@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 (Repository Foundation & Minimal CGO Tracer Bullet)
 
-**Status:** ready-for-agent
+**Status:** completed
 
 ## Scope
 - Implement prober and multi-window parser in `internal/provider/antigravity/` (`parse.go`, `probe.go`, `types.go`).
@@ -18,13 +18,13 @@
 - No priority ranking or host patching.
 
 ## Acceptance Criteria
-- [ ] Successfully extracts both 5h short window ($R_{\text{5h}}, T_{\text{5h}}$) and 7d weekly window ($R_{\text{7d}}, T_{\text{7d}}$) from standard Google JSON payloads.
-- [ ] When probing for `gemini`, only Gemini model quotas are parsed; when probing for `claude_gpt`, only Claude/GPT model quotas are parsed.
-- [ ] Window classifier accurately separates `5h`/`5hr` from `15h`/`25hr` and `5d 15h`.
-- [ ] Prober handles upstream 401, 403, 429, and network timeouts returning safe `ProbeResult` with status `probe_failed`.
+- [x] Successfully extracts both 5h short window ($R_{\text{5h}}, T_{\text{5h}}$) and 7d weekly window ($R_{\text{7d}}, T_{\text{7d}}$) from standard Google JSON payloads.
+- [x] When probing for `gemini`, only Gemini model quotas are parsed; when probing for `claude_gpt`, only Claude/GPT model quotas are parsed.
+- [x] Window classifier accurately separates `5h`/`5hr` from `15h`/`25hr` and `5d 15h`.
+- [x] Prober handles upstream 401, 403, 429, and network timeouts returning safe `ProbeResult` with status `probe_failed`.
 
 ## Required Tests
-- [ ] Table-driven JSON decoding test covering standard dual-window, 5h-only, weekly-only, and bucket/group variants.
-- [ ] Prober integration test with mock `HTTPDoer` covering successful queries, URL failover, and error codes.
-- [ ] Model group filtering verification tests for `gemini` vs `claude_gpt`.
-- [ ] Automated test coverage $\ge 90\%$ for `internal/provider/antigravity`.
+- [x] Table-driven JSON decoding test covering standard dual-window, 5h-only, weekly-only, and bucket/group variants.
+- [x] Prober integration test with mock `HTTPDoer` covering successful queries, URL failover, and error codes.
+- [x] Model group filtering verification tests for `gemini` vs `claude_gpt`.
+- [x] Automated test coverage $\ge 90\%$ for `internal/provider/antigravity` (achieved 96.4%).

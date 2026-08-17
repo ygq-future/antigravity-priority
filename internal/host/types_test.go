@@ -112,3 +112,32 @@ func TestHTTPResponse_UnmarshalJSON(t *testing.T) {
 		t.Error("expected error for invalid JSON, got nil")
 	}
 }
+
+func TestHeader_Get(t *testing.T) {
+	var nilHeader host.Header
+	if nilHeader.Get("Authorization") != "" {
+		t.Errorf("expected empty string for nil header")
+	}
+
+	h := host.Header{
+		"Authorization": []string{"Bearer token123"},
+		"content-type":  []string{"application/json"},
+		"Empty-Key":     []string{},
+	}
+
+	if got := h.Get("Authorization"); got != "Bearer token123" {
+		t.Errorf("expected Bearer token123, got %s", got)
+	}
+	if got := h.Get("authorization"); got != "Bearer token123" {
+		t.Errorf("expected Bearer token123 (case insensitive), got %s", got)
+	}
+	if got := h.Get("Content-Type"); got != "application/json" {
+		t.Errorf("expected application/json, got %s", got)
+	}
+	if got := h.Get("Non-Existent"); got != "" {
+		t.Errorf("expected empty string for non-existent key, got %s", got)
+	}
+	if got := h.Get("Empty-Key"); got != "" {
+		t.Errorf("expected empty string for empty key values, got %s", got)
+	}
+}

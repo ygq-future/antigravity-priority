@@ -15,6 +15,23 @@ var ErrInvalidRequest = errors.New("host: invalid request")
 // Header is a lightweight HTTP header map.
 type Header map[string][]string
 
+// Get returns the first value associated with the given key, case-insensitively.
+func (h Header) Get(key string) string {
+	if h == nil {
+		return ""
+	}
+	if v, ok := h[key]; ok && len(v) > 0 {
+		return v[0]
+	}
+	keyLower := strings.ToLower(key)
+	for k, v := range h {
+		if strings.ToLower(k) == keyLower && len(v) > 0 {
+			return v[0]
+		}
+	}
+	return ""
+}
+
 // AuthFile represents a minimal credential record returned by host.auth.list.
 type AuthFile struct {
 	Name            string          `json:"name"`
