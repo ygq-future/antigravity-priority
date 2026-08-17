@@ -1,0 +1,41 @@
+# Binaries and CGO dynamic libraries
+*.so
+*.dylib
+*.dll
+*.exe
+*.test
+*.out
+test_plugin.*
+
+# Distribution and Packaging
+dist/
+package/
+*.zip
+checksums.txt
+
+# Local runtime state & test coverage
+refresh-cache.json
+coverage.out
+coverage.html
+
+# Legacy example source directory and plan
+example-src/
+ANTIGRAVITY_PLUGIN_PLAN.md
+
+# AI Editors & Tools
+.cursor/
+.windsurf/
+.cline/
+.claude/
+
+# IDE & Editor configurations
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+*~
+
+# Operating System files
+.DS_Store
+Thumbs.db
