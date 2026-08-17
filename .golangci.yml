@@ -1,0 +1,39 @@
+version: 2
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  enable:
+    - govet
+    - staticcheck
+    - errcheck
+    - gofumpt
+    - revive
+    - misspell
+    - gocritic
+
+linters-settings:
+  govet:
+    enable-all: true
+    disable:
+      - fieldalignment
+  revive:
+    rules:
+      - name: exported
+        disabled: false
+      - name: unexported-return
+        disabled: false
+      - name: time-naming
+        disabled: false
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - style
+      - performance
+
+issues:
+  exclude-dirs:
+    - example-src
+    - dist
+    - package
