@@ -12,17 +12,35 @@ func extractPluginConfigYAML(data string) string {
 		return data
 	}
 	lines := strings.Split(data, "\n")
+	hasHostPlugins := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "plugins:" && leadingSpaces(line) == 0 {
+			hasHostPlugins = true
+			break
+		}
+	}
+
 	for index, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if trimmed != "antigravity-priority:" || !isCPAPluginConfigPath(lines, index) {
+		if trimmed != "antigravity-priority:" && trimmed != PluginID+":" {
+			continue
+		}
+		if !isCPAPluginConfigPath(lines, index) {
 			continue
 		}
 		indent := leadingSpaces(line)
 		collected := collectIndentedBlock(lines[index+1:], indent)
 		if len(collected) == 0 {
-			return data
+			return ""
 		}
 		return strings.Join(collected, "\n")
+	}
+
+	// If this is a full CPA config.yaml that doesn't define an antigravity-priority block,
+	// return empty so Default() configuration is used instead of failing on host-level fields.
+	if hasHostPlugins {
+		return ""
 	}
 	return data
 }
@@ -119,7 +137,7 @@ func parseYAMLMap(data string) (map[string]any, error) {
 
 	for _, line := range strings.Split(data, "\n") {
 		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "- ") || trimmed == "-" {
 			continue
 		}
 		indent := len(line) - len(strings.TrimLeft(line, " "))

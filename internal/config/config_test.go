@@ -253,6 +253,27 @@ func TestLoadBytes_Invalid(t *testing.T) {
 	}
 }
 
+func TestLoadBytes_HostConfigWithListsAndNoPluginBlock(t *testing.T) {
+	hostConfig := []byte(`
+plugins:
+  enabled: true
+  dir: "plugins"
+  store-sources:
+    - "https://raw.githubusercontent.com/ygq-future/antigravity-priority/main/registry.json"
+    - "https://example.com/store.json"
+  excluded-providers:
+    - antigravity
+`)
+
+	cfg, err := config.LoadBytes(hostConfig)
+	if err != nil {
+		t.Fatalf("unexpected error parsing host config with lists: %v", err)
+	}
+	if cfg != config.Default() {
+		t.Errorf("expected default config when plugin block absent from host config, got %+v", cfg)
+	}
+}
+
 func TestParseAntigravityModelGroup(t *testing.T) {
 	valid := map[string]config.AntigravityModelGroup{
 		"":               config.AntigravityModelGroupGemini,
