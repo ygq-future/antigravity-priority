@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -17,8 +18,8 @@ const (
 	DynamicLibraryBaseName = "antigravity-priority"
 	// CPAConfigKey is the configuration key under plugins.configs in CPA.
 	CPAConfigKey = "antigravity-priority"
-	// DefaultStateCachePath is the default path for persisting probe state and burn rate metrics.
-	DefaultStateCachePath = DirectoryName + "/refresh-cache.json"
+	// DefaultStateCachePath is the default path for persisting probe state and burn rate metrics inside CPA's persistent data directory.
+	DefaultStateCachePath = "data/antigravity-priority-cache.json"
 )
 
 // ErrInvalidConfig indicates configuration parsing or validation failure.
@@ -32,6 +33,7 @@ type Config struct {
 	AntigravityModelGroup AntigravityModelGroup
 	MaxConcurrency        int
 	MinChange             int
+	StateCachePath        string
 	PriorityRules         PriorityRules
 }
 
@@ -49,6 +51,8 @@ type rawConfig struct {
 	AntigravityModelGroup *string           `json:"antigravity_model_group"`
 	MaxConcurrency        *int              `json:"max_concurrency"`
 	MinChange             *int              `json:"min_change"`
+	StateCachePath        *string           `json:"state_cache_path"`
+	CachePath             *string           `json:"cache_path"`
 	PriorityRules         *rawPriorityRules `json:"priority_rules"`
 }
 
@@ -86,6 +90,7 @@ func Default() Config {
 		AntigravityModelGroup: AntigravityModelGroupGemini,
 		MaxConcurrency:        6,
 		MinChange:             1,
+		StateCachePath:        DefaultStateCachePath,
 		PriorityRules: PriorityRules{
 			Enabled:             true,
 			BoostStartPriority:  999,
@@ -170,6 +175,11 @@ func (raw rawConfig) apply(cfg Config) (Config, error) {
 			return Config{}, invalid("min_change", fmt.Sprint(*raw.MinChange), "must be at least 0")
 		}
 		cfg.MinChange = *raw.MinChange
+	}
+	if raw.StateCachePath != nil && strings.TrimSpace(*raw.StateCachePath) != "" {
+		cfg.StateCachePath = strings.TrimSpace(*raw.StateCachePath)
+	} else if raw.CachePath != nil && strings.TrimSpace(*raw.CachePath) != "" {
+		cfg.StateCachePath = strings.TrimSpace(*raw.CachePath)
 	}
 	if raw.PriorityRules != nil {
 		priorityRules, err := raw.PriorityRules.apply(cfg.PriorityRules)

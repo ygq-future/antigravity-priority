@@ -1,0 +1,389 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, for example v1.0.0"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  PLUGIN_NAME: antigravity-priority
+  INPUT_TAG: ${{ inputs.tag }}
+
+jobs:
+  prepare-release:
+    name: Prepare release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            tag="${INPUT_TAG}"
+          fi
+          if ! printf '%s\n' "$tag" | grep -Eq '^v[0-9]+[.][0-9]+[.][0-9]+([-.][0-9A-Za-z.]+)?$'; then
+            echo "release tag must be semantic version like v1.0.0" >&2
+            exit 1
+          fi
+          git fetch --force --depth=1 origin "refs/tags/${tag}:refs/tags/${tag}"
+          tag_sha="$(git rev-parse "${tag}^{commit}")"
+          head_sha="$(git rev-parse HEAD)"
+          if [ "$tag_sha" != "$head_sha" ]; then
+            echo "release tag must point to current workflow commit" >&2
+            exit 1
+          fi
+          notes_file=".github/release-notes/${tag}.md"
+          release_notes_file="$notes_file"
+          if [ ! -f "$notes_file" ]; then
+            echo "release notes file not found: ${notes_file}; generating release notes from commits" >&2
+            release_notes_file="${RUNNER_TEMP}/release-notes.md"
+            gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+              -f tag_name="${tag}" \
+              -f target_commitish="${tag_sha}" \
+              --jq .body > "$release_notes_file"
+          fi
+          if gh release view "${tag}" >/dev/null 2>&1; then
+            gh release edit "${tag}" --target "${tag_sha}" --title "${tag}" --notes-file "$release_notes_file"
+          else
+            gh release create "${tag}" --target "${tag_sha}" --title "${tag}" --notes-file "$release_notes_file"
+          fi
+
+  build-posix:
+    name: Build ${{ matrix.goos }}_${{ matrix.goarch }}
+    runs-on: ${{ matrix.runner }}
+    needs: prepare-release
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: darwin
+            goarch: amd64
+            runner: macos-15-intel
+            ext: dylib
+          - goos: darwin
+            goarch: arm64
+            runner: macos-latest
+            ext: dylib
+          - goos: linux
+            goarch: amd64
+            runner: ubuntu-latest
+            ext: so
+          - goos: linux
+            goarch: arm64
+            runner: ubuntu-24.04-arm
+            ext: so
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build package
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            version="${INPUT_TAG}"
+            version="${version#v}"
+          fi
+
+          archive="${PLUGIN_NAME}_${version}_${{ matrix.goos }}_${{ matrix.goarch }}.zip"
+          mkdir -p dist package
+          CGO_ENABLED=1 GOTOOLCHAIN=auto GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
+            go build -buildmode=c-shared -trimpath -ldflags="-s -w" \
+            -o "package/${PLUGIN_NAME}.${{ matrix.ext }}" .
+          (cd package && zip -q "../dist/${archive}" "${PLUGIN_NAME}.${{ matrix.ext }}")
+
+      - name: Upload release asset
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            tag="${INPUT_TAG}"
+          fi
+          if ! printf '%s\n' "$tag" | grep -Eq '^v[0-9]+[.][0-9]+[.][0-9]+([-.][0-9A-Za-z.]+)?$'; then
+            echo "release tag must be semantic version like v1.0.0" >&2
+            exit 1
+          fi
+          git fetch --force --depth=1 origin "refs/tags/${tag}:refs/tags/${tag}"
+          tag_sha="$(git rev-parse "${tag}^{commit}")"
+          head_sha="$(git rev-parse HEAD)"
+          if [ "$tag_sha" != "$head_sha" ]; then
+            echo "release tag must point to current workflow commit" >&2
+            exit 1
+          fi
+          gh release upload "${tag}" dist/*.zip --clobber
+
+  build-windows:
+    name: Build windows_amd64
+    runs-on: windows-latest
+    needs: prepare-release
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        timeout-minutes: 15
+        with:
+          msystem: UCRT64
+          path-type: inherit
+          update: false
+          cache: false
+          pacboy: toolchain:p
+
+      - name: Build package
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            version="${{ inputs.tag }}"
+            version="${version#v}"
+          fi
+
+          mkdir -p package
+          CGO_ENABLED=1 GOTOOLCHAIN=auto GOOS=windows GOARCH=amd64 CC=gcc \
+            go build -buildmode=c-shared -trimpath -ldflags="-s -w" \
+            -o "package/${PLUGIN_NAME}.dll" .
+
+      - name: Archive package
+        shell: pwsh
+        run: |
+          $version = "${env:GITHUB_REF_NAME}" -replace '^v', ''
+          if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') {
+            $version = "${env:INPUT_TAG}" -replace '^v', ''
+          }
+
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $archive = "${env:PLUGIN_NAME}_${version}_windows_amd64.zip"
+          Compress-Archive -Path "package/${env:PLUGIN_NAME}.dll" -DestinationPath "dist/${archive}" -Force
+
+      - name: Upload release asset
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${env:GITHUB_REF_NAME}"
+          if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') {
+            $tag = "${env:INPUT_TAG}"
+          }
+          if ($tag -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$') {
+            throw "release tag must be semantic version like v1.0.0"
+          }
+          git fetch --force --depth=1 origin "refs/tags/${tag}:refs/tags/${tag}"
+          $tagSha = (git rev-parse "${tag}^{commit}").Trim()
+          $headSha = (git rev-parse HEAD).Trim()
+          if ($tagSha -ne $headSha) {
+            throw "release tag must point to current workflow commit"
+          }
+          gh release upload $tag dist/*.zip --clobber
+
+  build-windows-arm64:
+    name: Build windows_arm64
+    runs-on: ubuntu-latest
+    needs: prepare-release
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.14.1
+          use-cache: false
+
+      - name: Build package
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            version="${INPUT_TAG}"
+            version="${version#v}"
+          fi
+
+          archive="${PLUGIN_NAME}_${version}_windows_arm64.zip"
+          mkdir -p dist package
+          CGO_ENABLED=1 GOTOOLCHAIN=auto GOOS=windows GOARCH=arm64 \
+            CC="zig cc -target aarch64-windows-gnu" \
+            CXX="zig c++ -target aarch64-windows-gnu" \
+            go build -buildmode=c-shared -trimpath -ldflags="-s -w" \
+            -o "package/${PLUGIN_NAME}.dll" .
+          (cd package && zip -q "../dist/${archive}" "${PLUGIN_NAME}.dll")
+
+      - name: Upload release asset
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            tag="${INPUT_TAG}"
+          fi
+          if ! printf '%s\n' "$tag" | grep -Eq '^v[0-9]+[.][0-9]+[.][0-9]+([-.][0-9A-Za-z.]+)?$'; then
+            echo "release tag must be semantic version like v1.0.0" >&2
+            exit 1
+          fi
+          git fetch --force --depth=1 origin "refs/tags/${tag}:refs/tags/${tag}"
+          tag_sha="$(git rev-parse "${tag}^{commit}")"
+          head_sha="$(git rev-parse HEAD)"
+          if [ "$tag_sha" != "$head_sha" ]; then
+            echo "release tag must point to current workflow commit" >&2
+            exit 1
+          fi
+          gh release upload "${tag}" dist/*.zip --clobber
+
+  build-freebsd:
+    name: Build freebsd_amd64
+    runs-on: ubuntu-latest
+    needs: prepare-release
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build package
+        uses: vmactions/freebsd-vm@v1
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          PLUGIN_NAME: ${{ env.PLUGIN_NAME }}
+        with:
+          usesh: true
+          envs: "INPUT_TAG PLUGIN_NAME"
+          prepare: |
+            pkg install -y go zip
+          run: |
+            set -eu
+            cd "${GITHUB_WORKSPACE}"
+            version="${GITHUB_REF_NAME#v}"
+            if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+              version="${INPUT_TAG#v}"
+            fi
+
+            archive="${PLUGIN_NAME}_${version}_freebsd_amd64.zip"
+            mkdir -p dist package
+            CGO_ENABLED=1 GOTOOLCHAIN=auto GOOS=freebsd GOARCH=amd64 \
+              go build -buildmode=c-shared -trimpath -ldflags="-s -w" \
+              -o "package/${PLUGIN_NAME}.so" .
+            (cd package && zip -q "../dist/${archive}" "${PLUGIN_NAME}.so")
+
+      - name: Upload release asset
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            tag="${INPUT_TAG}"
+          fi
+          if ! printf '%s\n' "$tag" | grep -Eq '^v[0-9]+[.][0-9]+[.][0-9]+([-.][0-9A-Za-z.]+)?$'; then
+            echo "release tag must be semantic version like v1.0.0" >&2
+            exit 1
+          fi
+          git fetch --force --depth=1 origin "refs/tags/${tag}:refs/tags/${tag}"
+          tag_sha="$(git rev-parse "${tag}^{commit}")"
+          head_sha="$(git rev-parse HEAD)"
+          if [ "$tag_sha" != "$head_sha" ]; then
+            echo "release tag must point to current workflow commit" >&2
+            exit 1
+          fi
+          gh release upload "${tag}" dist/*.zip --clobber
+
+  publish-release:
+    name: Publish checksums and notes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    needs:
+      - prepare-release
+      - build-posix
+      - build-windows
+      - build-windows-arm64
+      - build-freebsd
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Generate checksums and release notes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          tag="${GITHUB_REF_NAME}"
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            tag="${INPUT_TAG}"
+            version="${tag#v}"
+          fi
+          if ! printf '%s\n' "$tag" | grep -Eq '^v[0-9]+[.][0-9]+[.][0-9]+([-.][0-9A-Za-z.]+)?$'; then
+            echo "release tag must be semantic version like v1.0.0" >&2
+            exit 1
+          fi
+          git fetch --force --depth=1 origin "refs/tags/${tag}:refs/tags/${tag}"
+          tag_sha="$(git rev-parse "${tag}^{commit}")"
+          head_sha="$(git rev-parse HEAD)"
+          if [ "$tag_sha" != "$head_sha" ]; then
+            echo "release tag must point to current workflow commit" >&2
+            exit 1
+          fi
+          notes_file=".github/release-notes/${tag}.md"
+          if [ ! -f "$notes_file" ]; then
+            echo "release notes file not found: ${notes_file}; generating release notes from commits" >&2
+            gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+              -f tag_name="${tag}" \
+              -f target_commitish="${tag_sha}" \
+              --jq .body > "${RUNNER_TEMP}/release-notes.md"
+          else
+            cp "$notes_file" "${RUNNER_TEMP}/release-notes.md"
+          fi
+
+          mkdir -p dist
+          gh release download "${tag}" --pattern "${PLUGIN_NAME}_*.zip" --dir dist --clobber
+          (cd dist && sha256sum "${PLUGIN_NAME}"_*.zip > checksums.txt)
+          gh release upload "${tag}" dist/checksums.txt --clobber
+          gh release edit "${tag}" --title "${tag}" --notes-file "${RUNNER_TEMP}/release-notes.md"

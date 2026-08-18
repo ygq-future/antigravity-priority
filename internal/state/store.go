@@ -102,13 +102,20 @@ type ProbeSchedule struct {
 
 // Store manages the in-memory and on-disk state cache document.
 type Store struct {
-	mu      sync.RWMutex
-	path    string
-	entries map[string]Entry
+	mu           sync.RWMutex
+	path         string
+	entries      map[string]Entry
+	latestAudit  string
+	latestResult []byte
+	runHistory   []byte
 }
 
 type document struct {
-	Entries map[string]Entry `json:"entries"`
+	SchemaVersion int              `json:"schema_version"`
+	Entries       map[string]Entry `json:"entries"`
+	LatestAudit   string           `json:"latest_audit,omitempty"`
+	LatestResult  json.RawMessage  `json:"latest_result,omitempty"`
+	RunHistory    json.RawMessage  `json:"run_history,omitempty"`
 }
 
 // Load loads the state document from path. If the file does not exist, an empty store is returned.
@@ -134,6 +141,13 @@ func Load(ctx context.Context, path string) (*Store, error) {
 	if doc.Entries != nil {
 		store.entries = doc.Entries
 	}
+	store.latestAudit = doc.LatestAudit
+	if len(doc.LatestResult) > 0 {
+		store.latestResult = append([]byte(nil), doc.LatestResult...)
+	}
+	if len(doc.RunHistory) > 0 {
+		store.runHistory = append([]byte(nil), doc.RunHistory...)
+	}
 	return store, nil
 }
 
@@ -144,7 +158,14 @@ func (s *Store) SaveAtomic(ctx context.Context) (err error) {
 	}
 	s.mu.RLock()
 	path := s.path
-	data, err := json.MarshalIndent(document{Entries: s.entries}, "", "  ")
+	doc := document{
+		SchemaVersion: SchemaVersion,
+		Entries:       s.entries,
+		LatestAudit:   s.latestAudit,
+		LatestResult:  s.latestResult,
+		RunHistory:    s.runHistory,
+	}
+	data, err := json.MarshalIndent(doc, "", "  ")
 	s.mu.RUnlock()
 	if err != nil {
 		return fmt.Errorf("encode state cache: %w", err)
@@ -168,6 +189,22 @@ func (s *Store) SaveAtomic(ctx context.Context) (err error) {
 		return fmt.Errorf("rename state cache temp: %w", err)
 	}
 	return nil
+}
+
+// SetRuntimeSnapshot updates the persistent snapshot and run history.
+func (s *Store) SetRuntimeSnapshot(audit string, resultJSON []byte, historyJSON []byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.latestAudit = audit
+	s.latestResult = append([]byte(nil), resultJSON...)
+	s.runHistory = append([]byte(nil), historyJSON...)
+}
+
+// GetRuntimeSnapshot returns the persisted runtime snapshot and run history.
+func (s *Store) GetRuntimeSnapshot() (audit string, resultJSON []byte, historyJSON []byte) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.latestAudit, append([]byte(nil), s.latestResult...), append([]byte(nil), s.runHistory...)
 }
 
 // MarkProbeSuccess records a successful probe, adaptively updates cycle burn rate, and resets errors.

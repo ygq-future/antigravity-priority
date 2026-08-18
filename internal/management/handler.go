@@ -70,13 +70,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch {
-	case path == "/status" && method == http.MethodGet:
+	case (path == "/status" || path == "/v0/resource/plugins/"+config.PluginID+"/status" || path == "/v0/management/plugins/"+config.PluginID+"/status") && method == http.MethodGet:
 		h.handleStatus(w, r)
-	case path == "/run" && method == http.MethodPost:
+	case (path == "/run" || path == "/v0/management/plugins/"+config.PluginID+"/run") && method == http.MethodPost:
 		h.handleRun(w, r)
-	case path == "/diagnostics" && method == http.MethodGet:
+	case (path == "/diagnostics" || path == "/v0/management/plugins/"+config.PluginID+"/diagnostics") && method == http.MethodGet:
 		h.handleDiagnostics(w, r)
-	case path == "/snapshot/latest" && method == http.MethodGet:
+	case (path == "/snapshot/latest" || path == "/v0/management/plugins/"+config.PluginID+"/snapshot/latest") && method == http.MethodGet:
 		h.handleSnapshot(w, r)
 	default:
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")

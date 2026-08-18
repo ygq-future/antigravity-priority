@@ -4,7 +4,7 @@
 
 **Blocked by:** 06 (Plugin Runtime, Scheduler & CGO ABI), 07 (CPA-Themed Embedded Management UI)
 
-**Status:** ready-for-agent
+**Status:** completed
 
 ## Scope
 - Create `.github/workflows/ci.yml` (Lint, `go test -v ./...`, `go test -race ./...` on supported runners).
@@ -23,11 +23,11 @@
 - No functional Go application code changes.
 
 ## Acceptance Criteria
-- [ ] `ci.yml` passes lint, unit tests, and race detector on supported platforms.
-- [ ] `release.yml` matrix compiles all 7 target platforms, packages zip archives, and generates valid `checksums.txt`.
-- [ ] `registry.json` conforms to `CLIProxyAPI-Plugins-Store` schema.
-- [ ] Documentation clearly describes the mathematical model, double-window scheduling, adaptive burn rate, and configuration options.
+- [x] `ci.yml` passes lint, unit tests, and race detector on supported platforms.
+- [x] `release.yml` matrix compiles all 7 target platforms, packages zip archives, and generates valid `checksums.txt`.
+- [x] `registry.json` conforms to `CLIProxyAPI-Plugins-Store` schema.
+- [x] Documentation clearly describes the mathematical model, double-window scheduling, adaptive burn rate, and configuration options.
 
 ## Required Tests
-- [ ] Schema validation of `registry.json`.
-- [ ] Workflow syntax validation.
+- [x] Schema validation of `registry.json`.
+- [x] Workflow syntax validation.

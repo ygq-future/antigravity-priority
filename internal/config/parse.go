@@ -38,7 +38,7 @@ func hasTopLevelPluginField(data string) bool {
 			continue
 		}
 		switch strings.TrimSpace(key) {
-		case "enabled", "auto_apply", "interval", "antigravity_model_group", "max_concurrency", "min_change", "priority_rules":
+		case "enabled", "auto_apply", "interval", "antigravity_model_group", "max_concurrency", "min_change", "state_cache_path", "cache_path", "priority_rules":
 			return true
 		}
 	}

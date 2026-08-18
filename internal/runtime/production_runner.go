@@ -2,9 +2,11 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"antigravity-priority/internal/apply"
@@ -36,12 +38,24 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 
 	credentials := credentialsFromAuthFiles(files)
 	credentials = filterCredentialsByAuthIndex(credentials, request.AuthIndexes)
+	cachePath := request.Config.StateCachePath
+	if strings.TrimSpace(cachePath) == "" {
+		cachePath = config.DefaultStateCachePath
+	}
+
+	if len(credentials) == 0 {
+		// Ensure state cache file is initialized on disk even if no credentials exist
+		if store, err := state.Load(ctx, cachePath); err == nil {
+			_ = store.SaveAtomic(ctx)
+		}
+		return nil
+	}
 	credentials, authMaterials, err := enrichCredentialsFromAuthDocuments(ctx, client, credentials)
 	if err != nil {
 		return err
 	}
 
-	store, err := state.Load(ctx, config.DefaultStateCachePath)
+	store, err := state.Load(ctx, cachePath)
 	if err != nil {
 		return err
 	}
@@ -71,15 +85,20 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 
 	if request.Trigger == TriggerManual {
 		result := apply.Result{Snapshot: apply.Snapshot(plan)}
-		r.snapshotRunEntry(result, "dry-run plan generated", RunHistoryEntry{
+		audit := "dry-run plan generated"
+		r.snapshotRunEntry(result, audit, RunHistoryEntry{
 			Kind:      "dry_run",
 			Trigger:   string(request.Trigger),
 			Attempted: result.Attempted,
 			Succeeded: result.Succeeded,
 			Failed:    result.Failed,
 			Skipped:   result.Skipped,
-			Message:   "dry-run plan generated",
+			Message:   audit,
 		})
+		resJSON, _ := json.Marshal(result)
+		histJSON, _ := json.Marshal(r.currentRunHistory())
+		store.SetRuntimeSnapshot(audit, resJSON, histJSON)
+		_ = store.SaveAtomic(ctx)
 		return nil
 	}
 
@@ -105,6 +124,13 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 		Skipped:   result.Skipped,
 		Message:   summary,
 	})
+
+	resJSON, _ := json.Marshal(result)
+	histJSON, _ := json.Marshal(r.currentRunHistory())
+	store.SetRuntimeSnapshot(summary, resJSON, histJSON)
+	if err := store.SaveAtomic(ctx); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -192,9 +218,7 @@ func withProbeFailureTemporaryDisables(plan priority.Plan, evidence []priority.P
 func credentialsFromAuthFiles(files []host.AuthFile) []core.Credential {
 	credentials := make([]core.Credential, 0, len(files))
 	for _, file := range files {
-		provider := core.Provider(file.Provider)
-		credType := core.CredentialType(file.Type)
-		if provider == core.ProviderAntigravity || credType == core.CredentialTypeAntigravity {
+		if isAntigravityAuthFile(file) {
 			credentials = append(credentials, core.Credential{
 				Name:            file.Name,
 				AuthIndex:       file.AuthIndex,
@@ -215,6 +239,15 @@ func credentialsFromAuthFiles(files []host.AuthFile) []core.Credential {
 	return credentials
 }
 
+func isAntigravityAuthFile(file host.AuthFile) bool {
+	provider := strings.ToLower(strings.TrimSpace(file.Provider))
+	credType := strings.ToLower(strings.TrimSpace(file.Type))
+	name := strings.ToLower(strings.TrimSpace(file.Name))
+	return provider == "antigravity" || provider == "google" || provider == "gemini" || provider == "google-antigravity" ||
+		credType == "antigravity" || credType == "google" || credType == "gemini" ||
+		strings.Contains(name, "antigravity")
+}
+
 func filterCredentialsByAuthIndex(credentials []core.Credential, authIndexes []string) []core.Credential {
 	if len(authIndexes) == 0 {
 		return credentials
@@ -233,10 +266,20 @@ func filterCredentialsByAuthIndex(credentials []core.Credential, authIndexes []s
 }
 
 func priorityOptions(cfg config.Config, now time.Time) priority.Options {
+	boostStart := 999
+	normalStart := 100
+	if cfg.PriorityRules.Enabled {
+		if cfg.PriorityRules.BoostStartPriority > 0 {
+			boostStart = cfg.PriorityRules.BoostStartPriority
+		}
+		if cfg.PriorityRules.NormalStartPriority > 0 {
+			normalStart = cfg.PriorityRules.NormalStartPriority
+		}
+	}
 	return priority.Options{
 		Now:                 now,
-		BoostStartPriority:  cfg.PriorityRules.BoostStartPriority,
-		NormalStartPriority: cfg.PriorityRules.NormalStartPriority,
+		BoostStartPriority:  boostStart,
+		NormalStartPriority: normalStart,
 		MinChange:           cfg.MinChange,
 	}
 }

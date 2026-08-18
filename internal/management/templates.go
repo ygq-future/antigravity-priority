@@ -11,38 +11,41 @@ const StatusHTML = `<!DOCTYPE html>
     <style>
         :root {
             color-scheme: light dark;
-            --bg-primary: #f6f7fb;
+            --bg-primary: #ffffff;
+            --bg-secondary: #ffffff;
+            --bg-tertiary: #f6f6f6;
             --bg-surface: #ffffff;
             --bg-card: #ffffff;
-            --bg-subtle: #f8fafc;
-            --bg-overlay: rgba(15, 23, 42, 0.45);
-            --border-color: #e2e8f0;
-            --border-subtle: #f1f5f9;
-            --border-focus: #3b82f6;
-            --text-primary: #0f172a;
-            --text-secondary: #475569;
-            --text-muted: #64748b;
+            --bg-subtle: #f6f6f6;
+            --bg-hover: #f0f0f0;
+            --bg-overlay: rgba(45, 42, 38, 0.45);
+            --border-color: #e5e5e5;
+            --border-subtle: #f0eee9;
+            --border-focus: #8b8680;
+            --text-primary: #2d2a26;
+            --text-secondary: #6d6760;
+            --text-muted: #a29c95;
             --text-inverse: #ffffff;
             --accent-blue: #2563eb;
             --accent-blue-hover: #1d4ed8;
             --accent-blue-subtle: #eff6ff;
             --accent-blue-text: #1d4ed8;
-            --accent-green: #16a34a;
-            --accent-green-subtle: #f0fdf4;
-            --accent-green-text: #15803d;
+            --accent-green: #10b981;
+            --accent-green-subtle: #ecfdf5;
+            --accent-green-text: #047857;
             --accent-yellow: #d97706;
             --accent-yellow-subtle: #fffbeb;
             --accent-yellow-text: #b45309;
-            --accent-red: #dc2626;
+            --accent-red: #c65746;
             --accent-red-subtle: #fef2f2;
-            --accent-red-text: #b91c1c;
+            --accent-red-text: #991b1b;
             --accent-purple: #7c3aed;
             --accent-purple-subtle: #faf5ff;
             --accent-purple-text: #6d28d9;
-            --meter-bg: #e2e8f0;
-            --meter-fill: #2563eb;
-            --meter-warn: #d97706;
-            --meter-danger: #dc2626;
+            --meter-bg: #e5e5e5;
+            --meter-fill: #10b981;
+            --meter-warn: #e0aa14;
+            --meter-danger: #c65746;
             --badge-boost-bg: #fdf4ff;
             --badge-boost-border: #f0abfc;
             --badge-boost-text: #a21caf;
@@ -52,22 +55,25 @@ const StatusHTML = `<!DOCTYPE html>
             --diff-to-text: #166534;
             --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
             --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.08), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
-            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -4px rgba(0, 0, 0, 0.04);
+            --shadow-lg: 0 10px 18px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -4px rgba(0, 0, 0, 0.04);
         }
 
         @media (prefers-color-scheme: dark) {
             :root:not([data-theme="light"]) {
-                --bg-primary: #0b0f19;
-                --bg-surface: #111827;
-                --bg-card: #1f2937;
-                --bg-subtle: #1e293b;
-                --bg-overlay: rgba(0, 0, 0, 0.65);
-                --border-color: #374151;
-                --border-subtle: #2d3748;
-                --border-focus: #60a5fa;
-                --text-primary: #f8fafc;
-                --text-secondary: #cbd5e1;
-                --text-muted: #94a3b8;
+                --bg-primary: #121214;
+                --bg-secondary: #18181b;
+                --bg-tertiary: #27272a;
+                --bg-surface: #18181b;
+                --bg-card: #1f1f23;
+                --bg-subtle: #27272a;
+                --bg-hover: #3f3f46;
+                --bg-overlay: rgba(0, 0, 0, 0.7);
+                --border-color: #27272a;
+                --border-subtle: #27272a;
+                --border-focus: #a1a1aa;
+                --text-primary: #f4f4f5;
+                --text-secondary: #a1a1aa;
+                --text-muted: #71717a;
                 --text-inverse: #0f172a;
                 --accent-blue: #3b82f6;
                 --accent-blue-hover: #60a5fa;
@@ -85,7 +91,7 @@ const StatusHTML = `<!DOCTYPE html>
                 --accent-purple: #a855f7;
                 --accent-purple-subtle: rgba(88, 28, 135, 0.25);
                 --accent-purple-text: #c084fc;
-                --meter-bg: #374151;
+                --meter-bg: #27272a;
                 --meter-fill: #3b82f6;
                 --meter-warn: #f59e0b;
                 --meter-danger: #ef4444;
@@ -98,22 +104,25 @@ const StatusHTML = `<!DOCTYPE html>
                 --diff-to-text: #86efac;
                 --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.4);
                 --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -2px rgba(0, 0, 0, 0.4);
-                --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -4px rgba(0, 0, 0, 0.5);
+                --shadow-lg: 0 10px 18px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -4px rgba(0, 0, 0, 0.5);
             }
         }
 
         :root[data-theme="dark"] {
-            --bg-primary: #0b0f19;
-            --bg-surface: #111827;
-            --bg-card: #1f2937;
-            --bg-subtle: #1e293b;
-            --bg-overlay: rgba(0, 0, 0, 0.65);
-            --border-color: #374151;
-            --border-subtle: #2d3748;
-            --border-focus: #60a5fa;
-            --text-primary: #f8fafc;
-            --text-secondary: #cbd5e1;
-            --text-muted: #94a3b8;
+            --bg-primary: #121214;
+            --bg-secondary: #18181b;
+            --bg-tertiary: #27272a;
+            --bg-surface: #18181b;
+            --bg-card: #1f1f23;
+            --bg-subtle: #27272a;
+            --bg-hover: #3f3f46;
+            --bg-overlay: rgba(0, 0, 0, 0.7);
+            --border-color: #27272a;
+            --border-subtle: #27272a;
+            --border-focus: #a1a1aa;
+            --text-primary: #f4f4f5;
+            --text-secondary: #a1a1aa;
+            --text-muted: #71717a;
             --text-inverse: #0f172a;
             --accent-blue: #3b82f6;
             --accent-blue-hover: #60a5fa;
@@ -131,7 +140,7 @@ const StatusHTML = `<!DOCTYPE html>
             --accent-purple: #a855f7;
             --accent-purple-subtle: rgba(88, 28, 135, 0.25);
             --accent-purple-text: #c084fc;
-            --meter-bg: #374151;
+            --meter-bg: #27272a;
             --meter-fill: #3b82f6;
             --meter-warn: #f59e0b;
             --meter-danger: #ef4444;
@@ -144,13 +153,39 @@ const StatusHTML = `<!DOCTYPE html>
             --diff-to-text: #86efac;
             --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.4);
             --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -2px rgba(0, 0, 0, 0.4);
-            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -4px rgba(0, 0, 0, 0.5);
+            --shadow-lg: 0 10px 18px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -4px rgba(0, 0, 0, 0.5);
+        }
+
+        :root[data-theme="light"] {
+            --bg-primary: #ffffff;
+            --bg-secondary: #f8fafc;
+            --bg-tertiary: #f1f5f9;
+            --bg-surface: #ffffff;
+            --bg-card: #ffffff;
+            --bg-subtle: #f8fafc;
+            --bg-hover: #f1f5f9;
+            --bg-overlay: rgba(15, 23, 42, 0.45);
+            --border-color: #e2e8f0;
+            --border-subtle: #f1f5f9;
+            --border-focus: #3b82f6;
+            --text-primary: #0f172a;
+            --text-secondary: #475569;
+            --text-muted: #64748b;
+            --text-inverse: #ffffff;
+            --accent-blue: #2563eb;
+            --accent-blue-hover: #1d4ed8;
+            --accent-blue-subtle: #eff6ff;
+            --accent-blue-text: #1d4ed8;
+            --meter-bg: #e2e8f0;
+            --meter-fill: #2563eb;
+            --meter-warn: #d97706;
+            --meter-danger: #dc2626;
         }
 
         * { box-sizing: border-box; }
         body {
             margin: 0;
-            padding: 24px;
+            padding: 20px;
             background: var(--bg-primary);
             color: var(--text-primary);
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -161,11 +196,11 @@ const StatusHTML = `<!DOCTYPE html>
             width: 100%;
             max-width: 1200px;
             margin: 0 auto;
-            background: var(--bg-surface);
-            border: 1px solid var(--border-color);
-            border-radius: 18px;
-            padding: 28px;
-            box-shadow: var(--shadow-lg);
+            background: transparent;
+            border: 0;
+            border-radius: 0;
+            padding: 0;
+            box-shadow: none;
         }
 
         .topbar {
@@ -174,7 +209,7 @@ const StatusHTML = `<!DOCTYPE html>
             justify-content: space-between;
             gap: 16px;
             flex-wrap: wrap;
-            margin-bottom: 24px;
+            margin-bottom: 20px;
             padding-bottom: 16px;
             border-bottom: 1px solid var(--border-subtle);
         }
@@ -187,7 +222,7 @@ const StatusHTML = `<!DOCTYPE html>
 
         h1 {
             margin: 0;
-            font-size: 24px;
+            font-size: 22px;
             font-weight: 750;
             letter-spacing: -0.02em;
             display: flex;
@@ -211,6 +246,7 @@ const StatusHTML = `<!DOCTYPE html>
             align-items: center;
             gap: 10px;
             flex-wrap: wrap;
+            margin-right: 160px;
         }
 
         .tabs {
@@ -220,7 +256,7 @@ const StatusHTML = `<!DOCTYPE html>
             background: var(--bg-subtle);
             border: 1px solid var(--border-subtle);
             border-radius: 12px;
-            margin-bottom: 24px;
+            margin-bottom: 20px;
         }
 
         .tab {
@@ -238,7 +274,7 @@ const StatusHTML = `<!DOCTYPE html>
         }
 
         .tab.active {
-            background: var(--bg-surface);
+            background: var(--bg-card);
             color: var(--text-primary);
             box-shadow: var(--shadow-sm);
         }
@@ -254,12 +290,12 @@ const StatusHTML = `<!DOCTYPE html>
             display: grid;
             grid-template-columns: repeat(4, minmax(0, 1fr));
             gap: 16px;
-            margin-bottom: 24px;
+            margin-bottom: 20px;
         }
 
         .kpi-card {
-            background: var(--bg-subtle);
-            border: 1px solid var(--border-subtle);
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
             border-radius: 12px;
             padding: 16px;
             display: flex;
@@ -293,10 +329,10 @@ const StatusHTML = `<!DOCTYPE html>
             gap: 16px;
             flex-wrap: wrap;
             padding: 16px 20px;
-            background: var(--bg-subtle);
-            border: 1px solid var(--border-subtle);
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
             border-radius: 14px;
-            margin-bottom: 24px;
+            margin-bottom: 20px;
         }
 
         .control-group {
@@ -325,7 +361,7 @@ const StatusHTML = `<!DOCTYPE html>
             gap: 10px;
             min-height: 38px;
             padding: 8px 14px;
-            background: var(--bg-surface);
+            background: var(--bg-card);
             border: 1px solid var(--border-color);
             border-radius: 10px;
             color: var(--text-primary);
@@ -364,7 +400,7 @@ const StatusHTML = `<!DOCTYPE html>
             left: 0;
             right: 0;
             z-index: 50;
-            background: var(--bg-surface);
+            background: var(--bg-card);
             border: 1px solid var(--border-color);
             border-radius: 12px;
             padding: 6px;
@@ -388,23 +424,34 @@ const StatusHTML = `<!DOCTYPE html>
         }
 
         .custom-select-option:hover {
-            background: var(--bg-subtle);
+            background: var(--bg-hover, var(--bg-subtle));
             color: var(--text-primary);
         }
 
         .custom-select-option.selected {
-            background: var(--accent-blue-subtle);
-            color: var(--accent-blue-text);
+            background: var(--bg-subtle);
+            color: var(--text-primary);
             font-weight: 700;
         }
 
         .custom-select-check {
             display: none;
-            color: var(--accent-blue);
+            color: var(--primary-color, var(--accent-blue));
         }
 
         .custom-select-option.selected .custom-select-check {
             display: inline-flex;
+        }
+
+        input[type="password"], input[type="text"] {
+            min-height: 38px;
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 8px 14px;
+            font: inherit;
+            background: var(--bg-card);
+            color: var(--text-primary);
+            width: 100%;
         }
 
         button {
@@ -430,7 +477,7 @@ const StatusHTML = `<!DOCTYPE html>
         .btn-primary:hover { background: var(--accent-blue-hover); }
 
         .btn-secondary {
-            background: var(--bg-surface);
+            background: var(--bg-card);
             border-color: var(--border-color);
             color: var(--text-primary);
         }
@@ -624,7 +671,7 @@ const StatusHTML = `<!DOCTYPE html>
 
         .modal {
             width: min(720px, 100%);
-            background: var(--bg-surface);
+            background: var(--bg-card);
             border: 1px solid var(--border-color);
             border-radius: 18px;
             padding: 24px;
@@ -679,7 +726,7 @@ const StatusHTML = `<!DOCTYPE html>
 
         .toast-root {
             position: fixed;
-            top: 20px;
+            top: 90px;
             right: 20px;
             z-index: 200;
             display: flex;
@@ -695,7 +742,7 @@ const StatusHTML = `<!DOCTYPE html>
             font-weight: 600;
             box-shadow: var(--shadow-md);
             border-left: 4px solid;
-            background: var(--bg-surface);
+            background: var(--bg-card);
             color: var(--text-primary);
         }
         .toast-success { border-color: var(--accent-green); }
@@ -762,10 +809,9 @@ const StatusHTML = `<!DOCTYPE html>
 
         @media (max-width: 600px) {
             body { padding: 12px; }
-            .container { padding: 16px; }
             .summary-grid { grid-template-columns: 1fr; }
             .topbar { flex-direction: column; align-items: flex-start; }
-            .topbar-actions { width: 100%; justify-content: space-between; }
+            .topbar-actions { width: 100%; justify-content: space-between; margin-right: 0; }
         }
     </style>
 </head>
@@ -780,6 +826,9 @@ const StatusHTML = `<!DOCTYPE html>
             </div>
             <div class="topbar-actions">
                 <div id="toastRoot" class="toast-root" aria-live="polite"></div>
+                <button type="button" class="btn-secondary" onclick="openKeyModal()" aria-label="Set Management Key">
+                    <span>🔑 <span data-i18n="btnKey">密钥</span></span>
+                </button>
                 <button type="button" class="btn-secondary" onclick="toggleLanguage()" aria-label="Toggle Language">
                     <span id="langLabel">EN / 中文</span>
                 </button>
@@ -888,17 +937,47 @@ const StatusHTML = `<!DOCTYPE html>
 
         <section id="panelHelp" hidden>
             <div class="card" style="line-height:1.6; font-size:14px; color:var(--text-secondary);">
-                <h2 style="margin:0 0 12px; font-size:16px; color:var(--text-primary);" data-i18n="helpTitle">Antigravity Priority 原理与算法说明</h2>
+                <h2 style="margin:0 0 12px; font-size:16px; color:var(--text-primary);" data-i18n="helpTitle">Antigravity Priority 原理与规则说明</h2>
                 <p data-i18n="helpP1">本插件专为 CLIProxyAPI 的 Google Antigravity 设计，实现双窗口自适应优先级调度与智能写回：</p>
-                <ul>
-                    <li><strong data-i18n="help5h">5小时短窗口 (5h)</strong>: 实时监控高频请求配额与重置时间，防止短期突发请求触发 429 速率限制。</li>
-                    <li><strong data-i18n="help7d">7天长窗口 (7d)</strong>: 跟踪周配额剩余量及重置进度，避免单张凭证在周期前半段过早耗尽。</li>
-                    <li><strong data-i18n="helpBurn">自适应燃烧率 (C_cycle)</strong>: 在线学习估算周期消耗速率，实时动态计算保底所需剩余额度。</li>
-                    <li><strong data-i18n="helpUrgency">周紧迫度指标 (Urgency)</strong>: 计算配额紧迫指数，优先调度充裕健康的凭证。</li>
-                    <li><strong data-i18n="helpBoost">🚀 动态 Boost 机制</strong>: 对双窗口余量充裕且周期健康的凭证自动赋予第一梯队超高优先级（900-999）。</li>
+                <ul style="margin-top: 12px; padding-left: 20px; display: grid; gap: 8px;">
+                    <li data-i18n="help5hDesc"><strong>5小时短窗口 (5h)</strong>：实时监控高频请求配额与重置时间，防止短期突发请求触发 429 速率限制。</li>
+                    <li data-i18n="help7dDesc"><strong>7天长窗口 (7d)</strong>：跟踪周配额剩余量及重置进度，避免单张凭证在周期前半段过早耗尽。</li>
+                    <li data-i18n="helpBurnDesc"><strong>自适应燃烧率 (C_cycle)</strong>：在线学习估算周期消耗速率，实时动态计算保底所需剩余额度。</li>
+                    <li data-i18n="helpUrgencyDesc"><strong>周紧迫度指标 (Urgency)</strong>：计算配额紧迫指数，优先调度充裕健康的凭证。</li>
+                    <li data-i18n="helpBoostDesc"><strong>🚀 动态 Boost 机制</strong>：对双窗口余量充裕且周期健康的凭证自动赋予第一梯队超高优先级（900-999）。</li>
+                </ul>
+                <h3 style="margin:16px 0 8px; font-size:15px; color:var(--text-primary);" data-i18n="helpConfigTitle">配置字段详细说明</h3>
+                <ul style="padding-left: 20px; display: grid; gap: 6px;">
+                    <li data-i18n="helpConfigAutoApply"><code>auto_apply</code>: 是否开启定时自动优先级排序并写回宿主凭证。</li>
+                    <li data-i18n="helpConfigInterval"><code>interval</code>: 自动探测与调度周期（如 <code>15m</code>、<code>30m</code>）。</li>
+                    <li data-i18n="helpConfigGroup"><code>antigravity_model_group</code>: 配额主控模型组，可选 <code>gemini</code> 或 <code>claude_gpt</code>。</li>
+                    <li data-i18n="helpConfigConcurrency"><code>max_concurrency</code>: 探测并发 HTTP 请求数上限。</li>
+                    <li data-i18n="helpConfigMinChange"><code>min_change</code>: 优先级写回变动最小阈值。</li>
+                    <li data-i18n="helpConfigCachePath"><code>state_cache_path</code>: 状态缓存与自适应学习率持久化文件路径。</li>
+                    <li data-i18n="helpConfigRulesEnabled"><code>priority_rules.enabled</code>: 是否开启自定义优先级规则。</li>
+                    <li data-i18n="helpConfigBoostStart"><code>priority_rules.boost_start_priority</code>: 动态提权区间的起始基准优先级。</li>
+                    <li data-i18n="helpConfigNormalStart"><code>priority_rules.normal_start_priority</code>: 常规健康凭证的起始基准优先级。</li>
                 </ul>
             </div>
         </section>
+    </div>
+
+    <!-- Management Key Modal -->
+    <div id="keyModal" class="modal-backdrop" hidden>
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="keyModalTitle" style="max-width: 480px;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <h2 id="keyModalTitle" style="margin:0; font-size:18px;" data-i18n="keyModalTitle">CPA 管理密钥认证</h2>
+                <button type="button" class="btn-secondary" onclick="closeKeyModal()" style="min-height:30px; padding:4px 10px;">✕</button>
+            </div>
+            <p style="font-size:13px; color:var(--text-secondary); margin:0; line-height:1.6;" data-i18n="keyModalDesc">CPA 原生管理界面下请输入 config.yaml 中的 Management Key；若在 CPA-Plus 等增强面板中，请输入 CPA-Plus 登录密码（通常为 cpamp_... 格式）。</p>
+            <div>
+                <input type="password" id="manualKeyInput" placeholder="Management Key" autocomplete="off">
+            </div>
+            <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:8px;">
+                <button type="button" class="btn-secondary" onclick="closeKeyModal()" data-i18n="btnClose">取消</button>
+                <button type="button" class="btn-primary" onclick="saveKeyAndRefresh()" data-i18n="btnSaveKey">保存并验证</button>
+            </div>
+        </div>
     </div>
 
     <!-- Diff & Run Result Modal -->
@@ -918,6 +997,11 @@ const StatusHTML = `<!DOCTYPE html>
     </div>
 
     <script>
+        const BASE_PATH = "/v0/management/plugins/antigravity-priority";
+        const SNAPSHOT_PATH = BASE_PATH + "/snapshot/latest";
+        const DIAGNOSTICS_PATH = BASE_PATH + "/diagnostics";
+        const RUN_PATH = BASE_PATH + "/run";
+
         const I18N = {
             "zh-CN": {
                 title: "Antigravity 优先级管理",
@@ -935,6 +1019,7 @@ const StatusHTML = `<!DOCTYPE html>
                 optGemini: "Gemini 模型",
                 optClaudeGPT: "Claude 与 GPT 模型",
                 btnRefresh: "刷新",
+                btnKey: "密钥",
                 btnDryRun: "🔍 试运行 (Dry-Run)",
                 btnApply: "⚡ 立即写回 (Apply)",
                 loading: "正在加载凭证与配额状态...",
@@ -942,13 +1027,23 @@ const StatusHTML = `<!DOCTYPE html>
                 historyTitle: "最近执行记录 (最近 10 次)",
                 noHistory: "暂无执行历史记录",
                 diagnosticsTitle: "系统运行诊断与调度状态",
-                helpTitle: "Antigravity Priority 原理与算法说明",
+                helpTitle: "Antigravity Priority 原理与规则说明",
                 helpP1: "本插件专为 CLIProxyAPI 的 Google Antigravity 设计，实现双窗口自适应优先级调度与智能写回：",
-                help5h: "5小时短窗口 (5h)",
-                help7d: "7天长窗口 (7d)",
-                helpBurn: "自适应燃烧率 (C_cycle)",
-                helpUrgency: "周紧迫度指标 (Urgency)",
-                helpBoost: "🚀 动态 Boost 机制",
+                help5hDesc: "<strong>5小时短窗口 (5h)</strong>：实时监控高频请求配额与重置时间，防止短期突发请求触发 429 速率限制。",
+                help7dDesc: "<strong>7天长窗口 (7d)</strong>：跟踪周配额剩余量及重置进度，避免单张凭证在周期前半段过早耗尽。",
+                helpBurnDesc: "<strong>自适应燃烧率 (C_cycle)</strong>：在线学习估算周期消耗速率，实时动态计算保底所需剩余额度。",
+                helpUrgencyDesc: "<strong>周紧迫度指标 (Urgency)</strong>：计算配额紧迫指数，优先调度充裕健康的凭证。",
+                helpBoostDesc: "<strong>🚀 动态 Boost 机制</strong>：对双窗口余量充裕且周期健康的凭证自动赋予第一梯队超高优先级（900-999）。",
+                helpConfigTitle: "配置字段详细说明",
+                helpConfigAutoApply: "<code>auto_apply</code>: 是否开启定时自动优先级排序并写回宿主凭证（默认 <code>false</code>，关闭时仅在管理页手动写回）。",
+                helpConfigInterval: "<code>interval</code>: 自动探测与调度周期，例如 <code>15m</code>、<code>30m</code>、<code>1h</code>（默认 <code>15m</code>）。",
+                helpConfigGroup: "<code>antigravity_model_group</code>: 配额主控模型组，可选 <code>gemini</code> 或 <code>claude_gpt</code>（默认 <code>gemini</code>）。",
+                helpConfigConcurrency: "<code>max_concurrency</code>: 探测并发 HTTP 请求数上限（默认 <code>6</code>）。",
+                helpConfigMinChange: "<code>min_change</code>: 优先级写回变动最小阈值，变动小于该值则跳过写入以减少 IO（默认 <code>1</code>）。",
+                helpConfigCachePath: "<code>state_cache_path</code>: 状态缓存与自适应学习率持久化文件路径（默认 <code>data/antigravity-priority-cache.json</code>）。",
+                helpConfigRulesEnabled: "<code>priority_rules.enabled</code>: 是否启用自定义优先级规则（默认 <code>true</code>；关闭时强制使用内置默认值）。",
+                helpConfigBoostStart: "<code>priority_rules.boost_start_priority</code>: 动态提权区间的起始基准优先级（默认 <code>999</code>）。",
+                helpConfigNormalStart: "<code>priority_rules.normal_start_priority</code>: 常规健康凭证的起始基准优先级（默认 <code>100</code>）。",
                 btnClose: "关闭",
                 btnApplyNow: "立即写回",
                 previewTitle: "试运行计划预览 (Dry-Run)",
@@ -965,7 +1060,10 @@ const StatusHTML = `<!DOCTYPE html>
                 priority: "优先级",
                 urgencyLabel: "紧迫度",
                 burnLabel: "燃烧率",
-                running: "执行中..."
+                running: "执行中...",
+                keyModalTitle: "CPA 管理密钥认证",
+                keyModalDesc: "CPA 原生管理界面下请输入 config.yaml 中的 Management Key；若在 CPA-Plus 等增强面板中，请输入 CPA-Plus 登录密码（通常为 cpamp_... 格式）。",
+                btnSaveKey: "保存并验证"
             },
             "en-US": {
                 title: "Antigravity Priority",
@@ -983,6 +1081,7 @@ const StatusHTML = `<!DOCTYPE html>
                 optGemini: "Gemini Models",
                 optClaudeGPT: "Claude & GPT Models",
                 btnRefresh: "Refresh",
+                btnKey: "Key",
                 btnDryRun: "🔍 Dry-Run",
                 btnApply: "⚡ Apply Now",
                 loading: "Loading credentials & quota...",
@@ -990,13 +1089,23 @@ const StatusHTML = `<!DOCTYPE html>
                 historyTitle: "Execution History (Last 10)",
                 noHistory: "No execution history yet",
                 diagnosticsTitle: "System Diagnostics & Scheduler",
-                helpTitle: "Antigravity Priority Mechanics",
-                helpP1: "Tailored for Google Antigravity in CLIProxyAPI with double-window adaptive scheduling:",
-                help5h: "5-Hour Short Window (5h)",
-                help7d: "7-Day Weekly Window (7d)",
-                helpBurn: "Adaptive Burn Rate (C_cycle)",
-                helpUrgency: "Weekly Urgency Index",
-                helpBoost: "🚀 Dynamic Boost Tier",
+                helpTitle: "Antigravity Priority Mechanics & Rules",
+                helpP1: "Tailored for Google Antigravity in CLIProxyAPI with double-window adaptive scheduling and intelligent write-back:",
+                help5hDesc: "<strong>5-Hour Short Window (5h)</strong>: Monitors burst quota and reset countdowns to prevent 429 rate limits.",
+                help7dDesc: "<strong>7-Day Weekly Window (7d)</strong>: Tracks weekly remaining balance and reset progress to prevent early depletion.",
+                helpBurnDesc: "<strong>Adaptive Burn Rate (C_cycle)</strong>: Incrementally learns real consumption rates to calculate required burn horizons.",
+                helpUrgencyDesc: "<strong>Weekly Urgency Index</strong>: Measures unit-time quota pressure to smoothly rotate accounts throughout the cycle.",
+                helpBoostDesc: "<strong>🚀 Dynamic Boost Tier</strong>: Elevates credentials with large remaining balances to top priority (900-999) before weekly reset.",
+                helpConfigTitle: "Configuration Field Details",
+                helpConfigAutoApply: "<code>auto_apply</code>: Enable periodic scheduled priority sorting and write-back (default <code>false</code>; manual runs remain available).",
+                helpConfigInterval: "<code>interval</code>: Automated probing and scheduling interval, e.g. <code>15m</code>, <code>30m</code>, <code>1h</code> (default <code>15m</code>).",
+                helpConfigGroup: "<code>antigravity_model_group</code>: Primary quota model group, options: <code>gemini</code> or <code>claude_gpt</code> (default <code>gemini</code>).",
+                helpConfigConcurrency: "<code>max_concurrency</code>: Maximum concurrent quota probe HTTP requests (default <code>6</code>).",
+                helpConfigMinChange: "<code>min_change</code>: Minimum priority delta threshold to trigger write-back, skipping minor changes to reduce IO (default <code>1</code>).",
+                helpConfigCachePath: "<code>state_cache_path</code>: Path to persist state cache and learned metrics (default <code>data/antigravity-priority-cache.json</code>).",
+                helpConfigRulesEnabled: "<code>priority_rules.enabled</code>: Enable custom priority rules (default <code>true</code>; when false, built-in defaults are used).",
+                helpConfigBoostStart: "<code>priority_rules.boost_start_priority</code>: Starting priority base for boosted credentials (default <code>999</code>).",
+                helpConfigNormalStart: "<code>priority_rules.normal_start_priority</code>: Starting priority base for regular healthy credentials (default <code>100</code>).",
                 btnClose: "Close",
                 btnApplyNow: "Apply Changes",
                 previewTitle: "Dry-Run Plan Preview",
@@ -1013,7 +1122,10 @@ const StatusHTML = `<!DOCTYPE html>
                 priority: "Priority",
                 urgencyLabel: "Urgency",
                 burnLabel: "Burn Rate",
-                running: "Running..."
+                running: "Running...",
+                keyModalTitle: "CPA Management Key",
+                keyModalDesc: "For native CPA Web UI, enter the Management Key from config.yaml; for CPA-Plus enhanced panels, enter your CPA-Plus login password (e.g. cpamp_... format).",
+                btnSaveKey: "Save & Verify"
             }
         };
 
@@ -1022,6 +1134,139 @@ const StatusHTML = `<!DOCTYPE html>
         let latestDiagnostics = null;
         let activeTab = "overview";
         let countdownInterval = null;
+
+        function getManagementKey() {
+            try {
+                const keys = ['management_key', 'management-key', 'managementKey', 'cpa_management_key', 'admin_key', 'key'];
+                for (const k of keys) {
+                    const v = localStorage.getItem(k) || sessionStorage.getItem(k);
+                    if (v && v.trim()) return v.trim();
+                }
+            } catch (_) {}
+
+            try {
+                if (window.parent && window.parent !== window) {
+                    const keys = ['management_key', 'management-key', 'managementKey', 'cpa_management_key', 'admin_key', 'key'];
+                    for (const k of keys) {
+                        const v = window.parent.localStorage.getItem(k) || window.parent.sessionStorage.getItem(k);
+                        if (v && v.trim()) return v.trim();
+                    }
+                    const parentParams = new URLSearchParams(window.parent.location.search);
+                    const pKey = parentParams.get('key') || parentParams.get('management_key') || parentParams.get('management-key');
+                    if (pKey && pKey.trim()) return pKey.trim();
+                }
+            } catch (_) {}
+
+            try {
+                const params = new URLSearchParams(window.location.search);
+                const qKey = params.get('key') || params.get('management_key') || params.get('management-key');
+                if (qKey && qKey.trim()) return qKey.trim();
+            } catch (_) {}
+
+            return "";
+        }
+
+        function setSavedKey(key) {
+            try {
+                if (key) {
+                    localStorage.setItem('management_key', key.trim());
+                    sessionStorage.setItem('management_key', key.trim());
+                } else {
+                    localStorage.removeItem('management_key');
+                    sessionStorage.removeItem('management_key');
+                }
+            } catch (_) {}
+        }
+
+        function openKeyModal() {
+            const input = document.getElementById("manualKeyInput");
+            if (input) input.value = getManagementKey();
+            const modal = document.getElementById("keyModal");
+            if (modal) modal.hidden = false;
+        }
+
+        function closeKeyModal() {
+            const modal = document.getElementById("keyModal");
+            if (modal) modal.hidden = true;
+        }
+
+        function saveKeyAndRefresh() {
+            const input = document.getElementById("manualKeyInput");
+            if (input) {
+                setSavedKey(input.value);
+            }
+            closeKeyModal();
+            refreshDashboard();
+        }
+
+        function syncThemeFromParent() {
+            try {
+                if (window.parent && window.parent !== window && window.parent.document && window.parent.document.documentElement) {
+                    const pDoc = window.parent.document.documentElement;
+                    const pBody = window.parent.document.body;
+
+                    const pTheme = pDoc.getAttribute("data-theme") || (pBody && pBody.getAttribute("data-theme"));
+                    if (pTheme) {
+                        document.documentElement.setAttribute("data-theme", pTheme);
+                    } else {
+                        document.documentElement.removeAttribute("data-theme");
+                    }
+
+                    const isDark = pDoc.classList.contains("dark") || (pBody && pBody.classList.contains("dark")) || pTheme === "dark";
+                    if (isDark) {
+                        document.documentElement.setAttribute("data-theme", "dark");
+                    }
+
+                    const parentStyle = window.parent.getComputedStyle(pDoc);
+
+                    const cpaVarNames = [
+                        '--bg-primary', '--bg-secondary', '--bg-tertiary', '--bg-quinary', '--bg-hover',
+                        '--text-primary', '--text-secondary', '--text-tertiary', '--text-muted',
+                        '--border-color', '--border-primary', '--border-secondary', '--border-hover',
+                        '--primary-color', '--primary-hover', '--primary-active', '--primary-contrast',
+                        '--success-color', '--warning-color', '--error-color', '--danger-color',
+                        '--amber-color', '--quota-medium-color', '--floating-surface'
+                    ];
+
+                    for (const name of cpaVarNames) {
+                        const val = parentStyle.getPropertyValue(name);
+                        if (val && val.trim()) {
+                            document.documentElement.style.setProperty(name, val.trim());
+                        }
+                    }
+
+                    const sec = parentStyle.getPropertyValue('--bg-secondary') || parentStyle.getPropertyValue('--bg-primary');
+                    const tert = parentStyle.getPropertyValue('--bg-tertiary');
+                    if (sec && sec.trim()) {
+                        document.documentElement.style.setProperty('--bg-surface', sec.trim());
+                        document.documentElement.style.setProperty('--bg-card', sec.trim());
+                    }
+                    if (tert && tert.trim()) {
+                        document.documentElement.style.setProperty('--bg-subtle', tert.trim());
+                        document.documentElement.style.setProperty('--meter-bg', tert.trim());
+                    }
+                }
+            } catch (_) {}
+        }
+
+        syncThemeFromParent();
+        try {
+            if (window.parent && window.parent !== window && window.parent.document) {
+                const observer = new MutationObserver(function() {
+                    syncThemeFromParent();
+                });
+                observer.observe(window.parent.document.documentElement, {
+                    attributes: true,
+                    attributeFilter: ["data-theme", "class", "style"]
+                });
+                if (window.parent.document.body) {
+                    observer.observe(window.parent.document.body, {
+                        attributes: true,
+                        attributeFilter: ["data-theme", "class", "style"]
+                    });
+                }
+            }
+        } catch (_) {}
 
         function t(key) {
             return (I18N[currentLang] && I18N[currentLang][key]) || I18N["zh-CN"][key] || key;
@@ -1039,7 +1284,9 @@ const StatusHTML = `<!DOCTYPE html>
             document.documentElement.lang = currentLang;
             document.querySelectorAll("[data-i18n]").forEach(el => {
                 const key = el.getAttribute("data-i18n");
-                if (key) el.textContent = t(key);
+                if (key && I18N[currentLang] && I18N[currentLang][key]) {
+                    el.innerHTML = I18N[currentLang][key];
+                }
             });
             const langLabel = document.getElementById("langLabel");
             if (langLabel) langLabel.textContent = currentLang === "zh-CN" ? "EN / 中文" : "中文 / EN";
@@ -1115,7 +1362,13 @@ const StatusHTML = `<!DOCTYPE html>
         }
 
         function getAuthHeader() {
-            return { "Content-Type": "application/json" };
+            const headers = { "Content-Type": "application/json" };
+            const key = getManagementKey();
+            if (key) {
+                headers["Authorization"] = "Bearer " + key;
+                headers["X-Management-Key"] = key;
+            }
+            return headers;
         }
 
         async function apiFetch(path, options) {
@@ -1123,6 +1376,10 @@ const StatusHTML = `<!DOCTYPE html>
                 ...(options || {}),
                 headers: { ...getAuthHeader(), ...((options && options.headers) || {}) }
             });
+            if (resp.status === 401) {
+                openKeyModal();
+                throw new Error(currentLang === "zh-CN" ? "需要 CPA 管理密钥进行认证 (401 Unauthorized)" : "Management Key required (401 Unauthorized)");
+            }
             const text = await resp.text();
             if (!resp.ok) {
                 let errMessage = text || resp.statusText;
@@ -1137,7 +1394,7 @@ const StatusHTML = `<!DOCTYPE html>
 
         async function fetchSnapshot() {
             try {
-                const data = await apiFetch("/snapshot/latest");
+                const data = await apiFetch(SNAPSHOT_PATH);
                 latestSnapshot = data;
                 renderDashboard();
             } catch (err) {
@@ -1147,7 +1404,7 @@ const StatusHTML = `<!DOCTYPE html>
 
         async function fetchDiagnostics() {
             try {
-                const data = await apiFetch("/diagnostics");
+                const data = await apiFetch(DIAGNOSTICS_PATH);
                 latestDiagnostics = data;
                 renderHistory();
                 renderDiagnostics();
@@ -1161,17 +1418,25 @@ const StatusHTML = `<!DOCTYPE html>
             if (btn) btn.disabled = true;
             try {
                 await Promise.all([fetchSnapshot(), fetchDiagnostics()]);
-                showToast("Data refreshed", "info");
             } finally {
                 if (btn) btn.disabled = false;
             }
         }
 
-        function onModelGroupChange() {
-            // Model group selection changed, ready for Dry-Run or Apply
-        }
-
         async function triggerRun(mode) {
+            if (mode === "apply") {
+                const items = (latestSnapshot && latestSnapshot.items) || [];
+                if (items.length === 0) {
+                    showToast(currentLang === "zh-CN" ? "未发现有效凭证，无需执行写回" : "No credentials found to apply", "info");
+                    return;
+                }
+                const changes = (latestSnapshot && latestSnapshot.changes) || [];
+                if (changes.length === 0) {
+                    showToast(currentLang === "zh-CN" ? "当前凭证状态与优先级已是最优，无需写回" : "All credentials in sync, no changes needed", "info");
+                    return;
+                }
+            }
+
             const groupSelect = document.getElementById("modelGroupSelect");
             const group = groupSelect ? groupSelect.value : "gemini";
             const btnDry = document.getElementById("btnDryRun");
@@ -1181,9 +1446,14 @@ const StatusHTML = `<!DOCTYPE html>
             if (btnApp) btnApp.disabled = true;
 
             try {
-                const path = "/run?mode=" + encodeURIComponent(mode) + "&antigravity_model_group=" + encodeURIComponent(group);
+                const path = RUN_PATH + "?mode=" + encodeURIComponent(mode) + "&antigravity_model_group=" + encodeURIComponent(group);
                 const result = await apiFetch(path, { method: "POST" });
-                showModal(mode, result);
+                const items = (result && result.snapshot && result.snapshot.items) || (result && result.items) || [];
+                if (items.length === 0) {
+                    showToast(currentLang === "zh-CN" ? "未发现有效 Antigravity 凭证" : "No Antigravity credentials found", "info");
+                } else {
+                    showModal(mode, result);
+                }
                 await refreshDashboard();
             } catch (err) {
                 showToast(err.message, "error");
@@ -1201,9 +1471,9 @@ const StatusHTML = `<!DOCTYPE html>
             const btnApply = document.getElementById("btnModalApply");
 
             title.textContent = mode === "dry-run" ? t("previewTitle") : t("applyTitle");
-            btnApply.hidden = mode === "apply";
-
             const changes = (result && result.changes) || (result && result.snapshot && result.snapshot.changes) || [];
+            btnApply.hidden = mode === "apply" || changes.length === 0;
+
             summary.textContent = "Attempted: " + (result.attempted || changes.length) + ", Succeeded: " + (result.succeeded || 0) + ", Failed: " + (result.failed || 0) + ", Skipped: " + (result.skipped || 0);
 
             list.innerHTML = "";

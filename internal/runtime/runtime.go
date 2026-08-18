@@ -2,8 +2,10 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -11,6 +13,7 @@ import (
 	"antigravity-priority/internal/config"
 	"antigravity-priority/internal/host"
 	"antigravity-priority/internal/management"
+	"antigravity-priority/internal/state"
 )
 
 const maxRunHistory = 10
@@ -66,6 +69,33 @@ func New(options Options) *Runtime {
 		rt.runner = rt.runProductionTask
 	}
 	rt.management = management.NewHandler(managementRunner{runtime: rt})
+
+	// Restore persisted cache, learned rates, and execution snapshot from disk on startup
+	cachePath := rt.cfg.StateCachePath
+	if strings.TrimSpace(cachePath) == "" {
+		cachePath = config.DefaultStateCachePath
+	}
+	if store, err := state.Load(context.Background(), cachePath); err == nil {
+		audit, resJSON, histJSON := store.GetRuntimeSnapshot()
+		if len(resJSON) > 0 {
+			var res apply.Result
+			if err := json.Unmarshal(resJSON, &res); err == nil {
+				rt.latestResult = res
+			}
+		}
+		if len(histJSON) > 0 {
+			var hist []RunHistoryEntry
+			if err := json.Unmarshal(histJSON, &hist); err == nil {
+				rt.runHistory = hist
+			}
+		}
+		if audit != "" {
+			rt.latestAudit = audit
+		}
+		// Unconditionally ensure cache file exists on disk upon initialization
+		_ = store.SaveAtomic(context.Background())
+	}
+
 	return rt
 }
 
@@ -418,49 +448,69 @@ func registrationResult() RegisterResult {
 }
 
 func buildMetadata() Metadata {
+	defaults := config.Default()
+	rules := defaults.PriorityRules
 	return Metadata{
 		Name:             "Antigravity Priority",
 		Version:          "1.0.0",
-		Author:           "sheepyu",
-		GitHubRepository: "https://github.com/sheepyu/antigravity-priority",
+		Author:           "ygq-future",
+		GitHubRepository: "https://github.com/ygq-future/antigravity-priority",
 		Description:      "Intelligent quota pacing and adaptive burn-rate priority scheduler exclusively for Google Antigravity in CLIProxyAPI.",
 		ConfigFields: []ConfigField{
 			{
-				Name:         "enabled",
-				Type:         "bool",
-				Description:  "Enable or disable the Antigravity Priority plugin.",
-				DefaultValue: true,
-			},
-			{
 				Name:         "auto_apply",
-				Type:         "bool",
-				Description:  "Automatically write calculated priorities back to host auth files.",
-				DefaultValue: false,
+				Type:         "boolean",
+				Description:  "Enable scheduled automatic priority sorting and write-back (启用定时自动优先级排序并写回宿主)",
+				DefaultValue: defaults.AutoApply,
 			},
 			{
 				Name:         "interval",
 				Type:         "string",
-				Description:  "Probe and scheduling calculation interval.",
+				Description:  "Auto-sort and probe interval, e.g. 15m, 30m, 1h (自动探测与调度周期，例如 15m、30m、1h)",
 				DefaultValue: "15m",
 			},
 			{
 				Name:         "antigravity_model_group",
-				Type:         "select",
-				Description:  "Antigravity quota model group for priority scheduling.",
+				Type:         "string",
+				Description:  "Quota model group for priority scheduling, options: gemini, claude_gpt (配额主控模型组，可选值: gemini 或 claude_gpt，默认: gemini)",
 				EnumValues:   []string{"gemini", "claude_gpt"},
 				DefaultValue: "gemini",
 			},
 			{
 				Name:         "max_concurrency",
-				Type:         "int",
-				Description:  "Maximum concurrent quota probe requests.",
-				DefaultValue: 6,
+				Type:         "integer",
+				Description:  "Maximum concurrent quota probe requests (探测并发 HTTP 请求数上限，默认: 6)",
+				DefaultValue: defaults.MaxConcurrency,
 			},
 			{
 				Name:         "min_change",
-				Type:         "int",
-				Description:  "Minimum priority change required to trigger a write-back.",
-				DefaultValue: 1,
+				Type:         "integer",
+				Description:  "Minimum priority change threshold to trigger write-back (写回宿主的最小优先级变动阈值，默认: 1)",
+				DefaultValue: defaults.MinChange,
+			},
+			{
+				Name:         "state_cache_path",
+				Type:         "string",
+				Description:  "Path to persist state cache and learned metrics (状态缓存与学习率持久化文件路径，默认: data/antigravity-priority-cache.json)",
+				DefaultValue: defaults.StateCachePath,
+			},
+			{
+				Name:         "priority_rules.enabled",
+				Type:         "boolean",
+				Description:  "Enable custom priority rules; when false, default sorting is used (启用自定义优先级排序规则，默认: true)",
+				DefaultValue: rules.Enabled,
+			},
+			{
+				Name:         "priority_rules.boost_start_priority",
+				Type:         "integer",
+				Description:  "Starting priority for boosted credentials (动态提权区间的起始基准优先级，默认: 999)",
+				DefaultValue: rules.BoostStartPriority,
+			},
+			{
+				Name:         "priority_rules.normal_start_priority",
+				Type:         "integer",
+				Description:  "Starting priority for regular healthy credentials (常规健康凭证的起始基准优先级，默认: 100)",
+				DefaultValue: rules.NormalStartPriority,
 			},
 		},
 	}
