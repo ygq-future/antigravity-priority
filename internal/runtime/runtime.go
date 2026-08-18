@@ -499,7 +499,7 @@ func buildMetadata() Metadata {
 	rules := defaults.PriorityRules
 	return Metadata{
 		Name:             "Antigravity Priority",
-		Version:          "1.0.0",
+		Version:          "1.0.1",
 		Author:           "ygq-future",
 		GitHubRepository: "https://github.com/ygq-future/antigravity-priority",
 		Description:      "Intelligent quota pacing and adaptive burn-rate priority scheduler exclusively for Google Antigravity in CLIProxyAPI.",
