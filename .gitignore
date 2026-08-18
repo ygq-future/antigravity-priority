@@ -24,6 +24,7 @@ coverage.html
 # Legacy example source directory and plan
 example-src/
 ANTIGRAVITY_PLUGIN_PLAN.md
+CLIProxyAPI-Plugins-Store/
 
 # AI Editors & Tools
 .cursor/
