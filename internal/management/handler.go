@@ -26,6 +26,7 @@ type StatusInfo struct {
 // Runner defines the application layer contract required by the management HTTP API.
 type Runner interface {
 	Run(ctx context.Context, request RunRequest) (apply.Result, error)
+	Reset(ctx context.Context) (map[string]any, error)
 	Status(ctx context.Context) (StatusInfo, error)
 	LatestSnapshot(ctx context.Context) (apply.PlanSnapshot, error)
 	Diagnostics(ctx context.Context) (map[string]any, error)
@@ -74,6 +75,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleStatus(w, r)
 	case (path == "/run" || path == "/v0/management/plugins/"+config.PluginID+"/run") && method == http.MethodPost:
 		h.handleRun(w, r)
+	case (path == "/reset" || path == "/v0/management/plugins/"+config.PluginID+"/reset") && method == http.MethodPost:
+		h.handleReset(w, r)
 	case (path == "/diagnostics" || path == "/v0/management/plugins/"+config.PluginID+"/diagnostics") && method == http.MethodGet:
 		h.handleDiagnostics(w, r)
 	case (path == "/snapshot/latest" || path == "/v0/management/plugins/"+config.PluginID+"/snapshot/latest") && method == http.MethodGet:
@@ -83,6 +86,24 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "route not found"})
 	}
+}
+
+func (h *Handler) handleReset(w http.ResponseWriter, r *http.Request) {
+	if !h.tryAcquire() {
+		h.writeJSONError(w, http.StatusConflict, "concurrency conflict: runner is already active")
+		return
+	}
+	defer h.release()
+
+	result, err := h.runner.Reset(r.Context())
+	if err != nil {
+		h.writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(result)
 }
 
 func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {

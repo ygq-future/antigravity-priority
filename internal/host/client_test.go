@@ -360,6 +360,41 @@ func TestClient_PatchDisabled(t *testing.T) {
 	}
 }
 
+func TestClient_ResetPriority(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	authPath := filepath.Join(dir, "auth_reset.json")
+	if err := os.WriteFile(authPath, []byte(`{"name":"c1","auth_index":"idx-1","priority":999}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	callbacks := &mockHostCallbacks{
+		getAuthFunc: func(ctx context.Context, authIndex string) (host.AuthDocument, error) {
+			if authIndex == "idx-1" {
+				return host.AuthDocument{AuthIndex: "idx-1", Path: authPath}, nil
+			}
+			return host.AuthDocument{}, errors.New("not found")
+		},
+	}
+	client := host.NewClient(callbacks)
+
+	if err := client.ResetPriority(ctx, "idx-1"); err != nil {
+		t.Fatalf("unexpected reset priority error: %v", err)
+	}
+
+	content, err := os.ReadFile(authPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(content, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := parsed["priority"]; ok {
+		t.Fatalf("expected priority to be removed, but still present: %v", parsed["priority"])
+	}
+}
+
 func TestClient_HTTPDo(t *testing.T) {
 	ctx := context.Background()
 	callbacks := &mockHostCallbacks{

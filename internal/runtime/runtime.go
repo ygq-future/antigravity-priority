@@ -161,6 +161,53 @@ func (r *Runtime) ManualApply(ctx context.Context, modelGroup config.Antigravity
 	return r.run(ctx, TriggerManualApply, modelGroup, authIndexes)
 }
 
+// ResetAllPriorities removes the priority field from all Antigravity credentials in CPA host.
+func (r *Runtime) ResetAllPriorities(ctx context.Context) (map[string]any, error) {
+	if !r.runMu.TryLock() {
+		return nil, ErrRunInProgress
+	}
+	defer r.runMu.Unlock()
+
+	if r.hostCallbacks == nil {
+		return nil, errMissingHostCallbacks
+	}
+	client := host.NewClient(r.hostCallbacks)
+	files, err := client.ListAuthFiles(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	credentials := credentialsFromAuthFiles(files)
+	resetCount := 0
+	for _, cred := range credentials {
+		if err := client.ResetPriority(ctx, cred.AuthIndex); err == nil {
+			resetCount++
+		}
+	}
+
+	summary := fmt.Sprintf("reset %d Antigravity credentials priority to default unset state", resetCount)
+	res := apply.Result{
+		Attempted: resetCount,
+		Succeeded: resetCount,
+		Snapshot: apply.PlanSnapshot{
+			Items: make([]apply.SnapshotItem, 0),
+		},
+	}
+	r.snapshotRunEntry(res, summary, RunHistoryEntry{
+		Kind:      "reset",
+		Trigger:   "manual",
+		Attempted: resetCount,
+		Succeeded: resetCount,
+		Message:   summary,
+	})
+
+	return map[string]any{
+		"ok":          true,
+		"message":     summary,
+		"reset_count": resetCount,
+	}, nil
+}
+
 // AutoApply executes a background scheduled run respecting interval cooldown.
 func (r *Runtime) AutoApply(ctx context.Context) error {
 	return r.runAuto(ctx)

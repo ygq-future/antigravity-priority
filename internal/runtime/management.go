@@ -57,6 +57,7 @@ func (r *Runtime) registerManagement() []byte {
 	result := managementRegistration{
 		Routes: []managementRoute{
 			{Method: http.MethodPost, Path: "/plugins/" + config.PluginID + "/run"},
+			{Method: http.MethodPost, Path: "/plugins/" + config.PluginID + "/reset"},
 			{Method: http.MethodGet, Path: "/plugins/" + config.PluginID + "/diagnostics"},
 			{Method: http.MethodGet, Path: "/plugins/" + config.PluginID + "/snapshot/latest"},
 		},
@@ -237,6 +238,10 @@ func (r managementRunner) Run(ctx context.Context, request management.RunRequest
 	}
 	result, _ := r.runtime.currentRunSnapshot()
 	return result, nil
+}
+
+func (r managementRunner) Reset(ctx context.Context) (map[string]any, error) {
+	return r.runtime.ResetAllPriorities(ctx)
 }
 
 func (r managementRunner) Status(ctx context.Context) (management.StatusInfo, error) {

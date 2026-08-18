@@ -261,6 +261,20 @@ func (d *devRunner) Run(ctx context.Context, request management.RunRequest) (app
 	return result, nil
 }
 
+func (d *devRunner) Reset(ctx context.Context) (map[string]any, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for i := range d.snapshot.Items {
+		d.snapshot.Items[i].Current.Priority = 0
+		d.snapshot.Items[i].Target.Priority = 0
+	}
+	return map[string]any{
+		"ok":          true,
+		"message":     "reset all priorities to default (dev mock)",
+		"reset_count": len(d.snapshot.Items),
+	}, nil
+}
+
 func (d *devRunner) Status(ctx context.Context) (management.StatusInfo, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()

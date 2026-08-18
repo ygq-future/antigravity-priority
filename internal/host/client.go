@@ -96,6 +96,22 @@ func (c *Client) PatchPriority(ctx context.Context, authIndex string, priority i
 	return nil
 }
 
+// ResetPriority removes the priority field from the physical credential document, returning it to default unset state.
+func (c *Client) ResetPriority(ctx context.Context, authIndex string) error {
+	trimmed, err := stableName(authIndex)
+	if err != nil {
+		return err
+	}
+	document, err := c.GetAuth(ctx, trimmed)
+	if err != nil {
+		return err
+	}
+	if err := deletePriorityDocument(ctx, document); err != nil {
+		return fmt.Errorf("reset priority: %w", err)
+	}
+	return nil
+}
+
 // PatchDisabled updates the disabled field in the physical credential document.
 func (c *Client) PatchDisabled(ctx context.Context, name string, disabled bool) error {
 	trimmed, err := stableName(name)
@@ -220,6 +236,40 @@ func patchPriorityBytes(raw []byte, priority int) ([]byte, error) {
 		return nil, fmt.Errorf("encode priority: %w", err)
 	}
 	return patchTopLevelFieldBytes(raw, "priority", encodedPriority)
+}
+
+func deletePriorityDocument(ctx context.Context, document AuthDocument) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	path := strings.TrimSpace(document.Path)
+	if path == "" {
+		return fmt.Errorf("%w: auth document path is required", ErrInvalidRequest)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read auth document: %w", err)
+	}
+	patched, err := deleteTopLevelFieldBytes(raw, "priority")
+	if err != nil {
+		return err
+	}
+	if err := writeFileAtomic(ctx, path, patched); err != nil {
+		return err
+	}
+	return ctx.Err()
+}
+
+func deleteTopLevelFieldBytes(raw []byte, field string) ([]byte, error) {
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, fmt.Errorf("decode auth document for delete: %w", err)
+	}
+	if _, ok := m[field]; !ok {
+		return raw, nil
+	}
+	delete(m, field)
+	return json.MarshalIndent(m, "", "  ")
 }
 
 func patchDisabledDocument(ctx context.Context, document AuthDocument, disabled bool) error {

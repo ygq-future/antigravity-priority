@@ -907,6 +907,9 @@ const StatusHTML = `<!DOCTYPE html>
                     <button type="button" class="btn-primary" onclick="triggerRun('apply')" id="btnApply" data-i18n="btnApply">
                         <span>⚡ 立即写回 (Apply)</span>
                     </button>
+                    <button type="button" class="btn-danger" onclick="triggerReset()" id="btnReset" data-i18n="btnReset">
+                        <span>🔄 重置默认 (Reset)</span>
+                    </button>
                 </div>
             </div>
 
@@ -1001,6 +1004,7 @@ const StatusHTML = `<!DOCTYPE html>
         const SNAPSHOT_PATH = BASE_PATH + "/snapshot/latest";
         const DIAGNOSTICS_PATH = BASE_PATH + "/diagnostics";
         const RUN_PATH = BASE_PATH + "/run";
+        const RESET_PATH = BASE_PATH + "/reset";
 
         const I18N = {
             "zh-CN": {
@@ -1022,6 +1026,9 @@ const StatusHTML = `<!DOCTYPE html>
                 btnKey: "密钥",
                 btnDryRun: "🔍 试运行 (Dry-Run)",
                 btnApply: "⚡ 立即写回 (Apply)",
+                btnReset: "🔄 重置默认 (Reset)",
+                confirmReset: "确定要将所有 Antigravity 凭证的优先级重置为默认未设置状态吗？",
+                resetSuccess: "所有凭证优先级已重置为默认未设置状态",
                 loading: "正在加载凭证与配额状态...",
                 noCreds: "未发现 Antigravity 凭证",
                 historyTitle: "最近执行记录 (最近 10 次)",
@@ -1084,6 +1091,9 @@ const StatusHTML = `<!DOCTYPE html>
                 btnKey: "Key",
                 btnDryRun: "🔍 Dry-Run",
                 btnApply: "⚡ Apply Now",
+                btnReset: "🔄 Reset Default",
+                confirmReset: "Are you sure you want to reset all Antigravity credential priorities to default unset state?",
+                resetSuccess: "All credential priorities have been reset to default unset state",
                 loading: "Loading credentials & quota...",
                 noCreds: "No Antigravity credentials found",
                 historyTitle: "Execution History (Last 10)",
@@ -1514,6 +1524,23 @@ const StatusHTML = `<!DOCTYPE html>
         function applyFromModal() {
             closeModal();
             triggerRun("apply");
+        }
+
+        async function triggerReset() {
+            if (!confirm(t("confirmReset"))) {
+                return;
+            }
+            const btn = document.getElementById("btnReset");
+            if (btn) btn.disabled = true;
+            try {
+                const result = await apiFetch(RESET_PATH, { method: "POST" });
+                showToast(result.message || t("resetSuccess"), "success");
+                await refreshDashboard();
+            } catch (err) {
+                showToast(err.message, "error");
+            } finally {
+                if (btn) btn.disabled = false;
+            }
         }
 
         function formatCountdown(targetDateStr) {

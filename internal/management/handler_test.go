@@ -15,6 +15,7 @@ import (
 
 type mockRunner struct {
 	runFunc         func(ctx context.Context, req management.RunRequest) (apply.Result, error)
+	resetFunc       func(ctx context.Context) (map[string]any, error)
 	statusFunc      func(ctx context.Context) (management.StatusInfo, error)
 	snapshotFunc    func(ctx context.Context) (apply.PlanSnapshot, error)
 	diagnosticsFunc func(ctx context.Context) (map[string]any, error)
@@ -25,6 +26,13 @@ func (m *mockRunner) Run(ctx context.Context, req management.RunRequest) (apply.
 		return m.runFunc(ctx, req)
 	}
 	return apply.Result{}, nil
+}
+
+func (m *mockRunner) Reset(ctx context.Context) (map[string]any, error) {
+	if m.resetFunc != nil {
+		return m.resetFunc(ctx)
+	}
+	return map[string]any{"ok": true, "reset_count": 0}, nil
 }
 
 func (m *mockRunner) Status(ctx context.Context) (management.StatusInfo, error) {
@@ -318,5 +326,40 @@ func TestHandler_RunnerError(t *testing.T) {
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("expected status 500, got %d", rec.Code)
+	}
+}
+
+func TestHandler_Reset_Success(t *testing.T) {
+	called := false
+	runner := &mockRunner{
+		resetFunc: func(ctx context.Context) (map[string]any, error) {
+			called = true
+			return map[string]any{
+				"ok":          true,
+				"message":     "reset 3 credentials",
+				"reset_count": 3,
+			}, nil
+		},
+	}
+
+	handler := management.NewHandler(runner)
+	req := httptest.NewRequest(http.MethodPost, "/reset", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rec.Code)
+	}
+	if !called {
+		t.Fatal("expected runner.Reset to be called")
+	}
+
+	var res map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+		t.Fatalf("decode reset response failed: %v", err)
+	}
+	if res["ok"] != true {
+		t.Errorf("expected ok=true, got %v", res["ok"])
 	}
 }
