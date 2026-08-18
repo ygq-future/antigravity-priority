@@ -82,9 +82,9 @@ func TestExtractQuotaMetrics(t *testing.T) {
 			AuthIndex:            "auth-1",
 			Provider:             core.ProviderAntigravity,
 			LongWindowRemaining:  &r7dVal,
-			LongWindowResetAt:   &longReset,
+			LongWindowResetAt:    &longReset,
 			ShortWindowRemaining: &r5hVal,
-			ShortWindowResetAt:  &shortReset,
+			ShortWindowResetAt:   &shortReset,
 			CycleBurnRate:        0.15,
 			EvidenceFresh:        true,
 			Freshness:            core.FreshnessFresh,
@@ -132,9 +132,9 @@ func TestExtractQuotaMetrics(t *testing.T) {
 		ev := ProbeEvidence{
 			AuthIndex:            "auth-2",
 			LongWindowRemaining:  &r7dVal,
-			LongWindowResetAt:   &longReset,
+			LongWindowResetAt:    &longReset,
 			ShortWindowRemaining: &r5hVal,
-			ShortWindowResetAt:  &shortReset,
+			ShortWindowResetAt:   &shortReset,
 		}
 
 		metrics := ExtractQuotaMetrics(ev, now)
@@ -156,9 +156,9 @@ func TestExtractQuotaMetrics(t *testing.T) {
 		ev := ProbeEvidence{
 			AuthIndex:            "auth-3",
 			LongWindowRemaining:  &r7dVal,
-			LongWindowResetAt:   &longReset,
+			LongWindowResetAt:    &longReset,
 			ShortWindowRemaining: &r5hVal,
-			ShortWindowResetAt:  &shortReset,
+			ShortWindowResetAt:   &shortReset,
 		}
 
 		metrics := ExtractQuotaMetrics(ev, now)

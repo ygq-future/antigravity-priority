@@ -1,8 +1,11 @@
 package runtime
 
 import (
+	"context"
 	"errors"
+	"time"
 
+	"antigravity-priority/internal/config"
 	"antigravity-priority/internal/host"
 )
 
@@ -14,6 +17,61 @@ var ErrShutdown = errors.New("runtime: shutdown")
 
 // ErrInvalidRequest indicates that the CPA JSON envelope request is invalid.
 var ErrInvalidRequest = errors.New("runtime: invalid request")
+
+// Trigger represents the initiator of a scheduling execution.
+type Trigger string
+
+const (
+	// TriggerManual indicates a manual dry-run execution.
+	TriggerManual Trigger = "manual"
+	// TriggerManualApply indicates a manual write-back execution.
+	TriggerManualApply Trigger = "manual_apply"
+	// TriggerAutoApply indicates a background scheduled auto-apply execution.
+	TriggerAutoApply Trigger = "auto_apply"
+)
+
+// TaskRequest holds parameters for an internal scheduling run.
+type TaskRequest struct {
+	Config      config.Config
+	Trigger     Trigger
+	AuthIndexes []string
+}
+
+// TaskRunner executes a scheduling task.
+type TaskRunner func(ctx context.Context, request TaskRequest) error
+
+// Clock provides time abstraction for runtime testing.
+type Clock interface {
+	Now() time.Time
+}
+
+// Sleeper provides interruptible sleep abstraction.
+type Sleeper interface {
+	Sleep(ctx context.Context, duration time.Duration) error
+}
+
+// Ticker provides periodic time tick abstraction.
+type Ticker interface {
+	Chan() <-chan time.Time
+	Stop()
+}
+
+// TickerFactory creates Ticker instances.
+type TickerFactory interface {
+	NewTicker(interval time.Duration) Ticker
+}
+
+// RunHistoryEntry records the execution outcome of a scheduling run.
+type RunHistoryEntry struct {
+	Kind      string    `json:"kind"`
+	Trigger   string    `json:"trigger"`
+	At        time.Time `json:"at"`
+	Attempted int       `json:"attempted"`
+	Succeeded int       `json:"succeeded"`
+	Failed    int       `json:"failed"`
+	Skipped   int       `json:"skipped"`
+	Message   string    `json:"message"`
+}
 
 // RegisterRequest is the JSON request payload for plugin.register.
 type RegisterRequest struct {
@@ -53,5 +111,9 @@ type Metadata struct {
 
 // Options provides injectable dependencies for the runtime.
 type Options struct {
-	Host host.HostCallbacks
+	Host          host.HostCallbacks
+	Clock         Clock
+	Sleeper       Sleeper
+	TickerFactory TickerFactory
+	Runner        TaskRunner
 }

@@ -113,14 +113,14 @@ func main() {
 	}
 
 	// 3. Verify plugin.register call
-	methodBytes := append([]byte("plugin.register"), 0)
-	reqJSON := []byte("{\"config_yaml\":\"enabled: true\\nantigravity_model_group: gemini\\n\"}")
+	methodRegister := append([]byte("plugin.register"), 0)
+	reqRegister := []byte("{\"config_yaml\":\"enabled: true\\nantigravity_model_group: gemini\\n\"}")
 
 	var respBuf cliproxyBuffer
 	ret, _, _ = callProc.Call(
-		uintptr(unsafe.Pointer(&methodBytes[0])),
-		uintptr(unsafe.Pointer(&reqJSON[0])),
-		uintptr(len(reqJSON)),
+		uintptr(unsafe.Pointer(&methodRegister[0])),
+		uintptr(unsafe.Pointer(&reqRegister[0])),
+		uintptr(len(reqRegister)),
 		uintptr(unsafe.Pointer(&respBuf)),
 	)
 	if int32(ret) != 0 || respBuf.ptr == nil || respBuf.len == 0 {
@@ -141,11 +141,42 @@ func main() {
 		fmt.Fprintf(os.Stderr, "invalid envelope: %s\n", string(respBytes))
 		os.Exit(1)
 	}
-
-	// 4. Free buffer
 	freeProc.Call(uintptr(unsafe.Pointer(respBuf.ptr)), respBuf.len)
 
-	// 5. Shutdown
+	// 4. Verify management.register call
+	methodMgmtReg := append([]byte("management.register"), 0)
+	respBuf = cliproxyBuffer{}
+	ret, _, _ = callProc.Call(
+		uintptr(unsafe.Pointer(&methodMgmtReg[0])),
+		0,
+		0,
+		uintptr(unsafe.Pointer(&respBuf)),
+	)
+	if int32(ret) != 0 || respBuf.ptr == nil || respBuf.len == 0 {
+		fmt.Fprintf(os.Stderr, "management.register failed: ret=%d\n", int32(ret))
+		os.Exit(1)
+	}
+	freeProc.Call(uintptr(unsafe.Pointer(respBuf.ptr)), respBuf.len)
+
+	// 5. Verify repeated calls and memory freeing
+	for i := 0; i < 5; i++ {
+		methodMgmt := append([]byte("management.handle"), 0)
+		reqMgmt := []byte("{\"Method\":\"GET\",\"Path\":\"/v0/management/plugins/antigravity-priority/diagnostics\"}")
+		respBuf = cliproxyBuffer{}
+		ret, _, _ = callProc.Call(
+			uintptr(unsafe.Pointer(&methodMgmt[0])),
+			uintptr(unsafe.Pointer(&reqMgmt[0])),
+			uintptr(len(reqMgmt)),
+			uintptr(unsafe.Pointer(&respBuf)),
+		)
+		if int32(ret) != 0 || respBuf.ptr == nil || respBuf.len == 0 {
+			fmt.Fprintf(os.Stderr, "management.handle iteration %d failed: ret=%d\n", i, int32(ret))
+			os.Exit(1)
+		}
+		freeProc.Call(uintptr(unsafe.Pointer(respBuf.ptr)), respBuf.len)
+	}
+
+	// 6. Shutdown
 	shutdownProc.Call()
 
 	fmt.Println("VERIFY_CGO_ABI_SUCCESS")

@@ -462,4 +462,3 @@ func TestStore_Auxiliary_Coverage(t *testing.T) {
 		t.Fatalf("expected needing probe when ResetAt is reached")
 	}
 }
-

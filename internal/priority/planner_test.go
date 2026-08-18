@@ -42,9 +42,9 @@ func TestPlanFreshOnly(t *testing.T) {
 				AuthIndex:            "boost-1",
 				Provider:             core.ProviderAntigravity,
 				LongWindowRemaining:  int64Ptr(80),
-				LongWindowResetAt:   &reset7d1,
+				LongWindowResetAt:    &reset7d1,
 				ShortWindowRemaining: int64Ptr(90),
-				ShortWindowResetAt:  &reset5h,
+				ShortWindowResetAt:   &reset5h,
 				CycleBurnRate:        0.15, // T_req = (0.8/0.15)*5 = 26.67h
 				EvidenceFresh:        true,
 				Freshness:            core.FreshnessFresh,
@@ -55,9 +55,9 @@ func TestPlanFreshOnly(t *testing.T) {
 				AuthIndex:            "boost-2",
 				Provider:             core.ProviderAntigravity,
 				LongWindowRemaining:  int64Ptr(80),
-				LongWindowResetAt:   &reset7d2,
+				LongWindowResetAt:    &reset7d2,
 				ShortWindowRemaining: int64Ptr(90),
-				ShortWindowResetAt:  &reset5h,
+				ShortWindowResetAt:   &reset5h,
 				CycleBurnRate:        0.15,
 				EvidenceFresh:        true,
 				Freshness:            core.FreshnessFresh,
@@ -68,9 +68,9 @@ func TestPlanFreshOnly(t *testing.T) {
 				AuthIndex:            "boost-3",
 				Provider:             core.ProviderAntigravity,
 				LongWindowRemaining:  int64Ptr(80),
-				LongWindowResetAt:   &reset7d3,
+				LongWindowResetAt:    &reset7d3,
 				ShortWindowRemaining: int64Ptr(90),
-				ShortWindowResetAt:  &reset5h,
+				ShortWindowResetAt:   &reset5h,
 				CycleBurnRate:        0.15,
 				EvidenceFresh:        true,
 				Freshness:            core.FreshnessFresh,
@@ -121,9 +121,9 @@ func TestPlanFreshOnly(t *testing.T) {
 			{
 				AuthIndex:            "hard-depleted",
 				LongWindowRemaining:  int64Ptr(0), // R_7d = 0
-				LongWindowResetAt:   &reset7d,
+				LongWindowResetAt:    &reset7d,
 				ShortWindowRemaining: int64Ptr(80), // R_5h > 0
-				ShortWindowResetAt:  &reset5h,
+				ShortWindowResetAt:   &reset5h,
 				EvidenceFresh:        true,
 				Freshness:            core.FreshnessFresh,
 				ProbeStatus:          core.ProbeStatusReady,
@@ -132,9 +132,9 @@ func TestPlanFreshOnly(t *testing.T) {
 			{
 				AuthIndex:            "both-depleted",
 				LongWindowRemaining:  int64Ptr(0), // R_7d = 0
-				LongWindowResetAt:   &reset7d,
+				LongWindowResetAt:    &reset7d,
 				ShortWindowRemaining: int64Ptr(0), // R_5h = 0
-				ShortWindowResetAt:  &reset5h,
+				ShortWindowResetAt:   &reset5h,
 				EvidenceFresh:        true,
 				Freshness:            core.FreshnessFresh,
 				ProbeStatus:          core.ProbeStatusReady,
@@ -143,9 +143,9 @@ func TestPlanFreshOnly(t *testing.T) {
 			{
 				AuthIndex:            "soft-depleted",
 				LongWindowRemaining:  int64Ptr(50), // R_7d > 0
-				LongWindowResetAt:   &reset7d,
+				LongWindowResetAt:    &reset7d,
 				ShortWindowRemaining: int64Ptr(0), // R_5h = 0
-				ShortWindowResetAt:  &reset5h,
+				ShortWindowResetAt:   &reset5h,
 				EvidenceFresh:        true,
 				Freshness:            core.FreshnessFresh,
 				ProbeStatus:          core.ProbeStatusReady,
@@ -182,7 +182,7 @@ func TestPlanFreshOnly(t *testing.T) {
 		}
 
 		// Long reset far out (> 26.67h) so none are boosted
-		reset7d := now.Add(100 * time.Hour) // Urgency = 0.50 / 100 = 0.005
+		reset7d := now.Add(100 * time.Hour)    // Urgency = 0.50 / 100 = 0.005
 		reset7dHigh := now.Add(50 * time.Hour) // Urgency = 0.50 / 50 = 0.010 (higher)
 
 		reset5hEarly := now.Add(1 * time.Hour)
@@ -193,9 +193,9 @@ func TestPlanFreshOnly(t *testing.T) {
 				// reg-a: urgency 0.005, 5h reset 4h
 				AuthIndex:            "reg-a",
 				LongWindowRemaining:  int64Ptr(50),
-				LongWindowResetAt:   &reset7d,
+				LongWindowResetAt:    &reset7d,
 				ShortWindowRemaining: int64Ptr(80),
-				ShortWindowResetAt:  &reset5hLate,
+				ShortWindowResetAt:   &reset5hLate,
 				CycleBurnRate:        0.15,
 				EvidenceFresh:        true,
 				Freshness:            core.FreshnessFresh,
@@ -206,9 +206,9 @@ func TestPlanFreshOnly(t *testing.T) {
 				// reg-b: urgency 0.005, 5h reset 1h (should beat reg-a and reg-c due to 5h reset)
 				AuthIndex:            "reg-b",
 				LongWindowRemaining:  int64Ptr(50),
-				LongWindowResetAt:   &reset7d,
+				LongWindowResetAt:    &reset7d,
 				ShortWindowRemaining: int64Ptr(80),
-				ShortWindowResetAt:  &reset5hEarly,
+				ShortWindowResetAt:   &reset5hEarly,
 				CycleBurnRate:        0.15,
 				EvidenceFresh:        true,
 				Freshness:            core.FreshnessFresh,
@@ -219,9 +219,9 @@ func TestPlanFreshOnly(t *testing.T) {
 				// reg-c: urgency 0.005, 5h reset 4h (same urgency & 5h reset as reg-a -> tie break authIndex: reg-a < reg-c)
 				AuthIndex:            "reg-c",
 				LongWindowRemaining:  int64Ptr(50),
-				LongWindowResetAt:   &reset7d,
+				LongWindowResetAt:    &reset7d,
 				ShortWindowRemaining: int64Ptr(80),
-				ShortWindowResetAt:  &reset5hLate,
+				ShortWindowResetAt:   &reset5hLate,
 				CycleBurnRate:        0.15,
 				EvidenceFresh:        true,
 				Freshness:            core.FreshnessFresh,
@@ -232,9 +232,9 @@ func TestPlanFreshOnly(t *testing.T) {
 				// reg-d: urgency 0.010 (highest urgency -> priority 100)
 				AuthIndex:            "reg-d",
 				LongWindowRemaining:  int64Ptr(50),
-				LongWindowResetAt:   &reset7dHigh,
+				LongWindowResetAt:    &reset7dHigh,
 				ShortWindowRemaining: int64Ptr(80),
-				ShortWindowResetAt:  &reset5hLate,
+				ShortWindowResetAt:   &reset5hLate,
 				CycleBurnRate:        0.15,
 				EvidenceFresh:        true,
 				Freshness:            core.FreshnessFresh,
@@ -281,9 +281,9 @@ func TestPlanFreshOnly(t *testing.T) {
 			{
 				AuthIndex:            "fresh-boost",
 				LongWindowRemaining:  int64Ptr(80),
-				LongWindowResetAt:   &reset7dBoost,
+				LongWindowResetAt:    &reset7dBoost,
 				ShortWindowRemaining: int64Ptr(80),
-				ShortWindowResetAt:  &reset5h,
+				ShortWindowResetAt:   &reset5h,
 				CycleBurnRate:        0.15,
 				EvidenceFresh:        true,
 				Freshness:            core.FreshnessFresh,
@@ -293,9 +293,9 @@ func TestPlanFreshOnly(t *testing.T) {
 			{
 				AuthIndex:            "fresh-reg",
 				LongWindowRemaining:  int64Ptr(50),
-				LongWindowResetAt:   &reset7dReg,
+				LongWindowResetAt:    &reset7dReg,
 				ShortWindowRemaining: int64Ptr(80),
-				ShortWindowResetAt:  &reset5h,
+				ShortWindowResetAt:   &reset5h,
 				CycleBurnRate:        0.15,
 				EvidenceFresh:        true,
 				Freshness:            core.FreshnessFresh,
@@ -364,9 +364,9 @@ func TestPlanFreshOnly(t *testing.T) {
 			{
 				AuthIndex:            "cred-small-delta",
 				LongWindowRemaining:  int64Ptr(80),
-				LongWindowResetAt:   &reset7d,
+				LongWindowResetAt:    &reset7d,
 				ShortWindowRemaining: int64Ptr(80),
-				ShortWindowResetAt:  &reset5h,
+				ShortWindowResetAt:   &reset5h,
 				CycleBurnRate:        0.15,
 				EvidenceFresh:        true,
 				Freshness:            core.FreshnessFresh,
@@ -376,9 +376,9 @@ func TestPlanFreshOnly(t *testing.T) {
 			{
 				AuthIndex:            "cred-large-delta",
 				LongWindowRemaining:  int64Ptr(70),
-				LongWindowResetAt:   &reset7d,
+				LongWindowResetAt:    &reset7d,
 				ShortWindowRemaining: int64Ptr(80),
-				ShortWindowResetAt:  &reset5h,
+				ShortWindowResetAt:   &reset5h,
 				CycleBurnRate:        0.15,
 				EvidenceFresh:        true,
 				Freshness:            core.FreshnessFresh,
@@ -411,7 +411,7 @@ func TestPlanFreshOnly(t *testing.T) {
 			{
 				AuthIndex:           "missing-prio",
 				LongWindowRemaining: int64Ptr(80),
-				LongWindowResetAt:  &reset7d,
+				LongWindowResetAt:   &reset7d,
 				EvidenceFresh:       true,
 				Freshness:           core.FreshnessFresh,
 				ProbeStatus:         core.ProbeStatusReady,
@@ -506,9 +506,9 @@ func TestPlanFreshOnly(t *testing.T) {
 			{
 				AuthIndex:            "fresh-prio-100",
 				LongWindowRemaining:  int64Ptr(80),
-				LongWindowResetAt:   &reset7d,
+				LongWindowResetAt:    &reset7d,
 				ShortWindowRemaining: int64Ptr(80),
-				ShortWindowResetAt:  &reset5h,
+				ShortWindowResetAt:   &reset5h,
 				EvidenceFresh:        true,
 				Freshness:            core.FreshnessFresh,
 				ProbeStatus:          core.ProbeStatusReady,
@@ -544,7 +544,7 @@ func TestPlanFreshOnly(t *testing.T) {
 			{
 				AuthIndex:           "already-depleted",
 				LongWindowRemaining: int64Ptr(0),
-				LongWindowResetAt:  &reset7d,
+				LongWindowResetAt:   &reset7d,
 				EvidenceFresh:       true,
 				Freshness:           core.FreshnessFresh,
 				ProbeStatus:         core.ProbeStatusReady,
@@ -570,9 +570,9 @@ func TestPlanFreshOnly(t *testing.T) {
 			{
 				AuthIndex:            "c1",
 				LongWindowRemaining:  int64Ptr(90),
-				LongWindowResetAt:   &reset7d,
+				LongWindowResetAt:    &reset7d,
 				ShortWindowRemaining: int64Ptr(90),
-				ShortWindowResetAt:  &reset5h,
+				ShortWindowResetAt:   &reset5h,
 				EvidenceFresh:        true,
 				Freshness:            core.FreshnessFresh,
 				ProbeStatus:          core.ProbeStatusReady,
@@ -581,9 +581,9 @@ func TestPlanFreshOnly(t *testing.T) {
 			{
 				AuthIndex:            "c2",
 				LongWindowRemaining:  int64Ptr(80),
-				LongWindowResetAt:   &reset7d,
+				LongWindowResetAt:    &reset7d,
 				ShortWindowRemaining: int64Ptr(80),
-				ShortWindowResetAt:  &reset5h,
+				ShortWindowResetAt:   &reset5h,
 				EvidenceFresh:        true,
 				Freshness:            core.FreshnessFresh,
 				ProbeStatus:          core.ProbeStatusReady,
@@ -592,9 +592,9 @@ func TestPlanFreshOnly(t *testing.T) {
 			{
 				AuthIndex:            "c3",
 				LongWindowRemaining:  int64Ptr(70),
-				LongWindowResetAt:   &reset7d,
+				LongWindowResetAt:    &reset7d,
 				ShortWindowRemaining: int64Ptr(70),
-				ShortWindowResetAt:  &reset5h,
+				ShortWindowResetAt:   &reset5h,
 				EvidenceFresh:        true,
 				Freshness:            core.FreshnessFresh,
 				ProbeStatus:          core.ProbeStatusReady,

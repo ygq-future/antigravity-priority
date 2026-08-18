@@ -282,7 +282,7 @@ func TestApply_MinChangeAndNoDifferenceSkipping(t *testing.T) {
 			},
 			{
 				Credential:    creds[0],
-				Priority:      100, // same
+				Priority:      100,   // same
 				Disabled:      false, // same
 				EvidenceFresh: true,
 				Reason:        "no diff",
