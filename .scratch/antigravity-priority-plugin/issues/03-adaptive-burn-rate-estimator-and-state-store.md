@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 (Repository Foundation & Minimal CGO Tracer Bullet)
 
-**Status:** ready-for-agent
+**Status:** completed
 
 ## Scope
 - Implement state persistence and cache store in `internal/state/store.go`.
@@ -21,17 +21,17 @@
 - No host write-back operations (handled in Ticket 05).
 
 ## Acceptance Criteria
-- [ ] Cold-start credentials with no cache history return default $C_{\text{cycle}} = 0.15$.
-- [ ] On valid in-window consumption ($\Delta R_{\text{5h}} \ge 0.05, \Delta R_{\text{7d}} > 0$), $C_{\text{cycle}}$ updates correctly via EMA and remains clamped within $[0.08, 0.30]$.
-- [ ] When $\Delta R_{\text{5h}} < 0.05$, $\Delta R_{\text{7d}} \le 0$, or across 5h window resets, the learned $C_{\text{cycle}}$ is strictly preserved and does NOT reset to 0.15.
-- [ ] State cache writes atomically via temp-file + rename, preventing cache corruption on crash.
+- [x] Cold-start credentials with no cache history return default $C_{\text{cycle}} = 0.15$.
+- [x] On valid in-window consumption ($\Delta R_{\text{5h}} \ge 0.05, \Delta R_{\text{7d}} > 0$), $C_{\text{cycle}}$ updates correctly via EMA and remains clamped within $[0.08, 0.30]$.
+- [x] When $\Delta R_{\text{5h}} < 0.05$, $\Delta R_{\text{7d}} \le 0$, or across 5h window resets, the learned $C_{\text{cycle}}$ is strictly preserved and does NOT reset to 0.15.
+- [x] State cache writes atomically via temp-file + rename, preventing cache corruption on crash.
 
 ## Required Tests
-- [ ] Unit tests for cold-start initialization.
-- [ ] Unit tests for zero consumption (preserving learned value).
-- [ ] Unit tests for consumption under 5% threshold (preserving learned value).
-- [ ] Unit tests for 5h window reset boundary (preserving learned value).
-- [ ] Unit tests for valid observation update and multi-step EMA convergence.
-- [ ] Unit tests for upper clamp (0.30) and lower clamp (0.08).
-- [ ] Persistence test: SaveAtomic to disk, reload from disk, verify state integrity.
-- [ ] Automated test coverage $\ge 90\%$ for `internal/state`.
+- [x] Unit tests for cold-start initialization.
+- [x] Unit tests for zero consumption (preserving learned value).
+- [x] Unit tests for consumption under 5% threshold (preserving learned value).
+- [x] Unit tests for 5h window reset boundary (preserving learned value).
+- [x] Unit tests for valid observation update and multi-step EMA convergence.
+- [x] Unit tests for upper clamp (0.30) and lower clamp (0.08).
+- [x] Persistence test: SaveAtomic to disk, reload from disk, verify state integrity.
+- [x] Automated test coverage $\ge 90\%$ for `internal/state` (achieved 93.1%).
