@@ -111,6 +111,16 @@ func TestHTTPResponse_UnmarshalJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{invalid`), &respInvalid); err == nil {
 		t.Error("expected error for invalid JSON, got nil")
 	}
+
+	// Legacy empty string
+	emptyLegacyData := []byte(`{"status_code": 200, "body": ""}`)
+	var respEmptyLegacy host.HTTPResponse
+	if err := json.Unmarshal(emptyLegacyData, &respEmptyLegacy); err != nil {
+		t.Fatalf("unexpected error for empty legacy body: %v", err)
+	}
+	if respEmptyLegacy.Body != nil {
+		t.Errorf("expected nil body for empty legacy body, got %v", respEmptyLegacy.Body)
+	}
 }
 
 func TestHeader_Get(t *testing.T) {

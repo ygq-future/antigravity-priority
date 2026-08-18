@@ -9,6 +9,13 @@ import (
 	"strings"
 )
 
+const (
+	// ManagementAuthStatusPath is the CPA management API path to update credential disabled status.
+	ManagementAuthStatusPath = "/v0/management/auth-files/status"
+	// RedactedValue is the placeholder string for sensitive headers and fields.
+	RedactedValue = "[REDACTED]"
+)
+
 // ErrInvalidRequest indicates an invalid host request.
 var ErrInvalidRequest = errors.New("host: invalid request")
 
@@ -160,11 +167,31 @@ func looksLikeBase64(value string) bool {
 	return len(trimmed)%4 == 0 && !strings.ContainsAny(trimmed, "{}<>\n\r")
 }
 
+// RecordedHTTPRequest is the redacted audit view of an HTTPDo call.
+type RecordedHTTPRequest struct {
+	AuthIndex string `json:"auth_index,omitempty"`
+	Method    string `json:"method"`
+	URL       string `json:"url"`
+	Headers   Header `json:"headers,omitempty"`
+	Body      string `json:"body,omitempty"`
+}
+
 // HostCallbacks defines the host callback interface required by the runtime.
 type HostCallbacks interface {
 	ListAuthFiles(ctx context.Context) ([]AuthFile, error)
 	GetAuth(ctx context.Context, authIndex string) (AuthDocument, error)
 	GetRuntime(ctx context.Context, authIndex string) (RuntimeAuth, error)
 	SaveAuth(ctx context.Context, name string, doc json.RawMessage) error
+	HTTPDo(ctx context.Context, req HTTPRequest) (HTTPResponse, error)
+}
+
+// API defines the stable host adapter interface.
+type API interface {
+	ListAuthFiles(ctx context.Context) ([]AuthFile, error)
+	GetAuth(ctx context.Context, authIndex string) (AuthDocument, error)
+	GetRuntime(ctx context.Context, authIndex string) (RuntimeAuth, error)
+	SaveAuth(ctx context.Context, name string, doc json.RawMessage) error
+	PatchPriority(ctx context.Context, authIndex string, priority int) error
+	PatchDisabled(ctx context.Context, name string, disabled bool) error
 	HTTPDo(ctx context.Context, req HTTPRequest) (HTTPResponse, error)
 }
