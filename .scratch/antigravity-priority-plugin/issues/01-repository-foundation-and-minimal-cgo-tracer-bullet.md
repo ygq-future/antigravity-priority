@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** completed
 
 ## Scope
 - Initialize `go.mod` (Go 1.25+), `.gitignore` (ignoring `example-src/`, `dist/`, `package/`), and `.golangci.yml`.
@@ -18,12 +18,12 @@
 - No Web Management UI.
 
 ## Acceptance Criteria
-- [ ] `go mod tidy` and `go test ./...` pass with zero failures.
-- [ ] `golangci-lint run` passes with zero warnings.
-- [ ] `go build -buildmode=c-shared -o test_plugin.dll .` (or `.so`/`.dylib` on non-Windows) compiles successfully.
-- [ ] Exported CGO ABI symbols (`cliproxy_plugin_init`, `antigravityPriorityPluginCall`, `antigravityPriorityPluginFreeBuffer`, `antigravityPriorityPluginShutdown`) are verified present.
-- [ ] Calling `plugin.register` through CGO ABI returns valid JSON plugin metadata, and calling `free_buffer` frees memory without leak or double-free.
+- [x] `go mod tidy` and `go test ./...` pass with zero failures.
+- [x] `golangci-lint run` passes with zero warnings.
+- [x] `go build -buildmode=c-shared -o test_plugin.dll .` (or `.so`/`.dylib` on non-Windows) compiles successfully.
+- [x] Exported CGO ABI symbols (`cliproxy_plugin_init`, `antigravityPriorityPluginCall`, `antigravityPriorityPluginFreeBuffer`, `antigravityPriorityPluginShutdown`) are verified present.
+- [x] Calling `plugin.register` through CGO ABI returns valid JSON plugin metadata, and calling `free_buffer` frees memory without leak or double-free.
 
 ## Required Tests
-- [ ] Unit tests for `config.LoadBytes` (default values, duration parsing, invalid schema errors).
-- [ ] CGO ABI smoke test validating register response and buffer lifecycle.
+- [x] Unit tests for `config.LoadBytes` (default values, duration parsing, invalid schema errors).
+- [x] CGO ABI smoke test validating register response and buffer lifecycle.
