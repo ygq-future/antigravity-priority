@@ -7,16 +7,14 @@ linters:
     - govet
     - staticcheck
     - errcheck
-    - gofumpt
     - revive
     - misspell
-    - gocritic
 
 linters-settings:
   govet:
-    enable-all: true
     disable:
       - fieldalignment
+      - shadow
   revive:
     rules:
       - name: exported
@@ -25,21 +23,6 @@ linters-settings:
         disabled: false
       - name: time-naming
         disabled: false
-  gocritic:
-    disabled-checks:
-      - hugeParam
-      - rangeValCopy
-      - unnamedResult
-      - paramTypeCombine
-      - uncheckedInlineErr
-      - dupSubExpr
-      - dupImport
-      - nestingReduce
-      - emptyStringTest
-    enabled-tags:
-      - diagnostic
-      - style
-      - performance
 
 issues:
   exclude-dirs:

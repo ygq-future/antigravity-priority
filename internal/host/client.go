@@ -337,8 +337,8 @@ func topLevelFieldValueRange(raw []byte, field string) (int, int, bool, error) {
 		}
 		valueScanStart := int(decoder.InputOffset())
 		var value json.RawMessage
-		if err := decoder.Decode(&value); err != nil {
-			return 0, 0, false, fmt.Errorf("decode auth document value: %w", err)
+		if valErr := decoder.Decode(&value); valErr != nil {
+			return 0, 0, false, fmt.Errorf("decode auth document value: %w", valErr)
 		}
 		valueEnd := int(decoder.InputOffset())
 		if key != field {
