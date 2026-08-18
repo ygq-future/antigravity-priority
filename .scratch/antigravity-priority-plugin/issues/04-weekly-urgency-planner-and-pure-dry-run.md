@@ -4,7 +4,7 @@
 
 **Blocked by:** 02 (Antigravity Multi-Window Prober & Quota Evidence), 03 (Adaptive Burn Rate Estimator & State Store)
 
-**Status:** ready-for-agent
+**Status:** completed
 
 ## Scope
 - Implement priority planning in `internal/priority/` (`planner.go`, `boost.go`, `urgency.go`, `comparator.go`).
@@ -25,14 +25,14 @@
 - No HTTP API handling (handled in Ticket 06).
 
 ## Acceptance Criteria
-- [ ] Produces an immutable `Plan` data structure with zero side-effects on host state.
-- [ ] Boosted tier decrements from 999; no two boosted credentials receive the same priority.
-- [ ] When both $R_{\text{7d}} \le 0$ and $R_{\text{5h}} \le 0$ occur, weekly hard depletion (`disabled = true`) takes strict precedence over soft depletion.
-- [ ] Healthy credentials sort deterministically by Weekly Urgency, tie-breaking by earliest 5h reset ($T_{\text{5h}}$ asc), then AuthIndex.
-- [ ] Positive priorities within the active model group are guaranteed unique.
+- [x] Produces an immutable `Plan` data structure with zero side-effects on host state.
+- [x] Boosted tier decrements from 999; no two boosted credentials receive the same priority.
+- [x] When both $R_{\text{7d}} \le 0$ and $R_{\text{5h}} \le 0$ occur, weekly hard depletion (`disabled = true`) takes strict precedence over soft depletion.
+- [x] Healthy credentials sort deterministically by Weekly Urgency, tie-breaking by earliest 5h reset ($T_{\text{5h}}$ asc), then AuthIndex.
+- [x] Positive priorities within the active model group are guaranteed unique.
 
 ## Required Tests
-- [ ] Table-driven test matrix covering all decision branches:
+- [x] Table-driven test matrix covering all decision branches:
   - Dynamic boost threshold activation boundary.
   - Decrementing boost priority assignment (999, 998...).
   - Weekly urgency ordering.
@@ -40,4 +40,4 @@
   - AuthIndex deterministic resolution.
   - Hard vs soft depletion precedence.
   - Priority uniqueness and unprobed peer `ForceWrite` marking.
-- [ ] Automated test coverage $\ge 90\%$ for `internal/priority`.
+- [x] Automated test coverage $\ge 90\%$ for `internal/priority` (achieved 97.4%).
