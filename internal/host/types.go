@@ -30,9 +30,8 @@ func (h Header) Get(key string) string {
 	if v, ok := h[key]; ok && len(v) > 0 {
 		return v[0]
 	}
-	keyLower := strings.ToLower(key)
 	for k, v := range h {
-		if strings.ToLower(k) == keyLower && len(v) > 0 {
+		if strings.EqualFold(k, key) && len(v) > 0 {
 			return v[0]
 		}
 	}

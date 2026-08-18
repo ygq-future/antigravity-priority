@@ -11,10 +11,6 @@ func int64Ptr(v int64) *int64 {
 	return &v
 }
 
-func timePtr(t time.Time) *time.Time {
-	return &t
-}
-
 func TestPlanFreshOnly(t *testing.T) {
 	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
 	defaultOptions := Options{

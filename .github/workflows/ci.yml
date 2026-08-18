@@ -23,7 +23,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: "1.23"
 
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v6
@@ -47,7 +47,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: "1.23"
 
       - name: Run tests with race detector
         run: go test -v -race ./...
@@ -62,7 +62,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: "1.23"
 
       - name: Setup MSYS2
         uses: msys2/setup-msys2@v2

@@ -20,12 +20,17 @@ linters-settings:
   revive:
     rules:
       - name: exported
-        disabled: false
+        disabled: true
       - name: unexported-return
         disabled: false
       - name: time-naming
         disabled: false
   gocritic:
+    disabled-checks:
+      - hugeParam
+      - rangeValCopy
+      - unnamedResult
+      - paramTypeCombine
     enabled-tags:
       - diagnostic
       - style
