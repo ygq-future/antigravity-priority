@@ -1,6 +1,7 @@
 package apply_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -104,7 +105,7 @@ func TestSnapshot_And_AuditEvent_Redaction(t *testing.T) {
 	hostMock := newMockHost()
 	auditorMock := &mockAuditor{}
 
-	_, err = apply.Apply(t.Context(), apply.Request{
+	_, err = apply.Apply(context.Background(), apply.Request{
 		Host:    hostMock,
 		Auditor: auditorMock,
 		Plan:    plan,
@@ -188,7 +189,7 @@ func TestResultName_FallbackHierarchy(t *testing.T) {
 		},
 	}
 
-	res, err := apply.Apply(t.Context(), apply.Request{
+	res, err := apply.Apply(context.Background(), apply.Request{
 		Host:    newMockHost(),
 		Auditor: &mockAuditor{},
 		Plan:    plan,
