@@ -55,9 +55,6 @@ func NewHandler(runner Runner) *Handler {
 // RouteSourceHeader marks internal routing origin (resource vs management).
 const RouteSourceHeader = "X-Antigravity-Priority-Route-Source"
 
-// StatusHTMLPlaceholder is served as fallback static HTML before Ticket 07 UI integration.
-const StatusHTMLPlaceholder = `<!DOCTYPE html><html><head><title>Antigravity Priority</title></head><body><h1>Antigravity Priority Status</h1></body></html>`
-
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 	method := r.Method
@@ -73,6 +70,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch {
+	case path == "/status" && method == http.MethodGet:
+		h.handleStatus(w, r)
 	case path == "/run" && method == http.MethodPost:
 		h.handleRun(w, r)
 	case path == "/diagnostics" && method == http.MethodGet:
@@ -89,7 +88,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(StatusHTMLPlaceholder))
+	_, _ = w.Write([]byte(StatusHTML))
 }
 
 func (h *Handler) handleRun(w http.ResponseWriter, r *http.Request) {

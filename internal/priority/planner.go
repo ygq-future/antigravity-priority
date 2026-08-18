@@ -82,6 +82,7 @@ type Change struct {
 	Disabled      bool
 	EvidenceFresh bool
 	Reason        string
+	IsBoosted     bool
 }
 
 // Plan encapsulates the complete immutable priority scheduling decision and change set.
@@ -357,6 +358,7 @@ func changes(items []PlanItem, options Options) []Change {
 				Disabled:      item.Disabled,
 				EvidenceFresh: item.EvidenceFresh || item.ForceWrite,
 				Reason:        item.Reason,
+				IsBoosted:     item.IsBoosted,
 			})
 		}
 	}

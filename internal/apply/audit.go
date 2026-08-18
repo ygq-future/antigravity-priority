@@ -3,6 +3,7 @@ package apply
 import (
 	"encoding/json"
 	"strconv"
+	"time"
 
 	"antigravity-priority/internal/core"
 	"antigravity-priority/internal/host"
@@ -24,25 +25,44 @@ func Snapshot(plan priority.Plan) PlanSnapshot {
 
 // SnapshotItem is the redacted audit view of a single planned item.
 type SnapshotItem struct {
-	Name          string `json:"name"`
-	AuthIndex     string `json:"auth_index"`
-	Provider      string `json:"provider"`
-	Type          string `json:"type"`
-	Status        string `json:"status"`
-	Current       Target `json:"current"`
-	Target        Target `json:"target"`
-	EvidenceFresh bool   `json:"evidence_fresh"`
-	Reason        string `json:"reason"`
+	Name                 string     `json:"name"`
+	AuthIndex            string     `json:"auth_index"`
+	Account              string     `json:"account,omitempty"`
+	Email                string     `json:"email,omitempty"`
+	Provider             string     `json:"provider"`
+	Type                 string     `json:"type"`
+	Status               string     `json:"status"`
+	PlanType             string     `json:"plan_type,omitempty"`
+	Current              Target     `json:"current"`
+	Target               Target     `json:"target"`
+	EvidenceFresh        bool       `json:"evidence_fresh"`
+	Reason               string     `json:"reason"`
+	IsBoosted            bool       `json:"is_boosted"`
+	Urgency              float64    `json:"urgency"`
+	R7d                  float64    `json:"r7d"`
+	T7d                  float64    `json:"t7d"`
+	R5h                  float64    `json:"r5h"`
+	T5h                  float64    `json:"t5h"`
+	CycleBurnRate        float64    `json:"cycle_burn_rate"`
+	TRequired            float64    `json:"t_required"`
+	ResetAt              *time.Time `json:"reset_at,omitempty"`
+	ShortWindowResetAt   *time.Time `json:"short_window_reset_at,omitempty"`
+	ShortWindowRemaining *int64     `json:"short_window_remaining,omitempty"`
+	LongWindowResetAt    *time.Time `json:"long_window_reset_at,omitempty"`
+	LongWindowRemaining  *int64     `json:"long_window_remaining,omitempty"`
 }
 
 // SnapshotChange is the redacted audit view of a single candidate change.
 type SnapshotChange struct {
 	Name          string `json:"name"`
 	AuthIndex     string `json:"auth_index"`
+	Account       string `json:"account,omitempty"`
+	Email         string `json:"email,omitempty"`
 	Current       Target `json:"current"`
 	Target        Target `json:"target"`
 	EvidenceFresh bool   `json:"evidence_fresh"`
 	Reason        string `json:"reason"`
+	IsBoosted     bool   `json:"is_boosted"`
 }
 
 // Target represents the priority and disabled target state.
@@ -109,15 +129,31 @@ func newAuditEvent(plan priority.Plan) AuditEvent {
 func snapshotItem(item priority.PlanItem) SnapshotItem {
 	credential := item.Credential
 	return SnapshotItem{
-		Name:          redactString(credential.Name),
-		AuthIndex:     redactString(credential.AuthIndex),
-		Provider:      redactString(string(credential.Provider)),
-		Type:          redactString(string(credential.Type)),
-		Status:        redactString(string(credential.Status)),
-		Current:       target(credential.Priority, credential.Disabled),
-		Target:        target(item.Priority, item.Disabled),
-		EvidenceFresh: item.EvidenceFresh || item.ForceWrite,
-		Reason:        redactString(item.Reason),
+		Name:                 redactString(credential.Name),
+		AuthIndex:            redactString(credential.AuthIndex),
+		Account:              redactString(credential.Account),
+		Email:                redactString(credential.Email),
+		Provider:             redactString(string(credential.Provider)),
+		Type:                 redactString(string(credential.Type)),
+		Status:               redactString(string(credential.Status)),
+		PlanType:             redactString(string(item.PlanType)),
+		Current:              target(credential.Priority, credential.Disabled),
+		Target:               target(item.Priority, item.Disabled),
+		EvidenceFresh:        item.EvidenceFresh || item.ForceWrite,
+		Reason:               redactString(item.Reason),
+		IsBoosted:            item.IsBoosted,
+		Urgency:              item.Urgency,
+		R7d:                  item.R7d,
+		T7d:                  item.T7d,
+		R5h:                  item.R5h,
+		T5h:                  item.T5h,
+		CycleBurnRate:        item.CycleBurnRate,
+		TRequired:            item.TRequired,
+		ResetAt:              item.ResetAt,
+		ShortWindowResetAt:   item.ShortWindowResetAt,
+		ShortWindowRemaining: item.ShortWindowRemaining,
+		LongWindowResetAt:    item.LongWindowResetAt,
+		LongWindowRemaining:  item.LongWindowRemaining,
 	}
 }
 
@@ -126,10 +162,13 @@ func snapshotChange(change priority.Change) SnapshotChange {
 	return SnapshotChange{
 		Name:          redactString(credential.Name),
 		AuthIndex:     redactString(credential.AuthIndex),
+		Account:       redactString(credential.Account),
+		Email:         redactString(credential.Email),
 		Current:       target(credential.Priority, credential.Disabled),
 		Target:        target(change.Priority, change.Disabled),
 		EvidenceFresh: change.EvidenceFresh,
 		Reason:        redactString(change.Reason),
+		IsBoosted:     change.IsBoosted,
 	}
 }
 

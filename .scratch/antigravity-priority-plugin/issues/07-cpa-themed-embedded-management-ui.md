@@ -4,7 +4,7 @@
 
 **Blocked by:** 06 (Plugin Runtime, Scheduler & CGO ABI)
 
-**Status:** ready-for-agent
+**Status:** completed
 
 ## Scope
 - Implement embedded web UI in `internal/management/templates.go` and `internal/management/handler.go` (`GET /status`).
@@ -19,12 +19,12 @@
 - No external CDN dependencies (fonts, stylesheets, or JS libraries).
 
 ## Acceptance Criteria
-- [ ] Single HTML template embedded in binary with zero external network requests (CSP strict compliant).
-- [ ] Automatically renders dark theme on `data-theme="dark"` or dark system preference; renders clean light theme otherwise.
-- [ ] Renders 5h and 7d progress bars, reset countdowns, adaptive $C_{\text{cycle}}$, urgency index, and boost status.
-- [ ] Dry-Run action previews planned priority changes with clear diff highlights; Apply action executes host write-back and refreshes status.
+- [x] Single HTML template embedded in binary with zero external network requests (CSP strict compliant).
+- [x] Automatically renders dark theme on `data-theme="dark"` or dark system preference; renders clean light theme otherwise.
+- [x] Renders 5h and 7d progress bars, reset countdowns, adaptive $C_{\text{cycle}}$, urgency index, and boost status.
+- [x] Dry-Run action previews planned priority changes with clear diff highlights; Apply action executes host write-back and refreshes status.
 
 ## Required Tests
-- [ ] Handler test verifying `GET /status` returns HTTP 200 with HTML content-type.
-- [ ] CSS token completeness test ensuring every ground and text token is defined for both light and dark modes.
-- [ ] Security validation ensuring no remote URLs (`http://`, `https://`) exist in the template.
+- [x] Handler test verifying `GET /status` returns HTTP 200 with HTML content-type.
+- [x] CSS token completeness test ensuring every ground and text token is defined for both light and dark modes.
+- [x] Security validation ensuring no remote URLs (`http://`, `https://`) exist in the template.
