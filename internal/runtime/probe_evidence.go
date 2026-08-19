@@ -24,6 +24,7 @@ type collectInput struct {
 	forceProbe     bool
 	maxConcurrency int
 	modelGroup     config.AntigravityModelGroup
+	sampleCapacity int
 }
 
 type probeJob struct {
@@ -98,7 +99,7 @@ func runProbeJobs(ctx context.Context, prober antigravity.Prober, input collectI
 	if workers == 1 {
 		evidence := make([]priority.ProbeEvidence, 0, len(jobs))
 		for _, job := range jobs {
-			item, err := probeAndRecord(ctx, prober, input.store, job, input.now, input.modelGroup)
+			item, err := probeAndRecord(ctx, prober, input.store, job, input.now, input.modelGroup, input.sampleCapacity)
 			if err != nil {
 				return nil, err
 			}
@@ -131,7 +132,7 @@ func runProbeJobs(ctx context.Context, prober antigravity.Prober, input collectI
 					return
 				}
 				job := jobs[index]
-				item, err := probeAndRecord(runCtx, prober, input.store, job, input.now, input.modelGroup)
+				item, err := probeAndRecord(runCtx, prober, input.store, job, input.now, input.modelGroup, input.sampleCapacity)
 				select {
 				case resultsCh <- result{index: index, item: item, err: err}:
 				case <-runCtx.Done():
@@ -191,7 +192,7 @@ func runProbeJobs(ctx context.Context, prober antigravity.Prober, input collectI
 	return evidence, nil
 }
 
-func probeAndRecord(ctx context.Context, prober antigravity.Prober, store *state.Store, job probeJob, now time.Time, modelGroup config.AntigravityModelGroup) (priority.ProbeEvidence, error) {
+func probeAndRecord(ctx context.Context, prober antigravity.Prober, store *state.Store, job probeJob, now time.Time, modelGroup config.AntigravityModelGroup, sampleCapacity int) (priority.ProbeEvidence, error) {
 	results := prober.ProbeAll(ctx, antigravity.ProbeRequest{
 		AuthIndex:   job.credential.AuthIndex,
 		AccessToken: job.authMaterial.accessToken,
@@ -203,7 +204,7 @@ func probeAndRecord(ctx context.Context, prober antigravity.Prober, store *state
 	var primaryEvidence priority.ProbeEvidence
 	var primaryErr error
 	for group, result := range results {
-		evidence, err := recordAntigravityProbeResult(ctx, store, result, now)
+		evidence, err := recordAntigravityProbeResult(ctx, store, result, now, sampleCapacity)
 		if group == modelGroup {
 			primaryEvidence = evidence
 			primaryErr = err
@@ -213,7 +214,7 @@ func probeAndRecord(ctx context.Context, prober antigravity.Prober, store *state
 	return primaryEvidence, primaryErr
 }
 
-func recordAntigravityProbeResult(ctx context.Context, store *state.Store, result antigravity.ProbeResult, now time.Time) (priority.ProbeEvidence, error) {
+func recordAntigravityProbeResult(ctx context.Context, store *state.Store, result antigravity.ProbeResult, now time.Time, sampleCapacity int) (priority.ProbeEvidence, error) {
 	if result.Status != antigravity.StatusReady || result.ResetAt == nil || result.Remaining == nil {
 		err := store.MarkProbeFailure(ctx, state.ProbeFailure{
 			AuthIndex:   result.AuthIndex,
@@ -245,6 +246,7 @@ func recordAntigravityProbeResult(ctx context.Context, store *state.Store, resul
 		LongWindowRemaining:  result.LongWindowRemaining,
 		Source:               state.SourceFreshProbe,
 		NextProbeAt:          result.ObservedAt.Add(time.Hour),
+		SampleCapacity:       sampleCapacity,
 	})
 
 	cycleBurnRate := store.GetCycleBurnRate(result.AuthIndex, string(result.ModelGroup))

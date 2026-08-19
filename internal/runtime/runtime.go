@@ -590,6 +590,11 @@ func (r *Runtime) GetDynamicConfig(ctx context.Context) (state.DynamicConfig, er
 		}
 	}
 
+	capacity := cfg.QuotaSampleCapacity
+	if capacity < state.MinQuotaSampleCapacity || capacity > state.MaxQuotaSampleCapacity {
+		capacity = state.DefaultQuotaSampleCapacity
+	}
+
 	return state.DynamicConfig{
 		AutoApply:                cfg.AutoApply,
 		Interval:                 cfg.Interval.String(),
@@ -598,6 +603,7 @@ func (r *Runtime) GetDynamicConfig(ctx context.Context) (state.DynamicConfig, er
 		MinChange:                cfg.MinChange,
 		UrgencyTolerance:         0.05,
 		RateLimitCooldownMinutes: 5,
+		QuotaSampleCapacity:      capacity,
 		PriorityRules: state.PriorityRulesConfig{
 			Enabled:             cfg.PriorityRules.Enabled,
 			BoostStartPriority:  cfg.PriorityRules.BoostStartPriority,
@@ -639,6 +645,12 @@ func (r *Runtime) SetDynamicConfig(ctx context.Context, dyn state.DynamicConfig)
 	if dyn.RateLimitCooldownMinutes <= 0 {
 		dyn.RateLimitCooldownMinutes = 5
 	}
+	if dyn.QuotaSampleCapacity <= 0 {
+		dyn.QuotaSampleCapacity = state.DefaultQuotaSampleCapacity
+	}
+	if dyn.QuotaSampleCapacity < state.MinQuotaSampleCapacity || dyn.QuotaSampleCapacity > state.MaxQuotaSampleCapacity {
+		return fmt.Errorf("quota_sample_capacity must be between %d and %d, got %d", state.MinQuotaSampleCapacity, state.MaxQuotaSampleCapacity, dyn.QuotaSampleCapacity)
+	}
 	if err := state.ValidateScheduleWindow(dyn.Schedule.WindowStart, dyn.Schedule.WindowEnd); err != nil {
 		return err
 	}
@@ -651,6 +663,7 @@ func (r *Runtime) SetDynamicConfig(ctx context.Context, dyn state.DynamicConfig)
 	newCfg.AntigravityModelGroup = modelGroup
 	newCfg.MaxConcurrency = dyn.MaxConcurrency
 	newCfg.MinChange = dyn.MinChange
+	newCfg.QuotaSampleCapacity = dyn.QuotaSampleCapacity
 	newCfg.PriorityRules.Enabled = dyn.PriorityRules.Enabled
 	newCfg.PriorityRules.BoostStartPriority = dyn.PriorityRules.BoostStartPriority
 	newCfg.PriorityRules.NormalStartPriority = dyn.PriorityRules.NormalStartPriority
@@ -711,6 +724,9 @@ func applyDynamicConfigToRuntime(base config.Config, dyn state.DynamicConfig) co
 	}
 	if dyn.MinChange >= 0 {
 		res.MinChange = dyn.MinChange
+	}
+	if dyn.QuotaSampleCapacity >= state.MinQuotaSampleCapacity && dyn.QuotaSampleCapacity <= state.MaxQuotaSampleCapacity {
+		res.QuotaSampleCapacity = dyn.QuotaSampleCapacity
 	}
 	res.PriorityRules.Enabled = dyn.PriorityRules.Enabled
 	if dyn.PriorityRules.BoostStartPriority >= 1 {

@@ -78,6 +78,7 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 		forceProbe:     forceProbe,
 		maxConcurrency: request.Config.MaxConcurrency,
 		modelGroup:     request.Config.AntigravityModelGroup,
+		sampleCapacity: request.Config.QuotaSampleCapacity,
 	}, request.Trigger)
 	if err != nil {
 		return err

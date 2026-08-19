@@ -33,6 +33,7 @@ type Config struct {
 	AntigravityModelGroup AntigravityModelGroup
 	MaxConcurrency        int
 	MinChange             int
+	QuotaSampleCapacity   int
 	StateCachePath        string
 	PriorityRules         PriorityRules
 }
@@ -51,6 +52,7 @@ type rawConfig struct {
 	AntigravityModelGroup *string           `json:"antigravity_model_group"`
 	MaxConcurrency        *int              `json:"max_concurrency"`
 	MinChange             *int              `json:"min_change"`
+	QuotaSampleCapacity   *int              `json:"quota_sample_capacity"`
 	StateCachePath        *string           `json:"state_cache_path"`
 	CachePath             *string           `json:"cache_path"`
 	PriorityRules         *rawPriorityRules `json:"priority_rules"`
@@ -90,6 +92,7 @@ func Default() Config {
 		AntigravityModelGroup: AntigravityModelGroupGemini,
 		MaxConcurrency:        6,
 		MinChange:             1,
+		QuotaSampleCapacity:   6,
 		StateCachePath:        DefaultStateCachePath,
 		PriorityRules: PriorityRules{
 			Enabled:             true,
@@ -179,6 +182,12 @@ func (raw rawConfig) apply(cfg Config) (Config, error) {
 		}
 		cfg.MinChange = *raw.MinChange
 	}
+	if raw.QuotaSampleCapacity != nil {
+		if *raw.QuotaSampleCapacity < 2 || *raw.QuotaSampleCapacity > 30 {
+			return Config{}, invalid("quota_sample_capacity", fmt.Sprint(*raw.QuotaSampleCapacity), "must be between 2 and 30")
+		}
+		cfg.QuotaSampleCapacity = *raw.QuotaSampleCapacity
+	}
 	if raw.StateCachePath != nil && strings.TrimSpace(*raw.StateCachePath) != "" {
 		cfg.StateCachePath = strings.TrimSpace(*raw.StateCachePath)
 	} else if raw.CachePath != nil && strings.TrimSpace(*raw.CachePath) != "" {
@@ -262,6 +271,15 @@ func (raw rawConfig) applyTolerant(cfg Config) (Config, []string) {
 				*raw.MinChange))
 		} else {
 			cfg.MinChange = *raw.MinChange
+		}
+	}
+	if raw.QuotaSampleCapacity != nil {
+		if *raw.QuotaSampleCapacity < 2 || *raw.QuotaSampleCapacity > 30 {
+			warnings = append(warnings, fmt.Sprintf(
+				"quota_sample_capacity=%d is invalid (must be 2..30), falling back to default '6'",
+				*raw.QuotaSampleCapacity))
+		} else {
+			cfg.QuotaSampleCapacity = *raw.QuotaSampleCapacity
 		}
 	}
 	if raw.StateCachePath != nil && strings.TrimSpace(*raw.StateCachePath) != "" {

@@ -185,6 +185,13 @@ func TestStore_SaveAtomic_And_Reload(t *testing.T) {
 	if *entryReloaded.ShortWindowRemaining != 80 || *entryReloaded.LongWindowRemaining != 96 {
 		t.Fatalf("unexpected window values: short=%v, long=%v", *entryReloaded.ShortWindowRemaining, *entryReloaded.LongWindowRemaining)
 	}
+	if len(entryReloaded.Samples) == 0 {
+		t.Fatalf("expected reloaded samples to not be empty")
+	}
+	samples := storeReloaded.GetSamples("account-1", "gemini")
+	if len(samples) == 0 {
+		t.Fatalf("expected GetSamples to return non-empty slice")
+	}
 
 	allEntries := storeReloaded.Entries()
 	if len(allEntries) != 1 {

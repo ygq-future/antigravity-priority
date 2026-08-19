@@ -42,6 +42,7 @@ type Entry struct {
 	LongWindowResetAt    time.Time     `json:"long_window_reset_at,omitempty"`
 	LongWindowRemaining  *int64        `json:"long_window_remaining,omitempty"`
 	CycleBurnRate        float64       `json:"cycle_burn_rate"`
+	Samples              []QuotaSample `json:"samples,omitempty"`
 	LastError            string        `json:"last_error,omitempty"`
 	NextProbeAt          time.Time     `json:"next_probe_at,omitempty"`
 	AuthInvalid          bool          `json:"auth_invalid,omitempty"`
@@ -80,6 +81,7 @@ type ProbeSuccess struct {
 	AuthInvalid          bool
 	PlanType             core.PlanType
 	Source               Source
+	SampleCapacity       int
 }
 
 // ProbeFailure contains diagnostic information after a probe failure.
@@ -118,6 +120,7 @@ type DynamicConfig struct {
 	MinChange                int                 `json:"min_change"`
 	UrgencyTolerance         float64             `json:"urgency_tolerance"`          // e.g. 0.05
 	RateLimitCooldownMinutes int                 `json:"rate_limit_cooldown_minutes"` // e.g. 5
+	QuotaSampleCapacity      int                 `json:"quota_sample_capacity"`      // e.g. 6 (range 2..30)
 	PriorityRules            PriorityRulesConfig `json:"priority_rules"`
 	Schedule                 ScheduleConfig      `json:"schedule"`
 }
@@ -276,14 +279,22 @@ func (s *Store) MarkProbeSuccess(ctx context.Context, success ProbeSuccess) erro
 	defer s.mu.Unlock()
 
 	prev := s.entries[key]
-	newRate := CalculateCycleBurnRate(
+	capacity := success.SampleCapacity
+	if capacity <= 0 {
+		if s.dynamicConfig != nil && s.dynamicConfig.QuotaSampleCapacity > 0 {
+			capacity = s.dynamicConfig.QuotaSampleCapacity
+		} else {
+			capacity = DefaultQuotaSampleCapacity
+		}
+	}
+	newRate, newSamples := UpdateSamplesAndCycleBurnRate(
 		prev.CycleBurnRate,
-		prev.ShortWindowRemaining,
-		prev.LongWindowRemaining,
-		prev.ShortWindowResetAt,
+		prev.Samples,
+		success.ObservedAt,
+		success.ShortWindowResetAt,
 		success.ShortWindowRemaining,
 		success.LongWindowRemaining,
-		success.ShortWindowResetAt,
+		capacity,
 	)
 
 	entry := Entry{
@@ -299,6 +310,7 @@ func (s *Store) MarkProbeSuccess(ctx context.Context, success ProbeSuccess) erro
 		LongWindowResetAt:    utcOrZero(success.LongWindowResetAt),
 		LongWindowRemaining:  cloneInt64Ptr(success.LongWindowRemaining),
 		CycleBurnRate:        newRate,
+		Samples:              newSamples,
 		LastError:            "",
 		NextProbeAt:          utcOrZero(success.NextProbeAt),
 		AuthInvalid:          success.AuthInvalid,
@@ -379,6 +391,17 @@ func (s *Store) GetCycleBurnRate(authIndex, modelGroup string) float64 {
 		return DefaultCycleBurnRate
 	}
 	return entry.CycleBurnRate
+}
+
+// GetSamples returns a copy of the recorded quota samples for authIndex and modelGroup.
+func (s *Store) GetSamples(authIndex, modelGroup string) []QuotaSample {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	entry, ok := s.entries[entryKey(authIndex, modelGroup)]
+	if !ok || len(entry.Samples) == 0 {
+		return nil
+	}
+	return append([]QuotaSample(nil), entry.Samples...)
 }
 
 // NeedsProbe evaluates whether the entry requires a fresh probe.

@@ -981,14 +981,18 @@ func TestRuntime_GetSetDynamicConfig(t *testing.T) {
 	if dynCfg.AntigravityModelGroup != "gemini" {
 		t.Errorf("expected default model group=gemini, got %q", dynCfg.AntigravityModelGroup)
 	}
+	if dynCfg.QuotaSampleCapacity != 6 {
+		t.Errorf("expected default QuotaSampleCapacity=6, got %d", dynCfg.QuotaSampleCapacity)
+	}
 
 	// 2. Set updated dynamic config
 	update := state.DynamicConfig{
-		AutoApply:             true,
-		Interval:              "30m",
-		AntigravityModelGroup: "claude_gpt",
-		MaxConcurrency:        8,
-		MinChange:             3,
+		AutoApply:                true,
+		Interval:                 "30m",
+		AntigravityModelGroup:    "claude_gpt",
+		MaxConcurrency:           8,
+		MinChange:                3,
+		QuotaSampleCapacity:      10,
 		PriorityRules: state.PriorityRulesConfig{
 			Enabled:             true,
 			BoostStartPriority:  990,
@@ -1022,6 +1026,9 @@ func TestRuntime_GetSetDynamicConfig(t *testing.T) {
 	if runtimeCfg.MaxConcurrency != 8 {
 		t.Errorf("expected MaxConcurrency=8, got %d", runtimeCfg.MaxConcurrency)
 	}
+	if runtimeCfg.QuotaSampleCapacity != 10 {
+		t.Errorf("expected QuotaSampleCapacity=10, got %d", runtimeCfg.QuotaSampleCapacity)
+	}
 
 	// 4. Verify disk persistence and survival across reloads
 	store, err := state.Load(context.Background(), cachePath)
@@ -1032,7 +1039,7 @@ func TestRuntime_GetSetDynamicConfig(t *testing.T) {
 	if !ok {
 		t.Fatal("expected dynamic config on disk")
 	}
-	if diskDyn.Interval != "30m" || diskDyn.AntigravityModelGroup != "claude_gpt" {
+	if diskDyn.Interval != "30m" || diskDyn.AntigravityModelGroup != "claude_gpt" || diskDyn.QuotaSampleCapacity != 10 {
 		t.Errorf("unexpected disk dynamic config: %+v", diskDyn)
 	}
 

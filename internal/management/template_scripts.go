@@ -106,6 +106,8 @@ const TemplateScripts = `
                 cfgMinChangeHint: "优先级变化绝对值达到该阈值才写入宿主 (0-100)",
                 cfgUrgencyTolerance: "紧迫度分档容差",
                 cfgUrgencyToleranceHint: "紧迫度差距在此容差内分配相同优先级 (0.00-0.50)",
+                cfgSampleCapacity: "自适应时序样本容量",
+                cfgSampleCapacityHint: "滑动窗口保留的历史探测样本数，用于平滑估计燃尽率 (2-30)",
                 cfgCooldownMinutes: "429 熔断冷却时长 (分钟)",
                 cfgCooldownMinutesHint: "遭遇 429 限流时临时降级至 -1 的冷却期 (1-1440)",
                 statusCooldown: "⏳ 429 冷却中",
@@ -131,6 +133,7 @@ const TemplateScripts = `
                 valErrConcurrency: "最大并发数超出范围，需在 1 到 32 之间",
                 valErrMinChange: "变动写入阈值超出范围，需在 0 到 100 之间",
                 valErrUrgencyTol: "紧迫度容差超出范围，需在 0.00 到 0.50 之间 (最多两位小数)",
+                valErrSampleCapacity: "自适应样本容量超出范围，需在 2 到 30 之间",
                 valErrCooldown: "429 冷却时长超出范围，需在 1 到 1440 分钟之间",
                 valErrPriorityRange: "优先级分值超出范围，需在 1 到 999 之间",
                 valErrPriorityOrder: "常规起始优先级不能大于 Boost 起始优先级"
@@ -229,6 +232,8 @@ const TemplateScripts = `
                 cfgMinChangeHint: "Minimum priority delta required to write back to host",
                 cfgUrgencyTolerance: "Urgency Bucket Tolerance",
                 cfgUrgencyToleranceHint: "Credentials within this tolerance share the same priority (0.00-0.50)",
+                cfgSampleCapacity: "Adaptive Sample Capacity",
+                cfgSampleCapacityHint: "Sliding window sample count for multi-sample burn rate estimation (2-30)",
                 cfgCooldownMinutes: "429 Cooldown Duration (Min)",
                 cfgCooldownMinutesHint: "Cooldown period demoting account to -1 on 429 errors (1-1440)",
                 statusCooldown: "⏳ 429 Cooldown",
@@ -254,6 +259,7 @@ const TemplateScripts = `
                 valErrConcurrency: "Max concurrency out of range (1 - 32)",
                 valErrMinChange: "Min change threshold out of range (0 - 100)",
                 valErrUrgencyTol: "Urgency tolerance out of range (0.00 - 0.50, max 2 decimals)",
+                valErrSampleCapacity: "Sample capacity out of range (2 - 30)",
                 valErrCooldown: "429 cooldown minutes out of range (1 - 1440)",
                 valErrPriorityRange: "Priority out of range (1 - 999)",
                 valErrPriorityOrder: "Normal start priority cannot be greater than Boost start priority"
@@ -1386,6 +1392,7 @@ const TemplateScripts = `
             var maxConcurrency = (document.getElementById("cfgMaxConcurrency") && document.getElementById("cfgMaxConcurrency").value) || "";
             var minChange = (document.getElementById("cfgMinChange") && document.getElementById("cfgMinChange").value) || "";
             var urgencyTol = (document.getElementById("cfgUrgencyTolerance") && document.getElementById("cfgUrgencyTolerance").value) || "";
+            var sampleCapacity = (document.getElementById("cfgSampleCapacity") && document.getElementById("cfgSampleCapacity").value) || "";
             var cooldownMin = (document.getElementById("cfgCooldownMinutes") && document.getElementById("cfgCooldownMinutes").value) || "";
             var rulesEnabled = Boolean(document.getElementById("cfgRulesEnabled") && document.getElementById("cfgRulesEnabled").checked);
             var boostStart = (document.getElementById("cfgBoostStartPriority") && document.getElementById("cfgBoostStartPriority").value) || "";
@@ -1393,7 +1400,7 @@ const TemplateScripts = `
 
             return JSON.stringify({
                 autoApply, interval, modelGroup, windowEnabled, windowStart, windowEnd,
-                maxConcurrency, minChange, urgencyTol, cooldownMin, rulesEnabled, boostStart, normalStart
+                maxConcurrency, minChange, urgencyTol, sampleCapacity, cooldownMin, rulesEnabled, boostStart, normalStart
             });
         }
 
@@ -1461,6 +1468,9 @@ const TemplateScripts = `
 
             var urgencyTol = document.getElementById("cfgUrgencyTolerance");
             if (urgencyTol) urgencyTol.value = cfg.urgency_tolerance !== undefined ? cfg.urgency_tolerance : 0.05;
+
+            var sampleCapacity = document.getElementById("cfgSampleCapacity");
+            if (sampleCapacity) sampleCapacity.value = cfg.quota_sample_capacity !== undefined ? cfg.quota_sample_capacity : 6;
 
             var cooldownMin = document.getElementById("cfgCooldownMinutes");
             if (cooldownMin) cooldownMin.value = cfg.rate_limit_cooldown_minutes !== undefined ? cfg.rate_limit_cooldown_minutes : 5;
@@ -1578,6 +1588,13 @@ const TemplateScripts = `
                     return;
                 }
 
+                var sampleCapacity = parseInt((document.getElementById("cfgSampleCapacity") && document.getElementById("cfgSampleCapacity").value) || "6", 10);
+                if (isNaN(sampleCapacity) || sampleCapacity < 2 || sampleCapacity > 30) {
+                    showToast(t("valErrSampleCapacity"), "error");
+                    updateSaveButtonState();
+                    return;
+                }
+
                 var cooldownMin = parseInt((document.getElementById("cfgCooldownMinutes") && document.getElementById("cfgCooldownMinutes").value) || "5", 10);
                 if (isNaN(cooldownMin) || cooldownMin < 1 || cooldownMin > 1440) {
                     showToast(t("valErrCooldown"), "error");
@@ -1608,6 +1625,7 @@ const TemplateScripts = `
                     min_change: minChange,
                     urgency_tolerance: urgencyTol,
                     rate_limit_cooldown_minutes: cooldownMin,
+                    quota_sample_capacity: sampleCapacity,
                     priority_rules: {
                         enabled: rulesEnabled,
                         boost_start_priority: boostStart,
@@ -1652,6 +1670,7 @@ const TemplateScripts = `
                 max_concurrency: 6,
                 min_change: 1,
                 urgency_tolerance: 0.05,
+                quota_sample_capacity: 6,
                 rate_limit_cooldown_minutes: 5,
                 priority_rules: {
                     enabled: true,

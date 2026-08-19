@@ -166,6 +166,16 @@ const TemplateConfig = `
 
                         <div class="form-row">
                             <div class="form-label-box">
+                                <span class="form-title" data-i18n="cfgSampleCapacity">自适应时序样本容量</span>
+                                <span class="form-hint" data-i18n="cfgSampleCapacityHint">滑动窗口保留的历史探测样本数，用于平滑估计燃尽率 (2-30)</span>
+                            </div>
+                            <div class="form-input-group">
+                                <input type="number" id="cfgSampleCapacity" class="config-num-input" min="2" max="30" value="6">
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-label-box">
                                 <span class="form-title" data-i18n="cfgCooldownMinutes">429 熔断冷却时长 (分钟)</span>
                                 <span class="form-hint" data-i18n="cfgCooldownMinutesHint">遭遇 429 限流时临时降级至 -1 的冷却期 (1-1440)</span>
                             </div>

@@ -29,6 +29,9 @@ func TestDefault(t *testing.T) {
 	if cfg.MinChange != 1 {
 		t.Errorf("expected MinChange=1, got %v", cfg.MinChange)
 	}
+	if cfg.QuotaSampleCapacity != 6 {
+		t.Errorf("expected QuotaSampleCapacity=6, got %v", cfg.QuotaSampleCapacity)
+	}
 	if !cfg.PriorityRules.Enabled {
 		t.Errorf("expected PriorityRules.Enabled=true, got %v", cfg.PriorityRules.Enabled)
 	}
