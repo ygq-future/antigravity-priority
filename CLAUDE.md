@@ -1,8 +1,10 @@
-# AGENTS.md
+# CLAUDE.md
 
-> **说明**：本文档与 [CLAUDE.md](./CLAUDE.md) 保持内容完全一致，共同定义了本项目的核心设计原则、严格交互确认协议、Git 提交验收门禁与发布审阅规范。
+> **说明**：本文档内容完整引用于 [AGENTS.md](./AGENTS.md)，确保 Claude Code 与各类智能体遵循统一的工程准则、交互协议与发布审阅门禁。
 
 ---
+
+## 📖 项目定位与概述 (Project Overview)
 
 `antigravity-priority` 是专为 CLIProxyAPI (CPA) 打造的高能效、专精型 **Google Antigravity 凭证配额调度与智能提权插件**。
 

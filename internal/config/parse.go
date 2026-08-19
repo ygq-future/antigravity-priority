@@ -210,6 +210,40 @@ func parseDuration(field string, value string) (time.Duration, error) {
 	return parsed, nil
 }
 
+// parseDurationTolerant parses a duration string with case normalization.
+// Returns (duration, normalizedForm, error). normalizedForm is non-empty when
+// case normalization was applied (e.g. "30M" → "30m").
+func parseDurationTolerant(field string, value string) (time.Duration, string, error) {
+	text := yamlText(value)
+	durationText := text
+	if _, err := strconv.Atoi(text); err == nil {
+		durationText = text + "m"
+	}
+
+	// Try parsing as-is first
+	parsed, err := time.ParseDuration(durationText)
+	if err == nil && parsed > 0 {
+		return parsed, "", nil
+	}
+
+	// Try case-normalized version
+	normalized := normalizeDurationCase(durationText)
+	if normalized != durationText {
+		parsed, err = time.ParseDuration(normalized)
+		if err == nil && parsed > 0 {
+			return parsed, normalized, nil
+		}
+	}
+
+	return 0, "", invalid(field, text, "must be a positive duration")
+}
+
+// normalizeDurationCase converts uppercase duration units to lowercase.
+// Supports: S→s, M→m (when not preceded by digit for ms), H→h, MS→ms.
+func normalizeDurationCase(s string) string {
+	return strings.ToLower(s)
+}
+
 func yamlScalar(value string) any {
 	text := yamlText(value)
 	if parsed, err := strconv.Atoi(text); err == nil {

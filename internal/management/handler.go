@@ -11,6 +11,7 @@ import (
 	"antigravity-priority/internal/apply"
 	"antigravity-priority/internal/config"
 	"antigravity-priority/internal/host"
+	"antigravity-priority/internal/state"
 )
 
 // StatusInfo represents summary state for UI rendering and status inspection.
@@ -28,8 +29,12 @@ type Runner interface {
 	Run(ctx context.Context, request RunRequest) (apply.Result, error)
 	Reset(ctx context.Context) (map[string]any, error)
 	Status(ctx context.Context) (StatusInfo, error)
-	LatestSnapshot(ctx context.Context) (apply.PlanSnapshot, error)
+	LatestSnapshot(ctx context.Context) (apply.DualGroupSnapshot, error)
 	Diagnostics(ctx context.Context) (map[string]any, error)
+	GetScheduleConfig(ctx context.Context) (state.ScheduleConfig, error)
+	SetScheduleConfig(ctx context.Context, cfg state.ScheduleConfig) error
+	GetDynamicConfig(ctx context.Context) (state.DynamicConfig, error)
+	SetDynamicConfig(ctx context.Context, cfg state.DynamicConfig) error
 }
 
 // RunRequest encapsulates parameters for a manual scheduling run.
@@ -81,6 +86,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleDiagnostics(w, r)
 	case (path == "/snapshot/latest" || path == "/v0/management/plugins/"+config.PluginID+"/snapshot/latest") && method == http.MethodGet:
 		h.handleSnapshot(w, r)
+	case (path == "/schedule/config" || path == "/v0/management/plugins/"+config.PluginID+"/schedule/config") && method == http.MethodGet:
+		h.handleGetScheduleConfig(w, r)
+	case (path == "/schedule/config" || path == "/v0/management/plugins/"+config.PluginID+"/schedule/config") && method == http.MethodPost:
+		h.handleSetScheduleConfig(w, r)
+	case (path == "/config" || path == "/v0/management/plugins/"+config.PluginID+"/config") && method == http.MethodGet:
+		h.handleGetConfig(w, r)
+	case (path == "/config" || path == "/v0/management/plugins/"+config.PluginID+"/config") && method == http.MethodPost:
+		h.handleSetConfig(w, r)
 	default:
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(http.StatusNotFound)
@@ -114,8 +127,8 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) handleRun(w http.ResponseWriter, r *http.Request) {
 	mode := r.URL.Query().Get("mode")
-	if mode != "dry-run" && mode != "apply" {
-		h.writeJSONError(w, http.StatusBadRequest, "invalid mode: must be 'dry-run' or 'apply'")
+	if mode != "dry-run" && mode != "apply" && mode != "probe" {
+		h.writeJSONError(w, http.StatusBadRequest, "invalid mode: must be 'dry-run', 'apply', or 'probe'")
 		return
 	}
 
@@ -194,6 +207,86 @@ func (h *Handler) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(redactedSnap)
+}
+
+func (h *Handler) handleGetScheduleConfig(w http.ResponseWriter, r *http.Request) {
+	cfg, err := h.runner.GetScheduleConfig(r.Context())
+	if err != nil {
+		h.writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(cfg)
+}
+
+func (h *Handler) handleSetScheduleConfig(w http.ResponseWriter, r *http.Request) {
+	var req scheduleConfigRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.writeJSONError(w, http.StatusBadRequest, "invalid schedule config JSON: "+err.Error())
+		return
+	}
+
+	if err := state.ValidateScheduleWindow(req.WindowStart, req.WindowEnd); err != nil {
+		h.writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	cfg := state.ScheduleConfig{
+		Paused:        req.Paused,
+		WindowEnabled: req.WindowEnabled,
+		WindowStart:   req.WindowStart,
+		WindowEnd:     req.WindowEnd,
+	}
+
+	if err := h.runner.SetScheduleConfig(r.Context(), cfg); err != nil {
+		h.writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(cfg)
+}
+
+type scheduleConfigRequest struct {
+	Paused        bool   `json:"paused"`
+	WindowEnabled bool   `json:"window_enabled"`
+	WindowStart   string `json:"window_start"`
+	WindowEnd     string `json:"window_end"`
+}
+
+func (h *Handler) handleGetConfig(w http.ResponseWriter, r *http.Request) {
+	cfg, err := h.runner.GetDynamicConfig(r.Context())
+	if err != nil {
+		h.writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(cfg)
+}
+
+func (h *Handler) handleSetConfig(w http.ResponseWriter, r *http.Request) {
+	var req state.DynamicConfig
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.writeJSONError(w, http.StatusBadRequest, "invalid dynamic config JSON: "+err.Error())
+		return
+	}
+
+	if err := h.runner.SetDynamicConfig(r.Context(), req); err != nil {
+		h.writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	cfg, err := h.runner.GetDynamicConfig(r.Context())
+	if err != nil {
+		h.writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(cfg)
 }
 
 func (h *Handler) tryAcquire() bool {

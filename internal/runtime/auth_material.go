@@ -32,6 +32,9 @@ func enrichCredentialsFromAuthDocuments(ctx context.Context, client *host.Client
 			enriched[index].PriorityMissing = enriched[index].PriorityMissing || topLevelFieldMissing(rawJSON, "priority")
 			enriched[index].Account = firstNonEmpty(enriched[index].Account, accountFromJSON(rawJSON))
 			enriched[index].Email = firstNonEmpty(enriched[index].Email, emailFromJSON(rawJSON))
+			if dis, ok := disabledFromJSON(rawJSON); ok {
+				enriched[index].Disabled = dis
+			}
 		}
 		materials[credential.AuthIndex] = authMaterial{
 			accessToken: accessTokenFromJSON(rawJSON),
@@ -141,4 +144,14 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func disabledFromJSON(raw json.RawMessage) (bool, bool) {
+	var document struct {
+		Disabled *bool `json:"disabled"`
+	}
+	if err := json.Unmarshal(raw, &document); err != nil || document.Disabled == nil {
+		return false, false
+	}
+	return *document.Disabled, true
 }

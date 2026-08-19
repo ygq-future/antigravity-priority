@@ -38,6 +38,7 @@ type SnapshotItem struct {
 	EvidenceFresh        bool       `json:"evidence_fresh"`
 	Reason               string     `json:"reason"`
 	IsBoosted            bool       `json:"is_boosted"`
+	IsPredicted          bool       `json:"is_predicted"`
 	Urgency              float64    `json:"urgency"`
 	R7d                  float64    `json:"r7d"`
 	T7d                  float64    `json:"t7d"`
@@ -216,4 +217,50 @@ func errStrings(errs []error) []string {
 		values = append(values, strconv.Itoa(index+1)+": "+redactedError(err))
 	}
 	return values
+}
+
+// GroupSnapshot holds the snapshot for a single model group within a dual-group response.
+type GroupSnapshot struct {
+	Items   []SnapshotItem   `json:"items"`
+	Changes []SnapshotChange `json:"changes"`
+}
+
+// DualGroupSnapshot wraps snapshots for both model groups, enabling instant client-side switching.
+type DualGroupSnapshot struct {
+	ActiveModelGroup string                  `json:"active_model_group"`
+	ObservedAt       time.Time               `json:"observed_at,omitempty"`
+	Groups           map[string]GroupSnapshot `json:"groups"`
+}
+
+// SnapshotPredicted creates a PlanSnapshot with all items marked as predicted.
+func SnapshotPredicted(plan priority.Plan) PlanSnapshot {
+	snap := newPlanSnapshot(plan)
+	for i := range snap.Items {
+		snap.Items[i].IsPredicted = true
+		if snap.Items[i].Reason != "" && snap.Items[i].Reason != "keep current state" {
+			snap.Items[i].Reason = "predicted: " + snap.Items[i].Reason
+		}
+	}
+	for i := range snap.Changes {
+		if snap.Changes[i].Reason != "" && snap.Changes[i].Reason != "keep current state" {
+			snap.Changes[i].Reason = "predicted: " + snap.Changes[i].Reason
+		}
+	}
+	return snap
+}
+
+// NewDualGroupSnapshot builds a DualGroupSnapshot from primary and predicted plan snapshots.
+func NewDualGroupSnapshot(activeGroup string, observedAt time.Time, primary PlanSnapshot, predicted PlanSnapshot) DualGroupSnapshot {
+	altGroup := "claude_gpt"
+	if activeGroup == "claude_gpt" {
+		altGroup = "gemini"
+	}
+	return DualGroupSnapshot{
+		ActiveModelGroup: activeGroup,
+		ObservedAt:       observedAt,
+		Groups: map[string]GroupSnapshot{
+			activeGroup: {Items: primary.Items, Changes: primary.Changes},
+			altGroup:    {Items: predicted.Items, Changes: predicted.Changes},
+		},
+	}
 }

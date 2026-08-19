@@ -182,6 +182,12 @@ func TestStatusHTML_ContainsRequiredUIElements(t *testing.T) {
 		{"Apply action button", "btnApply"},
 		{"Diff modal container", "diffModal"},
 		{"System font stack", "-apple-system"},
+		{"Confirm modal container", "confirmModal"},
+		{"Config center panel", "panelConfig"},
+		{"Auto apply toggle", "cfgAutoApply"},
+		{"Interval select", "cfgIntervalSelect"},
+		{"Save config button", "btnSaveConfig"},
+		{"Reset config button", "btnResetConfig"},
 	}
 
 	for _, c := range checks {

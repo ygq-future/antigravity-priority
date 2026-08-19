@@ -26,6 +26,12 @@ const (
 )
 
 func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) error {
+	if !request.Config.Enabled && request.Trigger != TriggerManual {
+		return nil
+	}
+	if request.Trigger == TriggerAutoApply && !request.Config.AutoApply {
+		return nil
+	}
 	if r.hostCallbacks == nil {
 		return errMissingHostCallbacks
 	}
@@ -59,8 +65,9 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 	if err != nil {
 		return err
 	}
+	store.ClearExpiredCooldowns(now)
 
-	forceProbe := request.Trigger == TriggerManual || request.Trigger == TriggerManualApply
+	forceProbe := request.Trigger == TriggerManualApply || request.Trigger == TriggerProbe
 	evidence, err := r.collectEvidenceForTrigger(ctx, collectInput{
 		client:         client,
 		store:          store,
@@ -80,12 +87,38 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 		return err
 	}
 
-	plan := priority.PlanFreshOnly(credentials, evidence, priorityOptions(request.Config, now))
+	// Probe-only: evidence collected and cached, no plan or apply needed (REQ-04).
+	if request.Trigger == TriggerProbe {
+		r.snapshotRunEntry(apply.Result{}, "probe completed", RunHistoryEntry{
+			Kind:    "probe",
+			Trigger: string(request.Trigger),
+			Message: fmt.Sprintf("probe completed: %d credentials probed", len(evidence)),
+		})
+		resJSON, _ := json.Marshal(apply.Result{})
+		histJSON, _ := json.Marshal(r.currentRunHistory())
+		store.SetRuntimeSnapshot("probe completed", resJSON, histJSON)
+		_ = store.SaveAtomic(ctx)
+		return nil
+	}
+
+	plan := priority.PlanFreshOnly(credentials, evidence, priorityOptions(request.Config, store, now))
 	plan = withProbeFailureTemporaryDisables(plan, evidence)
 
+	// Build dual-group snapshot (REQ-05): compute predicted plan for the alternate model group.
+	primarySnapshot := apply.Snapshot(plan)
+	altGroup := alternateModelGroup(request.Config.AntigravityModelGroup)
+	altEvidence := buildCachedEvidenceForGroup(store, credentials, string(altGroup))
+	altPlan := priority.PlanFreshOnly(credentials, altEvidence, priorityOptions(request.Config, store, now))
+	altPlan = withProbeFailureTemporaryDisables(altPlan, altEvidence)
+	predictedSnapshot := apply.SnapshotPredicted(altPlan)
+	dualSnap := apply.NewDualGroupSnapshot(
+		string(request.Config.AntigravityModelGroup), now, primarySnapshot, predictedSnapshot)
+	r.setDualSnapshot(dualSnap)
+
 	if request.Trigger == TriggerManual {
-		result := apply.Result{Snapshot: apply.Snapshot(plan)}
+		result := apply.Result{Snapshot: primarySnapshot}
 		audit := "dry-run plan generated"
+		snap := primarySnapshot
 		r.snapshotRunEntry(result, audit, RunHistoryEntry{
 			Kind:      "dry_run",
 			Trigger:   string(request.Trigger),
@@ -94,6 +127,7 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 			Failed:    result.Failed,
 			Skipped:   result.Skipped,
 			Message:   audit,
+			Snapshot:  &snap,
 		})
 		resJSON, _ := json.Marshal(result)
 		histJSON, _ := json.Marshal(r.currentRunHistory())
@@ -123,6 +157,7 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 		Failed:    result.Failed,
 		Skipped:   result.Skipped,
 		Message:   summary,
+		Snapshot:  &primarySnapshot,
 	})
 
 	resJSON, _ := json.Marshal(result)
@@ -265,7 +300,7 @@ func filterCredentialsByAuthIndex(credentials []core.Credential, authIndexes []s
 	return filtered
 }
 
-func priorityOptions(cfg config.Config, now time.Time) priority.Options {
+func priorityOptions(cfg config.Config, store *state.Store, now time.Time) priority.Options {
 	boostStart := 999
 	normalStart := 100
 	if cfg.PriorityRules.Enabled {
@@ -276,11 +311,21 @@ func priorityOptions(cfg config.Config, now time.Time) priority.Options {
 			normalStart = cfg.PriorityRules.NormalStartPriority
 		}
 	}
+	tolerance := 0.05
+	var cooldowns map[string]time.Time
+	if store != nil {
+		if dyn, ok := store.GetDynamicConfig(); ok && dyn.UrgencyTolerance > 0 {
+			tolerance = dyn.UrgencyTolerance
+		}
+		cooldowns = store.GetActiveCooldowns(now)
+	}
 	return priority.Options{
 		Now:                 now,
 		BoostStartPriority:  boostStart,
 		NormalStartPriority: normalStart,
 		MinChange:           cfg.MinChange,
+		UrgencyTolerance:    tolerance,
+		CooldownAuthIndexes: cooldowns,
 	}
 }
 

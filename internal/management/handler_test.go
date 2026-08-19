@@ -6,19 +6,24 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"antigravity-priority/internal/apply"
 	"antigravity-priority/internal/config"
 	"antigravity-priority/internal/management"
+	"antigravity-priority/internal/state"
 )
 
 type mockRunner struct {
 	runFunc         func(ctx context.Context, req management.RunRequest) (apply.Result, error)
 	resetFunc       func(ctx context.Context) (map[string]any, error)
 	statusFunc      func(ctx context.Context) (management.StatusInfo, error)
-	snapshotFunc    func(ctx context.Context) (apply.PlanSnapshot, error)
+	snapshotFunc    func(ctx context.Context) (apply.DualGroupSnapshot, error)
 	diagnosticsFunc func(ctx context.Context) (map[string]any, error)
+	scheduleConfig  state.ScheduleConfig
+	dynamicConfig   state.DynamicConfig
 }
 
 func (m *mockRunner) Run(ctx context.Context, req management.RunRequest) (apply.Result, error) {
@@ -42,11 +47,11 @@ func (m *mockRunner) Status(ctx context.Context) (management.StatusInfo, error) 
 	return management.StatusInfo{}, nil
 }
 
-func (m *mockRunner) LatestSnapshot(ctx context.Context) (apply.PlanSnapshot, error) {
+func (m *mockRunner) LatestSnapshot(ctx context.Context) (apply.DualGroupSnapshot, error) {
 	if m.snapshotFunc != nil {
 		return m.snapshotFunc(ctx)
 	}
-	return apply.PlanSnapshot{}, nil
+	return apply.DualGroupSnapshot{}, nil
 }
 
 func (m *mockRunner) Diagnostics(ctx context.Context) (map[string]any, error) {
@@ -54,6 +59,25 @@ func (m *mockRunner) Diagnostics(ctx context.Context) (map[string]any, error) {
 		return m.diagnosticsFunc(ctx)
 	}
 	return map[string]any{}, nil
+}
+
+func (m *mockRunner) GetScheduleConfig(ctx context.Context) (state.ScheduleConfig, error) {
+	return m.scheduleConfig, nil
+}
+
+func (m *mockRunner) SetScheduleConfig(ctx context.Context, cfg state.ScheduleConfig) error {
+	m.scheduleConfig = cfg
+	return nil
+}
+
+func (m *mockRunner) GetDynamicConfig(ctx context.Context) (state.DynamicConfig, error) {
+	return m.dynamicConfig, nil
+}
+
+func (m *mockRunner) SetDynamicConfig(ctx context.Context, cfg state.DynamicConfig) error {
+	m.dynamicConfig = cfg
+	m.scheduleConfig = cfg.Schedule
+	return nil
 }
 
 func TestHandler_Run_DryRun_Success(t *testing.T) {
@@ -139,7 +163,7 @@ func TestHandler_Run_InvalidMode(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &errResp); err != nil {
 		t.Fatalf("unmarshal error resp failed: %v", err)
 	}
-	if errResp["error"] != "invalid mode: must be 'dry-run' or 'apply'" {
+	if errResp["error"] != "invalid mode: must be 'dry-run', 'apply', or 'probe'" {
 		t.Errorf("unexpected error message: %q", errResp["error"])
 	}
 }
@@ -234,8 +258,8 @@ func TestHandler_Diagnostics_Redaction(t *testing.T) {
 
 func TestHandler_Snapshot_Latest(t *testing.T) {
 	runner := &mockRunner{
-		snapshotFunc: func(ctx context.Context) (apply.PlanSnapshot, error) {
-			return apply.PlanSnapshot{
+		snapshotFunc: func(ctx context.Context) (apply.DualGroupSnapshot, error) {
+			primary := apply.PlanSnapshot{
 				TotalItems:   1,
 				TotalChanges: 1,
 				Items: []apply.SnapshotItem{
@@ -247,7 +271,9 @@ func TestHandler_Snapshot_Latest(t *testing.T) {
 						Reason:    "fresh boosted",
 					},
 				},
-			}, nil
+			}
+			predicted := apply.PlanSnapshot{Items: []apply.SnapshotItem{}, Changes: []apply.SnapshotChange{}}
+			return apply.NewDualGroupSnapshot("gemini", time.Now().UTC(), primary, predicted), nil
 		},
 	}
 
@@ -261,12 +287,19 @@ func TestHandler_Snapshot_Latest(t *testing.T) {
 		t.Fatalf("expected status 200, got %d", rec.Code)
 	}
 
-	var snap apply.PlanSnapshot
+	var snap apply.DualGroupSnapshot
 	if err := json.Unmarshal(rec.Body.Bytes(), &snap); err != nil {
 		t.Fatalf("decode snapshot failed: %v", err)
 	}
-	if snap.TotalItems != 1 {
-		t.Errorf("expected 1 item, got %d", snap.TotalItems)
+	if snap.ActiveModelGroup != "gemini" {
+		t.Errorf("expected active_model_group 'gemini', got %q", snap.ActiveModelGroup)
+	}
+	group, ok := snap.Groups["gemini"]
+	if !ok {
+		t.Fatal("expected 'gemini' group in snapshot")
+	}
+	if len(group.Items) != 1 {
+		t.Errorf("expected 1 item in gemini group, got %d", len(group.Items))
 	}
 }
 
@@ -361,5 +394,196 @@ func TestHandler_Reset_Success(t *testing.T) {
 	}
 	if res["ok"] != true {
 		t.Errorf("expected ok=true, got %v", res["ok"])
+	}
+}
+
+func TestHandler_GetScheduleConfig(t *testing.T) {
+	runner := &mockRunner{
+		scheduleConfig: state.ScheduleConfig{
+			Paused:        true,
+			WindowEnabled: true,
+			WindowStart:   "09:00",
+			WindowEnd:     "23:00",
+		},
+	}
+	handler := management.NewHandler(runner)
+	req := httptest.NewRequest(http.MethodGet, "/schedule/config", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	var cfg state.ScheduleConfig
+	if err := json.Unmarshal(rec.Body.Bytes(), &cfg); err != nil {
+		t.Fatalf("decode schedule config failed: %v", err)
+	}
+	if !cfg.Paused {
+		t.Error("expected Paused=true")
+	}
+	if cfg.WindowStart != "09:00" {
+		t.Errorf("expected WindowStart=09:00, got %q", cfg.WindowStart)
+	}
+}
+
+func TestHandler_SetScheduleConfig(t *testing.T) {
+	runner := &mockRunner{}
+	handler := management.NewHandler(runner)
+
+	body := `{"paused":false,"window_enabled":true,"window_start":"08:30","window_end":"23:30"}`
+	req := httptest.NewRequest(http.MethodPost, "/schedule/config", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	var cfg state.ScheduleConfig
+	if err := json.Unmarshal(rec.Body.Bytes(), &cfg); err != nil {
+		t.Fatalf("decode response failed: %v", err)
+	}
+	if !cfg.WindowEnabled {
+		t.Error("expected WindowEnabled=true")
+	}
+	if cfg.WindowStart != "08:30" || cfg.WindowEnd != "23:30" {
+		t.Errorf("unexpected window: %q-%q", cfg.WindowStart, cfg.WindowEnd)
+	}
+
+	// Verify it was stored on the mock
+	if runner.scheduleConfig.WindowStart != "08:30" {
+		t.Errorf("expected mock to store WindowStart=08:30, got %q", runner.scheduleConfig.WindowStart)
+	}
+}
+
+func TestHandler_SetScheduleConfig_InvalidWindow(t *testing.T) {
+	handler := management.NewHandler(&mockRunner{})
+	body := `{"window_enabled":true,"window_start":"25:00","window_end":"23:00"}`
+	req := httptest.NewRequest(http.MethodPost, "/schedule/config", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandler_SetScheduleConfig_InvalidJSON(t *testing.T) {
+	handler := management.NewHandler(&mockRunner{})
+	req := httptest.NewRequest(http.MethodPost, "/schedule/config", strings.NewReader("{invalid"))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", rec.Code)
+	}
+}
+
+func TestHandler_GetDynamicConfig(t *testing.T) {
+	runner := &mockRunner{
+		dynamicConfig: state.DynamicConfig{
+			AutoApply:                true,
+			Interval:                 "30m",
+			AntigravityModelGroup:    "claude_gpt",
+			MaxConcurrency:           8,
+			MinChange:                2,
+			UrgencyTolerance:         0.05,
+			RateLimitCooldownMinutes: 5,
+			PriorityRules: state.PriorityRulesConfig{
+				Enabled:             true,
+				BoostStartPriority:  990,
+				NormalStartPriority: 150,
+			},
+			Schedule: state.ScheduleConfig{
+				Paused:        false,
+				WindowEnabled: true,
+				WindowStart:   "08:00",
+				WindowEnd:     "22:00",
+			},
+		},
+	}
+	handler := management.NewHandler(runner)
+	req := httptest.NewRequest(http.MethodGet, "/config", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	var cfg state.DynamicConfig
+	if err := json.Unmarshal(rec.Body.Bytes(), &cfg); err != nil {
+		t.Fatalf("decode dynamic config failed: %v", err)
+	}
+	if !cfg.AutoApply {
+		t.Error("expected AutoApply=true")
+	}
+	if cfg.Interval != "30m" {
+		t.Errorf("expected Interval=30m, got %q", cfg.Interval)
+	}
+	if cfg.AntigravityModelGroup != "claude_gpt" {
+		t.Errorf("expected AntigravityModelGroup=claude_gpt, got %q", cfg.AntigravityModelGroup)
+	}
+	if cfg.MaxConcurrency != 8 {
+		t.Errorf("expected MaxConcurrency=8, got %d", cfg.MaxConcurrency)
+	}
+	if cfg.PriorityRules.BoostStartPriority != 990 {
+		t.Errorf("expected BoostStartPriority=990, got %d", cfg.PriorityRules.BoostStartPriority)
+	}
+	if cfg.UrgencyTolerance != 0.05 {
+		t.Errorf("expected UrgencyTolerance=0.05, got %v", cfg.UrgencyTolerance)
+	}
+	if cfg.RateLimitCooldownMinutes != 5 {
+		t.Errorf("expected RateLimitCooldownMinutes=5, got %d", cfg.RateLimitCooldownMinutes)
+	}
+}
+
+func TestHandler_SetDynamicConfig_Success(t *testing.T) {
+	runner := &mockRunner{}
+	handler := management.NewHandler(runner)
+
+	body := `{"auto_apply":true,"interval":"20m","antigravity_model_group":"gemini","max_concurrency":4,"min_change":3,"urgency_tolerance":0.08,"rate_limit_cooldown_minutes":10,"priority_rules":{"enabled":true,"boost_start_priority":995,"normal_start_priority":120},"schedule":{"paused":false,"window_enabled":true,"window_start":"09:00","window_end":"18:00"}}`
+	req := httptest.NewRequest(http.MethodPost, "/config", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	var cfg state.DynamicConfig
+	if err := json.Unmarshal(rec.Body.Bytes(), &cfg); err != nil {
+		t.Fatalf("decode response failed: %v", err)
+	}
+	if cfg.Interval != "20m" {
+		t.Errorf("expected Interval=20m, got %q", cfg.Interval)
+	}
+	if cfg.MinChange != 3 {
+		t.Errorf("expected MinChange=3, got %d", cfg.MinChange)
+	}
+	if cfg.UrgencyTolerance != 0.08 {
+		t.Errorf("expected UrgencyTolerance=0.08, got %v", cfg.UrgencyTolerance)
+	}
+	if cfg.RateLimitCooldownMinutes != 10 {
+		t.Errorf("expected RateLimitCooldownMinutes=10, got %d", cfg.RateLimitCooldownMinutes)
+	}
+}
+
+func TestHandler_SetDynamicConfig_InvalidJSON(t *testing.T) {
+	handler := management.NewHandler(&mockRunner{})
+	req := httptest.NewRequest(http.MethodPost, "/config", strings.NewReader("{invalid"))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", rec.Code)
 	}
 }

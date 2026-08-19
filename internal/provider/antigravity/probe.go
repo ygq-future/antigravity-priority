@@ -90,6 +90,61 @@ func probeHeaders(request ProbeRequest) host.Header {
 	return headers
 }
 
+// ProbeAll queries the Antigravity quota endpoint and returns normalized quota evidence
+// for all model groups. A single HTTP request is made; the response is parsed for both
+// gemini and claude_gpt groups simultaneously.
+func (p Prober) ProbeAll(ctx context.Context, request ProbeRequest) map[ModelGroup]ProbeResult {
+	observedAt := p.clock.Now().UTC()
+	if p.host == nil {
+		return allGroupsFailedProbe(request, observedAt, "host http doer unavailable")
+	}
+
+	var lastStatus int
+	var lastErr error
+	for _, url := range retrieveUserQuotaSummaryURLs {
+		response, err := p.host.HTTPDo(ctx, host.HTTPRequest{
+			AuthIndex: request.AuthIndex,
+			Method:    http.MethodPost,
+			URL:       url,
+			Headers:   probeHeaders(request),
+			Body:      probeBody(request),
+		})
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		lastStatus = response.StatusCode
+		if response.StatusCode != http.StatusOK {
+			continue
+		}
+		results := ParseAllModelGroups(response.Body, observedAt)
+		for group, result := range results {
+			result.AuthIndex = request.AuthIndex
+			results[group] = result
+		}
+		return results
+	}
+
+	msg := fmt.Sprintf("retrieve quota summary status %d", lastStatus)
+	if lastErr != nil && lastStatus == 0 {
+		msg = "host http do failed"
+	}
+	return allGroupsFailedProbe(request, observedAt, msg)
+}
+
+func allGroupsFailedProbe(request ProbeRequest, observedAt time.Time, message string) map[ModelGroup]ProbeResult {
+	return map[ModelGroup]ProbeResult{
+		ModelGroupGemini:    failedProbeForGroup(request, observedAt, message, ModelGroupGemini),
+		ModelGroupClaudeGPT: failedProbeForGroup(request, observedAt, message, ModelGroupClaudeGPT),
+	}
+}
+
+func failedProbeForGroup(request ProbeRequest, observedAt time.Time, message string, group ModelGroup) ProbeResult {
+	result := failedResult(observedAt, group, safeError(message))
+	result.AuthIndex = request.AuthIndex
+	return result
+}
+
 func failedProbe(request ProbeRequest, observedAt time.Time, message string) ProbeResult {
 	result := failedResult(observedAt, request.ModelGroup, safeError(message))
 	result.AuthIndex = request.AuthIndex

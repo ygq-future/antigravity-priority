@@ -100,22 +100,66 @@ type ProbeSchedule struct {
 	NextProbeAt time.Time
 }
 
+// ScheduleConfig holds dynamic schedule control state persisted across restarts.
+type ScheduleConfig struct {
+	Paused        bool   `json:"paused"`
+	WindowEnabled bool   `json:"window_enabled"`
+	WindowStart   string `json:"window_start,omitempty"` // "HH:MM" format, e.g. "09:00"
+	WindowEnd     string `json:"window_end,omitempty"`   // "HH:MM" format, e.g. "23:00"
+}
+
+// DynamicConfig contains all runtime-customizable configuration parameters
+// that can be modified via the UI Config Center without restarting the plugin (REQ-09).
+type DynamicConfig struct {
+	AutoApply                bool                `json:"auto_apply"`
+	Interval                 string              `json:"interval"`                   // e.g. "15m", "30m"
+	AntigravityModelGroup    string              `json:"antigravity_model_group"`    // "gemini" or "claude_gpt"
+	MaxConcurrency           int                 `json:"max_concurrency"`
+	MinChange                int                 `json:"min_change"`
+	UrgencyTolerance         float64             `json:"urgency_tolerance"`          // e.g. 0.05
+	RateLimitCooldownMinutes int                 `json:"rate_limit_cooldown_minutes"` // e.g. 5
+	PriorityRules            PriorityRulesConfig `json:"priority_rules"`
+	Schedule                 ScheduleConfig      `json:"schedule"`
+}
+
+// CooldownEntry tracks temporary 429 rate limit circuit breaking for a credential.
+type CooldownEntry struct {
+	AuthIndex     string    `json:"auth_index"`
+	ModelGroup    string    `json:"model_group,omitempty"`
+	TriggeredAt   time.Time `json:"triggered_at"`
+	CooldownUntil time.Time `json:"cooldown_until"`
+	Reason        string    `json:"reason"`
+}
+
+// PriorityRulesConfig holds priority rule settings for DynamicConfig.
+type PriorityRulesConfig struct {
+	Enabled             bool `json:"enabled"`
+	BoostStartPriority  int  `json:"boost_start_priority"`
+	NormalStartPriority int  `json:"normal_start_priority"`
+}
+
 // Store manages the in-memory and on-disk state cache document.
 type Store struct {
-	mu           sync.RWMutex
-	path         string
-	entries      map[string]Entry
-	latestAudit  string
-	latestResult []byte
-	runHistory   []byte
+	mu             sync.RWMutex
+	path           string
+	entries        map[string]Entry
+	latestAudit    string
+	latestResult   []byte
+	runHistory     []byte
+	scheduleConfig *ScheduleConfig
+	dynamicConfig  *DynamicConfig
+	cooldowns      map[string]CooldownEntry
 }
 
 type document struct {
-	SchemaVersion int              `json:"schema_version"`
-	Entries       map[string]Entry `json:"entries"`
-	LatestAudit   string           `json:"latest_audit,omitempty"`
-	LatestResult  json.RawMessage  `json:"latest_result,omitempty"`
-	RunHistory    json.RawMessage  `json:"run_history,omitempty"`
+	SchemaVersion  int                      `json:"schema_version"`
+	Entries        map[string]Entry         `json:"entries"`
+	LatestAudit    string                   `json:"latest_audit,omitempty"`
+	LatestResult   json.RawMessage          `json:"latest_result,omitempty"`
+	RunHistory     json.RawMessage          `json:"run_history,omitempty"`
+	ScheduleConfig *ScheduleConfig          `json:"schedule_config,omitempty"`
+	DynamicConfig  *DynamicConfig           `json:"app_config,omitempty"`
+	Cooldowns      map[string]CooldownEntry `json:"cooldowns,omitempty"`
 }
 
 // Load loads the state document from path. If the file does not exist, an empty store is returned.
@@ -123,7 +167,7 @@ func Load(ctx context.Context, path string) (*Store, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("load state context: %w", err)
 	}
-	store := &Store{path: path, entries: make(map[string]Entry)}
+	store := &Store{path: path, entries: make(map[string]Entry), cooldowns: make(map[string]CooldownEntry)}
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -148,6 +192,17 @@ func Load(ctx context.Context, path string) (*Store, error) {
 	if len(doc.RunHistory) > 0 {
 		store.runHistory = append([]byte(nil), doc.RunHistory...)
 	}
+	if doc.ScheduleConfig != nil {
+		sc := *doc.ScheduleConfig
+		store.scheduleConfig = &sc
+	}
+	if doc.DynamicConfig != nil {
+		dc := *doc.DynamicConfig
+		store.dynamicConfig = &dc
+	}
+	if doc.Cooldowns != nil {
+		store.cooldowns = doc.Cooldowns
+	}
 	return store, nil
 }
 
@@ -159,11 +214,14 @@ func (s *Store) SaveAtomic(ctx context.Context) (err error) {
 	s.mu.RLock()
 	path := s.path
 	doc := document{
-		SchemaVersion: SchemaVersion,
-		Entries:       s.entries,
-		LatestAudit:   s.latestAudit,
-		LatestResult:  s.latestResult,
-		RunHistory:    s.runHistory,
+		SchemaVersion:  SchemaVersion,
+		Entries:        s.entries,
+		LatestAudit:    s.latestAudit,
+		LatestResult:   s.latestResult,
+		RunHistory:     s.runHistory,
+		ScheduleConfig: s.scheduleConfig,
+		DynamicConfig:  s.dynamicConfig,
+		Cooldowns:      s.cooldowns,
 	}
 	data, err := json.MarshalIndent(doc, "", "  ")
 	s.mu.RUnlock()
@@ -447,4 +505,89 @@ func sanitizeProbeError(err error) string {
 		return text[:240]
 	}
 	return text
+}
+
+// GetScheduleConfig returns a copy of the persisted schedule configuration.
+// Returns a zero-value ScheduleConfig if none has been stored.
+func (s *Store) GetScheduleConfig() ScheduleConfig {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.scheduleConfig == nil {
+		return ScheduleConfig{}
+	}
+	return *s.scheduleConfig
+}
+
+// SetScheduleConfig updates the persisted schedule configuration.
+func (s *Store) SetScheduleConfig(cfg ScheduleConfig) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.scheduleConfig = &cfg
+}
+
+// GetDynamicConfig returns a copy of the persisted dynamic configuration and true if present.
+func (s *Store) GetDynamicConfig() (DynamicConfig, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.dynamicConfig == nil {
+		return DynamicConfig{}, false
+	}
+	return *s.dynamicConfig, true
+}
+
+// SetDynamicConfig updates the persisted dynamic configuration.
+func (s *Store) SetDynamicConfig(cfg DynamicConfig) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.dynamicConfig = &cfg
+}
+
+// GetActiveCooldowns returns a map of auth_index -> CooldownUntil for unexpired 429 rate limit cooldowns.
+func (s *Store) GetActiveCooldowns(now time.Time) map[string]time.Time {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	active := make(map[string]time.Time)
+	for k, v := range s.cooldowns {
+		if now.Before(v.CooldownUntil) {
+			active[k] = v.CooldownUntil
+		}
+	}
+	return active
+}
+
+// GetCooldowns returns a copy of all current cooldown entries.
+func (s *Store) GetCooldowns() map[string]CooldownEntry {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	copied := make(map[string]CooldownEntry, len(s.cooldowns))
+	for k, v := range s.cooldowns {
+		copied[k] = v
+	}
+	return copied
+}
+
+// SetCooldown records or updates a 429 rate limit cooldown for a credential.
+func (s *Store) SetCooldown(entry CooldownEntry) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cooldowns == nil {
+		s.cooldowns = make(map[string]CooldownEntry)
+	}
+	s.cooldowns[entry.AuthIndex] = entry
+}
+
+// ClearExpiredCooldowns removes cooldowns whose CooldownUntil time has passed.
+func (s *Store) ClearExpiredCooldowns(now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for k, v := range s.cooldowns {
+		if !now.Before(v.CooldownUntil) {
+			delete(s.cooldowns, k)
+		}
+	}
+}
+
+// Path returns the file path of the state cache.
+func (s *Store) Path() string {
+	return s.path
 }

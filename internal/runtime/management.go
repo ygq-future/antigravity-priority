@@ -14,6 +14,7 @@ import (
 	"antigravity-priority/internal/apply"
 	"antigravity-priority/internal/config"
 	"antigravity-priority/internal/management"
+	"antigravity-priority/internal/state"
 )
 
 // ManagementRequest represents the HTTP request envelope passed by CPA management.handle.
@@ -60,6 +61,10 @@ func (r *Runtime) registerManagement() []byte {
 			{Method: http.MethodPost, Path: "/plugins/" + config.PluginID + "/reset"},
 			{Method: http.MethodGet, Path: "/plugins/" + config.PluginID + "/diagnostics"},
 			{Method: http.MethodGet, Path: "/plugins/" + config.PluginID + "/snapshot/latest"},
+			{Method: http.MethodGet, Path: "/plugins/" + config.PluginID + "/schedule/config"},
+			{Method: http.MethodPost, Path: "/plugins/" + config.PluginID + "/schedule/config"},
+			{Method: http.MethodGet, Path: "/plugins/" + config.PluginID + "/config"},
+			{Method: http.MethodPost, Path: "/plugins/" + config.PluginID + "/config"},
 		},
 		Resources: []managementResource{
 			{Path: "/status", Menu: "Antigravity Priority", Description: "Shows Antigravity priority status and audit summary."},
@@ -233,6 +238,13 @@ func (r managementRunner) Run(ctx context.Context, request management.RunRequest
 		result, _ := r.runtime.currentRunSnapshot()
 		return result, nil
 	}
+	if request.Mode == "probe" {
+		if err := r.runtime.Probe(ctx, request.AntigravityModelGroup, request.AuthIndexes); err != nil {
+			return apply.Result{}, err
+		}
+		result, _ := r.runtime.currentRunSnapshot()
+		return result, nil
+	}
 	if err := r.runtime.DryRun(ctx, request.AntigravityModelGroup, request.AuthIndexes); err != nil {
 		return apply.Result{}, err
 	}
@@ -248,12 +260,28 @@ func (r managementRunner) Status(ctx context.Context) (management.StatusInfo, er
 	return r.runtime.Status(ctx)
 }
 
-func (r managementRunner) LatestSnapshot(ctx context.Context) (apply.PlanSnapshot, error) {
+func (r managementRunner) LatestSnapshot(ctx context.Context) (apply.DualGroupSnapshot, error) {
 	return r.runtime.LatestSnapshot(ctx)
 }
 
 func (r managementRunner) Diagnostics(ctx context.Context) (map[string]any, error) {
 	return r.runtime.Diagnostics(ctx)
+}
+
+func (r managementRunner) GetScheduleConfig(ctx context.Context) (state.ScheduleConfig, error) {
+	return r.runtime.GetScheduleConfig(ctx)
+}
+
+func (r managementRunner) SetScheduleConfig(ctx context.Context, cfg state.ScheduleConfig) error {
+	return r.runtime.SetScheduleConfig(ctx, cfg)
+}
+
+func (r managementRunner) GetDynamicConfig(ctx context.Context) (state.DynamicConfig, error) {
+	return r.runtime.GetDynamicConfig(ctx)
+}
+
+func (r managementRunner) SetDynamicConfig(ctx context.Context, cfg state.DynamicConfig) error {
+	return r.runtime.SetDynamicConfig(ctx, cfg)
 }
 
 var _ management.Runner = managementRunner{}

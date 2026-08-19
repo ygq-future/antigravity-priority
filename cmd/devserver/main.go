@@ -10,12 +10,15 @@ import (
 
 	"antigravity-priority/internal/apply"
 	"antigravity-priority/internal/management"
+	"antigravity-priority/internal/state"
 )
 
 type devRunner struct {
-	mu         sync.Mutex
-	snapshot   apply.PlanSnapshot
-	runHistory []map[string]any
+	mu             sync.Mutex
+	snapshot       apply.PlanSnapshot
+	runHistory     []map[string]any
+	scheduleConfig state.ScheduleConfig
+	dynamicConfig  state.DynamicConfig
 }
 
 func newDevRunner() *devRunner {
@@ -188,6 +191,26 @@ func newDevRunner() *devRunner {
 	return &devRunner{
 		snapshot:   snapshot,
 		runHistory: history,
+		dynamicConfig: state.DynamicConfig{
+			AutoApply:                true,
+			Interval:                 "15m",
+			AntigravityModelGroup:    "gemini",
+			MaxConcurrency:           6,
+			MinChange:                1,
+			UrgencyTolerance:         0.05,
+			RateLimitCooldownMinutes: 5,
+			PriorityRules: state.PriorityRulesConfig{
+				Enabled:             true,
+				BoostStartPriority:  999,
+				NormalStartPriority: 100,
+			},
+			Schedule: state.ScheduleConfig{
+				Paused:        false,
+				WindowEnabled: false,
+				WindowStart:   "00:00",
+				WindowEnd:     "23:59",
+			},
+		},
 	}
 }
 
@@ -285,10 +308,13 @@ func (d *devRunner) Status(ctx context.Context) (management.StatusInfo, error) {
 	}, nil
 }
 
-func (d *devRunner) LatestSnapshot(ctx context.Context) (apply.PlanSnapshot, error) {
+func (d *devRunner) LatestSnapshot(ctx context.Context) (apply.DualGroupSnapshot, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return d.snapshot, nil
+	return apply.NewDualGroupSnapshot(
+		"gemini", time.Now().UTC(), d.snapshot,
+		apply.PlanSnapshot{Items: []apply.SnapshotItem{}, Changes: []apply.SnapshotChange{}},
+	), nil
 }
 
 func (d *devRunner) Diagnostics(ctx context.Context) (map[string]any, error) {
@@ -309,6 +335,34 @@ func (d *devRunner) Diagnostics(ctx context.Context) (map[string]any, error) {
 		"latest_audit": "all 4 credentials healthy & double-window monitored",
 		"run_history":  d.runHistory,
 	}, nil
+}
+
+func (d *devRunner) GetScheduleConfig(ctx context.Context) (state.ScheduleConfig, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.scheduleConfig, nil
+}
+
+func (d *devRunner) SetScheduleConfig(ctx context.Context, cfg state.ScheduleConfig) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.scheduleConfig = cfg
+	d.dynamicConfig.Schedule = cfg
+	return nil
+}
+
+func (d *devRunner) GetDynamicConfig(ctx context.Context) (state.DynamicConfig, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.dynamicConfig, nil
+}
+
+func (d *devRunner) SetDynamicConfig(ctx context.Context, cfg state.DynamicConfig) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.dynamicConfig = cfg
+	d.scheduleConfig = cfg.Schedule
+	return nil
 }
 
 func main() {

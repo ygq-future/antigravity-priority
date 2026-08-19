@@ -32,11 +32,23 @@ _Avoid_: Boost threshold, near-reset deadline, emergency window
 The mathematical ratio of remaining weekly quota proportion to remaining hours until weekly reset ($\text{Urgency}_{\text{weekly}} = R_{\text{7d}} / \max(T_{\text{7d}}, 0.5)$), representing unit-time burn pressure.
 _Avoid_: Priority score, account rank, sort index
 
+**Equal Priority Clustering (Priority Bucketing)**:
+Grouping credentials with near-identical Weekly Urgency metrics ($\Delta \text{Urgency} \le \text{UrgencyTolerance}$) into the same priority integer tier, enabling CPA to perform round-robin load balancing across healthy peers instead of single-point saturation.
+_Avoid_: Random priority, flat priority, forced unique decrement
+
+**Urgency Tolerance**:
+The numerical delta threshold $\Delta \text{Urgency}$ (default 0.05) below which adjacent credentials are assigned identical priority scores.
+_Avoid_: Margin of error, floating threshold, priority gap
+
 **Fresh Evidence**:
 Verified quota observation data obtained from a successful probe in the current scheduling round.
 _Avoid_: Cached state, stale data, fallback record
 
-### Quota Depletion States
+### Quota Depletion & Cooldown States
+
+**429 Reactive Cooldown (Circuit Breaker)**:
+Temporarily demoting an account's priority to `-1` upon encountering an upstream Google 429 Rate Limit error for a configurable duration (default 5 minutes), isolating the credential into the bottom fallback tier while preserving its enabled state.
+_Avoid_: Ban, account punishment, hard disable
 
 **Soft Depletion**:
 Setting priority to `-1` while maintaining `disabled = false` when the 5-hour short window is exhausted ($R_{\text{5h}} \le 0$), enabling automatic self-healing upon the 5-hour reset.

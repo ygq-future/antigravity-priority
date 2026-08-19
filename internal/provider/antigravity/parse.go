@@ -61,7 +61,29 @@ func ParseAvailableModels(raw []byte, observedAt time.Time, group ModelGroup) Pr
 	if err := decoder.Decode(&response); err != nil {
 		return failedResult(observedAt, group, "parse antigravity quota failed")
 	}
+	return parseGroupFromResponse(response, observedAt, group)
+}
 
+// ParseAllModelGroups parses the Antigravity quota summary JSON into ProbeResults
+// for all known model groups from a single decode pass. A single HTTP response
+// contains quota for all models; this extracts both gemini and claude_gpt groups.
+func ParseAllModelGroups(raw []byte, observedAt time.Time) map[ModelGroup]ProbeResult {
+	var response availableModelsResponse
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&response); err != nil {
+		return map[ModelGroup]ProbeResult{
+			ModelGroupGemini:    failedResult(observedAt, ModelGroupGemini, "parse antigravity quota failed"),
+			ModelGroupClaudeGPT: failedResult(observedAt, ModelGroupClaudeGPT, "parse antigravity quota failed"),
+		}
+	}
+	return map[ModelGroup]ProbeResult{
+		ModelGroupGemini:    parseGroupFromResponse(response, observedAt, ModelGroupGemini),
+		ModelGroupClaudeGPT: parseGroupFromResponse(response, observedAt, ModelGroupClaudeGPT),
+	}
+}
+
+func parseGroupFromResponse(response availableModelsResponse, observedAt time.Time, group ModelGroup) ProbeResult {
 	windows := collectGroupWindows(response, group)
 	selected, ok := pickEffectiveWindow(windows)
 	if !ok {

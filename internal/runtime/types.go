@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"antigravity-priority/internal/apply"
 	"antigravity-priority/internal/config"
 	"antigravity-priority/internal/host"
 )
@@ -28,6 +29,8 @@ const (
 	TriggerManualApply Trigger = "manual_apply"
 	// TriggerAutoApply indicates a background scheduled auto-apply execution.
 	TriggerAutoApply Trigger = "auto_apply"
+	// TriggerProbe indicates a probe-only execution that fetches fresh quota without planning or applying.
+	TriggerProbe Trigger = "probe"
 )
 
 // TaskRequest holds parameters for an internal scheduling run.
@@ -63,14 +66,15 @@ type TickerFactory interface {
 
 // RunHistoryEntry records the execution outcome of a scheduling run.
 type RunHistoryEntry struct {
-	Kind      string    `json:"kind"`
-	Trigger   string    `json:"trigger"`
-	At        time.Time `json:"at"`
-	Attempted int       `json:"attempted"`
-	Succeeded int       `json:"succeeded"`
-	Failed    int       `json:"failed"`
-	Skipped   int       `json:"skipped"`
-	Message   string    `json:"message"`
+	Kind      string             `json:"kind"`
+	Trigger   string             `json:"trigger"`
+	At        time.Time          `json:"at"`
+	Attempted int                `json:"attempted"`
+	Succeeded int                `json:"succeeded"`
+	Failed    int                `json:"failed"`
+	Skipped   int                `json:"skipped"`
+	Message   string             `json:"message"`
+	Snapshot  *apply.PlanSnapshot `json:"snapshot,omitempty"`
 }
 
 // RegisterRequest is the JSON request payload for plugin.register.

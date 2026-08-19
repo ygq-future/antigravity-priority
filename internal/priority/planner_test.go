@@ -20,7 +20,7 @@ func TestPlanFreshOnly(t *testing.T) {
 		MinChange:           1,
 	}
 
-	t.Run("acceptance: boosted tier decrements from 999 uniquely", func(t *testing.T) {
+	t.Run("acceptance: boosted tier clustering with tolerance", func(t *testing.T) {
 		creds := []core.Credential{
 			{AuthIndex: "boost-1", Priority: 50, Disabled: false},
 			{AuthIndex: "boost-2", Priority: 50, Disabled: false},
@@ -75,13 +75,15 @@ func TestPlanFreshOnly(t *testing.T) {
 			},
 		}
 
-		plan := PlanFreshOnly(creds, evidence, defaultOptions)
+		optsTight := defaultOptions
+		optsTight.UrgencyTolerance = 0.01
+		plan := PlanFreshOnly(creds, evidence, optsTight)
 
 		if len(plan.Items) != 3 {
 			t.Fatalf("expected 3 items, got %d", len(plan.Items))
 		}
 
-		// Sorted order should be boost-2 (urgency 0.16) -> boost-1 (0.08) -> boost-3 (0.04)
+		// Sorted order with tight tolerance: boost-2 (0.16) -> 999, boost-1 (0.08) -> 998, boost-3 (0.04) -> 997
 		itemMap := make(map[string]PlanItem)
 		for _, item := range plan.Items {
 			itemMap[item.Credential.AuthIndex] = item
@@ -103,11 +105,78 @@ func TestPlanFreshOnly(t *testing.T) {
 		}
 	})
 
+	t.Run("equal priority clustering: healthy accounts with close urgency share identical priority", func(t *testing.T) {
+		creds := []core.Credential{
+			{AuthIndex: "acc-1", Priority: 50, Disabled: false},
+			{AuthIndex: "acc-2", Priority: 50, Disabled: false},
+			{AuthIndex: "acc-3", Priority: 50, Disabled: false},
+			{AuthIndex: "acc-4", Priority: 50, Disabled: false},
+		}
+
+		reset7d := now.Add(100 * time.Hour)
+		reset5h := now.Add(2 * time.Hour)
+
+		// All 4 accounts have close weekly balances: 85%, 84%, 83%, 82% (Urgency: 0.0085, 0.0084, 0.0083, 0.0082)
+		// Max delta is 0.0003, well within default tolerance of 0.05
+		evidence := []ProbeEvidence{
+			{AuthIndex: "acc-1", LongWindowRemaining: int64Ptr(85), LongWindowResetAt: &reset7d, ShortWindowRemaining: int64Ptr(90), ShortWindowResetAt: &reset5h, CycleBurnRate: 0.15, EvidenceFresh: true, Freshness: core.FreshnessFresh, ProbeStatus: core.ProbeStatusReady, Status: EvidenceStatusReady},
+			{AuthIndex: "acc-2", LongWindowRemaining: int64Ptr(84), LongWindowResetAt: &reset7d, ShortWindowRemaining: int64Ptr(90), ShortWindowResetAt: &reset5h, CycleBurnRate: 0.15, EvidenceFresh: true, Freshness: core.FreshnessFresh, ProbeStatus: core.ProbeStatusReady, Status: EvidenceStatusReady},
+			{AuthIndex: "acc-3", LongWindowRemaining: int64Ptr(83), LongWindowResetAt: &reset7d, ShortWindowRemaining: int64Ptr(90), ShortWindowResetAt: &reset5h, CycleBurnRate: 0.15, EvidenceFresh: true, Freshness: core.FreshnessFresh, ProbeStatus: core.ProbeStatusReady, Status: EvidenceStatusReady},
+			{AuthIndex: "acc-4", LongWindowRemaining: int64Ptr(82), LongWindowResetAt: &reset7d, ShortWindowRemaining: int64Ptr(90), ShortWindowResetAt: &reset5h, CycleBurnRate: 0.15, EvidenceFresh: true, Freshness: core.FreshnessFresh, ProbeStatus: core.ProbeStatusReady, Status: EvidenceStatusReady},
+		}
+
+		plan := PlanFreshOnly(creds, evidence, defaultOptions)
+		for _, item := range plan.Items {
+			if item.Priority != 100 {
+				t.Errorf("expected account %s in same cluster to get priority 100, got %d", item.Credential.AuthIndex, item.Priority)
+			}
+		}
+	})
+
+	t.Run("429 rate limit cooldown sets priority to -1 while keeping disabled false", func(t *testing.T) {
+		creds := []core.Credential{
+			{AuthIndex: "acc-healthy", Priority: 50, Disabled: false},
+			{AuthIndex: "acc-cooldown", Priority: 50, Disabled: false},
+		}
+
+		reset7d := now.Add(100 * time.Hour)
+		reset5h := now.Add(2 * time.Hour)
+
+		evidence := []ProbeEvidence{
+			{AuthIndex: "acc-healthy", LongWindowRemaining: int64Ptr(80), LongWindowResetAt: &reset7d, ShortWindowRemaining: int64Ptr(90), ShortWindowResetAt: &reset5h, CycleBurnRate: 0.15, EvidenceFresh: true, Freshness: core.FreshnessFresh, ProbeStatus: core.ProbeStatusReady, Status: EvidenceStatusReady},
+			{AuthIndex: "acc-cooldown", LongWindowRemaining: int64Ptr(80), LongWindowResetAt: &reset7d, ShortWindowRemaining: int64Ptr(90), ShortWindowResetAt: &reset5h, CycleBurnRate: 0.15, EvidenceFresh: true, Freshness: core.FreshnessFresh, ProbeStatus: core.ProbeStatusReady, Status: EvidenceStatusReady},
+		}
+
+		opts := defaultOptions
+		opts.CooldownAuthIndexes = map[string]time.Time{
+			"acc-cooldown": now.Add(5 * time.Minute),
+		}
+
+		plan := PlanFreshOnly(creds, evidence, opts)
+		itemMap := make(map[string]PlanItem)
+		for _, item := range plan.Items {
+			itemMap[item.Credential.AuthIndex] = item
+		}
+
+		if itemMap["acc-healthy"].Priority != 100 {
+			t.Errorf("healthy account priority = %d; want 100", itemMap["acc-healthy"].Priority)
+		}
+		if itemMap["acc-cooldown"].Priority != -1 {
+			t.Errorf("cooldown account priority = %d; want -1", itemMap["acc-cooldown"].Priority)
+		}
+		if itemMap["acc-cooldown"].Disabled {
+			t.Errorf("cooldown account should NOT be disabled, got Disabled=true")
+		}
+		if itemMap["acc-cooldown"].Reason != "429 rate limit cooldown" {
+			t.Errorf("cooldown reason = %q; want '429 rate limit cooldown'", itemMap["acc-cooldown"].Reason)
+		}
+	})
+
 	t.Run("acceptance: hard depletion strict precedence over soft depletion", func(t *testing.T) {
 		creds := []core.Credential{
 			{AuthIndex: "hard-depleted", Priority: 100, Disabled: false},
 			{AuthIndex: "both-depleted", Priority: 100, Disabled: false},
-			{AuthIndex: "soft-depleted", Priority: 100, Disabled: true}, // was disabled on host
+			{AuthIndex: "soft-depleted", Priority: 100, Disabled: false},
 		}
 
 		reset7d := now.Add(100 * time.Hour)
@@ -163,9 +232,48 @@ func TestPlanFreshOnly(t *testing.T) {
 		if itemMap["both-depleted"].Priority != -1 || !itemMap["both-depleted"].Disabled {
 			t.Errorf("both-depleted: priority=%d disabled=%v; want -1, true", itemMap["both-depleted"].Priority, itemMap["both-depleted"].Disabled)
 		}
-		// soft-depleted: priority=-1, disabled=false (soft depletion clears disabled on host!)
+		// soft-depleted: priority=-1, disabled=false (soft depletion keeps disabled=false for auto-recovery)
 		if itemMap["soft-depleted"].Priority != -1 || itemMap["soft-depleted"].Disabled {
 			t.Errorf("soft-depleted: priority=%d disabled=%v; want -1, false", itemMap["soft-depleted"].Priority, itemMap["soft-depleted"].Disabled)
+		}
+	})
+
+	t.Run("manually disabled credential on host is never re-enabled even with healthy quota", func(t *testing.T) {
+		creds := []core.Credential{
+			{AuthIndex: "user-disabled-healthy", Priority: 100, Disabled: true},
+		}
+		reset7d := now.Add(100 * time.Hour)
+		reset5h := now.Add(3 * time.Hour)
+		evidence := []ProbeEvidence{
+			{
+				AuthIndex:            "user-disabled-healthy",
+				LongWindowRemaining:  int64Ptr(90),
+				LongWindowResetAt:    &reset7d,
+				ShortWindowRemaining: int64Ptr(90),
+				ShortWindowResetAt:   &reset5h,
+				CycleBurnRate:        0.15,
+				EvidenceFresh:        true,
+				Freshness:            core.FreshnessFresh,
+				ProbeStatus:          core.ProbeStatusReady,
+				Status:               EvidenceStatusReady,
+			},
+		}
+
+		plan := PlanFreshOnly(creds, evidence, defaultOptions)
+		if len(plan.Items) != 1 {
+			t.Fatalf("expected 1 item, got %d", len(plan.Items))
+		}
+		if !plan.Items[0].Disabled {
+			t.Errorf("expected manually disabled account to stay disabled (Disabled=true), got Disabled=false")
+		}
+		if plan.Items[0].Priority != DepletedPriority {
+			t.Errorf("expected priority %d, got %d", DepletedPriority, plan.Items[0].Priority)
+		}
+		// Must not generate any change enabling the account
+		for _, chg := range plan.Changes {
+			if chg.Credential.AuthIndex == "user-disabled-healthy" && !chg.Disabled {
+				t.Errorf("plan generated change enabling user-disabled credential: %+v", chg)
+			}
 		}
 	})
 
@@ -239,24 +347,27 @@ func TestPlanFreshOnly(t *testing.T) {
 			},
 		}
 
-		plan := PlanFreshOnly(creds, evidence, defaultOptions)
+		optsTight := defaultOptions
+		optsTight.UrgencyTolerance = 0.001
+		plan := PlanFreshOnly(creds, evidence, optsTight)
 		itemMap := make(map[string]PlanItem)
 		for _, item := range plan.Items {
 			itemMap[item.Credential.AuthIndex] = item
 		}
 
-		// Expected order: reg-d (100) -> reg-b (99) -> reg-a (98) -> reg-c (97)
+		// reg-d has urgency 0.010 -> Tier 1 (100)
+		// reg-b, reg-a, reg-c all share urgency 0.005 -> Tier 2 (99)
 		if itemMap["reg-d"].Priority != 100 {
 			t.Errorf("reg-d priority = %d; want 100", itemMap["reg-d"].Priority)
 		}
 		if itemMap["reg-b"].Priority != 99 {
 			t.Errorf("reg-b priority = %d; want 99", itemMap["reg-b"].Priority)
 		}
-		if itemMap["reg-a"].Priority != 98 {
-			t.Errorf("reg-a priority = %d; want 98", itemMap["reg-a"].Priority)
+		if itemMap["reg-a"].Priority != 99 {
+			t.Errorf("reg-a priority = %d; want 99", itemMap["reg-a"].Priority)
 		}
-		if itemMap["reg-c"].Priority != 97 {
-			t.Errorf("reg-c priority = %d; want 97", itemMap["reg-c"].Priority)
+		if itemMap["reg-c"].Priority != 99 {
+			t.Errorf("reg-c priority = %d; want 99", itemMap["reg-c"].Priority)
 		}
 	})
 
@@ -313,16 +424,10 @@ func TestPlanFreshOnly(t *testing.T) {
 			t.Errorf("fresh-reg priority = %d; want 100", itemMap["fresh-reg"].Priority)
 		}
 
-		// unprobed-peer-collision had priority 100, but 100 was taken by fresh-reg -> shifted to 99
+		// unprobed-peer-collision had priority 100 -> stays <= 100
 		unprobedColl := itemMap["unprobed-peer-collision"]
-		if unprobedColl.Priority == 100 {
-			t.Errorf("unprobed-peer-collision priority should have shifted away from 100")
-		}
-		if !unprobedColl.ForceWrite {
-			t.Errorf("unprobed-peer-collision ForceWrite = false; want true")
-		}
-		if unprobedColl.Reason != "priority uniqueness" {
-			t.Errorf("unprobed-peer-collision Reason = %s; want 'priority uniqueness'", unprobedColl.Reason)
+		if unprobedColl.Priority > 100 {
+			t.Errorf("unprobed-peer-collision priority = %d; want <= 100", unprobedColl.Priority)
 		}
 
 		// unprobed-peer-safe had priority 70 -> stays 70, ForceWrite = false
@@ -332,18 +437,6 @@ func TestPlanFreshOnly(t *testing.T) {
 		}
 		if unprobedSafe.ForceWrite {
 			t.Errorf("unprobed-peer-safe ForceWrite = true; want false")
-		}
-
-		// All positive priorities of enabled items must be distinct
-		seen := make(map[int]string)
-		for _, item := range plan.Items {
-			if item.Disabled || item.Priority < 1 {
-				continue
-			}
-			if prevAuth, exists := seen[item.Priority]; exists {
-				t.Fatalf("collision detected at priority %d between %s and %s", item.Priority, prevAuth, item.Credential.AuthIndex)
-			}
-			seen[item.Priority] = item.Credential.AuthIndex
 		}
 	})
 
@@ -521,10 +614,10 @@ func TestPlanFreshOnly(t *testing.T) {
 		if itemMap["fresh-prio-100"].Priority != 100 {
 			t.Errorf("fresh-prio-100 priority = %d; want 100", itemMap["fresh-prio-100"].Priority)
 		}
-		// unprobed-legacy-999 had 999, should be capped to <= 100 and since 100 is used, assigned 99
+		// unprobed-legacy-999 had 999, should be capped to <= 100
 		unprobed := itemMap["unprobed-legacy-999"]
-		if unprobed.Priority != 99 {
-			t.Errorf("unprobed-legacy-999 priority = %d; want 99", unprobed.Priority)
+		if unprobed.Priority != 100 {
+			t.Errorf("unprobed-legacy-999 priority = %d; want 100", unprobed.Priority)
 		}
 		if !unprobed.ForceWrite {
 			t.Errorf("unprobed-legacy-999 ForceWrite = false; want true")

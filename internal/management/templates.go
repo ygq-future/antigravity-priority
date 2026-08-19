@@ -813,6 +813,288 @@ const StatusHTML = `<!DOCTYPE html>
             .topbar { flex-direction: column; align-items: flex-start; }
             .topbar-actions { width: 100%; justify-content: space-between; margin-right: 0; }
         }
+
+        /* REQ-06: Scroll containment */
+        .scroll-container {
+            max-height: calc(100vh - 280px);
+            overflow-y: auto;
+            scrollbar-width: thin;
+            scrollbar-color: var(--border-color) transparent;
+        }
+        .scroll-container::-webkit-scrollbar { width: 5px; }
+        .scroll-container::-webkit-scrollbar-track { background: transparent; }
+        .scroll-container::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 999px; }
+
+        .diag-scroll { max-height: 480px; overflow: auto; }
+
+        /* REQ-06: Dual-column grid */
+        .credentials-grid.dual-column {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+        .credentials-grid.dual-column .cred-card {
+            grid-template-columns: 1fr;
+            gap: 12px;
+        }
+        .credentials-grid.dual-column .cred-card .cred-priority {
+            align-items: flex-start;
+            flex-direction: row;
+            gap: 10px;
+        }
+
+        /* REQ-03: Confirm modal */
+        .confirm-title {
+            margin: 0;
+            font-size: 18px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .confirm-message {
+            font-size: 14px;
+            color: var(--text-secondary);
+            margin: 0;
+            line-height: 1.6;
+        }
+        .confirm-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            margin-top: 8px;
+        }
+
+        /* REQ-06: Toast animations */
+        @keyframes toastIn {
+            from { transform: translateX(30px) scale(0.95); opacity: 0; }
+            to   { transform: translateX(0) scale(1); opacity: 1; }
+        }
+        @keyframes toastOut {
+            from { opacity: 1; transform: translateY(0); }
+            to   { opacity: 0; transform: translateY(-8px); }
+        }
+        .toast { animation: toastIn 240ms cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+        .toast.toast-exit { animation: toastOut 200ms ease forwards; }
+
+        /* REQ-06: Modal animations */
+        @keyframes modalBgIn {
+            from { opacity: 0; }
+            to   { opacity: 1; }
+        }
+        @keyframes modalIn {
+            from { transform: translateY(12px) scale(0.96); opacity: 0; }
+            to   { transform: translateY(0) scale(1); opacity: 1; }
+        }
+        .modal-backdrop { animation: modalBgIn 200ms ease forwards; }
+        .modal-backdrop .modal { animation: modalIn 260ms cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+
+        /* REQ-06: Tab fade */
+        section[id^="panel"] { transition: opacity 0.18s ease-out; }
+
+        /* REQ-06: Meter smooth transition */
+        .meter-fill { transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.3s ease; }
+
+        /* REQ-06: Loading shimmer */
+        @keyframes shimmer {
+            0%   { background-position: -200% 0; }
+            100% { background-position: 200% 0; }
+        }
+        .shimmer-loading {
+            background: linear-gradient(90deg, var(--bg-subtle) 25%, var(--bg-hover) 50%, var(--bg-subtle) 75%);
+            background-size: 200% 100%;
+            animation: shimmer 1.5s ease-in-out infinite;
+            border-radius: 8px;
+            min-height: 60px;
+        }
+
+        /* REQ-06: Copy button */
+        .diag-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .btn-copy {
+            min-height: 30px;
+            padding: 4px 10px;
+            font-size: 12px;
+        }
+
+        /* REQ-02: Config warnings */
+        .config-warnings { display: grid; gap: 6px; }
+        .config-warning-item {
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 600;
+            background: var(--accent-yellow-subtle);
+            color: var(--accent-yellow-text);
+            border: 1px solid var(--accent-yellow);
+            border-left-width: 4px;
+        }
+
+        /* REQ-08: Schedule status */
+        .schedule-status {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 700;
+            background: var(--bg-subtle);
+            border: 1px solid var(--border-subtle);
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+        .schedule-status:hover { background: var(--bg-hover); }
+        .schedule-status.active { color: var(--accent-green-text); }
+        .schedule-status.paused { color: var(--accent-yellow-text); }
+
+        /* REQ-05: Predicted priority badge */
+        .priority-predicted {
+            color: var(--accent-purple-text);
+        }
+        .badge-predicted {
+            background: var(--accent-purple-subtle);
+            border: 1px solid var(--accent-purple);
+            color: var(--accent-purple-text);
+            font-size: 11px;
+        }
+
+        /* REQ-04: Probe cooldown */
+        .btn-cooldown { opacity: 0.6; cursor: not-allowed !important; }
+
+        /* View toggle */
+        .btn-toggle-active {
+            background: var(--accent-blue-subtle);
+            color: var(--accent-blue-text);
+            border-color: var(--accent-blue);
+        }
+
+        /* REQ-09: Config Center */
+        .config-grid {
+            display: grid;
+            gap: 20px;
+        }
+        .config-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 14px;
+            padding: 20px;
+            display: grid;
+            gap: 16px;
+        }
+        .config-card-title {
+            margin: 0;
+            font-size: 15px;
+            font-weight: 750;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .form-row {
+            display: grid;
+            grid-template-columns: minmax(180px, 1.2fr) minmax(200px, 1fr);
+            gap: 16px;
+            align-items: center;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        .form-row:last-child {
+            border-bottom: 0;
+            padding-bottom: 0;
+        }
+        .form-label-box {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+        .form-title {
+            font-size: 13px;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+        .form-hint {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+        .form-input-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .form-input-group input[type="text"],
+        .form-input-group input[type="number"],
+        .form-input-group select {
+            min-height: 38px;
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 8px 12px;
+            font: inherit;
+            font-size: 13px;
+            background: var(--bg-card);
+            color: var(--text-primary);
+            width: 100%;
+        }
+        .form-input-group select {
+            cursor: pointer;
+        }
+        .toggle-label {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            user-select: none;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 44px;
+            height: 24px;
+        }
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-color: var(--meter-bg);
+            border-radius: 24px;
+            transition: .25s;
+        }
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            border-radius: 50%;
+            transition: .25s;
+        }
+        .toggle-switch input:checked + .toggle-slider {
+            background-color: var(--accent-green);
+        }
+        .toggle-switch input:checked + .toggle-slider:before {
+            transform: translateX(20px);
+        }
+        .config-actions-bar {
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+            padding: 16px 20px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 14px;
+            margin-top: 10px;
+        }
     </style>
 </head>
 <body>
@@ -821,7 +1103,7 @@ const StatusHTML = `<!DOCTYPE html>
             <div class="brand-zone">
                 <h1>
                     <span data-i18n="title">Antigravity Priority</span>
-                    <span class="version-badge">v1.0.1</span>
+                    <span class="version-badge">v1.1.0</span>
                 </h1>
             </div>
             <div class="topbar-actions">
@@ -839,6 +1121,7 @@ const StatusHTML = `<!DOCTYPE html>
             <button type="button" class="tab active" data-tab="overview" onclick="switchTab('overview')" data-i18n="tabOverview">概览与仪表盘</button>
             <button type="button" class="tab" data-tab="history" onclick="switchTab('history')" data-i18n="tabHistory">执行历史</button>
             <button type="button" class="tab" data-tab="diagnostics" onclick="switchTab('diagnostics')" data-i18n="tabDiagnostics">系统诊断</button>
+            <button type="button" class="tab" data-tab="config" onclick="switchTab('config')" data-i18n="tabConfig">⚙️ 配置中心</button>
             <button type="button" class="tab" data-tab="help" onclick="switchTab('help')" data-i18n="tabHelp">使用帮助</button>
         </nav>
 
@@ -897,9 +1180,20 @@ const StatusHTML = `<!DOCTYPE html>
                     </div>
                 </div>
                 <div class="control-group">
+                    <button type="button" class="btn-secondary" onclick="toggleViewMode()" id="btnViewToggle" title="Toggle view">
+                        <span id="viewToggleLabel">🔲</span>
+                    </button>
+                    <span id="scheduleStatusBadge" class="schedule-status active" onclick="toggleSchedulePause()" title="Click to toggle pause">
+                        🟢 <span id="scheduleStatusText" data-i18n="scheduleActive">自动调度运行中</span>
+                    </span>
+                </div>
+                <div class="control-group">
                     <button type="button" class="btn-secondary" onclick="refreshDashboard()" id="btnRefresh" data-i18n="btnRefresh">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
                         <span>刷新</span>
+                    </button>
+                    <button type="button" class="btn-secondary" onclick="triggerProbe()" id="btnProbe">
+                        <span>📡 <span data-i18n="btnProbe">获取最新配额</span></span>
                     </button>
                     <button type="button" class="btn-secondary" onclick="triggerRun('dry-run')" id="btnDryRun" data-i18n="btnDryRun">
                         <span>🔍 试运行 (Dry-Run)</span>
@@ -913,7 +1207,7 @@ const StatusHTML = `<!DOCTYPE html>
                 </div>
             </div>
 
-            <div id="credentialsContainer" class="credentials-grid">
+            <div id="credentialsContainer" class="credentials-grid scroll-container">
                 <div class="empty-state" data-i18n="loading">加载中...</div>
             </div>
         </section>
@@ -924,7 +1218,7 @@ const StatusHTML = `<!DOCTYPE html>
                     <h2 style="margin:0; font-size:16px;" data-i18n="historyTitle">最近执行记录 (最近 10 次)</h2>
                     <button type="button" class="btn-secondary" onclick="fetchDiagnostics()" data-i18n="btnRefresh">刷新</button>
                 </div>
-                <div id="historyList" style="display:grid; gap:12px;">
+                <div id="historyList" class="scroll-container" style="display:grid; gap:12px;">
                     <div class="empty-state" data-i18n="noHistory">暂无执行历史</div>
                 </div>
             </div>
@@ -933,8 +1227,191 @@ const StatusHTML = `<!DOCTYPE html>
         <section id="panelDiagnostics" hidden>
             <div class="card" style="display:grid; gap:16px;">
                 <h2 style="margin:0; font-size:16px;" data-i18n="diagnosticsTitle">系统运行诊断与调度状态</h2>
+                <div id="configWarnings" class="config-warnings" hidden></div>
                 <div id="schedulerInfo" class="diff-card" style="font-size:13px;"></div>
-                <pre id="rawDiagnostics" class="code-block"></pre>
+                <div class="diag-header">
+                    <span style="font-size:13px; font-weight:600; color:var(--text-muted);">Raw JSON</span>
+                    <button type="button" class="btn-secondary btn-copy" onclick="copyDiagnosticsJSON()">📋 <span data-i18n="btnCopy">复制 JSON</span></button>
+                </div>
+                <pre id="rawDiagnostics" class="code-block diag-scroll"></pre>
+            </div>
+        </section>
+
+        <!-- REQ-09: Configuration Center Panel -->
+        <section id="panelConfig" hidden>
+            <div class="config-grid">
+                <!-- Card 1: Scheduling & Active Time Window -->
+                <div class="config-card">
+                    <h3 class="config-card-title">
+                        <span>⏰</span>
+                        <span data-i18n="cfgCardScheduleTitle">自动调度与时段配置</span>
+                    </h3>
+
+                    <div class="form-row">
+                        <div class="form-label-box">
+                            <span class="form-title" data-i18n="cfgAutoApply">自动定时调度</span>
+                            <span class="form-hint" data-i18n="cfgAutoApplyHint">周期性自动探测并智能更新宿主凭证优先级</span>
+                        </div>
+                        <div class="form-input-group">
+                            <label class="toggle-label">
+                                <span class="toggle-switch">
+                                    <input type="checkbox" id="cfgAutoApply">
+                                    <span class="toggle-slider"></span>
+                                </span>
+                                <span id="cfgAutoApplyStatusText">已开启</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-label-box">
+                            <span class="form-title" data-i18n="cfgInterval">调度执行周期</span>
+                            <span class="form-hint" data-i18n="cfgIntervalHint">自动调度与探测的执行间隔（如 15m, 30m, 1h）</span>
+                        </div>
+                        <div class="form-input-group">
+                            <select id="cfgIntervalSelect" onchange="onIntervalSelectChange()">
+                                <option value="5m">5 分钟 (5m)</option>
+                                <option value="15m" selected>15 分钟 (15m - 推荐)</option>
+                                <option value="30m">30 分钟 (30m)</option>
+                                <option value="1h">1 小时 (1h)</option>
+                                <option value="custom">自定义 (Custom)</option>
+                            </select>
+                            <input type="text" id="cfgIntervalCustom" placeholder="15m" style="max-width: 100px;" hidden>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-label-box">
+                            <span class="form-title" data-i18n="cfgModelGroup">配额主控模型组</span>
+                            <span class="form-hint" data-i18n="cfgModelGroupHint">作为主要写回依据的模型组</span>
+                        </div>
+                        <div class="form-input-group">
+                            <select id="cfgModelGroup">
+                                <option value="gemini">Gemini 模型 (gemini)</option>
+                                <option value="claude_gpt">Claude 与 GPT 模型 (claude_gpt)</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-label-box">
+                            <span class="form-title" data-i18n="cfgScheduleWindow">生效时间区间</span>
+                            <span class="form-hint" data-i18n="cfgScheduleWindowHint">仅在每日指定时间段内执行调度（支持跨午夜，如 22:00-06:00）</span>
+                        </div>
+                        <div style="display:flex; flex-direction:column; gap:8px;">
+                            <label class="toggle-label" style="font-size:12px;">
+                                <input type="checkbox" id="cfgWindowEnabled" onchange="onWindowEnabledChange()">
+                                <span data-i18n="cfgWindowEnabledLabel">仅在指定时段运行 (非此时段休眠)</span>
+                            </label>
+                            <div id="cfgWindowInputs" style="display:flex; align-items:center; gap:8px;">
+                                <input type="text" id="cfgWindowStart" placeholder="09:00" style="max-width:90px; text-align:center;">
+                                <span>至</span>
+                                <input type="text" id="cfgWindowEnd" placeholder="23:00" style="max-width:90px; text-align:center;">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Card 2: Probing & Performance -->
+                <div class="config-card">
+                    <h3 class="config-card-title">
+                        <span>⚡</span>
+                        <span data-i18n="cfgCardPerfTitle">探测与写回性能</span>
+                    </h3>
+
+                    <div class="form-row">
+                        <div class="form-label-box">
+                            <span class="form-title" data-i18n="cfgMaxConcurrency">最大探测并发数</span>
+                            <span class="form-hint" data-i18n="cfgMaxConcurrencyHint">向 Google API 并发探测的最大协程数 (1-32)</span>
+                        </div>
+                        <div class="form-input-group">
+                            <input type="number" id="cfgMaxConcurrency" min="1" max="32" value="6" style="max-width:120px;">
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-label-box">
+                            <span class="form-title" data-i18n="cfgMinChange">优先级变动写入阈值</span>
+                            <span class="form-hint" data-i18n="cfgMinChangeHint">优先级变化绝对值达到该阈值才写入宿主，以减少磁盘 IO</span>
+                        </div>
+                        <div class="form-input-group">
+                            <input type="number" id="cfgMinChange" min="0" max="100" value="1" style="max-width:120px;">
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-label-box">
+                            <span class="form-title" data-i18n="cfgUrgencyTolerance">紧迫度分档容差</span>
+                            <span class="form-hint" data-i18n="cfgUrgencyToleranceHint">紧迫度差距在此容差内的账号分配相同优先级进行负载均衡</span>
+                        </div>
+                        <div class="form-input-group">
+                            <input type="number" id="cfgUrgencyTolerance" min="0.00" max="0.50" step="0.01" value="0.05" style="max-width:120px;">
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-label-box">
+                            <span class="form-title" data-i18n="cfgCooldownMinutes">429 熔断冷却时长 (分钟)</span>
+                            <span class="form-hint" data-i18n="cfgCooldownMinutesHint">遭遇 429 限流时临时降级至 -1 的冷却期，到期自动自愈</span>
+                        </div>
+                        <div class="form-input-group">
+                            <input type="number" id="cfgCooldownMinutes" min="1" max="1440" value="5" style="max-width:120px;">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Card 3: Priority Rules -->
+                <div class="config-card">
+                    <h3 class="config-card-title">
+                        <span>🎯</span>
+                        <span data-i18n="cfgCardRulesTitle">优先级分值规则 (Priority Rules)</span>
+                    </h3>
+
+                    <div class="form-row">
+                        <div class="form-label-box">
+                            <span class="form-title" data-i18n="cfgRulesEnabled">启用双窗口优先级规则</span>
+                            <span class="form-hint" data-i18n="cfgRulesEnabledHint">基于 5h 短窗口与 7d 长窗口配额综合决策</span>
+                        </div>
+                        <div class="form-input-group">
+                            <label class="toggle-label">
+                                <span class="toggle-switch">
+                                    <input type="checkbox" id="cfgRulesEnabled">
+                                    <span class="toggle-slider"></span>
+                                </span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-label-box">
+                            <span class="form-title" data-i18n="cfgBoostStart">🚀 动态 Boost 起始优先级</span>
+                            <span class="form-hint" data-i18n="cfgBoostStartHint">充裕且即将重置的第一梯队凭证起始基准优先级 (1-999)</span>
+                        </div>
+                        <div class="form-input-group">
+                            <input type="number" id="cfgBoostStartPriority" min="1" max="999" value="999" style="max-width:120px;">
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-label-box">
+                            <span class="form-title" data-i18n="cfgNormalStart">常规健康凭证起始优先级</span>
+                            <span class="form-hint" data-i18n="cfgNormalStartHint">常规可用梯队凭证的起始基准优先级 (1-999)</span>
+                        </div>
+                        <div class="form-input-group">
+                            <input type="number" id="cfgNormalStartPriority" min="1" max="999" value="100" style="max-width:120px;">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Action Bar -->
+                <div class="config-actions-bar">
+                    <button type="button" class="btn-secondary" onclick="resetDynamicConfigToDefaults()" id="btnResetConfig">
+                        <span>🔄 <span data-i18n="btnResetToDefaults">恢复默认配置</span></span>
+                    </button>
+                    <button type="button" class="btn-primary" onclick="saveDynamicConfig()" id="btnSaveConfig">
+                        <span>💾 <span data-i18n="btnSaveConfig">保存并立即生效</span></span>
+                    </button>
+                </div>
             </div>
         </section>
 
@@ -999,12 +1476,26 @@ const StatusHTML = `<!DOCTYPE html>
         </div>
     </div>
 
+    <!-- REQ-03: Custom Confirm Modal -->
+    <div id="confirmModal" class="modal-backdrop" hidden>
+        <div class="modal" role="dialog" aria-modal="true" style="max-width: 480px;">
+            <div class="confirm-title" id="confirmTitle"></div>
+            <p class="confirm-message" id="confirmMessage"></p>
+            <div class="confirm-actions">
+                <button type="button" class="btn-secondary" id="confirmCancelBtn">取消</button>
+                <button type="button" class="btn-danger" id="confirmOkBtn">确认</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         const BASE_PATH = "/v0/management/plugins/antigravity-priority";
         const SNAPSHOT_PATH = BASE_PATH + "/snapshot/latest";
         const DIAGNOSTICS_PATH = BASE_PATH + "/diagnostics";
         const RUN_PATH = BASE_PATH + "/run";
         const RESET_PATH = BASE_PATH + "/reset";
+        const SCHEDULE_CONFIG_PATH = BASE_PATH + "/schedule/config";
+        const CONFIG_PATH = BASE_PATH + "/config";
 
         const I18N = {
             "zh-CN": {
@@ -1012,6 +1503,7 @@ const StatusHTML = `<!DOCTYPE html>
                 tabOverview: "概览与仪表盘",
                 tabHistory: "执行历史",
                 tabDiagnostics: "系统诊断",
+                tabConfig: "⚙️ 配置中心",
                 tabHelp: "使用帮助",
                 kpiTotal: "总凭证数",
                 kpiBoosted: "🚀 动态 Boost",
@@ -1070,13 +1562,61 @@ const StatusHTML = `<!DOCTYPE html>
                 running: "执行中...",
                 keyModalTitle: "CPA 管理密钥认证",
                 keyModalDesc: "CPA 原生管理界面下请输入 config.yaml 中的 Management Key；若在 CPA-Plus 等增强面板中，请输入 CPA-Plus 登录密码（通常为 cpamp_... 格式）。",
-                btnSaveKey: "保存并验证"
+                btnSaveKey: "保存并验证",
+                btnProbe: "获取最新配额",
+                btnCopy: "复制 JSON",
+                copied: "✅ 已复制",
+                scheduleActive: "自动调度运行中",
+                schedulePaused: "⏸ 自动调度已暂停",
+                scheduleSleeping: "🌙 调度休眠中",
+                confirmResetTitle: "⚠️ 确认重置凭证优先级",
+                confirmResetMessage: "该操作将清除所有 Antigravity 凭证的自定义 priority 字段，恢复为宿主默认未分配状态。",
+                predictedBadge: "🔮 预测",
+                predictedNote: "当前查看预测视图，非主控组数据",
+                probeSuccess: "配额探测完成",
+                probeCooldown: "冷却中...",
+                viewList: "📄 列表",
+                viewGrid: "🔲 双列",
+                viewDetails: "🔍 查看明细",
+                cfgCardScheduleTitle: "自动调度与时段配置",
+                cfgAutoApply: "自动定时调度",
+                cfgAutoApplyHint: "周期性自动探测并智能更新宿主凭证优先级",
+                cfgInterval: "调度执行周期",
+                cfgIntervalHint: "自动调度与探测的执行间隔（如 15m, 30m, 1h）",
+                cfgModelGroup: "配额主控模型组",
+                cfgModelGroupHint: "作为主要写回依据的模型组",
+                cfgScheduleWindow: "生效时间区间",
+                cfgScheduleWindowHint: "仅在每日指定时间段内执行调度（支持跨午夜，如 22:00-06:00）",
+                cfgWindowEnabledLabel: "仅在指定时段运行 (非此时段休眠)",
+                cfgCardPerfTitle: "探测与写回性能",
+                cfgMaxConcurrency: "最大探测并发数",
+                cfgMaxConcurrencyHint: "向 Google API 并发探测的最大协程数 (1-32)",
+                cfgMinChange: "优先级变动写入阈值",
+                cfgMinChangeHint: "优先级变化绝对值达到该阈值才写入宿主，以减少磁盘 IO",
+                cfgUrgencyTolerance: "紧迫度分档容差",
+                cfgUrgencyToleranceHint: "紧迫度差距在此容差内的账号分配相同优先级进行负载均衡",
+                cfgCooldownMinutes: "429 熔断冷却时长 (分钟)",
+                cfgCooldownMinutesHint: "遭遇 429 限流时临时降级至 -1 的冷却期，到期自动自愈",
+                statusCooldown: "⏳ 429 冷却中",
+                cfgCardRulesTitle: "优先级分值规则 (Priority Rules)",
+                cfgRulesEnabled: "启用双窗口优先级规则",
+                cfgRulesEnabledHint: "基于 5h 短窗口与 7d 长窗口配额综合决策",
+                cfgBoostStart: "🚀 动态 Boost 起始优先级",
+                cfgBoostStartHint: "充裕且即将重置的第一梯队凭证起始基准优先级 (1-999)",
+                cfgNormalStart: "常规健康凭证起始优先级",
+                cfgNormalStartHint: "常规可用梯队凭证的起始基准优先级 (1-999)",
+                btnSaveConfig: "保存并立即生效",
+                btnResetToDefaults: "恢复默认配置",
+                configSaveSuccess: "配置已更新并立即生效",
+                confirmResetConfigTitle: "⚠️ 确认恢复默认配置",
+                confirmResetConfigMsg: "确定要将所有运行时配置恢复为官方推荐默认值吗？"
             },
             "en-US": {
                 title: "Antigravity Priority",
                 tabOverview: "Overview & Meters",
                 tabHistory: "Run History",
                 tabDiagnostics: "Diagnostics",
+                tabConfig: "⚙️ Config Center",
                 tabHelp: "Help & Rules",
                 kpiTotal: "Total Credentials",
                 kpiBoosted: "🚀 Boosted",
@@ -1135,7 +1675,54 @@ const StatusHTML = `<!DOCTYPE html>
                 running: "Running...",
                 keyModalTitle: "CPA Management Key",
                 keyModalDesc: "For native CPA Web UI, enter the Management Key from config.yaml; for CPA-Plus enhanced panels, enter your CPA-Plus login password (e.g. cpamp_... format).",
-                btnSaveKey: "Save & Verify"
+                btnSaveKey: "Save & Verify",
+                btnProbe: "Fetch Quota",
+                btnCopy: "Copy JSON",
+                copied: "✅ Copied",
+                scheduleActive: "Auto Schedule: Running",
+                schedulePaused: "⏸ Auto Schedule: Paused",
+                scheduleSleeping: "🌙 Schedule: Sleeping",
+                confirmResetTitle: "⚠️ Confirm Priority Reset",
+                confirmResetMessage: "This will clear all Antigravity credential custom priority fields, restoring them to the host default unset state.",
+                predictedBadge: "🔮 Predicted",
+                predictedNote: "Viewing predicted priorities, not the active group",
+                probeSuccess: "Quota probe complete",
+                probeCooldown: "Cooling down...",
+                viewList: "📄 List",
+                viewGrid: "🔲 Grid",
+                viewDetails: "🔍 Details",
+                cfgCardScheduleTitle: "Auto Scheduling & Time Window",
+                cfgAutoApply: "Auto Periodic Scheduling",
+                cfgAutoApplyHint: "Periodically probe and update host credential priorities",
+                cfgInterval: "Scheduling Interval",
+                cfgIntervalHint: "Execution interval for probing and scheduling (e.g. 15m, 30m, 1h)",
+                cfgModelGroup: "Primary Model Group",
+                cfgModelGroupHint: "Model group used as the primary write-back basis",
+                cfgScheduleWindow: "Active Schedule Window",
+                cfgScheduleWindowHint: "Only run scheduling within daily time window (supports cross-midnight, e.g. 22:00-06:00)",
+                cfgWindowEnabledLabel: "Only run in specified window (sleep otherwise)",
+                cfgCardPerfTitle: "Probing & Performance",
+                cfgMaxConcurrency: "Max Probe Concurrency",
+                cfgMaxConcurrencyHint: "Maximum concurrent goroutines for Google API probes (1-32)",
+                cfgMinChange: "Priority Min Change Threshold",
+                cfgMinChangeHint: "Minimum priority delta required to write back to host",
+                cfgUrgencyTolerance: "Urgency Bucket Tolerance",
+                cfgUrgencyToleranceHint: "Credentials within this tolerance share the same priority for round-robin load balancing",
+                cfgCooldownMinutes: "429 Cooldown Duration (Min)",
+                cfgCooldownMinutesHint: "Cooldown period demoting account to -1 on 429 rate limit errors",
+                statusCooldown: "⏳ 429 Cooldown",
+                cfgCardRulesTitle: "Priority Scoring Rules",
+                cfgRulesEnabled: "Enable Double-Window Priority Rules",
+                cfgRulesEnabledHint: "Decide priority based on 5h short and 7d long window quotas",
+                cfgBoostStart: "🚀 Dynamic Boost Start Priority",
+                cfgBoostStartHint: "Base priority for top-tier abundant credentials (1-999)",
+                cfgNormalStart: "Normal Healthy Start Priority",
+                cfgNormalStartHint: "Base priority for regular healthy credentials (1-999)",
+                btnSaveConfig: "Save & Apply",
+                btnResetToDefaults: "Reset to Defaults",
+                configSaveSuccess: "Configuration updated and applied immediately",
+                confirmResetConfigTitle: "⚠️ Confirm Reset to Defaults",
+                confirmResetConfigMsg: "Are you sure you want to reset all runtime configurations to standard defaults?"
             }
         };
 
@@ -1144,6 +1731,10 @@ const StatusHTML = `<!DOCTYPE html>
         let latestDiagnostics = null;
         let activeTab = "overview";
         let countdownInterval = null;
+        let viewMode = "list";
+        let probeCooldownTimer = null;
+        let scheduleConfig = null;
+        let dynamicConfig = null;
 
         function getManagementKey() {
             try {
@@ -1288,6 +1879,8 @@ const StatusHTML = `<!DOCTYPE html>
             renderDashboard();
             renderHistory();
             renderDiagnostics();
+            renderScheduleStatus();
+            if (dynamicConfig) renderDynamicConfigForm(dynamicConfig);
         }
 
         function applyLanguage() {
@@ -1340,6 +1933,7 @@ const StatusHTML = `<!DOCTYPE html>
 
             updateCustomSelectDisplay();
             closeCustomSelect();
+            renderDashboard();
         }
 
         function updateCustomSelectDisplay() {
@@ -1366,9 +1960,11 @@ const StatusHTML = `<!DOCTYPE html>
             document.getElementById("panelOverview").hidden = tabId !== "overview";
             document.getElementById("panelHistory").hidden = tabId !== "history";
             document.getElementById("panelDiagnostics").hidden = tabId !== "diagnostics";
+            document.getElementById("panelConfig").hidden = tabId !== "config";
             document.getElementById("panelHelp").hidden = tabId !== "help";
             if (tabId === "history") fetchDiagnostics();
             if (tabId === "diagnostics") fetchDiagnostics();
+            if (tabId === "config") fetchDynamicConfig();
         }
 
         function getAuthHeader() {
@@ -1435,12 +2031,20 @@ const StatusHTML = `<!DOCTYPE html>
 
         async function triggerRun(mode) {
             if (mode === "apply") {
-                const items = (latestSnapshot && latestSnapshot.items) || [];
+                const groupSelect = document.getElementById("modelGroupSelect");
+                const selectedGroup = groupSelect ? groupSelect.value : "gemini";
+                const activeGroup = (latestSnapshot && latestSnapshot.active_model_group) || "gemini";
+                if (selectedGroup !== activeGroup) {
+                    showToast(currentLang === "zh-CN" ? "仅主控组可执行写回，当前主控组为 " + activeGroup : "Only active group can apply. Active: " + activeGroup, "info");
+                    return;
+                }
+                const groupData = (latestSnapshot && latestSnapshot.groups && latestSnapshot.groups[selectedGroup]) || {};
+                const items = groupData.items || [];
                 if (items.length === 0) {
                     showToast(currentLang === "zh-CN" ? "未发现有效凭证，无需执行写回" : "No credentials found to apply", "info");
                     return;
                 }
-                const changes = (latestSnapshot && latestSnapshot.changes) || [];
+                const changes = groupData.changes || [];
                 if (changes.length === 0) {
                     showToast(currentLang === "zh-CN" ? "当前凭证状态与优先级已是最优，无需写回" : "All credentials in sync, no changes needed", "info");
                     return;
@@ -1493,11 +2097,25 @@ const StatusHTML = `<!DOCTYPE html>
                 changes.forEach(c => {
                     const row = document.createElement("div");
                     row.className = "diff-card";
-                    const fromP = c.current ? c.current.priority : "-";
-                    const toP = c.target ? c.target.priority : (c.priority || "-");
+                    let fromP = "-";
+                    if (c.current && c.current.priority !== undefined) {
+                        fromP = c.current.disabled ? "[Disabled]" : c.current.priority;
+                    } else if (c.priority_from !== undefined) {
+                        fromP = c.disabled_from ? "[Disabled]" : (c.priority_missing ? "-" : c.priority_from);
+                    }
+
+                    let toP = "-";
+                    if (c.target && c.target.priority !== undefined) {
+                        toP = c.target.disabled ? "[Disabled]" : c.target.priority;
+                    } else if (c.priority_to !== undefined) {
+                        toP = c.disabled_to ? "[Disabled]" : c.priority_to;
+                    } else if (c.priority !== undefined) {
+                        toP = c.disabled ? "[Disabled]" : c.priority;
+                    }
+
                     const name = c.name || c.auth_index || "Credential";
                     const reason = c.reason || "";
-                    const isBoost = c.is_boosted;
+                    const isBoost = Boolean(c.is_boosted || (c.reason && c.reason.indexOf("boost") >= 0));
 
                     row.innerHTML = "<div>" +
                         "<div style=\"font-weight:700; font-size:14px; display:flex; align-items:center; gap:6px;\">" +
@@ -1527,7 +2145,14 @@ const StatusHTML = `<!DOCTYPE html>
         }
 
         async function triggerReset() {
-            if (!confirm(t("confirmReset"))) {
+            var confirmed = await showThemedConfirm({
+                title: t("confirmResetTitle"),
+                message: t("confirmResetMessage"),
+                confirmText: currentLang === "zh-CN" ? "确认重置" : "Reset",
+                cancelText: currentLang === "zh-CN" ? "取消" : "Cancel",
+                isDanger: true
+            });
+            if (!confirmed) {
                 return;
             }
             const btn = document.getElementById("btnReset");
@@ -1545,20 +2170,26 @@ const StatusHTML = `<!DOCTYPE html>
 
         function formatCountdown(targetDateStr) {
             if (!targetDateStr) return "-";
-            const target = new Date(targetDateStr).getTime();
-            const now = Date.now();
-            const diff = target - now;
-            if (diff <= 0) return "00m 00s";
+            var target = new Date(targetDateStr).getTime();
+            var now = Date.now();
+            var diff = target - now;
+            if (diff <= 0) return currentLang === "zh-CN" ? "就绪" : "Ready";
 
-            const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-            const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-            const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-            const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+            var days = Math.floor(diff / (1000 * 60 * 60 * 24));
+            var hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+            var minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+            var seconds = Math.floor((diff % (1000 * 60)) / 1000);
 
             if (days > 0) {
                 return days + "d " + pad(hours) + "h " + pad(minutes) + "m";
             }
-            return pad(hours) + "h " + pad(minutes) + "m " + pad(seconds) + "s";
+            if (hours > 0) {
+                return pad(hours) + "h " + pad(minutes) + "m " + pad(seconds) + "s";
+            }
+            if (minutes > 0) {
+                return pad(minutes) + "m " + pad(seconds) + "s";
+            }
+            return pad(seconds) + "s";
         }
 
         function pad(n) { return n < 10 ? "0" + n : n; }
@@ -1567,7 +2198,12 @@ const StatusHTML = `<!DOCTYPE html>
             const container = document.getElementById("credentialsContainer");
             if (!container) return;
 
-            const items = (latestSnapshot && latestSnapshot.items) || [];
+            const groupSelect = document.getElementById("modelGroupSelect");
+            const selectedGroup = groupSelect ? groupSelect.value : "gemini";
+            const activeGroup = (latestSnapshot && latestSnapshot.active_model_group) || "gemini";
+            const isPredictedView = selectedGroup !== activeGroup;
+            const groupData = (latestSnapshot && latestSnapshot.groups && latestSnapshot.groups[selectedGroup]) || {};
+            const items = groupData.items || [];
             let boostedCount = 0;
             let depletedCount = 0;
             let activeCount = 0;
@@ -1585,9 +2221,10 @@ const StatusHTML = `<!DOCTYPE html>
 
             if (latestDiagnostics) {
                 document.getElementById("valLastAudit").textContent = latestDiagnostics.latest_audit || "-";
-                if (latestDiagnostics.scheduler && latestDiagnostics.scheduler.next_wait) {
-                    document.getElementById("valNextProbe").textContent = (currentLang === "zh-CN" ? "下次自动调度: " : "Next run in: ") + latestDiagnostics.scheduler.next_wait;
-                }
+                var nextRunAt = latestDiagnostics.scheduler && latestDiagnostics.scheduler.next_run_at;
+                var nextStr = nextRunAt ? formatCountdown(nextRunAt) : (latestDiagnostics.scheduler && latestDiagnostics.scheduler.next_wait || "-");
+                var el = document.getElementById("valNextProbe");
+                el.innerHTML = (currentLang === "zh-CN" ? "下次自动调度: " : "Next run in: ") + "<span class=\"meter-countdown\" data-scheduler-countdown=\"" + (nextRunAt || "") + "\">" + nextStr + "</span>";
             }
 
             container.innerHTML = "";
@@ -1620,6 +2257,8 @@ const StatusHTML = `<!DOCTYPE html>
                 let statusBadge = "<span class=\"badge badge-success\">" + t("statusActive") + "</span>";
                 if (item.target && item.target.disabled) {
                     statusBadge = "<span class=\"badge badge-danger\">" + t("statusWeeklyDepleted") + "</span>";
+                } else if (item.reason && item.reason.indexOf("429") >= 0) {
+                    statusBadge = "<span class=\"badge badge-warning\">" + t("statusCooldown") + "</span>";
                 } else if (isBoosted) {
                     statusBadge = "<span class=\"badge badge-boost\">" + t("statusBoosted") + "</span>";
                 }
@@ -1659,8 +2298,8 @@ const StatusHTML = `<!DOCTYPE html>
                     "</div>" +
 
                     "<div class=\"cred-priority\">" +
-                        "<div style=\"font-size:12px; color:var(--text-muted);\">" + t("priority") + "</div>" +
-                        "<div class=\"priority-score\">" + targetP + "</div>" +
+                        "<div style=\"font-size:12px; color:var(--text-muted);\">" + t("priority") + (isPredictedView ? " <span class=\"badge badge-predicted\">" + t("predictedBadge") + "</span>" : "") + "</div>" +
+                        "<div class=\"priority-score" + (isPredictedView ? " priority-predicted" : "") + "\">" + targetP + "</div>" +
                         "<div style=\"font-size:11px; color:var(--text-secondary);\">" + escapeHTML(item.reason || "") + "</div>" +
                     "</div>";
 
@@ -1679,12 +2318,13 @@ const StatusHTML = `<!DOCTYPE html>
                 return;
             }
 
-            entries.forEach(entry => {
+            entries.forEach(function(entry, idx) {
                 const item = document.createElement("div");
                 item.className = "history-item";
                 const dateStr = entry.at ? new Date(entry.at).toLocaleString(currentLang === "zh-CN" ? "zh-CN" : "en-US") : "-";
                 const kind = entry.kind || "run";
                 const msg = entry.message || "";
+                const hasSnapshot = entry.snapshot && (entry.snapshot.items || entry.snapshot.changes);
 
                 item.innerHTML =
                     "<div class=\"history-head\">" +
@@ -1696,6 +2336,7 @@ const StatusHTML = `<!DOCTYPE html>
                             "<span class=\"badge badge-success\">Succeeded: " + (entry.succeeded || 0) + "</span>" +
                             "<span class=\"badge badge-danger\">Failed: " + (entry.failed || 0) + "</span>" +
                             "<span class=\"badge badge-subtle\">Skipped: " + (entry.skipped || 0) + "</span>" +
+                            (hasSnapshot ? "<button type=\"button\" class=\"btn-secondary\" style=\"min-height:26px; padding:2px 8px; font-size:11px;\" onclick=\"showHistoryDetails(" + idx + ")\">" + t("viewDetails") + "</button>" : "") +
                         "</div>" +
                     "</div>" +
                     (msg ? "<div style=\"font-size:12px; color:var(--text-muted); font-family:monospace;\">" + escapeHTML(msg) + "</div>" : "");
@@ -1704,33 +2345,53 @@ const StatusHTML = `<!DOCTYPE html>
         }
 
         function renderDiagnostics() {
-            const raw = document.getElementById("rawDiagnostics");
-            const sched = document.getElementById("schedulerInfo");
+            var raw = document.getElementById("rawDiagnostics");
+            var sched = document.getElementById("schedulerInfo");
             if (raw && latestDiagnostics) {
                 raw.textContent = JSON.stringify(latestDiagnostics, null, 2);
             }
             if (sched && latestDiagnostics && latestDiagnostics.scheduler) {
-                sched.innerHTML = "<strong>Scheduler:</strong> Interval: " + (latestDiagnostics.scheduler.interval || "-") + " · Active: " + (latestDiagnostics.scheduler.worker_active ? "Yes" : "No") + " · Next Wait: " + (latestDiagnostics.scheduler.next_wait || "-");
+                var nextRunAt = latestDiagnostics.scheduler.next_run_at;
+                var nextStr = nextRunAt ? formatCountdown(nextRunAt) : (latestDiagnostics.scheduler.next_wait || "-");
+                sched.innerHTML = "<strong>Scheduler:</strong> Interval: " + (latestDiagnostics.scheduler.interval || "-") + " · Active: " + (latestDiagnostics.scheduler.worker_active ? "Yes" : "No") + " · " + (currentLang === "zh-CN" ? "下次运行: " : "Next Run: ") + "<span class=\"meter-countdown\" data-scheduler-countdown=\"" + (nextRunAt || "") + "\">" + nextStr + "</span>";
+            }
+            var warningsEl = document.getElementById("configWarnings");
+            if (warningsEl) {
+                var warnings = (latestDiagnostics && latestDiagnostics.config_warnings) || [];
+                if (warnings.length > 0) {
+                    warningsEl.innerHTML = warnings.map(function(w) { return "<div class=\"config-warning-item\">⚠️ " + escapeHTML(w) + "</div>"; }).join("");
+                    warningsEl.hidden = false;
+                } else {
+                    warningsEl.innerHTML = "";
+                    warningsEl.hidden = true;
+                }
             }
         }
 
         function updateAllCountdowns() {
-            document.querySelectorAll(".meter-countdown[data-reset-time]").forEach(el => {
-                const resetTime = el.getAttribute("data-reset-time");
+            document.querySelectorAll(".meter-countdown[data-reset-time]").forEach(function(el) {
+                var resetTime = el.getAttribute("data-reset-time");
                 if (resetTime) {
                     el.textContent = formatCountdown(resetTime);
                 }
             });
+            document.querySelectorAll("[data-scheduler-countdown]").forEach(function(el) {
+                var t = el.getAttribute("data-scheduler-countdown");
+                if (t) el.textContent = formatCountdown(t);
+            });
         }
 
         function showToast(msg, type) {
-            const root = document.getElementById("toastRoot");
+            var root = document.getElementById("toastRoot");
             if (!root) return;
-            const toast = document.createElement("div");
+            var toast = document.createElement("div");
             toast.className = "toast " + (type === "error" ? "toast-error" : type === "info" ? "toast-info" : "toast-success");
             toast.textContent = msg;
             root.appendChild(toast);
-            setTimeout(() => toast.remove(), 3000);
+            setTimeout(function() {
+                toast.classList.add("toast-exit");
+                setTimeout(function() { toast.remove(); }, 200);
+            }, 2800);
         }
 
         function escapeHTML(str) {
@@ -1742,9 +2403,409 @@ const StatusHTML = `<!DOCTYPE html>
                 .replace(/'/g, "&#039;");
         }
 
+        // REQ-03: Custom themed confirm modal returning Promise<boolean>
+        function showThemedConfirm(opts) {
+            return new Promise(function(resolve) {
+                var modal = document.getElementById("confirmModal");
+                var titleEl = document.getElementById("confirmTitle");
+                var msgEl = document.getElementById("confirmMessage");
+                var okBtn = document.getElementById("confirmOkBtn");
+                var cancelBtn = document.getElementById("confirmCancelBtn");
+
+                titleEl.textContent = opts.title || "";
+                msgEl.textContent = opts.message || "";
+                okBtn.textContent = opts.confirmText || "OK";
+                cancelBtn.textContent = opts.cancelText || "Cancel";
+
+                if (opts.isDanger) {
+                    okBtn.className = "btn-danger";
+                } else {
+                    okBtn.className = "btn-primary";
+                }
+
+                function cleanup(result) {
+                    modal.hidden = true;
+                    okBtn.removeEventListener("click", onOk);
+                    cancelBtn.removeEventListener("click", onCancel);
+                    document.removeEventListener("keydown", onKey);
+                    resolve(result);
+                }
+                function onOk() { cleanup(true); }
+                function onCancel() { cleanup(false); }
+                function onKey(e) { if (e.key === "Escape") cleanup(false); }
+
+                okBtn.addEventListener("click", onOk);
+                cancelBtn.addEventListener("click", onCancel);
+                document.addEventListener("keydown", onKey);
+                modal.hidden = false;
+            });
+        }
+
+        // REQ-04: Probe with 10s cooldown
+        async function triggerProbe() {
+            var btn = document.getElementById("btnProbe");
+            if (!btn || btn.classList.contains("btn-cooldown")) return;
+
+            btn.disabled = true;
+            btn.classList.add("btn-cooldown");
+
+            try {
+                var groupSelect = document.getElementById("modelGroupSelect");
+                var group = groupSelect ? groupSelect.value : "gemini";
+                var path = RUN_PATH + "?mode=probe&antigravity_model_group=" + encodeURIComponent(group);
+                await apiFetch(path, { method: "POST" });
+                showToast(t("probeSuccess"), "success");
+                await refreshDashboard();
+            } catch (err) {
+                showToast(err.message, "error");
+            }
+
+            // 10s cooldown
+            var remaining = 10;
+            var label = btn.querySelector("[data-i18n='btnProbe']") || btn.querySelector("span");
+            var origText = label ? label.textContent : "";
+            probeCooldownTimer = setInterval(function() {
+                remaining--;
+                if (label) label.textContent = t("probeCooldown") + " (" + remaining + "s)";
+                if (remaining <= 0) {
+                    clearInterval(probeCooldownTimer);
+                    probeCooldownTimer = null;
+                    btn.disabled = false;
+                    btn.classList.remove("btn-cooldown");
+                    if (label) label.textContent = origText;
+                }
+            }, 1000);
+        }
+
+        // REQ-06: Toggle list/dual-column view
+        function toggleViewMode() {
+            var container = document.getElementById("credentialsContainer");
+            var btn = document.getElementById("btnViewToggle");
+            var label = document.getElementById("viewToggleLabel");
+            if (!container) return;
+
+            if (viewMode === "list") {
+                viewMode = "grid";
+                container.classList.add("dual-column");
+                if (label) label.textContent = "📄";
+                if (btn) btn.title = t("viewList");
+            } else {
+                viewMode = "list";
+                container.classList.remove("dual-column");
+                if (label) label.textContent = "🔲";
+                if (btn) btn.title = t("viewGrid");
+            }
+        }
+
+        // REQ-06: Copy diagnostics JSON to clipboard
+        async function copyDiagnosticsJSON() {
+            var raw = document.getElementById("rawDiagnostics");
+            if (!raw || !raw.textContent) return;
+            try {
+                await navigator.clipboard.writeText(raw.textContent);
+                showToast(t("copied"), "success");
+            } catch (e) {
+                // Fallback for restricted contexts
+                var textarea = document.createElement("textarea");
+                textarea.value = raw.textContent;
+                textarea.style.position = "fixed";
+                textarea.style.left = "-9999px";
+                document.body.appendChild(textarea);
+                textarea.select();
+                document.execCommand("copy");
+                document.body.removeChild(textarea);
+                showToast(t("copied"), "success");
+            }
+        }
+
+        // REQ-08: Fetch schedule config from backend
+        async function fetchScheduleConfig() {
+            try {
+                scheduleConfig = await apiFetch(SCHEDULE_CONFIG_PATH);
+                renderScheduleStatus();
+            } catch (_) {}
+        }
+
+        // REQ-08: Render schedule status indicator
+        function renderScheduleStatus() {
+            var badge = document.getElementById("scheduleStatusBadge");
+            var textEl = document.getElementById("scheduleStatusText");
+            if (!badge || !textEl || !scheduleConfig) return;
+
+            if (scheduleConfig.paused) {
+                badge.className = "schedule-status paused";
+                badge.innerHTML = "⏸ <span id=\"scheduleStatusText\">" + t("schedulePaused") + "</span>";
+            } else {
+                var windowStr = "";
+                if (scheduleConfig.window_enabled && scheduleConfig.window_start && scheduleConfig.window_end) {
+                    windowStr = " (" + scheduleConfig.window_start + "-" + scheduleConfig.window_end + ")";
+                }
+                badge.className = "schedule-status active";
+                badge.innerHTML = "🟢 <span id=\"scheduleStatusText\">" + t("scheduleActive") + windowStr + "</span>";
+            }
+        }
+
+        // REQ-08: Toggle schedule pause/resume
+        async function toggleSchedulePause() {
+            if (!scheduleConfig) {
+                await fetchScheduleConfig();
+                if (!scheduleConfig) return;
+            }
+
+            var newConfig = {
+                paused: !scheduleConfig.paused,
+                window_enabled: scheduleConfig.window_enabled || false,
+                window_start: scheduleConfig.window_start || "00:00",
+                window_end: scheduleConfig.window_end || "23:59"
+            };
+
+            try {
+                scheduleConfig = await apiFetch(SCHEDULE_CONFIG_PATH, {
+                    method: "POST",
+                    body: JSON.stringify(newConfig)
+                });
+                renderScheduleStatus();
+                showToast(scheduleConfig.paused ? t("schedulePaused") : t("scheduleActive"), "info");
+            } catch (err) {
+                showToast(err.message, "error");
+            }
+        }
+
+        // REQ-07: Show history entry details in modal
+        function showHistoryDetails(index) {
+            if (!latestDiagnostics || !latestDiagnostics.run_history) return;
+            var entry = latestDiagnostics.run_history[index];
+            if (!entry) return;
+
+            var snap = entry.snapshot;
+            if (!snap || (!snap.items && !snap.changes)) {
+                showToast(currentLang === "zh-CN" ? "该记录无详细快照数据" : "No snapshot data for this entry", "info");
+                return;
+            }
+
+            var result = {
+                snapshot: snap,
+                changes: snap.changes || [],
+                attempted: entry.attempted || 0,
+                succeeded: entry.succeeded || 0,
+                failed: entry.failed || 0,
+                skipped: entry.skipped || 0
+            };
+
+            var mode = (entry.kind || "").toLowerCase().indexOf("apply") >= 0 ? "apply" : "dry-run";
+            showModal(mode, result);
+        }
+
+        // REQ-09: Fetch dynamic config from backend and populate form
+        async function fetchDynamicConfig() {
+            try {
+                dynamicConfig = await apiFetch(CONFIG_PATH);
+                renderDynamicConfigForm(dynamicConfig);
+            } catch (err) {
+                showToast(err.message, "error");
+            }
+        }
+
+        // REQ-09: Render dynamic config form
+        function renderDynamicConfigForm(cfg) {
+            if (!cfg) return;
+
+            var autoApply = document.getElementById("cfgAutoApply");
+            var autoText = document.getElementById("cfgAutoApplyStatusText");
+            if (autoApply) {
+                autoApply.checked = Boolean(cfg.auto_apply);
+                if (autoText) autoText.textContent = cfg.auto_apply ? (currentLang === "zh-CN" ? "已开启" : "Enabled") : (currentLang === "zh-CN" ? "已关闭" : "Disabled");
+            }
+
+            var intervalSelect = document.getElementById("cfgIntervalSelect");
+            var intervalCustom = document.getElementById("cfgIntervalCustom");
+            var intervalVal = cfg.interval || "15m";
+            if (intervalSelect) {
+                if (["5m", "15m", "30m", "1h"].indexOf(intervalVal) >= 0) {
+                    intervalSelect.value = intervalVal;
+                    if (intervalCustom) intervalCustom.hidden = true;
+                } else {
+                    intervalSelect.value = "custom";
+                    if (intervalCustom) {
+                        intervalCustom.value = intervalVal;
+                        intervalCustom.hidden = false;
+                    }
+                }
+            }
+
+            var modelGroup = document.getElementById("cfgModelGroup");
+            if (modelGroup) {
+                modelGroup.value = cfg.antigravity_model_group || "gemini";
+            }
+
+            var windowEnabled = document.getElementById("cfgWindowEnabled");
+            var windowInputs = document.getElementById("cfgWindowInputs");
+            var windowStart = document.getElementById("cfgWindowStart");
+            var windowEnd = document.getElementById("cfgWindowEnd");
+            var sched = cfg.schedule || {};
+            if (windowEnabled) {
+                windowEnabled.checked = Boolean(sched.window_enabled);
+                if (windowInputs) windowInputs.style.opacity = sched.window_enabled ? "1" : "0.5";
+            }
+            if (windowStart) windowStart.value = sched.window_start || "09:00";
+            if (windowEnd) windowEnd.value = sched.window_end || "23:00";
+
+            var maxConcurrency = document.getElementById("cfgMaxConcurrency");
+            if (maxConcurrency) maxConcurrency.value = cfg.max_concurrency || 6;
+
+            var minChange = document.getElementById("cfgMinChange");
+            if (minChange) minChange.value = cfg.min_change !== undefined ? cfg.min_change : 1;
+
+            var urgencyTol = document.getElementById("cfgUrgencyTolerance");
+            if (urgencyTol) urgencyTol.value = cfg.urgency_tolerance !== undefined ? cfg.urgency_tolerance : 0.05;
+
+            var cooldownMin = document.getElementById("cfgCooldownMinutes");
+            if (cooldownMin) cooldownMin.value = cfg.rate_limit_cooldown_minutes !== undefined ? cfg.rate_limit_cooldown_minutes : 5;
+
+            var rules = cfg.priority_rules || {};
+            var rulesEnabled = document.getElementById("cfgRulesEnabled");
+            if (rulesEnabled) rulesEnabled.checked = rules.enabled !== false;
+
+            var boostStart = document.getElementById("cfgBoostStartPriority");
+            if (boostStart) boostStart.value = rules.boost_start_priority || 999;
+
+            var normalStart = document.getElementById("cfgNormalStartPriority");
+            if (normalStart) normalStart.value = rules.normal_start_priority || 100;
+        }
+
+        function onIntervalSelectChange() {
+            var select = document.getElementById("cfgIntervalSelect");
+            var custom = document.getElementById("cfgIntervalCustom");
+            if (!select || !custom) return;
+            custom.hidden = select.value !== "custom";
+            if (select.value === "custom" && !custom.value) {
+                custom.value = "20m";
+            }
+        }
+
+        function onWindowEnabledChange() {
+            var chk = document.getElementById("cfgWindowEnabled");
+            var inputs = document.getElementById("cfgWindowInputs");
+            if (chk && inputs) {
+                inputs.style.opacity = chk.checked ? "1" : "0.5";
+            }
+        }
+
+        // Toggle label text update on change
+        document.addEventListener("change", function(e) {
+            if (e.target && e.target.id === "cfgAutoApply") {
+                var autoText = document.getElementById("cfgAutoApplyStatusText");
+                if (autoText) {
+                    autoText.textContent = e.target.checked ? (currentLang === "zh-CN" ? "已开启" : "Enabled") : (currentLang === "zh-CN" ? "已关闭" : "Disabled");
+                }
+            }
+        });
+
+        // REQ-09: Save dynamic config to backend
+        async function saveDynamicConfig() {
+            var btn = document.getElementById("btnSaveConfig");
+            if (btn) btn.disabled = true;
+
+            try {
+                var autoApply = Boolean(document.getElementById("cfgAutoApply") && document.getElementById("cfgAutoApply").checked);
+                var intervalSelect = document.getElementById("cfgIntervalSelect");
+                var intervalCustom = document.getElementById("cfgIntervalCustom");
+                var interval = "15m";
+                if (intervalSelect) {
+                    if (intervalSelect.value === "custom") {
+                        interval = (intervalCustom && intervalCustom.value.trim()) || "15m";
+                    } else {
+                        interval = intervalSelect.value;
+                    }
+                }
+                var modelGroup = (document.getElementById("cfgModelGroup") && document.getElementById("cfgModelGroup").value) || "gemini";
+                var windowEnabled = Boolean(document.getElementById("cfgWindowEnabled") && document.getElementById("cfgWindowEnabled").checked);
+                var windowStart = (document.getElementById("cfgWindowStart") && document.getElementById("cfgWindowStart").value.trim()) || "09:00";
+                var windowEnd = (document.getElementById("cfgWindowEnd") && document.getElementById("cfgWindowEnd").value.trim()) || "23:00";
+                var maxConcurrency = parseInt((document.getElementById("cfgMaxConcurrency") && document.getElementById("cfgMaxConcurrency").value) || "6", 10);
+                var minChange = parseInt((document.getElementById("cfgMinChange") && document.getElementById("cfgMinChange").value) || "1", 10);
+                var urgencyTol = parseFloat((document.getElementById("cfgUrgencyTolerance") && document.getElementById("cfgUrgencyTolerance").value) || "0.05");
+                var cooldownMin = parseInt((document.getElementById("cfgCooldownMinutes") && document.getElementById("cfgCooldownMinutes").value) || "5", 10);
+                var rulesEnabled = Boolean(document.getElementById("cfgRulesEnabled") && document.getElementById("cfgRulesEnabled").checked);
+                var boostStart = parseInt((document.getElementById("cfgBoostStartPriority") && document.getElementById("cfgBoostStartPriority").value) || "999", 10);
+                var normalStart = parseInt((document.getElementById("cfgNormalStartPriority") && document.getElementById("cfgNormalStartPriority").value) || "100", 10);
+
+                var reqBody = {
+                    auto_apply: autoApply,
+                    interval: interval,
+                    antigravity_model_group: modelGroup,
+                    max_concurrency: maxConcurrency,
+                    min_change: minChange,
+                    urgency_tolerance: urgencyTol,
+                    rate_limit_cooldown_minutes: cooldownMin,
+                    priority_rules: {
+                        enabled: rulesEnabled,
+                        boost_start_priority: boostStart,
+                        normal_start_priority: normalStart
+                    },
+                    schedule: {
+                        paused: Boolean(scheduleConfig && scheduleConfig.paused),
+                        window_enabled: windowEnabled,
+                        window_start: windowStart,
+                        window_end: windowEnd
+                    }
+                };
+
+                dynamicConfig = await apiFetch(CONFIG_PATH, {
+                    method: "POST",
+                    body: JSON.stringify(reqBody)
+                });
+                renderDynamicConfigForm(dynamicConfig);
+                await fetchScheduleConfig();
+                await refreshDashboard();
+                showToast(t("configSaveSuccess"), "success");
+            } catch (err) {
+                showToast(err.message, "error");
+            } finally {
+                if (btn) btn.disabled = false;
+            }
+        }
+
+        // REQ-09: Reset dynamic config to recommended defaults
+        async function resetDynamicConfigToDefaults() {
+            var confirmed = await showThemedConfirm({
+                title: t("confirmResetConfigTitle"),
+                message: t("confirmResetConfigMsg"),
+                confirmText: currentLang === "zh-CN" ? "确认恢复默认" : "Reset to Defaults",
+                cancelText: currentLang === "zh-CN" ? "取消" : "Cancel",
+                isDanger: false
+            });
+            if (!confirmed) return;
+
+            var defaultCfg = {
+                auto_apply: true,
+                interval: "15m",
+                antigravity_model_group: "gemini",
+                max_concurrency: 6,
+                min_change: 1,
+                urgency_tolerance: 0.05,
+                rate_limit_cooldown_minutes: 5,
+                priority_rules: {
+                    enabled: true,
+                    boost_start_priority: 999,
+                    normal_start_priority: 100
+                },
+                schedule: {
+                    paused: false,
+                    window_enabled: false,
+                    window_start: "00:00",
+                    window_end: "23:59"
+                }
+            };
+            renderDynamicConfigForm(defaultCfg);
+            await saveDynamicConfig();
+        }
+
         // Initialize application
         applyLanguage();
         refreshDashboard();
+        fetchScheduleConfig();
+        fetchDynamicConfig();
         countdownInterval = setInterval(updateAllCountdowns, 1000);
     </script>
 </body>

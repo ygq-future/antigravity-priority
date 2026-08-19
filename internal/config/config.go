@@ -100,12 +100,15 @@ func Default() Config {
 }
 
 // LoadBytes parses raw YAML or JSON bytes into a validated Config.
-func LoadBytes(data []byte) (Config, error) {
+// Field-level validation issues produce warnings with smooth fallback to defaults
+// rather than hard errors. Only structurally unparseable input returns an error.
+func LoadBytes(data []byte) (Config, []string, error) {
 	raw, err := decodeRaw(data)
 	if err != nil {
-		return Config{}, fmt.Errorf("parse config: %w", err)
+		return Config{}, nil, fmt.Errorf("parse config: %w", err)
 	}
-	return raw.apply(Default())
+	cfg, warnings := raw.applyTolerant(Default())
+	return cfg, warnings, nil
 }
 
 func decodeRaw(data []byte) (rawConfig, error) {
@@ -208,4 +211,94 @@ func (raw *rawPriorityRules) apply(rules PriorityRules) (PriorityRules, error) {
 		rules.NormalStartPriority = *raw.NormalStartPriority
 	}
 	return rules, nil
+}
+
+func (raw rawConfig) applyTolerant(cfg Config) (Config, []string) {
+	var warnings []string
+	if raw.Enabled != nil {
+		cfg.Enabled = *raw.Enabled
+	}
+	if raw.AutoApply != nil {
+		cfg.AutoApply = *raw.AutoApply
+	}
+	if raw.AntigravityModelGroup != nil {
+		modelGroup, err := ParseAntigravityModelGroup(*raw.AntigravityModelGroup)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf(
+				"antigravity_model_group=%q is invalid, falling back to default 'gemini'",
+				*raw.AntigravityModelGroup))
+		} else {
+			cfg.AntigravityModelGroup = modelGroup
+		}
+	}
+	if raw.Interval != nil {
+		parsed, normalized, err := parseDurationTolerant("interval", string(*raw.Interval))
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf(
+				"interval=%q is invalid, falling back to default '15m'",
+				string(*raw.Interval)))
+		} else {
+			cfg.Interval = parsed
+			if normalized != "" {
+				warnings = append(warnings, fmt.Sprintf(
+					"interval=%q normalized to '%s'",
+					string(*raw.Interval), normalized))
+			}
+		}
+	}
+	if raw.MaxConcurrency != nil {
+		if *raw.MaxConcurrency < 1 {
+			warnings = append(warnings, fmt.Sprintf(
+				"max_concurrency=%d is invalid (<1), falling back to default '6'",
+				*raw.MaxConcurrency))
+		} else {
+			cfg.MaxConcurrency = *raw.MaxConcurrency
+		}
+	}
+	if raw.MinChange != nil {
+		if *raw.MinChange < 0 {
+			warnings = append(warnings, fmt.Sprintf(
+				"min_change=%d is invalid (<0), falling back to default '1'",
+				*raw.MinChange))
+		} else {
+			cfg.MinChange = *raw.MinChange
+		}
+	}
+	if raw.StateCachePath != nil && strings.TrimSpace(*raw.StateCachePath) != "" {
+		cfg.StateCachePath = strings.TrimSpace(*raw.StateCachePath)
+	} else if raw.CachePath != nil && strings.TrimSpace(*raw.CachePath) != "" {
+		cfg.StateCachePath = strings.TrimSpace(*raw.CachePath)
+	}
+	if raw.PriorityRules != nil {
+		rules, ruleWarnings := raw.PriorityRules.applyTolerant(cfg.PriorityRules)
+		cfg.PriorityRules = rules
+		warnings = append(warnings, ruleWarnings...)
+	}
+	return cfg, warnings
+}
+
+func (raw *rawPriorityRules) applyTolerant(rules PriorityRules) (PriorityRules, []string) {
+	var warnings []string
+	if raw.Enabled != nil {
+		rules.Enabled = *raw.Enabled
+	}
+	if raw.BoostStartPriority != nil {
+		if *raw.BoostStartPriority < 1 {
+			warnings = append(warnings, fmt.Sprintf(
+				"priority_rules.boost_start_priority=%d is invalid (<1), falling back to default '999'",
+				*raw.BoostStartPriority))
+		} else {
+			rules.BoostStartPriority = *raw.BoostStartPriority
+		}
+	}
+	if raw.NormalStartPriority != nil {
+		if *raw.NormalStartPriority < 1 {
+			warnings = append(warnings, fmt.Sprintf(
+				"priority_rules.normal_start_priority=%d is invalid (<1), falling back to default '100'",
+				*raw.NormalStartPriority))
+		} else {
+			rules.NormalStartPriority = *raw.NormalStartPriority
+		}
+	}
+	return rules, warnings
 }

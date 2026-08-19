@@ -24,17 +24,15 @@ A high-performance, single-provider priority scheduler and quota management plug
 
 ## Overview
 
-- **Tailored for Antigravity**: Dedicated exclusively to Google Antigravity (supporting both `gemini` and `claude_gpt` quota model groups) with deep awareness of 5-hour burst and 7-day weekly quota windows.
-- **Dynamic Boost Horizon**: Computes the physical time required to burn remaining weekly balance, proactively triggering `999, 998...` priority boost well in advance (e.g. 27–40 hours ahead) to completely eliminate end-of-cycle quota waste.
-- **Weekly Urgency Index**: Smoothly balances credentials throughout the entire 7-day cycle by quantifying unit-time consumption pressure.
-- **Adaptive Cycle Burn Rate ($C_{\text{cycle}}$)**: Automatically measures actual consumption ratios from consecutive probe observations and smooths via EMA without requiring manual coefficient tuning.
-- **Self-Healing Soft Depletion & Hard Disabling**:
-  - **5-Hour Window Depleted**: Demotes priority to `-1` while keeping `disabled = false`, allowing silent auto-recovery when the 5-hour window resets.
-  - **7-Day Window Depleted**: Demotes priority to `-1` and applies `disabled = true` to prevent out-of-quota host failures (weekly hard-disable takes precedence over short-window soft depletion).
-- **CPA Host Integration**: Reuses CPA credential discovery, proxying, and persistence flows via `host.auth.list`, `host.auth.get`, `host.auth.get_runtime`, and `host.auth.save`.
-- **Fresh Evidence Gating**: Plans priority updates only from fresh and ready probe evidence collected in the current run.
-- **Strict End-to-End Redaction**: All sensitive credentials, authorization headers, tokens, and cookies are automatically masked as `[REDACTED]` across UI, diagnostics, snapshots, and logs.
-- **Native Dual-Theme Management UI**: Embedded zero-external-CDN dashboard adhering seamlessly to CPA's dark and light modes.
+- **Tailored Antigravity Dual-Window Scheduling**: Dedicated exclusively to Google Antigravity (supporting both `gemini` and `claude_gpt` model groups) with deep awareness of 5-hour burst and 7-day weekly quota windows.
+- **Equal Priority Clustering & Load Balancing**: Accounts with close urgency metrics automatically share the same priority integer, enabling CPA native round-robin distribution and eliminating single-account 429 rate limit saturation.
+- **429 Reactive Cooldown Circuit Breaker**: Automatically intercepts upstream 429 errors and demotes affected accounts to `-1` fallback tier, auto-recovering after a configurable cooldown.
+- **Dynamic Boost Horizon**: Intelligently computes the required burn horizon to proactively elevate abundant accounts to top priority (`999, 998...`), eliminating end-of-cycle quota waste.
+- **Weekly Urgency Balancing**: Quantifies unit-time consumption pressure to smoothly rotate accounts throughout the 7-day cycle.
+- **Adaptive Online Learning ($C_{\text{cycle}}$)**: Automatically measures and smooths real consumption velocity without requiring manual coefficient tuning.
+- **Self-Healing Soft Fallback & Hard Disabling**: Soft-depletes 5-hour burst exhaustion for automatic recovery upon reset, and hard-disables exhausted 7-day weekly accounts.
+- **Web UI Dynamic Config Center**: CPA host YAML only requires `enabled: true`. All scheduling intervals, concurrency, model groups, and scoring rules are visually managed with instant zero-restart hot-reloads.
+- **Embedded Dual-Theme Dashboard**: Zero external CDN, strictly CSP-compliant, providing real-time quota meters, instant prediction switching, dry-run/apply controls, and end-to-end data redaction.
 
 ---
 
@@ -100,7 +98,9 @@ plugins:
 
 ## Configuration
 
-Enable the plugin system in CPA's `config.yaml` and configure plugin settings under `plugins.configs.antigravity-priority`:
+### 1. Minimalist CPA Host Configuration (`config.yaml`)
+
+Starting from v1.1.0, it is recommended to keep only the basic plugin enablement switch in CPA's `config.yaml`. All business and scheduling parameters can be visually managed via the Web dashboard's **`⚙️ Config Center`**:
 
 ```yaml
 plugins:
@@ -109,32 +109,27 @@ plugins:
   configs:
     antigravity-priority:
       enabled: true
-      auto_apply: false                 # Enable periodic background write-backs (default false)
-      interval: 15m                     # Probing and scheduling interval
-      antigravity_model_group: "gemini" # Primary quota model group: gemini or claude_gpt
-      max_concurrency: 6                # Max concurrent HTTP probe workers
-      min_change: 1                     # Priority delta threshold for write-back
-      priority_rules:
-        enabled: true
-        boost_start_priority: 999       # Starting priority for boosted credentials
-        normal_start_priority: 100      # Starting priority for regular credentials
 ```
 
-### Configuration Fields
+### 2. UI Dynamic Config Center (Zero-Restart Hot Reload)
 
-| Field | Type | Default | Description |
+In the **`⚙️ Config Center`** tab of the management dashboard, the following options can be visually adjusted and applied instantly:
+
+| Setting | Default | Range/Options | Description |
 | :--- | :--- | :--- | :--- |
-| `enabled` | boolean | `true` | Plugin switch. Requires global `plugins.enabled: true` and successful dynamic library registration. |
-| `auto_apply` | boolean | `false` | When true, scheduled background runs automatically write priorities back to CPA host. When false, run manually via management UI. |
-| `interval` | duration | `15m` | Background probing and scheduling period (e.g. `15m`, `30m`, `1h`). |
-| `antigravity_model_group` | string | `gemini` | Primary quota model group: `gemini` (Gemini 2.5/Flash) or `claude_gpt` (Claude 3.5/GPT-4o). |
-| `max_concurrency` | integer | `6` | Maximum number of concurrent probe HTTP workers. |
-| `min_change` | integer | `1` | Priority change threshold below which write-back is skipped to reduce disk/database IO. |
-| `priority_rules.enabled` | boolean | `true` | Enables multi-tier priority rules. |
-| `priority_rules.boost_start_priority` | integer | `999` | Starting base priority for boosted credentials. |
-| `priority_rules.normal_start_priority` | integer | `100` | Starting base priority for regular healthy credentials. |
+| **Auto Periodic Scheduling (`auto_apply`)** | `true` | On / Off | When true, scheduled background runs automatically probe and commit priority updates. |
+| **Scheduling Interval (`interval`)** | `15m` | `5m`, `15m`, `30m`, `1h`, custom | Background execution interval. Changes take effect immediately without restarting. |
+| **Primary Model Group (`antigravity_model_group`)** | `gemini` | `gemini` / `claude_gpt` | Primary model group used as the basis for host priority write-backs. |
+| **Active Schedule Window (`schedule_window`)** | `All day` | `HH:MM` to `HH:MM` | Daily active time window (e.g. `09:00-23:00`, supports cross-midnight like `22:00-06:00`). Sleeps outside window. |
+| **Max Probe Concurrency (`max_concurrency`)** | `6` | `1 ~ 32` | Maximum concurrent goroutines for quota probe requests to Google API. |
+| **Priority Min Change Threshold (`min_change`)** | `1` | `0 ~ 100` | Minimum priority delta required to trigger a write-back to host. |
+| **Urgency Bucket Tolerance (`urgency_tolerance`)** | `0.05` | `0.00 ~ 0.50` | Accounts within this tolerance share the same priority for round-robin balancing. |
+| **429 Cooldown Duration (`rate_limit_cooldown_minutes`)** | `5` | `1 ~ 60` (min) | Cooldown duration demoting account to `-1` fallback tier on 429 errors. |
+| **Enable Double-Window Rules (`priority_rules.enabled`)** | `true` | On / Off | Enables multi-tier double-window priority decision algorithms. |
+| **Boost Start Priority (`boost_start_priority`)** | `999` | `1 ~ 999` | Base priority for tier-1 boosted credentials. |
+| **Normal Healthy Start Priority (`normal_start_priority`)** | `100` | `1 ~ 999` | Base priority for tier-2 regular healthy credentials. |
 
-> **Tip**: All settings can also be visually adjusted directly in the CPA Plugin Manager interface via `ConfigFields`.
+> **Persistence Guarantee**: All settings changed in the UI Config Center are atomically saved to `data/antigravity-priority-cache.json`, surviving CPA container restarts and taking precedence over initial YAML values.
 
 ---
 
@@ -142,34 +137,38 @@ plugins:
 
 The plugin registers **resources** (static management dashboard) and **routes** (dynamic management APIs) with the CPA host via `management.register`.
 
-### Product Boundary
-
-| Capability | Entry Path | Notes |
-| :--- | :--- | :--- |
-| Automated Priority & Rules | CPA Plugin Manager visual fields or `config.yaml` | Edit `auto_apply`, `interval`, `antigravity_model_group`, etc. |
-| Resource Dashboard Page | `/v0/resource/plugins/antigravity-priority/status` | Static HTML dashboard: Key verify + double-window meters + Dry-Run/Apply |
-| Manual Run / Apply | `/v0/management/plugins/antigravity-priority/run` | Dynamic Management API (requires Management Key) |
-| Redacted Diagnostics & Snapshot | `/v0/management/plugins/antigravity-priority/diagnostics` | Inspect probe status, adaptive rates, and recent run history |
-| Read-Only Config View | Host `GET /v0/management/plugins/antigravity-priority/config` | Read-only configuration provided by CPA host |
-
 ### Resource Page (Static Web UI)
 
 - `GET /v0/resource/plugins/antigravity-priority/status`
   - **Access**: Click **"Antigravity Priority"** in the CPA management sidebar, or open `http://<CPA_HOST>:<PORT>/v0/resource/plugins/antigravity-priority/status` in your browser.
-  - **Features**: Embedded dual-theme dashboard (strictly CSP-compliant). Authenticate using your Management Key to inspect real-time 5h burst and 7d weekly progress bars, countdown timers, adaptive burn rate $C_{\text{cycle}}$, urgency scores, and 🚀 boost badges; switch model groups dynamically, and execute **Dry-Run (preview)** or **Apply (write-back)**.
+  - **Key Features**:
+    - **Overview & Meters**: Real-time 5h/7d quota meters, adaptive countdown timers, learned $C_{\text{cycle}}$, urgency scores, and 🚀 boost badges; list/dual-column view toggle and scroll containment.
+    - **Instant Model Group Switching**: Toggle between Gemini and Claude/GPT views with smart `🔮 Predicted Priority` badges.
+    - **Two-Stage Control**: `📡 Fetch Quota (10s cooldown)`, `🔍 Dry-Run (0 network calls)`, `⚡ Apply Now`, `🔄 Reset to Default`.
+    - **Execution History**: Last 10 runs with `🔍 View Details` modal for side-by-side Apply write-back or Dry-Run predicted shifts.
+    - **System Diagnostics**: Worker status, config warning alerts, and one-click JSON Copy.
+    - **⚙️ Config Center**: Online management of all scheduling and algorithm parameters with instant hot reload.
 
 ### Management API (Dynamic, Key Required)
 
 - `POST /v0/management/plugins/antigravity-priority/run?mode=dry-run`
-  - Triggers a probe and priority planning cycle (simulation), updating the latest snapshot and UI preview **without modifying host credentials**.
+  - Runs in-memory priority planning (simulation) using cached quota, **0 network overhead, host credentials unmodified**.
+- `POST /v0/management/plugins/antigravity-priority/run?mode=probe`
+  - Triggers a fresh network quota probe against Google API and updates local cache, **no priority write-back**.
 - `POST /v0/management/plugins/antigravity-priority/run?mode=apply`
-  - Triggers a probe and planning cycle, and **commits updated priorities and disabled states to the CPA host**.
-- `POST /v0/management/plugins/antigravity-priority/run?mode=apply&antigravity_model_group=claude_gpt`
-  - Executes probe and write-back specifically for the Claude/GPT model group.
+  - Runs probe/plan and **commits updated priorities and disabled states to CPA host**.
+- `GET /v0/management/plugins/antigravity-priority/config`
+  - Retrieves current full runtime configuration.
+- `POST /v0/management/plugins/antigravity-priority/config`
+  - Submits updated runtime configuration and hot-applies immediately.
+- `GET /v0/management/plugins/antigravity-priority/schedule/config`
+  - Retrieves active schedule time window and pause state.
+- `POST /v0/management/plugins/antigravity-priority/schedule/config`
+  - Updates active schedule time window or toggles pause/resume.
 - `GET /v0/management/plugins/antigravity-priority/diagnostics`
-  - Exports redacted scheduler diagnostic metrics, background ticker status, and recent execution history.
+  - Exports redacted scheduler diagnostic metrics, config warnings, background worker state, and run history.
 - `GET /v0/management/plugins/antigravity-priority/snapshot/latest`
-  - Returns the latest redacted decision planning snapshot.
+  - Returns the latest dual-group redacted decision planning snapshot (`DualGroupSnapshot`).
 
 ---
 

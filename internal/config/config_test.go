@@ -41,20 +41,26 @@ func TestDefault(t *testing.T) {
 }
 
 func TestLoadBytes_Empty(t *testing.T) {
-	cfg, err := config.LoadBytes(nil)
+	cfg, warnings, err := config.LoadBytes(nil)
 	if err != nil {
 		t.Fatalf("unexpected error on nil: %v", err)
 	}
 	if cfg != config.Default() {
 		t.Errorf("expected default config on nil, got %+v", cfg)
 	}
+	if len(warnings) != 0 {
+		t.Errorf("expected no warnings on nil, got %v", warnings)
+	}
 
-	cfg, err = config.LoadBytes([]byte(""))
+	cfg, warnings, err = config.LoadBytes([]byte(""))
 	if err != nil {
 		t.Fatalf("unexpected error on empty bytes: %v", err)
 	}
 	if cfg != config.Default() {
 		t.Errorf("expected default config on empty bytes, got %+v", cfg)
+	}
+	if len(warnings) != 0 {
+		t.Errorf("expected no warnings on empty bytes, got %v", warnings)
 	}
 }
 
@@ -73,9 +79,12 @@ func TestLoadBytes_JSON(t *testing.T) {
 		}
 	}`)
 
-	cfg, err := config.LoadBytes(jsonData)
+	cfg, warnings, err := config.LoadBytes(jsonData)
 	if err != nil {
 		t.Fatalf("unexpected error loading json: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Errorf("expected no warnings, got %v", warnings)
 	}
 
 	if cfg.Enabled {
@@ -111,7 +120,7 @@ func TestLoadBytes_JSON_FlatKeys(t *testing.T) {
 		"priority_rules.normal_start_priority": 120
 	}`)
 
-	cfg, err := config.LoadBytes(jsonData)
+	cfg, _, err := config.LoadBytes(jsonData)
 	if err != nil {
 		t.Fatalf("unexpected error loading flat keys json: %v", err)
 	}
@@ -139,7 +148,7 @@ priority_rules:
   normal_start_priority: 50
 `)
 
-	cfg, err := config.LoadBytes(yamlData)
+	cfg, _, err := config.LoadBytes(yamlData)
 	if err != nil {
 		t.Fatalf("unexpected error loading yaml: %v", err)
 	}
@@ -185,7 +194,7 @@ plugins:
       max_concurrency: 8
 `)
 
-	cfg, err := config.LoadBytes(fullCPAConfig)
+	cfg, _, err := config.LoadBytes(fullCPAConfig)
 	if err != nil {
 		t.Fatalf("unexpected error parsing CPA plugin config path: %v", err)
 	}
@@ -202,7 +211,8 @@ plugins:
 }
 
 func TestLoadBytes_Invalid(t *testing.T) {
-	tests := []struct {
+	// Only structurally unparseable input should produce hard errors
+	structuralErrors := []struct {
 		name string
 		raw  string
 	}{
@@ -214,40 +224,106 @@ func TestLoadBytes_Invalid(t *testing.T) {
 			name: "invalid yaml syntax",
 			raw:  "keyWithoutColon",
 		},
-		{
-			name: "invalid model group",
-			raw:  `{"antigravity_model_group": "invalid_group"}`,
-		},
-		{
-			name: "negative interval",
-			raw:  `{"interval": "-5m"}`,
-		},
-		{
-			name: "zero max concurrency",
-			raw:  `{"max_concurrency": 0}`,
-		},
-		{
-			name: "negative min change",
-			raw:  `{"min_change": -1}`,
-		},
-		{
-			name: "zero boost start priority",
-			raw:  `{"priority_rules": {"boost_start_priority": 0}}`,
-		},
-		{
-			name: "zero normal start priority",
-			raw:  `{"priority_rules": {"normal_start_priority": 0}}`,
-		},
 	}
 
-	for _, tt := range tests {
+	for _, tt := range structuralErrors {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := config.LoadBytes([]byte(tt.raw))
+			_, _, err := config.LoadBytes([]byte(tt.raw))
 			if err == nil {
 				t.Errorf("expected error, got nil")
 			}
 			if !errors.Is(err, config.ErrInvalidConfig) {
 				t.Errorf("expected ErrInvalidConfig, got %v", err)
+			}
+		})
+	}
+
+	// Field-level issues should produce warnings with smooth fallback to defaults
+	warningCases := []struct {
+		name           string
+		raw            string
+		wantWarnings   int
+		checkField     string
+		checkValue     any
+	}{
+		{
+			name:         "invalid model group falls back to gemini",
+			raw:          `{"antigravity_model_group": "invalid_group"}`,
+			wantWarnings: 1,
+			checkField:   "model_group",
+			checkValue:   config.AntigravityModelGroupGemini,
+		},
+		{
+			name:         "negative interval falls back to 15m",
+			raw:          `{"interval": "-5m"}`,
+			wantWarnings: 1,
+			checkField:   "interval",
+			checkValue:   15 * time.Minute,
+		},
+		{
+			name:         "zero max concurrency falls back to 6",
+			raw:          `{"max_concurrency": 0}`,
+			wantWarnings: 1,
+			checkField:   "max_concurrency",
+			checkValue:   6,
+		},
+		{
+			name:         "negative min change falls back to 1",
+			raw:          `{"min_change": -1}`,
+			wantWarnings: 1,
+			checkField:   "min_change",
+			checkValue:   1,
+		},
+		{
+			name:         "zero boost start priority falls back to 999",
+			raw:          `{"priority_rules": {"boost_start_priority": 0}}`,
+			wantWarnings: 1,
+			checkField:   "boost_start_priority",
+			checkValue:   999,
+		},
+		{
+			name:         "zero normal start priority falls back to 100",
+			raw:          `{"priority_rules": {"normal_start_priority": 0}}`,
+			wantWarnings: 1,
+			checkField:   "normal_start_priority",
+			checkValue:   100,
+		},
+	}
+
+	for _, tt := range warningCases {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, warnings, err := config.LoadBytes([]byte(tt.raw))
+			if err != nil {
+				t.Fatalf("expected no error with smooth fallback, got %v", err)
+			}
+			if len(warnings) != tt.wantWarnings {
+				t.Errorf("expected %d warning(s), got %d: %v", tt.wantWarnings, len(warnings), warnings)
+			}
+			switch tt.checkField {
+			case "model_group":
+				if cfg.AntigravityModelGroup != tt.checkValue {
+					t.Errorf("expected %v, got %v", tt.checkValue, cfg.AntigravityModelGroup)
+				}
+			case "interval":
+				if cfg.Interval != tt.checkValue {
+					t.Errorf("expected %v, got %v", tt.checkValue, cfg.Interval)
+				}
+			case "max_concurrency":
+				if cfg.MaxConcurrency != tt.checkValue {
+					t.Errorf("expected %v, got %v", tt.checkValue, cfg.MaxConcurrency)
+				}
+			case "min_change":
+				if cfg.MinChange != tt.checkValue {
+					t.Errorf("expected %v, got %v", tt.checkValue, cfg.MinChange)
+				}
+			case "boost_start_priority":
+				if cfg.PriorityRules.BoostStartPriority != tt.checkValue {
+					t.Errorf("expected %v, got %v", tt.checkValue, cfg.PriorityRules.BoostStartPriority)
+				}
+			case "normal_start_priority":
+				if cfg.PriorityRules.NormalStartPriority != tt.checkValue {
+					t.Errorf("expected %v, got %v", tt.checkValue, cfg.PriorityRules.NormalStartPriority)
+				}
 			}
 		})
 	}
@@ -265,12 +341,15 @@ plugins:
     - antigravity
 `)
 
-	cfg, err := config.LoadBytes(hostConfig)
+	cfg, warnings, err := config.LoadBytes(hostConfig)
 	if err != nil {
 		t.Fatalf("unexpected error parsing host config with lists: %v", err)
 	}
 	if cfg != config.Default() {
 		t.Errorf("expected default config when plugin block absent from host config, got %+v", cfg)
+	}
+	if len(warnings) != 0 {
+		t.Errorf("expected no warnings, got %v", warnings)
 	}
 }
 
@@ -302,5 +381,76 @@ func TestParseAntigravityModelGroup(t *testing.T) {
 		if err == nil {
 			t.Errorf("ParseAntigravityModelGroup(%q) expected error, got nil", input)
 		}
+	}
+}
+
+func TestLoadBytes_DurationCaseNormalization(t *testing.T) {
+	cases := []struct {
+		name     string
+		raw      string
+		expected time.Duration
+	}{
+		{"uppercase 30M", `{"interval": "30M"}`, 30 * time.Minute},
+		{"uppercase 1H", `{"interval": "1H"}`, time.Hour},
+		{"uppercase 15S", `{"interval": "15S"}`, 15 * time.Second},
+		{"uppercase 500MS", `{"interval": "500MS"}`, 500 * time.Millisecond},
+		{"mixed 1h30M", `{"interval": "1h30M"}`, 90 * time.Minute},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, warnings, err := config.LoadBytes([]byte(tt.raw))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if cfg.Interval != tt.expected {
+				t.Errorf("expected Interval=%v, got %v", tt.expected, cfg.Interval)
+			}
+			if len(warnings) != 1 {
+				t.Errorf("expected 1 normalization warning, got %d: %v", len(warnings), warnings)
+			}
+		})
+	}
+}
+
+func TestLoadBytes_MultipleWarnings(t *testing.T) {
+	raw := `{
+		"interval": "INVALID",
+		"antigravity_model_group": "unknown_group",
+		"max_concurrency": -5,
+		"min_change": -10,
+		"priority_rules": {
+			"boost_start_priority": 0,
+			"normal_start_priority": -1
+		}
+	}`
+
+	cfg, warnings, err := config.LoadBytes([]byte(raw))
+	if err != nil {
+		t.Fatalf("expected no error with smooth fallback, got %v", err)
+	}
+	if len(warnings) != 6 {
+		t.Errorf("expected 6 warnings, got %d: %v", len(warnings), warnings)
+	}
+
+	// All values should be defaults
+	defaults := config.Default()
+	if cfg.Interval != defaults.Interval {
+		t.Errorf("expected Interval=%v, got %v", defaults.Interval, cfg.Interval)
+	}
+	if cfg.AntigravityModelGroup != defaults.AntigravityModelGroup {
+		t.Errorf("expected AntigravityModelGroup=%v, got %v", defaults.AntigravityModelGroup, cfg.AntigravityModelGroup)
+	}
+	if cfg.MaxConcurrency != defaults.MaxConcurrency {
+		t.Errorf("expected MaxConcurrency=%v, got %v", defaults.MaxConcurrency, cfg.MaxConcurrency)
+	}
+	if cfg.MinChange != defaults.MinChange {
+		t.Errorf("expected MinChange=%v, got %v", defaults.MinChange, cfg.MinChange)
+	}
+	if cfg.PriorityRules.BoostStartPriority != defaults.PriorityRules.BoostStartPriority {
+		t.Errorf("expected BoostStartPriority=%v, got %v", defaults.PriorityRules.BoostStartPriority, cfg.PriorityRules.BoostStartPriority)
+	}
+	if cfg.PriorityRules.NormalStartPriority != defaults.PriorityRules.NormalStartPriority {
+		t.Errorf("expected NormalStartPriority=%v, got %v", defaults.PriorityRules.NormalStartPriority, cfg.PriorityRules.NormalStartPriority)
 	}
 }

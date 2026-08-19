@@ -20,23 +20,26 @@ const maxRunHistory = 10
 
 // Runtime manages plugin lifecycle, configuration, ticker worker, and single-flight execution.
 type Runtime struct {
-	mu              sync.Mutex
-	runMu           sync.Mutex
-	tickerFactory   TickerFactory
-	runner          TaskRunner
-	rootCtx         context.Context
-	cancel          context.CancelFunc
-	cfg             config.Config
-	hostCallbacks   host.HostCallbacks
-	clock           Clock
-	sleeper         Sleeper
-	management      *management.Handler
-	latestResult    apply.Result
-	latestAudit     string
-	runHistory      []RunHistoryEntry
-	lastAutoApplyAt time.Time
-	worker          *tickerWorker
-	shutdown        bool
+	mu                 sync.Mutex
+	runMu              sync.Mutex
+	tickerFactory      TickerFactory
+	runner             TaskRunner
+	rootCtx            context.Context
+	cancel             context.CancelFunc
+	cfg                config.Config
+	configWarnings     []string
+	hostCallbacks      host.HostCallbacks
+	clock              Clock
+	sleeper            Sleeper
+	management         *management.Handler
+	latestResult       apply.Result
+	latestAudit        string
+	latestDualSnapshot *apply.DualGroupSnapshot
+	scheduleConfig     state.ScheduleConfig
+	runHistory         []RunHistoryEntry
+	lastAutoApplyAt    time.Time
+	worker             *tickerWorker
+	shutdown           bool
 }
 
 // New creates an initialized Runtime instance.
@@ -92,6 +95,10 @@ func New(options Options) *Runtime {
 		if audit != "" {
 			rt.latestAudit = audit
 		}
+		rt.scheduleConfig = store.GetScheduleConfig()
+		if dynCfg, ok := store.GetDynamicConfig(); ok {
+			rt.cfg = applyDynamicConfigToRuntime(rt.cfg, dynCfg)
+		}
 		// Unconditionally ensure cache file exists on disk upon initialization
 		_ = store.SaveAtomic(context.Background())
 	}
@@ -122,6 +129,8 @@ func (r *Runtime) Handle(ctx context.Context, method string, request []byte) []b
 		return r.registerManagement()
 	case "management.handle":
 		return r.handleManagement(ctx, request)
+	case "filter.response", "filter.complete", "filter.error", "filter.outbound", "filter.inbound":
+		return r.handleFilterEvent(ctx, request)
 	default:
 		return failure(fmt.Errorf("%w: method %q", ErrInvalidRequest, method))
 	}
@@ -129,10 +138,14 @@ func (r *Runtime) Handle(ctx context.Context, method string, request []byte) []b
 
 // Register initializes the plugin with configuration received from CPA and starts scheduled workers.
 func (r *Runtime) Register(ctx context.Context, req RegisterRequest) (RegisterResult, error) {
-	cfg, err := config.LoadBytes([]byte(req.ConfigYAML))
+	cfg, warnings, err := config.LoadBytes([]byte(req.ConfigYAML))
 	if err != nil {
 		return RegisterResult{}, fmt.Errorf("load register config: %w", err)
 	}
+	r.mu.Lock()
+	r.configWarnings = warnings
+	r.mu.Unlock()
+	cfg = r.mergePersistedDynamicConfig(cfg)
 	if err := r.replaceConfig(ctx, cfg); err != nil {
 		return RegisterResult{}, err
 	}
@@ -141,10 +154,14 @@ func (r *Runtime) Register(ctx context.Context, req RegisterRequest) (RegisterRe
 
 // Reconfigure updates runtime configuration dynamically and adjusts scheduled workers.
 func (r *Runtime) Reconfigure(ctx context.Context, req ReconfigureRequest) (RegisterResult, error) {
-	cfg, err := config.LoadBytes([]byte(req.ConfigYAML))
+	cfg, warnings, err := config.LoadBytes([]byte(req.ConfigYAML))
 	if err != nil {
 		return RegisterResult{}, fmt.Errorf("load reconfigure config: %w", err)
 	}
+	r.mu.Lock()
+	r.configWarnings = warnings
+	r.mu.Unlock()
+	cfg = r.mergePersistedDynamicConfig(cfg)
 	if err := r.replaceConfig(ctx, cfg); err != nil {
 		return RegisterResult{}, err
 	}
@@ -159,6 +176,11 @@ func (r *Runtime) DryRun(ctx context.Context, modelGroup config.AntigravityModel
 // ManualApply triggers an immediate priority calculation and host write-back.
 func (r *Runtime) ManualApply(ctx context.Context, modelGroup config.AntigravityModelGroup, authIndexes []string) error {
 	return r.run(ctx, TriggerManualApply, modelGroup, authIndexes)
+}
+
+// Probe triggers a probe-only execution: fetches fresh quota and updates the cache without planning or applying.
+func (r *Runtime) Probe(ctx context.Context, modelGroup config.AntigravityModelGroup, authIndexes []string) error {
+	return r.run(ctx, TriggerProbe, modelGroup, authIndexes)
 }
 
 // ResetAllPriorities removes the priority field from all Antigravity credentials in CPA host.
@@ -225,6 +247,10 @@ func (r *Runtime) run(ctx context.Context, trigger Trigger, modelGroup config.An
 	}
 	defer cleanup()
 
+	if !cfg.Enabled && trigger != TriggerManual {
+		return errors.New("plugin is disabled")
+	}
+
 	if modelGroup != "" {
 		cfg.AntigravityModelGroup = modelGroup
 	}
@@ -245,6 +271,16 @@ func (r *Runtime) runAuto(ctx context.Context) error {
 	}
 	defer r.runMu.Unlock()
 
+	r.mu.Lock()
+	cfg := r.cfg
+	sched := r.scheduleConfig
+	r.mu.Unlock()
+
+	// Guard: skip if plugin is disabled or scheduler is paused
+	if !cfg.Enabled || sched.Paused {
+		return nil
+	}
+
 	taskCtx, cleanup, cfg, runner, err := r.taskContext(ctx)
 	if err != nil {
 		return err
@@ -252,6 +288,11 @@ func (r *Runtime) runAuto(ctx context.Context) error {
 	defer cleanup()
 
 	now := r.clock.Now().UTC()
+
+	if !state.IsInScheduleWindow(now, sched) {
+		return nil
+	}
+
 	r.mu.Lock()
 	last := r.lastAutoApplyAt
 	interval := cfg.Interval
@@ -328,13 +369,26 @@ func (r *Runtime) Status(ctx context.Context) (management.StatusInfo, error) {
 	}, nil
 }
 
-// LatestSnapshot returns the most recently generated plan snapshot.
-func (r *Runtime) LatestSnapshot(ctx context.Context) (apply.PlanSnapshot, error) {
+// LatestSnapshot returns the most recently generated dual-group plan snapshot.
+func (r *Runtime) LatestSnapshot(ctx context.Context) (apply.DualGroupSnapshot, error) {
 	if _, err := r.Config(); err != nil {
-		return apply.PlanSnapshot{}, err
+		return apply.DualGroupSnapshot{}, err
 	}
+	r.mu.Lock()
+	snap := r.latestDualSnapshot
+	r.mu.Unlock()
+	if snap != nil {
+		return *snap, nil
+	}
+	// Fallback: wrap the legacy single-group result
 	result, _ := r.currentRunSnapshot()
-	return result.Snapshot, nil
+	cfg, _ := r.Config()
+	return apply.NewDualGroupSnapshot(
+		string(cfg.AntigravityModelGroup),
+		r.clock.Now().UTC(),
+		result.Snapshot,
+		apply.PlanSnapshot{Items: []apply.SnapshotItem{}, Changes: []apply.SnapshotChange{}},
+	), nil
 }
 
 // Diagnostics returns a comprehensive diagnostics map.
@@ -347,8 +401,11 @@ func (r *Runtime) Diagnostics(ctx context.Context) (map[string]any, error) {
 	r.mu.Lock()
 	lastAuto := r.lastAutoApplyAt
 	workerActive := r.worker != nil
+	warnings := append([]string(nil), r.configWarnings...)
+	sched := r.scheduleConfig
 	r.mu.Unlock()
 	nextWait := r.nextAutoApplyWait(cfg.Interval)
+	nextRunAt := r.clock.Now().UTC().Add(nextWait)
 	return map[string]any{
 		"management_api": map[string]any{
 			"status":     "ready",
@@ -359,11 +416,17 @@ func (r *Runtime) Diagnostics(ctx context.Context) (map[string]any, error) {
 			"interval":           cfg.Interval.String(),
 			"last_auto_apply_at": lastAuto,
 			"next_wait":          nextWait.String(),
+			"next_run_at":        nextRunAt.Format(time.RFC3339),
 			"worker_active":      workerActive,
+			"paused":             sched.Paused,
+			"window_enabled":     sched.WindowEnabled,
+			"window_start":       sched.WindowStart,
+			"window_end":         sched.WindowEnd,
 		},
-		"latest_audit": audit,
-		"last_result":  result,
-		"run_history":  r.currentRunHistory(),
+		"config_warnings": warnings,
+		"latest_audit":    audit,
+		"last_result":     result,
+		"run_history":     r.currentRunHistory(),
 	}, nil
 }
 
@@ -469,6 +532,196 @@ func (r *Runtime) snapshotRunEntry(result apply.Result, audit string, entry RunH
 	r.runHistory = history
 }
 
+func (r *Runtime) setDualSnapshot(snap apply.DualGroupSnapshot) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.latestDualSnapshot = &snap
+}
+
+// GetScheduleConfig returns the current dynamic schedule configuration.
+func (r *Runtime) GetScheduleConfig(ctx context.Context) (state.ScheduleConfig, error) {
+	if _, err := r.Config(); err != nil {
+		return state.ScheduleConfig{}, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.scheduleConfig, nil
+}
+
+// SetScheduleConfig updates the dynamic schedule configuration and persists it to the state store.
+func (r *Runtime) SetScheduleConfig(ctx context.Context, cfg state.ScheduleConfig) error {
+	runtimeCfg, err := r.Config()
+	if err != nil {
+		return err
+	}
+	cachePath := runtimeCfg.StateCachePath
+	if strings.TrimSpace(cachePath) == "" {
+		cachePath = config.DefaultStateCachePath
+	}
+	store, err := state.Load(ctx, cachePath)
+	if err != nil {
+		return fmt.Errorf("load state for schedule config: %w", err)
+	}
+	store.SetScheduleConfig(cfg)
+	if err := store.SaveAtomic(ctx); err != nil {
+		return fmt.Errorf("persist schedule config: %w", err)
+	}
+	r.mu.Lock()
+	r.scheduleConfig = cfg
+	r.mu.Unlock()
+	return nil
+}
+
+// GetDynamicConfig returns the active dynamic configuration.
+func (r *Runtime) GetDynamicConfig(ctx context.Context) (state.DynamicConfig, error) {
+	r.mu.Lock()
+	cfg := r.cfg
+	sched := r.scheduleConfig
+	r.mu.Unlock()
+
+	cachePath := cfg.StateCachePath
+	if strings.TrimSpace(cachePath) == "" {
+		cachePath = config.DefaultStateCachePath
+	}
+	store, err := state.Load(ctx, cachePath)
+	if err == nil {
+		if dyn, ok := store.GetDynamicConfig(); ok {
+			return dyn, nil
+		}
+	}
+
+	return state.DynamicConfig{
+		AutoApply:                cfg.AutoApply,
+		Interval:                 cfg.Interval.String(),
+		AntigravityModelGroup:    string(cfg.AntigravityModelGroup),
+		MaxConcurrency:           cfg.MaxConcurrency,
+		MinChange:                cfg.MinChange,
+		UrgencyTolerance:         0.05,
+		RateLimitCooldownMinutes: 5,
+		PriorityRules: state.PriorityRulesConfig{
+			Enabled:             cfg.PriorityRules.Enabled,
+			BoostStartPriority:  cfg.PriorityRules.BoostStartPriority,
+			NormalStartPriority: cfg.PriorityRules.NormalStartPriority,
+		},
+		Schedule: sched,
+	}, nil
+}
+
+// SetDynamicConfig validates, persists, and hot-applies new dynamic configuration without restarting.
+func (r *Runtime) SetDynamicConfig(ctx context.Context, dyn state.DynamicConfig) error {
+	// 1. Validation
+	interval, err := time.ParseDuration(dyn.Interval)
+	if err != nil || interval <= 0 {
+		return fmt.Errorf("invalid interval %q: must be positive duration (e.g. 15m)", dyn.Interval)
+	}
+	if interval < time.Minute {
+		return fmt.Errorf("interval %s too short: minimum is 1m", dyn.Interval)
+	}
+	modelGroup, err := config.ParseAntigravityModelGroup(dyn.AntigravityModelGroup)
+	if err != nil {
+		return fmt.Errorf("invalid antigravity_model_group %q: must be 'gemini' or 'claude_gpt'", dyn.AntigravityModelGroup)
+	}
+	if dyn.MaxConcurrency < 1 || dyn.MaxConcurrency > 64 {
+		return fmt.Errorf("max_concurrency must be between 1 and 64, got %d", dyn.MaxConcurrency)
+	}
+	if dyn.MinChange < 0 || dyn.MinChange > 1000 {
+		return fmt.Errorf("min_change must be between 0 and 1000, got %d", dyn.MinChange)
+	}
+	if dyn.PriorityRules.BoostStartPriority < 1 || dyn.PriorityRules.BoostStartPriority > 999 {
+		return fmt.Errorf("boost_start_priority must be between 1 and 999, got %d", dyn.PriorityRules.BoostStartPriority)
+	}
+	if dyn.PriorityRules.NormalStartPriority < 1 || dyn.PriorityRules.NormalStartPriority > 999 {
+		return fmt.Errorf("normal_start_priority must be between 1 and 999, got %d", dyn.PriorityRules.NormalStartPriority)
+	}
+	if dyn.UrgencyTolerance <= 0 {
+		dyn.UrgencyTolerance = 0.05
+	}
+	if dyn.RateLimitCooldownMinutes <= 0 {
+		dyn.RateLimitCooldownMinutes = 5
+	}
+	if err := state.ValidateScheduleWindow(dyn.Schedule.WindowStart, dyn.Schedule.WindowEnd); err != nil {
+		return err
+	}
+
+	// 2. Prepare updated config
+	r.mu.Lock()
+	newCfg := r.cfg
+	newCfg.AutoApply = dyn.AutoApply
+	newCfg.Interval = interval
+	newCfg.AntigravityModelGroup = modelGroup
+	newCfg.MaxConcurrency = dyn.MaxConcurrency
+	newCfg.MinChange = dyn.MinChange
+	newCfg.PriorityRules.Enabled = dyn.PriorityRules.Enabled
+	newCfg.PriorityRules.BoostStartPriority = dyn.PriorityRules.BoostStartPriority
+	newCfg.PriorityRules.NormalStartPriority = dyn.PriorityRules.NormalStartPriority
+	cachePath := r.cfg.StateCachePath
+	r.scheduleConfig = dyn.Schedule
+	r.mu.Unlock()
+
+	if strings.TrimSpace(cachePath) == "" {
+		cachePath = config.DefaultStateCachePath
+	}
+
+	// 3. Persist to disk
+	store, err := state.Load(ctx, cachePath)
+	if err != nil {
+		return fmt.Errorf("load state for save: %w", err)
+	}
+	store.SetDynamicConfig(dyn)
+	store.SetScheduleConfig(dyn.Schedule)
+	if err := store.SaveAtomic(ctx); err != nil {
+		return fmt.Errorf("save dynamic config: %w", err)
+	}
+
+	// 4. Hot-apply config and adjust worker if needed
+	return r.replaceConfig(ctx, newCfg)
+}
+
+func (r *Runtime) mergePersistedDynamicConfig(baseCfg config.Config) config.Config {
+	cachePath := baseCfg.StateCachePath
+	if strings.TrimSpace(cachePath) == "" {
+		cachePath = config.DefaultStateCachePath
+	}
+	store, err := state.Load(context.Background(), cachePath)
+	if err != nil {
+		return baseCfg
+	}
+	dynCfg, ok := store.GetDynamicConfig()
+	if !ok {
+		return baseCfg
+	}
+	return applyDynamicConfigToRuntime(baseCfg, dynCfg)
+}
+
+func applyDynamicConfigToRuntime(base config.Config, dyn state.DynamicConfig) config.Config {
+	res := base
+	res.AutoApply = dyn.AutoApply
+	if dyn.Interval != "" {
+		if d, err := time.ParseDuration(dyn.Interval); err == nil && d > 0 {
+			res.Interval = d
+		}
+	}
+	if dyn.AntigravityModelGroup != "" {
+		if mg, err := config.ParseAntigravityModelGroup(dyn.AntigravityModelGroup); err == nil {
+			res.AntigravityModelGroup = mg
+		}
+	}
+	if dyn.MaxConcurrency >= 1 {
+		res.MaxConcurrency = dyn.MaxConcurrency
+	}
+	if dyn.MinChange >= 0 {
+		res.MinChange = dyn.MinChange
+	}
+	res.PriorityRules.Enabled = dyn.PriorityRules.Enabled
+	if dyn.PriorityRules.BoostStartPriority >= 1 {
+		res.PriorityRules.BoostStartPriority = dyn.PriorityRules.BoostStartPriority
+	}
+	if dyn.PriorityRules.NormalStartPriority >= 1 {
+		res.PriorityRules.NormalStartPriority = dyn.PriorityRules.NormalStartPriority
+	}
+	return res
+}
+
 func (r *Runtime) currentRunSnapshot() (apply.Result, string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -488,78 +741,81 @@ func registrationResult() RegisterResult {
 		SchemaVersion: 1,
 		Metadata:      buildMetadata(),
 		Capabilities: map[string]bool{
-			"management_api": true,
-			"management":     true,
+			"management_api":  true,
+			"management":      true,
+			"filter.response": true,
+			"filter.complete": true,
+			"filter.error":    true,
 		},
 	}
 }
 
+func (r *Runtime) handleFilterEvent(ctx context.Context, raw []byte) []byte {
+	var payload struct {
+		AuthIndex  string `json:"auth_index"`
+		AuthName   string `json:"auth_name"`
+		StatusCode int    `json:"status_code"`
+		Error      string `json:"error"`
+		ModelGroup string `json:"model_group"`
+	}
+	_ = json.Unmarshal(raw, &payload)
+	authIndex := firstNonEmpty(payload.AuthIndex, payload.AuthName)
+	if authIndex == "" {
+		return mustMarshal(Envelope{OK: true})
+	}
+
+	is429 := payload.StatusCode == 429 || strings.Contains(strings.ToLower(payload.Error), "429") ||
+		strings.Contains(strings.ToUpper(payload.Error), "RESOURCE_EXHAUSTED") ||
+		strings.Contains(strings.ToUpper(payload.Error), "RATE_LIMIT")
+
+	if is429 {
+		r.triggerCooldown(ctx, authIndex, payload.ModelGroup, "429 rate limit detected")
+	}
+
+	return mustMarshal(Envelope{OK: true})
+}
+
+func (r *Runtime) triggerCooldown(ctx context.Context, authIndex, modelGroup, reason string) {
+	now := r.clock.Now().UTC()
+	cfg, _ := r.Config()
+	cachePath := cfg.StateCachePath
+	if strings.TrimSpace(cachePath) == "" {
+		cachePath = config.DefaultStateCachePath
+	}
+	store, err := state.Load(ctx, cachePath)
+	if err != nil {
+		return
+	}
+
+	cooldownMinutes := 5
+	if dyn, ok := store.GetDynamicConfig(); ok && dyn.RateLimitCooldownMinutes > 0 {
+		cooldownMinutes = dyn.RateLimitCooldownMinutes
+	}
+	cooldownUntil := now.Add(time.Duration(cooldownMinutes) * time.Minute)
+
+	store.SetCooldown(state.CooldownEntry{
+		AuthIndex:     authIndex,
+		ModelGroup:    modelGroup,
+		TriggeredAt:   now,
+		CooldownUntil: cooldownUntil,
+		Reason:        reason,
+	})
+	_ = store.SaveAtomic(ctx)
+
+	// Immediately demote priority to -1 on the host
+	if r.hostCallbacks != nil {
+		client := host.NewClient(r.hostCallbacks)
+		_ = client.PatchPriority(ctx, authIndex, -1)
+	}
+}
+
 func buildMetadata() Metadata {
-	defaults := config.Default()
-	rules := defaults.PriorityRules
 	return Metadata{
 		Name:             "Antigravity Priority",
-		Version:          "1.0.1",
+		Version:          "1.1.0",
 		Author:           "ygq-future",
 		GitHubRepository: "https://github.com/ygq-future/antigravity-priority",
 		Description:      "Intelligent quota pacing and adaptive burn-rate priority scheduler exclusively for Google Antigravity in CLIProxyAPI.",
-		ConfigFields: []ConfigField{
-			{
-				Name:         "auto_apply",
-				Type:         "boolean",
-				Description:  "Enable scheduled automatic priority sorting and write-back (启用定时自动优先级排序并写回宿主)",
-				DefaultValue: defaults.AutoApply,
-			},
-			{
-				Name:         "interval",
-				Type:         "string",
-				Description:  "Auto-sort and probe interval, e.g. 15m, 30m, 1h (自动探测与调度周期，例如 15m、30m、1h)",
-				DefaultValue: "15m",
-			},
-			{
-				Name:         "antigravity_model_group",
-				Type:         "string",
-				Description:  "Quota model group for priority scheduling, options: gemini, claude_gpt (配额主控模型组，可选值: gemini 或 claude_gpt，默认: gemini)",
-				EnumValues:   []string{"gemini", "claude_gpt"},
-				DefaultValue: "gemini",
-			},
-			{
-				Name:         "max_concurrency",
-				Type:         "integer",
-				Description:  "Maximum concurrent quota probe requests (探测并发 HTTP 请求数上限，默认: 6)",
-				DefaultValue: defaults.MaxConcurrency,
-			},
-			{
-				Name:         "min_change",
-				Type:         "integer",
-				Description:  "Minimum priority change threshold to trigger write-back (写回宿主的最小优先级变动阈值，默认: 1)",
-				DefaultValue: defaults.MinChange,
-			},
-			{
-				Name:         "state_cache_path",
-				Type:         "string",
-				Description:  "Path to persist state cache and learned metrics (状态缓存与学习率持久化文件路径，默认: data/antigravity-priority-cache.json)",
-				DefaultValue: defaults.StateCachePath,
-			},
-			{
-				Name:         "priority_rules.enabled",
-				Type:         "boolean",
-				Description:  "Enable custom priority rules; when false, default sorting is used (启用自定义优先级排序规则，默认: true)",
-				DefaultValue: rules.Enabled,
-			},
-			{
-				Name:         "priority_rules.boost_start_priority",
-				Type:         "integer",
-				Description:  "Starting priority for boosted credentials (动态提权区间的起始基准优先级，默认: 999)",
-				DefaultValue: rules.BoostStartPriority,
-			},
-			{
-				Name:         "priority_rules.normal_start_priority",
-				Type:         "integer",
-				Description:  "Starting priority for regular healthy credentials (常规健康凭证的起始基准优先级，默认: 100)",
-				DefaultValue: rules.NormalStartPriority,
-			},
-		},
 	}
 }
 

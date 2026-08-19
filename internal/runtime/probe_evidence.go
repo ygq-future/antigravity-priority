@@ -192,13 +192,25 @@ func runProbeJobs(ctx context.Context, prober antigravity.Prober, input collectI
 }
 
 func probeAndRecord(ctx context.Context, prober antigravity.Prober, store *state.Store, job probeJob, now time.Time, modelGroup config.AntigravityModelGroup) (priority.ProbeEvidence, error) {
-	result := prober.Probe(ctx, antigravity.ProbeRequest{
+	results := prober.ProbeAll(ctx, antigravity.ProbeRequest{
 		AuthIndex:   job.credential.AuthIndex,
 		AccessToken: job.authMaterial.accessToken,
 		ProjectID:   job.authMaterial.projectID,
 		ModelGroup:  modelGroup,
 	})
-	return recordAntigravityProbeResult(ctx, store, result, now)
+
+	// Record all model groups from the single probe response (REQ-05: dual-group persistence).
+	var primaryEvidence priority.ProbeEvidence
+	var primaryErr error
+	for group, result := range results {
+		evidence, err := recordAntigravityProbeResult(ctx, store, result, now)
+		if group == modelGroup {
+			primaryEvidence = evidence
+			primaryErr = err
+		}
+	}
+
+	return primaryEvidence, primaryErr
 }
 
 func recordAntigravityProbeResult(ctx context.Context, store *state.Store, result antigravity.ProbeResult, now time.Time) (priority.ProbeEvidence, error) {
@@ -257,6 +269,19 @@ func recordAntigravityProbeResult(ctx context.Context, store *state.Store, resul
 }
 
 func cachedEvidenceFromEntry(entry state.Entry) priority.ProbeEvidence {
+	// A cached entry with LastError set is a recorded probe failure — return it
+	// as EvidenceStatusProbeFailed so withProbeFailureTemporaryDisables can handle it.
+	if entry.LastError != "" {
+		return priority.ProbeEvidence{
+			Provider:    core.ProviderAntigravity,
+			AuthIndex:   entry.AuthIndex,
+			ObservedAt:  entry.ObservedAt,
+			Freshness:   core.FreshnessUnknown,
+			ProbeStatus: core.ProbeStatusUnknown,
+			Status:      priority.EvidenceStatusProbeFailed,
+		}
+	}
+
 	var resetAt *time.Time
 	if !entry.ResetAt.IsZero() {
 		r := entry.ResetAt
@@ -311,4 +336,26 @@ type fixedClock struct {
 
 func (c fixedClock) Now() time.Time {
 	return c.now
+}
+
+// alternateModelGroup returns the other model group.
+func alternateModelGroup(group config.AntigravityModelGroup) config.AntigravityModelGroup {
+	if group == config.AntigravityModelGroupClaudeGPT {
+		return config.AntigravityModelGroupGemini
+	}
+	return config.AntigravityModelGroupClaudeGPT
+}
+
+// buildCachedEvidenceForGroup constructs ProbeEvidence for a model group from the state store cache.
+// Used to build predicted priority snapshots for the alternate (non-primary) group.
+func buildCachedEvidenceForGroup(store *state.Store, credentials []core.Credential, modelGroup string) []priority.ProbeEvidence {
+	evidence := make([]priority.ProbeEvidence, 0, len(credentials))
+	for _, cred := range credentials {
+		entry, ok := store.GetEntry(cred.AuthIndex, modelGroup)
+		if !ok || entry.SchemaVersion != state.SchemaVersion {
+			continue
+		}
+		evidence = append(evidence, cachedEvidenceFromEntry(entry))
+	}
+	return evidence
 }

@@ -48,6 +48,8 @@ type Options struct {
 	BoostStartPriority  int
 	NormalStartPriority int
 	MinChange           int
+	UrgencyTolerance    float64
+	CooldownAuthIndexes map[string]time.Time
 }
 
 // PlanItem represents the calculated target state for a single credential.
@@ -124,6 +126,9 @@ func normalizeOptions(options Options) Options {
 	if options.MinChange < 0 {
 		options.MinChange = 0
 	}
+	if options.UrgencyTolerance <= 0 {
+		options.UrgencyTolerance = 0.05
+	}
 	return options
 }
 
@@ -153,6 +158,14 @@ func initialItems(credentials []core.Credential, evidenceByAuthIndex map[string]
 			Disabled:   credential.Disabled,
 			PlanType:   credential.PlanType,
 			Reason:     "keep current state",
+		}
+
+		if credential.Disabled {
+			item.Disabled = true
+			item.Priority = DepletedPriority
+			item.Reason = "disabled on host"
+			items[index] = item
+			continue
 		}
 
 		evidence, hasFresh := evidenceByAuthIndex[credential.AuthIndex]
@@ -205,11 +218,23 @@ func initialItems(credentials []core.Credential, evidenceByAuthIndex map[string]
 }
 
 func planFreshPositive(items []PlanItem, options Options) {
+	tolerance := options.UrgencyTolerance
+	if tolerance <= 0 {
+		tolerance = 0.05
+	}
+
 	boostedIndices := make([]int, 0)
 	regularIndices := make([]int, 0)
 
 	for index, item := range items {
-		if !item.EvidenceFresh || item.Priority == DepletedPriority {
+		if item.Disabled || !item.EvidenceFresh || item.Priority == DepletedPriority {
+			continue
+		}
+		// Check 429 Cooldown
+		if cooldownUntil, inCooldown := options.CooldownAuthIndexes[item.Credential.AuthIndex]; inCooldown && options.Now.Before(cooldownUntil) {
+			items[index].Priority = DepletedPriority
+			items[index].Disabled = false
+			items[index].Reason = "429 rate limit cooldown"
 			continue
 		}
 		if item.IsBoosted {
@@ -219,111 +244,70 @@ func planFreshPositive(items []PlanItem, options Options) {
 		}
 	}
 
-	// 1. Plan Tier 1 (Boosted)
-	slices.SortStableFunc(boostedIndices, func(left, right int) int {
-		return CompareHealthyCandidates(items[left], items[right])
-	})
-	boostPriority := options.BoostStartPriority
-	for _, index := range boostedIndices {
-		items[index].Priority = boostPriority
-		items[index].Disabled = false
-		items[index].Reason = "fresh boosted"
-		boostPriority--
-		if boostPriority < MinPriority {
-			boostPriority = MinPriority
+	// 1. Plan Tier 1 (Boosted) with Equal Priority Clustering
+	if len(boostedIndices) > 0 {
+		slices.SortStableFunc(boostedIndices, func(left, right int) int {
+			return CompareHealthyCandidates(items[left], items[right])
+		})
+		currentPriority := options.BoostStartPriority
+		anchorUrgency := items[boostedIndices[0]].Urgency
+		for i, index := range boostedIndices {
+			if i > 0 {
+				diff := anchorUrgency - items[index].Urgency
+				if diff < 0 {
+					diff = -diff
+				}
+				if diff > tolerance {
+					currentPriority--
+					if currentPriority < MinPriority {
+						currentPriority = MinPriority
+					}
+					anchorUrgency = items[index].Urgency
+				}
+			}
+			items[index].Priority = currentPriority
+			items[index].Disabled = false
+			items[index].Reason = "fresh boosted"
 		}
 	}
 
-	// 2. Plan Tier 2 (Regular Active)
-	slices.SortStableFunc(regularIndices, func(left, right int) int {
-		return CompareHealthyCandidates(items[left], items[right])
-	})
-	normalPriority := options.NormalStartPriority
-	for _, index := range regularIndices {
-		items[index].Priority = normalPriority
-		items[index].Disabled = false
-		items[index].Reason = "fresh remaining positive"
-		normalPriority--
-		if normalPriority < MinPriority {
-			normalPriority = MinPriority
+	// 2. Plan Tier 2 (Regular Active) with Equal Priority Clustering
+	if len(regularIndices) > 0 {
+		slices.SortStableFunc(regularIndices, func(left, right int) int {
+			return CompareHealthyCandidates(items[left], items[right])
+		})
+		currentPriority := options.NormalStartPriority
+		anchorUrgency := items[regularIndices[0]].Urgency
+		for i, index := range regularIndices {
+			if i > 0 {
+				diff := anchorUrgency - items[index].Urgency
+				if diff < 0 {
+					diff = -diff
+				}
+				if diff > tolerance {
+					currentPriority--
+					if currentPriority < MinPriority {
+						currentPriority = MinPriority
+					}
+					anchorUrgency = items[index].Urgency
+				}
+			}
+			items[index].Priority = currentPriority
+			items[index].Disabled = false
+			items[index].Reason = "fresh remaining positive"
 		}
 	}
 }
 
 func ensureUniquePriorities(items []PlanItem, options Options) {
-	activeIndices := make([]int, 0)
-	hasFreshPositive := false
-
 	for index, item := range items {
 		if item.Disabled || item.Priority < MinPriority {
 			continue
 		}
-		if item.EvidenceFresh && isPositiveRemaining(item) {
-			hasFreshPositive = true
-		}
-		activeIndices = append(activeIndices, index)
-	}
-
-	if len(activeIndices) == 0 || !hasFreshPositive {
-		return
-	}
-
-	slices.SortStableFunc(activeIndices, func(left, right int) int {
-		return CompareUniquenessCandidates(items[left], items[right])
-	})
-
-	used := make(map[int]struct{}, len(activeIndices))
-	assigned := make(map[int]int, len(activeIndices))
-
-	// Pass 1: Assign fresh boosted items
-	boostPriority := options.BoostStartPriority
-	for _, index := range activeIndices {
-		if !items[index].EvidenceFresh || !items[index].IsBoosted {
-			continue
-		}
-		slot := nextAvailablePriority(boostPriority, used)
-		assigned[index] = slot
-		used[slot] = struct{}{}
-		boostPriority = slot - 1
-	}
-
-	// Pass 2: Assign fresh regular items
-	normalPriority := options.NormalStartPriority
-	for _, index := range activeIndices {
-		if !items[index].EvidenceFresh || items[index].IsBoosted {
-			continue
-		}
-		slot := nextAvailablePriority(normalPriority, used)
-		assigned[index] = slot
-		used[slot] = struct{}{}
-		normalPriority = slot - 1
-	}
-
-	// Pass 3: Assign unprobed peers
-	for _, index := range activeIndices {
-		if items[index].EvidenceFresh {
-			continue
-		}
-		pref := items[index].Priority
-		if pref > options.NormalStartPriority {
-			pref = options.NormalStartPriority
-		}
-		slot := nextAvailablePriority(pref, used)
-		assigned[index] = slot
-		used[slot] = struct{}{}
-	}
-
-	// Apply unique assignments and tag shifted peers with ForceWrite
-	for _, index := range activeIndices {
-		newPriority := assigned[index]
-		if items[index].Priority != newPriority {
-			if !items[index].EvidenceFresh {
-				items[index].ForceWrite = true
-				items[index].Reason = "priority uniqueness"
-			} else if items[index].Reason == "keep current state" || items[index].Reason == "" {
-				items[index].Reason = "priority uniqueness"
-			}
-			items[index].Priority = newPriority
+		// Cap unprobed peers so they don't linger at 999 boost tier
+		if !item.EvidenceFresh && item.Priority > options.NormalStartPriority {
+			items[index].Priority = options.NormalStartPriority
+			items[index].ForceWrite = true
 		}
 	}
 }
