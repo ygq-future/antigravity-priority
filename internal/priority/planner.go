@@ -135,7 +135,7 @@ func normalizeOptions(options Options) Options {
 func freshEvidenceByAuthIndex(evidence []ProbeEvidence) map[string]ProbeEvidence {
 	result := make(map[string]ProbeEvidence, len(evidence))
 	for _, item := range evidence {
-		if isFreshReadyEvidence(item) {
+		if isFreshReadyEvidence(item) || item.Status == EvidenceStatusProbeFailed {
 			result[item.AuthIndex] = item
 		}
 	}
@@ -170,6 +170,14 @@ func initialItems(credentials []core.Credential, evidenceByAuthIndex map[string]
 
 		evidence, hasFresh := evidenceByAuthIndex[credential.AuthIndex]
 		if hasFresh {
+			if evidence.Status == EvidenceStatusProbeFailed {
+				item.Disabled = true
+				item.EvidenceFresh = true
+				item.Reason = "failedQuotaFetch"
+				items[index] = item
+				continue
+			}
+
 			item.EvidenceFresh = true
 			item.PlanType = evidence.PlanType
 			item.ResetAt = evidence.ResetAt

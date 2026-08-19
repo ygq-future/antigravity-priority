@@ -514,10 +514,9 @@ func TestPlanFreshOnly(t *testing.T) {
 		}
 	})
 
-	t.Run("stale and failed probe evidence is ignored", func(t *testing.T) {
+	t.Run("stale probe evidence is ignored", func(t *testing.T) {
 		creds := []core.Credential{
 			{AuthIndex: "stale-cred", Priority: 50, Disabled: false},
-			{AuthIndex: "failed-cred", Priority: 60, Disabled: false},
 		}
 
 		evidence := []ProbeEvidence{
@@ -528,30 +527,95 @@ func TestPlanFreshOnly(t *testing.T) {
 				ProbeStatus:   core.ProbeStatusReady,
 				Status:        EvidenceStatusReady,
 			},
-			{
-				AuthIndex:     "failed-cred",
-				EvidenceFresh: true,
-				Freshness:     core.FreshnessFresh,
-				ProbeStatus:   core.ProbeStatusUnknown,
-				Status:        EvidenceStatusProbeFailed, // failed
-			},
 		}
 
 		plan := PlanFreshOnly(creds, evidence, defaultOptions)
 
 		if len(plan.Changes) != 0 {
-			t.Errorf("expected 0 changes for non-ready evidence, got %d", len(plan.Changes))
+			t.Errorf("expected 0 changes for stale evidence, got %d", len(plan.Changes))
 		}
+
+		if len(plan.Items) != 1 {
+			t.Fatalf("expected 1 item, got %d", len(plan.Items))
+		}
+		item := plan.Items[0]
+		if item.Priority != 50 {
+			t.Errorf("stale-cred priority = %d; want 50", item.Priority)
+		}
+		if item.Disabled {
+			t.Errorf("stale-cred should NOT be disabled")
+		}
+		if item.Reason != "keep current state" {
+			t.Errorf("stale-cred reason = %q; want 'keep current state'", item.Reason)
+		}
+	})
+
+	t.Run("probe failure triggers temporary disable failedQuotaFetch", func(t *testing.T) {
+		creds := []core.Credential{
+			{AuthIndex: "failed-cred", Priority: 60, Disabled: false},
+			{AuthIndex: "already-disabled-failed", Priority: 100, Disabled: true},
+		}
+
+		evidence := []ProbeEvidence{
+			{
+				AuthIndex:     "failed-cred",
+				EvidenceFresh: true,
+				Freshness:     core.FreshnessFresh,
+				ProbeStatus:   core.ProbeStatusUnknown,
+				Status:        EvidenceStatusProbeFailed,
+			},
+			{
+				AuthIndex:     "already-disabled-failed",
+				EvidenceFresh: true,
+				Freshness:     core.FreshnessFresh,
+				ProbeStatus:   core.ProbeStatusUnknown,
+				Status:        EvidenceStatusProbeFailed,
+			},
+		}
+
+		plan := PlanFreshOnly(creds, evidence, defaultOptions)
 
 		itemMap := make(map[string]PlanItem)
 		for _, item := range plan.Items {
 			itemMap[item.Credential.AuthIndex] = item
 		}
-		if itemMap["stale-cred"].Priority != 50 {
-			t.Errorf("stale-cred priority = %d; want 50", itemMap["stale-cred"].Priority)
+
+		// 1. failed-cred was active -> now disabled with failedQuotaFetch
+		failedItem := itemMap["failed-cred"]
+		if !failedItem.Disabled {
+			t.Errorf("failed-cred should be Disabled=true")
 		}
-		if itemMap["failed-cred"].Priority != 60 {
-			t.Errorf("failed-cred priority = %d; want 60", itemMap["failed-cred"].Priority)
+		if failedItem.Reason != "failedQuotaFetch" {
+			t.Errorf("failed-cred reason = %q; want 'failedQuotaFetch'", failedItem.Reason)
+		}
+		if failedItem.Priority != 60 {
+			t.Errorf("failed-cred priority = %d; want 60", failedItem.Priority)
+		}
+
+		// 2. already-disabled-failed was already disabled on host -> stays disabled with reason "disabled on host"
+		alreadyDisabledItem := itemMap["already-disabled-failed"]
+		if !alreadyDisabledItem.Disabled {
+			t.Errorf("already-disabled-failed should be Disabled=true")
+		}
+		if alreadyDisabledItem.Reason != "disabled on host" {
+			t.Errorf("already-disabled-failed reason = %q; want 'disabled on host'", alreadyDisabledItem.Reason)
+		}
+		if alreadyDisabledItem.Priority != DepletedPriority {
+			t.Errorf("already-disabled-failed priority = %d; want %d", alreadyDisabledItem.Priority, DepletedPriority)
+		}
+
+		// Changes should contain only the change for failed-cred (since already-disabled-failed was already disabled)
+		if len(plan.Changes) != 1 {
+			t.Fatalf("expected 1 change, got %d", len(plan.Changes))
+		}
+		if plan.Changes[0].Credential.AuthIndex != "failed-cred" {
+			t.Errorf("change authIndex = %s; want failed-cred", plan.Changes[0].Credential.AuthIndex)
+		}
+		if !plan.Changes[0].Disabled {
+			t.Errorf("change should have Disabled=true")
+		}
+		if plan.Changes[0].Reason != "failedQuotaFetch" {
+			t.Errorf("change reason = %q; want 'failedQuotaFetch'", plan.Changes[0].Reason)
 		}
 	})
 

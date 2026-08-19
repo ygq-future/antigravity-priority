@@ -103,14 +103,12 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 	}
 
 	plan := priority.PlanFreshOnly(credentials, evidence, priorityOptions(request.Config, store, now))
-	plan = withProbeFailureTemporaryDisables(plan, evidence)
 
 	// Build dual-group snapshot (REQ-05): compute predicted plan for the alternate model group.
 	primarySnapshot := apply.Snapshot(plan)
 	altGroup := alternateModelGroup(request.Config.AntigravityModelGroup)
 	altEvidence := buildCachedEvidenceForGroup(store, credentials, string(altGroup))
 	altPlan := priority.PlanFreshOnly(credentials, altEvidence, priorityOptions(request.Config, store, now))
-	altPlan = withProbeFailureTemporaryDisables(altPlan, altEvidence)
 	predictedSnapshot := apply.SnapshotPredicted(altPlan)
 	dualSnap := apply.NewDualGroupSnapshot(
 		string(request.Config.AntigravityModelGroup), now, primarySnapshot, predictedSnapshot)
@@ -196,59 +194,6 @@ func hasProbeFailure(evidence []priority.ProbeEvidence) bool {
 	return slices.ContainsFunc(evidence, func(item priority.ProbeEvidence) bool {
 		return item.Status == priority.EvidenceStatusProbeFailed
 	})
-}
-
-func withProbeFailureTemporaryDisables(plan priority.Plan, evidence []priority.ProbeEvidence) priority.Plan {
-	failures := make(map[string]priority.ProbeEvidence)
-	for _, item := range evidence {
-		if item.Status == priority.EvidenceStatusProbeFailed {
-			failures[item.AuthIndex] = item
-		}
-	}
-	if len(failures) == 0 {
-		return plan
-	}
-
-	for index := range plan.Items {
-		if _, ok := failures[plan.Items[index].Credential.AuthIndex]; !ok {
-			continue
-		}
-		if plan.Items[index].Credential.Disabled {
-			continue
-		}
-		plan.Items[index].Disabled = true
-		plan.Items[index].Reason = "failedQuotaFetch"
-	}
-
-	changeIndex := make(map[string]int, len(plan.Changes))
-	for index, change := range plan.Changes {
-		changeIndex[change.Credential.AuthIndex] = index
-	}
-
-	for _, item := range plan.Items {
-		if _, ok := failures[item.Credential.AuthIndex]; !ok {
-			continue
-		}
-		if item.Credential.Disabled {
-			continue
-		}
-		if existing, ok := changeIndex[item.Credential.AuthIndex]; ok {
-			plan.Changes[existing].Disabled = true
-			plan.Changes[existing].EvidenceFresh = true
-			if plan.Changes[existing].Reason == "" || plan.Changes[existing].Reason == "keep current state" {
-				plan.Changes[existing].Reason = "failedQuotaFetch"
-			}
-			continue
-		}
-		plan.Changes = append(plan.Changes, priority.Change{
-			Credential:    item.Credential,
-			Priority:      item.Priority,
-			Disabled:      true,
-			EvidenceFresh: true,
-			Reason:        "failedQuotaFetch",
-		})
-	}
-	return plan
 }
 
 func credentialsFromAuthFiles(files []host.AuthFile) []core.Credential {
