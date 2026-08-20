@@ -257,12 +257,12 @@ func priorityOptions(cfg config.Config, store *state.Store, now time.Time) prior
 			normalStart = cfg.PriorityRules.NormalStartPriority
 		}
 	}
-	tolerance := 0.05
+	tolerance := cfg.UrgencyTolerance
+	if tolerance <= 0 {
+		tolerance = config.DefaultUrgencyTolerance
+	}
 	var cooldowns map[string]time.Time
 	if store != nil {
-		if dyn, ok := store.GetDynamicConfig(); ok && dyn.UrgencyTolerance > 0 {
-			tolerance = dyn.UrgencyTolerance
-		}
 		cooldowns = store.GetActiveCooldowns(now)
 	}
 	return priority.Options{

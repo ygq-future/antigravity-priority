@@ -14,7 +14,6 @@ import (
 	"antigravity-priority/internal/apply"
 	"antigravity-priority/internal/config"
 	"antigravity-priority/internal/management"
-	"antigravity-priority/internal/state"
 )
 
 // ManagementRequest represents the HTTP request envelope passed by CPA management.handle.
@@ -268,19 +267,19 @@ func (r managementRunner) Diagnostics(ctx context.Context) (map[string]any, erro
 	return r.runtime.Diagnostics(ctx)
 }
 
-func (r managementRunner) GetScheduleConfig(ctx context.Context) (state.ScheduleConfig, error) {
+func (r managementRunner) GetScheduleConfig(ctx context.Context) (config.ScheduleConfig, error) {
 	return r.runtime.GetScheduleConfig(ctx)
 }
 
-func (r managementRunner) SetScheduleConfig(ctx context.Context, cfg state.ScheduleConfig) error {
+func (r managementRunner) SetScheduleConfig(ctx context.Context, cfg config.ScheduleConfig) error {
 	return r.runtime.SetScheduleConfig(ctx, cfg)
 }
 
-func (r managementRunner) GetDynamicConfig(ctx context.Context) (state.DynamicConfig, error) {
+func (r managementRunner) GetDynamicConfig(ctx context.Context) (config.DynamicConfig, error) {
 	return r.runtime.GetDynamicConfig(ctx)
 }
 
-func (r managementRunner) SetDynamicConfig(ctx context.Context, cfg state.DynamicConfig) error {
+func (r managementRunner) SetDynamicConfig(ctx context.Context, cfg config.DynamicConfig) error {
 	return r.runtime.SetDynamicConfig(ctx, cfg)
 }
 

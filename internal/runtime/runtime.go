@@ -97,7 +97,10 @@ func New(options Options) *Runtime {
 		}
 		rt.scheduleConfig = store.GetScheduleConfig()
 		if dynCfg, ok := store.GetDynamicConfig(); ok {
-			rt.cfg = applyDynamicConfigToRuntime(rt.cfg, dynCfg)
+			if merged, err := dynCfg.ApplyTo(rt.cfg); err == nil {
+				rt.cfg = merged
+				rt.scheduleConfig = merged.Schedule
+			}
 		}
 		// Unconditionally ensure cache file exists on disk upon initialization
 		_ = store.SaveAtomic(context.Background())
@@ -539,9 +542,9 @@ func (r *Runtime) setDualSnapshot(snap apply.DualGroupSnapshot) {
 }
 
 // GetScheduleConfig returns the current dynamic schedule configuration.
-func (r *Runtime) GetScheduleConfig(ctx context.Context) (state.ScheduleConfig, error) {
+func (r *Runtime) GetScheduleConfig(ctx context.Context) (config.ScheduleConfig, error) {
 	if _, err := r.Config(); err != nil {
-		return state.ScheduleConfig{}, err
+		return config.ScheduleConfig{}, err
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -549,7 +552,10 @@ func (r *Runtime) GetScheduleConfig(ctx context.Context) (state.ScheduleConfig, 
 }
 
 // SetScheduleConfig updates the dynamic schedule configuration and persists it to the state store.
-func (r *Runtime) SetScheduleConfig(ctx context.Context, cfg state.ScheduleConfig) error {
+func (r *Runtime) SetScheduleConfig(ctx context.Context, cfg config.ScheduleConfig) error {
+	if err := config.ValidateScheduleWindow(cfg.WindowStart, cfg.WindowEnd); err != nil {
+		return err
+	}
 	runtimeCfg, err := r.Config()
 	if err != nil {
 		return err
@@ -568,12 +574,13 @@ func (r *Runtime) SetScheduleConfig(ctx context.Context, cfg state.ScheduleConfi
 	}
 	r.mu.Lock()
 	r.scheduleConfig = cfg
+	r.cfg.Schedule = cfg
 	r.mu.Unlock()
 	return nil
 }
 
 // GetDynamicConfig returns the active dynamic configuration.
-func (r *Runtime) GetDynamicConfig(ctx context.Context) (state.DynamicConfig, error) {
+func (r *Runtime) GetDynamicConfig(ctx context.Context) (config.DynamicConfig, error) {
 	r.mu.Lock()
 	cfg := r.cfg
 	sched := r.scheduleConfig
@@ -590,92 +597,27 @@ func (r *Runtime) GetDynamicConfig(ctx context.Context) (state.DynamicConfig, er
 		}
 	}
 
-	capacity := cfg.QuotaSampleCapacity
-	if capacity < state.MinQuotaSampleCapacity || capacity > state.MaxQuotaSampleCapacity {
-		capacity = state.DefaultQuotaSampleCapacity
-	}
-
-	return state.DynamicConfig{
-		AutoApply:                cfg.AutoApply,
-		Interval:                 cfg.Interval.String(),
-		AntigravityModelGroup:    string(cfg.AntigravityModelGroup),
-		MaxConcurrency:           cfg.MaxConcurrency,
-		MinChange:                cfg.MinChange,
-		UrgencyTolerance:         0.05,
-		RateLimitCooldownMinutes: 5,
-		QuotaSampleCapacity:      capacity,
-		PriorityRules: state.PriorityRulesConfig{
-			Enabled:             cfg.PriorityRules.Enabled,
-			BoostStartPriority:  cfg.PriorityRules.BoostStartPriority,
-			NormalStartPriority: cfg.PriorityRules.NormalStartPriority,
-		},
-		Schedule: sched,
-	}, nil
+	dyn := cfg.Dynamic()
+	dyn.Schedule = sched
+	return dyn, nil
 }
 
 // SetDynamicConfig validates, persists, and hot-applies new dynamic configuration without restarting.
-func (r *Runtime) SetDynamicConfig(ctx context.Context, dyn state.DynamicConfig) error {
-	// 1. Validation
-	interval, err := time.ParseDuration(dyn.Interval)
-	if err != nil || interval <= 0 {
-		return fmt.Errorf("invalid interval %q: must be positive duration (e.g. 15m)", dyn.Interval)
-	}
-	if interval < time.Minute {
-		return fmt.Errorf("interval %s too short: minimum is 1m", dyn.Interval)
-	}
-	modelGroup, err := config.ParseAntigravityModelGroup(dyn.AntigravityModelGroup)
+func (r *Runtime) SetDynamicConfig(ctx context.Context, dyn config.DynamicConfig) error {
+	r.mu.Lock()
+	baseCfg := r.cfg
+	cachePath := r.cfg.StateCachePath
+	r.mu.Unlock()
+
+	newCfg, err := dyn.ApplyTo(baseCfg)
 	if err != nil {
-		return fmt.Errorf("invalid antigravity_model_group %q: must be 'gemini' or 'claude_gpt'", dyn.AntigravityModelGroup)
-	}
-	if dyn.MaxConcurrency < 1 || dyn.MaxConcurrency > 64 {
-		return fmt.Errorf("max_concurrency must be between 1 and 64, got %d", dyn.MaxConcurrency)
-	}
-	if dyn.MinChange < 0 || dyn.MinChange > 1000 {
-		return fmt.Errorf("min_change must be between 0 and 1000, got %d", dyn.MinChange)
-	}
-	if dyn.PriorityRules.BoostStartPriority < 1 || dyn.PriorityRules.BoostStartPriority > 999 {
-		return fmt.Errorf("boost_start_priority must be between 1 and 999, got %d", dyn.PriorityRules.BoostStartPriority)
-	}
-	if dyn.PriorityRules.NormalStartPriority < 1 || dyn.PriorityRules.NormalStartPriority > 999 {
-		return fmt.Errorf("normal_start_priority must be between 1 and 999, got %d", dyn.PriorityRules.NormalStartPriority)
-	}
-	if dyn.UrgencyTolerance <= 0 {
-		dyn.UrgencyTolerance = 0.05
-	}
-	if dyn.RateLimitCooldownMinutes <= 0 {
-		dyn.RateLimitCooldownMinutes = 5
-	}
-	if dyn.QuotaSampleCapacity <= 0 {
-		dyn.QuotaSampleCapacity = state.DefaultQuotaSampleCapacity
-	}
-	if dyn.QuotaSampleCapacity < state.MinQuotaSampleCapacity || dyn.QuotaSampleCapacity > state.MaxQuotaSampleCapacity {
-		return fmt.Errorf("quota_sample_capacity must be between %d and %d, got %d", state.MinQuotaSampleCapacity, state.MaxQuotaSampleCapacity, dyn.QuotaSampleCapacity)
-	}
-	if err := state.ValidateScheduleWindow(dyn.Schedule.WindowStart, dyn.Schedule.WindowEnd); err != nil {
 		return err
 	}
-
-	// 2. Prepare updated config
-	r.mu.Lock()
-	newCfg := r.cfg
-	newCfg.AutoApply = dyn.AutoApply
-	newCfg.Interval = interval
-	newCfg.AntigravityModelGroup = modelGroup
-	newCfg.MaxConcurrency = dyn.MaxConcurrency
-	newCfg.MinChange = dyn.MinChange
-	newCfg.QuotaSampleCapacity = dyn.QuotaSampleCapacity
-	newCfg.PriorityRules.Enabled = dyn.PriorityRules.Enabled
-	newCfg.PriorityRules.BoostStartPriority = dyn.PriorityRules.BoostStartPriority
-	newCfg.PriorityRules.NormalStartPriority = dyn.PriorityRules.NormalStartPriority
-	cachePath := r.cfg.StateCachePath
-	r.scheduleConfig = dyn.Schedule
-	r.mu.Unlock()
 
 	if strings.TrimSpace(cachePath) == "" {
 		cachePath = config.DefaultStateCachePath
 	}
 
-	// 3. Persist to disk
 	store, err := state.Load(ctx, cachePath)
 	if err != nil {
 		return fmt.Errorf("load state for save: %w", err)
@@ -686,7 +628,10 @@ func (r *Runtime) SetDynamicConfig(ctx context.Context, dyn state.DynamicConfig)
 		return fmt.Errorf("save dynamic config: %w", err)
 	}
 
-	// 4. Hot-apply config and adjust worker if needed
+	r.mu.Lock()
+	r.scheduleConfig = dyn.Schedule
+	r.mu.Unlock()
+
 	return r.replaceConfig(ctx, newCfg)
 }
 
@@ -703,39 +648,11 @@ func (r *Runtime) mergePersistedDynamicConfig(baseCfg config.Config) config.Conf
 	if !ok {
 		return baseCfg
 	}
-	return applyDynamicConfigToRuntime(baseCfg, dynCfg)
-}
-
-func applyDynamicConfigToRuntime(base config.Config, dyn state.DynamicConfig) config.Config {
-	res := base
-	res.AutoApply = dyn.AutoApply
-	if dyn.Interval != "" {
-		if d, err := time.ParseDuration(dyn.Interval); err == nil && d > 0 {
-			res.Interval = d
-		}
+	merged, err := dynCfg.ApplyTo(baseCfg)
+	if err != nil {
+		return baseCfg
 	}
-	if dyn.AntigravityModelGroup != "" {
-		if mg, err := config.ParseAntigravityModelGroup(dyn.AntigravityModelGroup); err == nil {
-			res.AntigravityModelGroup = mg
-		}
-	}
-	if dyn.MaxConcurrency >= 1 {
-		res.MaxConcurrency = dyn.MaxConcurrency
-	}
-	if dyn.MinChange >= 0 {
-		res.MinChange = dyn.MinChange
-	}
-	if dyn.QuotaSampleCapacity >= state.MinQuotaSampleCapacity && dyn.QuotaSampleCapacity <= state.MaxQuotaSampleCapacity {
-		res.QuotaSampleCapacity = dyn.QuotaSampleCapacity
-	}
-	res.PriorityRules.Enabled = dyn.PriorityRules.Enabled
-	if dyn.PriorityRules.BoostStartPriority >= 1 {
-		res.PriorityRules.BoostStartPriority = dyn.PriorityRules.BoostStartPriority
-	}
-	if dyn.PriorityRules.NormalStartPriority >= 1 {
-		res.PriorityRules.NormalStartPriority = dyn.PriorityRules.NormalStartPriority
-	}
-	return res
+	return merged
 }
 
 func (r *Runtime) currentRunSnapshot() (apply.Result, string) {
@@ -803,9 +720,9 @@ func (r *Runtime) triggerCooldown(ctx context.Context, authIndex, modelGroup, re
 		return
 	}
 
-	cooldownMinutes := 5
-	if dyn, ok := store.GetDynamicConfig(); ok && dyn.RateLimitCooldownMinutes > 0 {
-		cooldownMinutes = dyn.RateLimitCooldownMinutes
+	cooldownMinutes := cfg.RateLimitCooldownMinutes
+	if cooldownMinutes <= 0 {
+		cooldownMinutes = config.DefaultRateLimitCooldownMinutes
 	}
 	cooldownUntil := now.Add(time.Duration(cooldownMinutes) * time.Minute)
 

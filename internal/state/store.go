@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"antigravity-priority/internal/config"
 	"antigravity-priority/internal/core"
 )
 
@@ -102,28 +103,9 @@ type ProbeSchedule struct {
 	NextProbeAt time.Time
 }
 
-// ScheduleConfig holds dynamic schedule control state persisted across restarts.
-type ScheduleConfig struct {
-	Paused        bool   `json:"paused"`
-	WindowEnabled bool   `json:"window_enabled"`
-	WindowStart   string `json:"window_start,omitempty"` // "HH:MM" format, e.g. "09:00"
-	WindowEnd     string `json:"window_end,omitempty"`   // "HH:MM" format, e.g. "23:00"
-}
-
 // DynamicConfig contains all runtime-customizable configuration parameters
 // that can be modified via the UI Config Center without restarting the plugin (REQ-09).
-type DynamicConfig struct {
-	AutoApply                bool                `json:"auto_apply"`
-	Interval                 string              `json:"interval"`                   // e.g. "15m", "30m"
-	AntigravityModelGroup    string              `json:"antigravity_model_group"`    // "gemini" or "claude_gpt"
-	MaxConcurrency           int                 `json:"max_concurrency"`
-	MinChange                int                 `json:"min_change"`
-	UrgencyTolerance         float64             `json:"urgency_tolerance"`          // e.g. 0.05
-	RateLimitCooldownMinutes int                 `json:"rate_limit_cooldown_minutes"` // e.g. 5
-	QuotaSampleCapacity      int                 `json:"quota_sample_capacity"`      // e.g. 6 (range 2..30)
-	PriorityRules            PriorityRulesConfig `json:"priority_rules"`
-	Schedule                 ScheduleConfig      `json:"schedule"`
-}
+type DynamicConfig = config.DynamicConfig
 
 // CooldownEntry tracks temporary 429 rate limit circuit breaking for a credential.
 type CooldownEntry struct {
@@ -135,11 +117,7 @@ type CooldownEntry struct {
 }
 
 // PriorityRulesConfig holds priority rule settings for DynamicConfig.
-type PriorityRulesConfig struct {
-	Enabled             bool `json:"enabled"`
-	BoostStartPriority  int  `json:"boost_start_priority"`
-	NormalStartPriority int  `json:"normal_start_priority"`
-}
+type PriorityRulesConfig = config.PriorityRulesConfig
 
 // Store manages the in-memory and on-disk state cache document.
 type Store struct {

@@ -11,7 +11,6 @@ import (
 	"antigravity-priority/internal/apply"
 	"antigravity-priority/internal/config"
 	"antigravity-priority/internal/host"
-	"antigravity-priority/internal/state"
 )
 
 // StatusInfo represents summary state for UI rendering and status inspection.
@@ -31,10 +30,10 @@ type Runner interface {
 	Status(ctx context.Context) (StatusInfo, error)
 	LatestSnapshot(ctx context.Context) (apply.DualGroupSnapshot, error)
 	Diagnostics(ctx context.Context) (map[string]any, error)
-	GetScheduleConfig(ctx context.Context) (state.ScheduleConfig, error)
-	SetScheduleConfig(ctx context.Context, cfg state.ScheduleConfig) error
-	GetDynamicConfig(ctx context.Context) (state.DynamicConfig, error)
-	SetDynamicConfig(ctx context.Context, cfg state.DynamicConfig) error
+	GetScheduleConfig(ctx context.Context) (config.ScheduleConfig, error)
+	SetScheduleConfig(ctx context.Context, cfg config.ScheduleConfig) error
+	GetDynamicConfig(ctx context.Context) (config.DynamicConfig, error)
+	SetDynamicConfig(ctx context.Context, cfg config.DynamicConfig) error
 }
 
 // RunRequest encapsulates parameters for a manual scheduling run.
@@ -227,12 +226,12 @@ func (h *Handler) handleSetScheduleConfig(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if err := state.ValidateScheduleWindow(req.WindowStart, req.WindowEnd); err != nil {
+	if err := config.ValidateScheduleWindow(req.WindowStart, req.WindowEnd); err != nil {
 		h.writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	cfg := state.ScheduleConfig{
+	cfg := config.ScheduleConfig{
 		Paused:        req.Paused,
 		WindowEnabled: req.WindowEnabled,
 		WindowStart:   req.WindowStart,
@@ -268,7 +267,7 @@ func (h *Handler) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleSetConfig(w http.ResponseWriter, r *http.Request) {
-	var req state.DynamicConfig
+	var req config.DynamicConfig
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.writeJSONError(w, http.StatusBadRequest, "invalid dynamic config JSON: "+err.Error())
 		return

@@ -2,6 +2,7 @@ package config_test
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -456,4 +457,155 @@ func TestLoadBytes_MultipleWarnings(t *testing.T) {
 	if cfg.PriorityRules.NormalStartPriority != defaults.PriorityRules.NormalStartPriority {
 		t.Errorf("expected NormalStartPriority=%v, got %v", defaults.PriorityRules.NormalStartPriority, cfg.PriorityRules.NormalStartPriority)
 	}
+}
+
+func TestDynamicConfig_ValidateAndApplyTo(t *testing.T) {
+	base := config.Default()
+
+	t.Run("valid dynamic config applies cleanly", func(t *testing.T) {
+		dyn := config.DynamicConfig{
+			AutoApply:                true,
+			Interval:                 "30m",
+			AntigravityModelGroup:    "claude_gpt",
+			MaxConcurrency:           12,
+			MinChange:                5,
+			UrgencyTolerance:         0.10,
+			RateLimitCooldownMinutes: 10,
+			QuotaSampleCapacity:      15,
+			PriorityRules: config.PriorityRulesConfig{
+				Enabled:             true,
+				BoostStartPriority:  990,
+				NormalStartPriority: 250,
+			},
+			Schedule: config.ScheduleConfig{
+				Paused:        false,
+				WindowEnabled: true,
+				WindowStart:   "09:00",
+				WindowEnd:     "23:00",
+			},
+		}
+
+		merged, err := dyn.ApplyTo(base)
+		if err != nil {
+			t.Fatalf("expected valid ApplyTo, got %v", err)
+		}
+
+		if !merged.AutoApply {
+			t.Errorf("expected AutoApply=true")
+		}
+		if merged.Interval != 30*time.Minute {
+			t.Errorf("expected Interval=30m, got %v", merged.Interval)
+		}
+		if merged.AntigravityModelGroup != config.AntigravityModelGroupClaudeGPT {
+			t.Errorf("expected ModelGroup=claude_gpt, got %v", merged.AntigravityModelGroup)
+		}
+		if merged.MaxConcurrency != 12 {
+			t.Errorf("expected MaxConcurrency=12, got %d", merged.MaxConcurrency)
+		}
+		if merged.MinChange != 5 {
+			t.Errorf("expected MinChange=5, got %d", merged.MinChange)
+		}
+		if merged.UrgencyTolerance != 0.10 {
+			t.Errorf("expected UrgencyTolerance=0.10, got %f", merged.UrgencyTolerance)
+		}
+		if merged.RateLimitCooldownMinutes != 10 {
+			t.Errorf("expected RateLimitCooldownMinutes=10, got %d", merged.RateLimitCooldownMinutes)
+		}
+		if merged.QuotaSampleCapacity != 15 {
+			t.Errorf("expected QuotaSampleCapacity=15, got %d", merged.QuotaSampleCapacity)
+		}
+		if merged.PriorityRules.BoostStartPriority != 990 {
+			t.Errorf("expected BoostStartPriority=990, got %d", merged.PriorityRules.BoostStartPriority)
+		}
+		if merged.PriorityRules.NormalStartPriority != 250 {
+			t.Errorf("expected NormalStartPriority=250, got %d", merged.PriorityRules.NormalStartPriority)
+		}
+		if !merged.Schedule.WindowEnabled || merged.Schedule.WindowStart != "09:00" || merged.Schedule.WindowEnd != "23:00" {
+			t.Errorf("expected Schedule window enabled with 09:00-23:00, got %+v", merged.Schedule)
+		}
+
+		// Exporting dynamic view matches applied values
+		exportedDyn := merged.Dynamic()
+		if exportedDyn.Interval != "30m0s" && exportedDyn.Interval != "30m" {
+			t.Errorf("expected exported interval 30m, got %s", exportedDyn.Interval)
+		}
+	})
+
+	t.Run("invalid boundary checks produce errors", func(t *testing.T) {
+		invalidCases := []struct {
+			name    string
+			mutate  func(dyn *config.DynamicConfig)
+			wantErr string
+		}{
+			{
+				name:    "invalid interval duration string",
+				mutate:  func(dyn *config.DynamicConfig) { dyn.Interval = "invalid" },
+				wantErr: "invalid interval",
+			},
+			{
+				name:    "interval duration too short (< 1m)",
+				mutate:  func(dyn *config.DynamicConfig) { dyn.Interval = "30s" },
+				wantErr: "too short",
+			},
+			{
+				name:    "invalid model group",
+				mutate:  func(dyn *config.DynamicConfig) { dyn.AntigravityModelGroup = "unknown" },
+				wantErr: "invalid antigravity_model_group",
+			},
+			{
+				name:    "max concurrency out of range (0)",
+				mutate:  func(dyn *config.DynamicConfig) { dyn.MaxConcurrency = 0 },
+				wantErr: "max_concurrency must be between",
+			},
+			{
+				name:    "max concurrency out of range (> 64)",
+				mutate:  func(dyn *config.DynamicConfig) { dyn.MaxConcurrency = 65 },
+				wantErr: "max_concurrency must be between",
+			},
+			{
+				name:    "min change out of range (< 0)",
+				mutate:  func(dyn *config.DynamicConfig) { dyn.MinChange = -1 },
+				wantErr: "min_change must be between",
+			},
+			{
+				name:    "boost start priority out of range (0)",
+				mutate:  func(dyn *config.DynamicConfig) { dyn.PriorityRules.BoostStartPriority = 0 },
+				wantErr: "boost_start_priority must be between",
+			},
+			{
+				name:    "normal start priority out of range (> 999)",
+				mutate:  func(dyn *config.DynamicConfig) { dyn.PriorityRules.NormalStartPriority = 1000 },
+				wantErr: "normal_start_priority must be between",
+			},
+			{
+				name:    "quota sample capacity out of range (1)",
+				mutate:  func(dyn *config.DynamicConfig) { dyn.QuotaSampleCapacity = 1 },
+				wantErr: "quota_sample_capacity must be between",
+			},
+			{
+				name:    "quota sample capacity out of range (31)",
+				mutate:  func(dyn *config.DynamicConfig) { dyn.QuotaSampleCapacity = 31 },
+				wantErr: "quota_sample_capacity must be between",
+			},
+			{
+				name:    "invalid schedule window format",
+				mutate:  func(dyn *config.DynamicConfig) { dyn.Schedule.WindowStart = "25:00" },
+				wantErr: "window_start",
+			},
+		}
+
+		for _, tt := range invalidCases {
+			t.Run(tt.name, func(t *testing.T) {
+				validDyn := base.Dynamic()
+				tt.mutate(&validDyn)
+				_, err := validDyn.ApplyTo(base)
+				if err == nil {
+					t.Fatalf("expected error for %s, got nil", tt.name)
+				}
+				if tt.wantErr != "" && !strings.Contains(err.Error(), tt.wantErr) {
+					t.Errorf("expected error containing %q, got %q", tt.wantErr, err.Error())
+				}
+			})
+		}
+	})
 }
