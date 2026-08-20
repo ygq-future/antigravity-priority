@@ -114,6 +114,9 @@ func TestEstimator_MultiSample_ZeroConsumptionDeduplication(t *testing.T) {
 	if len(samples) != 1 || !samples[0].ObservedAt.Equal(t3) {
 		t.Fatalf("expected 1 sample with updated observedAt, got len=%d", len(samples))
 	}
+	if rate != 0.18 {
+		t.Fatalf("expected rate unchanged at 0.18 on zero consumption, got %v", rate)
+	}
 }
 
 func TestEstimator_MultiSample_WindowResetEviction(t *testing.T) {
