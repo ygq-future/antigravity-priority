@@ -6,15 +6,17 @@
 
 ## 目录
 
-1. [提案 1: 将探测失败策略吸收进 Priority Planner (Absorb Probe Failure Policy)](#1-将探测失败策略吸收进-priority-planner)
-2. [提案 2: 统一静态与动态配置至深度配置模块 (Unified Configuration Module)](#2-统一静态与动态配置至深度配置模块)
-3. [提案 3: 拆分物理文档修改与主机 RPC 客户端 (Extract Document Patcher Adapter)](#3-拆分物理文档修改与主机-rpc-客户端)
-4. [提案 4: 将状态缓存深化为高语义状态引擎 (Consolidate State Engine)](#4-将状态缓存深化为高语义状态引擎)
+1. [提案 1: 将探测失败策略吸收进 Priority Planner (Absorb Probe Failure Policy) [已完成]](#1-将探测失败策略吸收进-priority-planner-已完成)
+2. [提案 2: 统一静态与动态配置至深度配置模块 (Unified Configuration Module) [已完成]](#2-统一静态与动态配置至深度配置模块-已完成)
+3. [提案 3: 拆分物理文档修改与主机 RPC 客户端 (Extract Document Patcher Adapter) [已完成]](#3-拆分物理文档修改与主机-rpc-客户端-已完成)
+4. [提案 4: 将状态缓存深化为高语义状态引擎 (Consolidate State Engine) [待处理]](#4-将状态缓存深化为高语义状态引擎)
 
 ---
 
-## 1. 将探测失败策略吸收进 Priority Planner
+## 1. 将探测失败策略吸收进 Priority Planner [已完成]
 
+- **状态**：`已完成 (Completed)`
+- **落地提交**：`a89510d refactor(priority): absorb probe failure policy into planner and archive deepening proposals`
 - **推荐评级**：`Strong` (强烈推荐)
 - **依赖类别**：`in-process`
 - **涉及文件**：
@@ -34,14 +36,19 @@
 
 ---
 
-## 2. 统一静态与动态配置至深度配置模块
+## 2. 统一静态与动态配置至深度配置模块 [已完成]
 
+- **状态**：`已完成 (Completed)`
+- **落地提交**：`33cb31b refactor(config): unify dynamic and static configuration into deep config module`
 - **推荐评级**：`Strong` (强烈推荐)
 - **依赖类别**：`in-process`
 - **涉及文件**：
   - `internal/config/config.go`
+  - `internal/config/schedule.go`
   - `internal/state/store.go`
+  - `internal/state/schedule.go`
   - `internal/runtime/runtime.go`
+  - `internal/runtime/production_runner.go`
   - `internal/management/handler.go`
 
 ### 现状与缺陷 (Problem)
@@ -65,17 +72,19 @@
 
 ---
 
-## 3. 拆分物理文档修改与主机 RPC 客户端
+## 3. 拆分物理文档修改与主机 RPC 客户端 [已完成]
 
+- **状态**：`已完成 (Completed)`
 - **推荐评级**：`Worth exploring` (值得探索)
 - **依赖类别**：`ports & adapters`
 - **涉及文件**：
   - `internal/host/client.go`
+  - `internal/host/patcher.go`
+  - `internal/host/redact.go`
   - `internal/host/types.go`
-  - `internal/apply/apply.go`
 
 ### 现状与缺陷 (Problem)
-`host.Client` 当前承担了两个物理职责截然不同的适配器角色：
+`host.Client` 原先承担了两个物理职责截然不同的适配器角色：
 1. **CGO Host RPC 客户端**：通过 CGO 桥接调用 CPA 宿主的 `ListAuthFiles`、`GetAuth`、`GetRuntime`、`HTTPDo`；
 2. **物理文件 AST 修改器**：由于 CPA 未提供原生优先级修改接口，`Client` 直接通过 `os.ReadFile`、`os.CreateTemp` 和原子重命名对本地凭据 JSON 文件进行 AST 字节级原地修改（`PatchPriority`、`ResetPriority`、`PatchDisabled`）。
 
@@ -83,9 +92,9 @@
 
 ### 深化方案 (Solution)
 在主机通信与本地文件修改之间建立清晰的 **接缝 (Seam)**：
-- 拆分出专门的 `DocumentPatcher`（或 `AuthStorage`）适配器，专门封装原子物理文件写入、AST 字段定位与回填；
+- 拆分出专门的 `DocumentPatcher` 适配器，专门封装原子物理文件写入、AST 字段定位与回填；
 - `host.Client` 纯粹作为 CGO/RPC 适配器，只负责与 CPA 宿主上下文交互；
-- 将通用的脱敏工具（`RedactBytes` 等）从 `host/client.go` 中提炼为独立的脱敏工具模块。
+- 将通用的脱敏工具（`RedactBytes` 等）提炼为独立的脱敏模块 `redact.go`。
 
 ### 收益 (Benefits)
 - **Locality**：磁盘物理文件操作与网络/RPC 回调解耦，各自职责清晰；
