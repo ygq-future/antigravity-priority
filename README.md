@@ -176,6 +176,10 @@ plugins:
   - 动态切换自动调度暂停/恢复或更新生效时间区间。
 - `GET /v0/management/plugins/antigravity-priority/diagnostics`
   - 导出全脱敏的调度器运行诊断数据、配置告警、后台 Ticker 状态与近期执行记录。
+- `POST /v0/management/plugins/antigravity-priority/sync`
+  - 主动从 CPA 宿主同步最新凭证文件列表并即时重新生成双组快照。
+- `GET /v0/management/plugins/antigravity-priority/samples?auth_index=xxx`
+  - 获取指定凭证在各模型组下的历史滑动窗口时序采样数据。
 - `GET /v0/management/plugins/antigravity-priority/snapshot/latest`
   - 获取最近一次双模型组脱敏决策规划快照（`DualGroupSnapshot`）。
 

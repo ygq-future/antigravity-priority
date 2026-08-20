@@ -43,7 +43,7 @@ const TemplateConfig = `
                                 </select>
                                 <div id="customIntervalSelect" class="custom-select-wrapper" style="min-width:140px;">
                                     <button type="button" class="custom-select-trigger" onclick="toggleCustomIntervalSelect(event)" aria-haspopup="listbox" aria-expanded="false">
-                                        <span id="customIntervalLabel" data-i18n="optInterval15m">15 分钟 (推荐)</span>
+                                        <span id="customIntervalLabel">15 分钟 (推荐)</span>
                                         <span class="custom-select-arrow">
                                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"></path></svg>
                                         </span>
@@ -87,7 +87,7 @@ const TemplateConfig = `
                                 </select>
                                 <div id="customCfgModelGroupSelect" class="custom-select-wrapper" style="min-width:160px;">
                                     <button type="button" class="custom-select-trigger" onclick="toggleCustomCfgModelSelect(event)" aria-haspopup="listbox" aria-expanded="false">
-                                        <span id="customCfgModelLabel" data-i18n="optGemini">Gemini 模型</span>
+                                        <span id="customCfgModelLabel">Gemini 模型</span>
                                         <span class="custom-select-arrow">
                                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"></path></svg>
                                         </span>

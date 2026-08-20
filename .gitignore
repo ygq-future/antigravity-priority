@@ -29,6 +29,7 @@ CLIProxyAPI-Plugins-Store/
 .windsurf/
 .cline/
 .claude/
+*.png
 
 # IDE & Editor configurations
 .idea/

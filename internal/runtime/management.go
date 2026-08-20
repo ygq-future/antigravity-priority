@@ -14,6 +14,7 @@ import (
 	"antigravity-priority/internal/apply"
 	"antigravity-priority/internal/config"
 	"antigravity-priority/internal/management"
+	"antigravity-priority/internal/state"
 )
 
 // ManagementRequest represents the HTTP request envelope passed by CPA management.handle.
@@ -57,6 +58,7 @@ func (r *Runtime) registerManagement() []byte {
 	result := managementRegistration{
 		Routes: []managementRoute{
 			{Method: http.MethodPost, Path: management.PrefixLegacyPlugin + management.PathRun},
+			{Method: http.MethodPost, Path: management.PrefixLegacyPlugin + management.PathSync},
 			{Method: http.MethodPost, Path: management.PrefixLegacyPlugin + management.PathReset},
 			{Method: http.MethodGet, Path: management.PrefixLegacyPlugin + management.PathDiagnostics},
 			{Method: http.MethodGet, Path: management.PrefixLegacyPlugin + management.PathSnapshotLatest},
@@ -64,6 +66,7 @@ func (r *Runtime) registerManagement() []byte {
 			{Method: http.MethodPost, Path: management.PrefixLegacyPlugin + management.PathScheduleConfig},
 			{Method: http.MethodGet, Path: management.PrefixLegacyPlugin + management.PathConfig},
 			{Method: http.MethodPost, Path: management.PrefixLegacyPlugin + management.PathConfig},
+			{Method: http.MethodGet, Path: management.PrefixLegacyPlugin + management.PathSamples},
 		},
 		Resources: []managementResource{
 			{Path: management.PathStatus, Menu: "Antigravity Priority", Description: "Shows Antigravity priority status and audit summary."},
@@ -263,6 +266,10 @@ func (r managementRunner) LatestSnapshot(ctx context.Context) (apply.DualGroupSn
 	return r.runtime.LatestSnapshot(ctx)
 }
 
+func (r managementRunner) SyncHost(ctx context.Context, modelGroup config.AntigravityModelGroup) (apply.DualGroupSnapshot, error) {
+	return r.runtime.SyncHost(ctx, modelGroup)
+}
+
 func (r managementRunner) Diagnostics(ctx context.Context) (map[string]any, error) {
 	return r.runtime.Diagnostics(ctx)
 }
@@ -281,6 +288,10 @@ func (r managementRunner) GetDynamicConfig(ctx context.Context) (config.DynamicC
 
 func (r managementRunner) SetDynamicConfig(ctx context.Context, cfg config.DynamicConfig) error {
 	return r.runtime.SetDynamicConfig(ctx, cfg)
+}
+
+func (r managementRunner) GetSamples(ctx context.Context, authIndex, modelGroup string) ([]state.QuotaSample, error) {
+	return r.runtime.GetSamples(ctx, authIndex, modelGroup)
 }
 
 var _ management.Runner = managementRunner{}

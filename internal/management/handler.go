@@ -11,6 +11,7 @@ import (
 	"antigravity-priority/internal/apply"
 	"antigravity-priority/internal/config"
 	"antigravity-priority/internal/host"
+	"antigravity-priority/internal/state"
 )
 
 // StatusInfo represents summary state for UI rendering and status inspection.
@@ -29,11 +30,13 @@ type Runner interface {
 	Reset(ctx context.Context) (map[string]any, error)
 	Status(ctx context.Context) (StatusInfo, error)
 	LatestSnapshot(ctx context.Context) (apply.DualGroupSnapshot, error)
+	SyncHost(ctx context.Context, modelGroup config.AntigravityModelGroup) (apply.DualGroupSnapshot, error)
 	Diagnostics(ctx context.Context) (map[string]any, error)
 	GetScheduleConfig(ctx context.Context) (config.ScheduleConfig, error)
 	SetScheduleConfig(ctx context.Context, cfg config.ScheduleConfig) error
 	GetDynamicConfig(ctx context.Context) (config.DynamicConfig, error)
 	SetDynamicConfig(ctx context.Context, cfg config.DynamicConfig) error
+	GetSamples(ctx context.Context, authIndex, modelGroup string) ([]state.QuotaSample, error)
 }
 
 // RunRequest encapsulates parameters for a manual scheduling run.
@@ -69,11 +72,13 @@ const (
 	// Management API Paths
 	PathStatus         = "/status"
 	PathRun            = "/run"
+	PathSync           = "/sync"
 	PathReset          = "/reset"
 	PathDiagnostics    = "/diagnostics"
 	PathSnapshotLatest = "/snapshot/latest"
 	PathScheduleConfig = "/schedule/config"
 	PathConfig         = "/config"
+	PathSamples        = "/samples"
 
 	// URL Prefixes
 	PrefixResourcePlugin   = "/v0/resource/plugins/" + config.PluginID
@@ -100,6 +105,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleStatus(w, r)
 	case (path == PathRun || path == PrefixManagementPlugin+PathRun) && method == http.MethodPost:
 		h.handleRun(w, r)
+	case (path == PathSync || path == PrefixManagementPlugin+PathSync) && method == http.MethodPost:
+		h.handleSync(w, r)
 	case (path == PathReset || path == PrefixManagementPlugin+PathReset) && method == http.MethodPost:
 		h.handleReset(w, r)
 	case (path == PathDiagnostics || path == PrefixManagementPlugin+PathDiagnostics) && method == http.MethodGet:
@@ -114,6 +121,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleGetConfig(w, r)
 	case (path == PathConfig || path == PrefixManagementPlugin+PathConfig) && method == http.MethodPost:
 		h.handleSetConfig(w, r)
+	case (path == PathSamples || path == PrefixManagementPlugin+PathSamples) && method == http.MethodGet:
+		h.handleGetSamples(w, r)
 	default:
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(http.StatusNotFound)
@@ -307,6 +316,74 @@ func (h *Handler) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(cfg)
+}
+
+func (h *Handler) handleSync(w http.ResponseWriter, r *http.Request) {
+	if !h.tryAcquire() {
+		h.writeJSONError(w, http.StatusConflict, "concurrency conflict: runner is already active")
+		return
+	}
+	defer h.release()
+
+	var modelGroup config.AntigravityModelGroup
+	if mgStr := r.URL.Query().Get("antigravity_model_group"); mgStr != "" {
+		mg, err := config.ParseAntigravityModelGroup(mgStr)
+		if err != nil {
+			h.writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		modelGroup = mg
+	}
+
+	snap, err := h.runner.SyncHost(r.Context(), modelGroup)
+	if err != nil {
+		h.writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	snapBytes, err := json.Marshal(snap)
+	if err != nil {
+		h.writeJSONError(w, http.StatusInternalServerError, "marshal snapshot failed: "+err.Error())
+		return
+	}
+
+	var snapMap map[string]any
+	if err := json.Unmarshal(snapBytes, &snapMap); err != nil {
+		h.writeJSONError(w, http.StatusInternalServerError, "unmarshal snapshot failed: "+err.Error())
+		return
+	}
+
+	redactedSnap := redactMap(snapMap)
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(redactedSnap)
+}
+
+func (h *Handler) handleGetSamples(w http.ResponseWriter, r *http.Request) {
+	authIndex := r.URL.Query().Get("auth_index")
+	if authIndex == "" {
+		h.writeJSONError(w, http.StatusBadRequest, "auth_index is required")
+		return
+	}
+
+	geminiSamples, _ := h.runner.GetSamples(r.Context(), authIndex, "gemini")
+	claudeSamples, _ := h.runner.GetSamples(r.Context(), authIndex, "claude_gpt")
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"auth_index": authIndex,
+		"groups": map[string]any{
+			"gemini": map[string]any{
+				"name":    "Gemini 模型",
+				"samples": geminiSamples,
+			},
+			"claude_gpt": map[string]any{
+				"name":    "Claude & GPT 模型",
+				"samples": claudeSamples,
+			},
+		},
+	})
 }
 
 func (h *Handler) tryAcquire() bool {

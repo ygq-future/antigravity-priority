@@ -170,20 +170,17 @@ func initialItems(credentials []core.Credential, evidenceByAuthIndex map[string]
 			Reason:     ReasonKeepCurrentState,
 		}
 
-		if credential.Disabled {
-			item.Disabled = true
-			item.Priority = DepletedPriority
-			item.Reason = ReasonDisabledOnHost
-			items[index] = item
-			continue
-		}
-
 		evidence, hasFresh := evidenceByAuthIndex[credential.AuthIndex]
 		if hasFresh {
 			if evidence.Status == EvidenceStatusProbeFailed {
 				item.Disabled = true
 				item.EvidenceFresh = true
-				item.Reason = ReasonFailedQuotaFetch
+				if credential.Disabled {
+					item.Priority = DepletedPriority
+					item.Reason = ReasonDisabledOnHost
+				} else {
+					item.Reason = ReasonFailedQuotaFetch
+				}
 				items[index] = item
 				continue
 			}
@@ -208,6 +205,14 @@ func initialItems(credentials []core.Credential, evidenceByAuthIndex map[string]
 			item.Urgency = metrics.Urgency
 			item.IsBoosted = metrics.IsBoosted
 
+			if credential.Disabled {
+				item.Disabled = true
+				item.Priority = DepletedPriority
+				item.Reason = ReasonDisabledOnHost
+				items[index] = item
+				continue
+			}
+
 			switch {
 			case metrics.IsWeeklyDepleted:
 				// Tier 3: Weekly hard depletion has highest precedence
@@ -228,6 +233,10 @@ func initialItems(credentials []core.Credential, evidenceByAuthIndex map[string]
 					item.Reason = ReasonFreshRemainingPositive
 				}
 			}
+		} else if credential.Disabled {
+			item.Disabled = true
+			item.Priority = DepletedPriority
+			item.Reason = ReasonDisabledOnHost
 		}
 
 		items[index] = item
@@ -369,6 +378,9 @@ func changes(items []PlanItem, options Options) []Change {
 
 func shouldChange(item PlanItem, options Options) bool {
 	if !item.EvidenceFresh && !item.ForceWrite {
+		return false
+	}
+	if item.Credential.Disabled && item.Disabled {
 		return false
 	}
 	if item.Credential.PriorityMissing {

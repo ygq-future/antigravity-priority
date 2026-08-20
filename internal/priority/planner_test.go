@@ -355,19 +355,20 @@ func TestPlanFreshOnly(t *testing.T) {
 			itemMap[item.Credential.AuthIndex] = item
 		}
 
-		// reg-d has urgency 0.010 -> Tier 1 (100)
-		// reg-b, reg-a, reg-c all share urgency 0.005 -> Tier 2 (99)
+		// reg-d has highest urgency -> Tier 1 (100)
+		// reg-b has 1h 5h reset advantage -> Tier 2 (99)
+		// reg-a, reg-c share identical 5h/7d metrics -> Tier 3 (98)
 		if itemMap["reg-d"].Priority != 100 {
 			t.Errorf("reg-d priority = %d; want 100", itemMap["reg-d"].Priority)
 		}
 		if itemMap["reg-b"].Priority != 99 {
 			t.Errorf("reg-b priority = %d; want 99", itemMap["reg-b"].Priority)
 		}
-		if itemMap["reg-a"].Priority != 99 {
-			t.Errorf("reg-a priority = %d; want 99", itemMap["reg-a"].Priority)
+		if itemMap["reg-a"].Priority != 98 {
+			t.Errorf("reg-a priority = %d; want 98", itemMap["reg-a"].Priority)
 		}
-		if itemMap["reg-c"].Priority != 99 {
-			t.Errorf("reg-c priority = %d; want 99", itemMap["reg-c"].Priority)
+		if itemMap["reg-c"].Priority != 98 {
+			t.Errorf("reg-c priority = %d; want 98", itemMap["reg-c"].Priority)
 		}
 	})
 

@@ -597,6 +597,51 @@ const TemplateCSS = `
             font-size: 10px;
         }
 
+        .badge-pending {
+            background: var(--accent-yellow-subtle);
+            border: 1px solid rgba(245, 158, 11, 0.25);
+            color: var(--accent-yellow-text);
+            font-size: 10px;
+        }
+
+        .sample-table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+            font-size: 12px;
+            text-align: left;
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid var(--border-color);
+        }
+
+        .sample-table th {
+            padding: 9px 12px;
+            font-weight: 700;
+            color: var(--text-muted);
+            border-bottom: 1px solid var(--border-color);
+            background: var(--bg-subtle);
+            font-size: 11px;
+            white-space: nowrap;
+        }
+
+        .sample-table td {
+            padding: 7px 12px;
+            color: var(--text-primary);
+            font-family: SFMono-Regular, Consolas, Menlo, monospace;
+            font-size: 11.5px;
+            white-space: nowrap;
+            transition: background 0.12s ease;
+        }
+
+        .sample-table tbody.sample-group:hover td {
+            background: var(--bg-hover) !important;
+        }
+
+        .sample-table tbody.sample-group:not(:last-child) td.sample-group-bottom {
+            border-bottom: 1px solid var(--border-color);
+        }
+
         .schedule-status {
             background: var(--bg-subtle);
             border: 1px solid var(--border-subtle);

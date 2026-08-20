@@ -16,7 +16,7 @@ const StatusHTML = `<!DOCTYPE html>
             <div class="brand-zone">
                 <h1>
                     <span data-i18n="title">Antigravity Priority</span>
-                    <span class="version-badge">v1.1.1</span>
+                    <span class="version-badge">v1.1.5</span>
                 </h1>
             </div>
             <div class="topbar-actions">

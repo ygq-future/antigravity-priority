@@ -7,9 +7,11 @@ const TemplateScripts = `
         const SNAPSHOT_PATH = BASE_PATH + "/snapshot/latest";
         const DIAGNOSTICS_PATH = BASE_PATH + "/diagnostics";
         const RUN_PATH = BASE_PATH + "/run";
+        const SYNC_PATH = BASE_PATH + "/sync";
         const RESET_PATH = BASE_PATH + "/reset";
         const SCHEDULE_CONFIG_PATH = BASE_PATH + "/schedule/config";
         const CONFIG_PATH = BASE_PATH + "/config";
+        const SAMPLES_PATH = BASE_PATH + "/samples";
 
         const I18N = {
             "zh-CN": {
@@ -34,6 +36,18 @@ const TemplateScripts = `
                 btnApply: "立即写回",
                 btnReset: "重置优先级",
                 btnProbe: "刷新配额",
+                btnSamples: "采样",
+                samplesModalTitle: "自适应时序采样明细",
+                colObservedAt: "采样时间",
+                colShortRem: "5h 余量",
+                colLongRem: "7d 余量",
+                noSamples: "暂无采样历史记录 (需等待连续探测)",
+                actualPriority: "实际",
+                targetPriority: "目标",
+                predictedPriority: "预测",
+                pendingApply: "待写回",
+                unsetPriority: "[未设置]",
+                syncSuccess: "已从 CPA 宿主同步最新凭证文件",
                 confirmReset: "确定要将所有 Antigravity 凭证的优先级重置为默认未设置状态吗？",
                 resetSuccess: "所有凭证优先级已重置为默认未设置状态",
                 loading: "正在加载凭证与配额状态...",
@@ -161,6 +175,18 @@ const TemplateScripts = `
                 btnApply: "Apply",
                 btnReset: "Reset Priority",
                 btnProbe: "Fetch Quota",
+                btnSamples: "Samples",
+                samplesModalTitle: "Adaptive Quota Samples",
+                colObservedAt: "Observed At",
+                colShortRem: "5h Quota",
+                colLongRem: "7d Quota",
+                noSamples: "No quota samples recorded yet",
+                actualPriority: "Actual",
+                targetPriority: "Target",
+                predictedPriority: "Predicted",
+                pendingApply: "Pending",
+                unsetPriority: "[Unset]",
+                syncSuccess: "Synchronized with CPA host auth files",
                 confirmReset: "Are you sure you want to reset all Antigravity credential priorities to default unset state?",
                 resetSuccess: "All credential priorities have been reset to default unset state",
                 loading: "Loading credentials & quota...",
@@ -284,6 +310,7 @@ const TemplateScripts = `
         let scheduleConfig = null;
         let dynamicConfig = null;
         let originalConfigState = null;
+        let userSelectedModelGroup = false;
 
         function getManagementKey() {
             try {
@@ -495,6 +522,9 @@ const TemplateScripts = `
             if (lower.indexOf("in sync") >= 0 || lower.indexOf("optimal") >= 0) {
                 return currentLang === "zh-CN" ? "状态最优" : "In Sync";
             }
+            if (lower.indexOf("disabled on host") >= 0) {
+                return currentLang === "zh-CN" ? "宿主已手动禁用" : "Disabled on Host";
+            }
             return reason;
         }
 
@@ -574,7 +604,10 @@ const TemplateScripts = `
         }
 
         function selectModelGroup(value, event) {
-            if (event) event.stopPropagation();
+            if (event) {
+                event.stopPropagation();
+                userSelectedModelGroup = true;
+            }
             const select = document.getElementById("modelGroupSelect");
             if (select) select.value = value;
 
@@ -641,8 +674,15 @@ const TemplateScripts = `
                 const selectedOpt = select.options[select.selectedIndex];
                 if (selectedOpt) {
                     const key = selectedOpt.getAttribute("data-i18n");
-                    label.textContent = key ? t(key) : selectedOpt.textContent;
+                    label.textContent = key ? t(key) : (selectedOpt.text || selectedOpt.value);
                 }
+            }
+            const menu = document.getElementById("customIntervalMenu");
+            if (menu && select) {
+                menu.querySelectorAll(".custom-select-option").forEach(opt => {
+                    const isSelected = opt.getAttribute("data-value") === select.value;
+                    opt.classList.toggle("selected", isSelected);
+                });
             }
         }
 
@@ -683,8 +723,15 @@ const TemplateScripts = `
                 const selectedOpt = select.options[select.selectedIndex];
                 if (selectedOpt) {
                     const key = selectedOpt.getAttribute("data-i18n");
-                    label.textContent = key ? t(key) : selectedOpt.textContent;
+                    label.textContent = key ? t(key) : (selectedOpt.text || selectedOpt.value);
                 }
+            }
+            const menu = document.getElementById("customCfgModelMenu");
+            if (menu && select) {
+                menu.querySelectorAll(".custom-select-option").forEach(opt => {
+                    const isSelected = opt.getAttribute("data-value") === select.value;
+                    opt.classList.toggle("selected", isSelected);
+                });
             }
         }
 
@@ -766,6 +813,20 @@ const TemplateScripts = `
             try {
                 const data = await apiFetch(SNAPSHOT_PATH);
                 latestSnapshot = data;
+                if (!userSelectedModelGroup && data && data.active_model_group) {
+                    const select = document.getElementById("modelGroupSelect");
+                    if (select && select.value !== data.active_model_group) {
+                        select.value = data.active_model_group;
+                        updateCustomSelectDisplay();
+                        const menu = document.getElementById("customSelectMenu");
+                        if (menu) {
+                            menu.querySelectorAll(".custom-select-option").forEach(opt => {
+                                const isSelected = opt.getAttribute("data-value") === data.active_model_group;
+                                opt.classList.toggle("selected", isSelected);
+                            });
+                        }
+                    }
+                }
                 renderDashboard();
             } catch (err) {
                 showToast(err.message, "error");
@@ -785,48 +846,80 @@ const TemplateScripts = `
             }
         }
 
-        async function refreshDashboard() {
+        async function syncHost() {
+            try {
+                const groupSelect = document.getElementById("modelGroupSelect");
+                const group = groupSelect ? groupSelect.value : "gemini";
+                const data = await apiFetch(SYNC_PATH + "?antigravity_model_group=" + encodeURIComponent(group), { method: "POST" });
+                latestSnapshot = data;
+                renderDashboard();
+                showToast(t("syncSuccess"), "success");
+            } catch (err) {
+                await fetchSnapshot();
+            }
+        }
+
+        async function refreshDashboard(withSync) {
             const btn = document.getElementById("btnRefresh");
             if (btn) btn.disabled = true;
             try {
-                await Promise.all([fetchSnapshot(), fetchDiagnostics()]);
+                if (withSync) {
+                    await syncHost();
+                } else {
+                    await fetchSnapshot();
+                }
+                await fetchDiagnostics();
             } finally {
                 if (btn) btn.disabled = false;
             }
         }
 
         async function triggerApplyWithConfirm() {
-            var confirmed = await showThemedConfirm({
-                title: t("confirmApplyTitle"),
-                message: t("confirmApplyMsg"),
-                confirmText: currentLang === "zh-CN" ? "确认写回" : "Apply",
-                cancelText: currentLang === "zh-CN" ? "取消" : "Cancel",
-                isDanger: false
-            });
-            if (!confirmed) return;
-            triggerRun("apply");
+            const groupSelect = document.getElementById("modelGroupSelect");
+            const selectedGroup = groupSelect ? groupSelect.value : "gemini";
+            const activeGroup = (dynamicConfig && dynamicConfig.antigravity_model_group) || (latestSnapshot && latestSnapshot.active_model_group) || "gemini";
+            if (selectedGroup !== activeGroup) {
+                showToast(currentLang === "zh-CN" ? "仅主控组可执行写回，当前主控组为 " + activeGroup : "Only active group can apply. Active: " + activeGroup, "info");
+                return;
+            }
+            const groupData = (latestSnapshot && latestSnapshot.groups && latestSnapshot.groups[selectedGroup]) || {};
+            const items = groupData.items || [];
+            if (items.length === 0) {
+                showToast(currentLang === "zh-CN" ? "未发现有效凭证，无需执行写回" : "No credentials found to apply", "info");
+                return;
+            }
+
+            // Show changes preview modal with direct confirm button
+            showModal("apply-confirm", {
+                snapshot: groupData,
+                changes: groupData.changes || [],
+                items: items
+            }, false);
+        }
+
+        async function executeDirectApply() {
+            closeModal();
+            const groupSelect = document.getElementById("modelGroupSelect");
+            const group = groupSelect ? groupSelect.value : "gemini";
+            const btnApp = document.getElementById("btnApply");
+            if (btnApp) btnApp.disabled = true;
+
+            try {
+                const path = RUN_PATH + "?mode=apply&antigravity_model_group=" + encodeURIComponent(group);
+                const result = await apiFetch(path, { method: "POST" });
+                showToast(currentLang === "zh-CN" ? "已成功写回 CPA 宿主凭证优先级" : "Applied credential priorities to CPA host successfully", "success");
+                await refreshDashboard();
+            } catch (err) {
+                showToast(err.message, "error");
+            } finally {
+                if (btnApp) btnApp.disabled = false;
+            }
         }
 
         async function triggerRun(mode) {
             if (mode === "apply") {
-                const groupSelect = document.getElementById("modelGroupSelect");
-                const selectedGroup = groupSelect ? groupSelect.value : "gemini";
-                const activeGroup = (latestSnapshot && latestSnapshot.active_model_group) || "gemini";
-                if (selectedGroup !== activeGroup) {
-                    showToast(currentLang === "zh-CN" ? "仅主控组可执行写回，当前主控组为 " + activeGroup : "Only active group can apply. Active: " + activeGroup, "info");
-                    return;
-                }
-                const groupData = (latestSnapshot && latestSnapshot.groups && latestSnapshot.groups[selectedGroup]) || {};
-                const items = groupData.items || [];
-                if (items.length === 0) {
-                    showToast(currentLang === "zh-CN" ? "未发现有效凭证，无需执行写回" : "No credentials found to apply", "info");
-                    return;
-                }
-                const changes = groupData.changes || [];
-                if (changes.length === 0) {
-                    showToast(currentLang === "zh-CN" ? "当前凭证状态与优先级已是最优，无需写回" : "All credentials in sync, no changes needed", "info");
-                    return;
-                }
+                await executeDirectApply();
+                return;
             }
 
             const groupSelect = document.getElementById("modelGroupSelect");
@@ -855,7 +948,7 @@ const TemplateScripts = `
             }
         }
 
-        // Show Modal: Distinguish Dry-Run (Quota & Metrics diff) vs Apply (Priority & Disabled diff)
+        // Show Modal: Distinguish Dry-Run (Quota & Metrics diff) vs Apply Confirm vs History
         function showModal(mode, result, isFromHistory) {
             const modal = document.getElementById("diffModal");
             const title = document.getElementById("modalTitle");
@@ -863,14 +956,26 @@ const TemplateScripts = `
             const list = document.getElementById("modalDiffList");
             const btnApply = document.getElementById("btnModalApply");
 
-            title.textContent = mode === "dry-run" ? t("previewTitle") : t("applyTitle");
             const changes = (result && result.changes) || (result && result.snapshot && result.snapshot.changes) || [];
             const items = (result && result.snapshot && result.snapshot.items) || [];
 
-            // Only live dry-run offers the "Apply" button; history view is strictly read-only
-            btnApply.hidden = mode === "apply" || isFromHistory === true || changes.length === 0;
-
-            summary.textContent = "Attempted: " + (result.attempted || changes.length) + ", Succeeded: " + (result.succeeded || 0) + ", Failed: " + (result.failed || 0) + ", Skipped: " + (result.skipped || 0);
+            if (mode === "apply-confirm") {
+                title.textContent = t("confirmApplyTitle");
+                btnApply.hidden = false;
+                btnApply.textContent = currentLang === "zh-CN" ? "确认写回" : "Confirm Apply";
+                btnApply.onclick = executeDirectApply;
+                summary.textContent = (currentLang === "zh-CN" ? "待写回凭证数量: " : "Credentials to update: ") + (changes.length || items.length);
+            } else if (mode === "dry-run") {
+                title.textContent = t("previewTitle");
+                btnApply.hidden = isFromHistory === true;
+                btnApply.textContent = t("btnApplyNow");
+                btnApply.onclick = applyFromModal;
+                summary.textContent = "Attempted: " + (result.attempted || changes.length) + ", Succeeded: " + (result.succeeded || 0) + ", Failed: " + (result.failed || 0) + ", Skipped: " + (result.skipped || 0);
+            } else {
+                title.textContent = t("applyTitle");
+                btnApply.hidden = true;
+                summary.textContent = "Attempted: " + (result.attempted || changes.length) + ", Succeeded: " + (result.succeeded || 0) + ", Failed: " + (result.failed || 0) + ", Skipped: " + (result.skipped || 0);
+            }
 
             list.innerHTML = "";
             if (changes.length === 0 && items.length === 0) {
@@ -893,9 +998,9 @@ const TemplateScripts = `
 
                     let fromP = "-";
                     if (c.current && c.current.priority !== undefined) {
-                        fromP = c.current.disabled ? (currentLang === "zh-CN" ? "[已禁用]" : "[Disabled]") : c.current.priority;
+                        fromP = c.current.disabled ? (currentLang === "zh-CN" ? "[已禁用]" : "[Disabled]") : (c.current.priority_missing || c.current.priority <= 0 ? t("unsetPriority") : c.current.priority);
                     } else if (c.priority_from !== undefined) {
-                        fromP = c.disabled_from ? (currentLang === "zh-CN" ? "[已禁用]" : "[Disabled]") : (c.priority_missing ? "-" : c.priority_from);
+                        fromP = c.disabled_from ? (currentLang === "zh-CN" ? "[已禁用]" : "[Disabled]") : (c.priority_missing || c.priority_from <= 0 ? t("unsetPriority") : c.priority_from);
                     }
 
                     let toP = "-";
@@ -904,7 +1009,7 @@ const TemplateScripts = `
                     } else if (c.priority_to !== undefined) {
                         toP = c.disabled_to ? (currentLang === "zh-CN" ? "[已禁用]" : "[Disabled]") : c.priority_to;
                     } else if (c.priority !== undefined) {
-                        toP = c.disabled ? (currentLang === "zh-CN" ? "[已禁用]" : "[Disabled]") : c.priority;
+                        toP = (c.disabled || (c.target && c.target.disabled)) ? (currentLang === "zh-CN" ? "[已禁用]" : "[Disabled]") : c.priority;
                     }
 
                     row.innerHTML = "<div>" +
@@ -934,9 +1039,9 @@ const TemplateScripts = `
                     row.className = "diff-card";
                     let fromP = "-";
                     if (c.current && c.current.priority !== undefined) {
-                        fromP = c.current.disabled ? (currentLang === "zh-CN" ? "[已禁用]" : "[Disabled]") : c.current.priority;
+                        fromP = c.current.disabled ? (currentLang === "zh-CN" ? "[已禁用]" : "[Disabled]") : (c.current.priority_missing || c.current.priority <= 0 ? t("unsetPriority") : c.current.priority);
                     } else if (c.priority_from !== undefined) {
-                        fromP = c.disabled_from ? (currentLang === "zh-CN" ? "[已禁用]" : "[Disabled]") : (c.priority_missing ? "-" : c.priority_from);
+                        fromP = c.disabled_from ? (currentLang === "zh-CN" ? "[已禁用]" : "[Disabled]") : (c.priority_missing || c.priority_from <= 0 ? t("unsetPriority") : c.priority_from);
                     }
 
                     let toP = "-";
@@ -945,7 +1050,7 @@ const TemplateScripts = `
                     } else if (c.priority_to !== undefined) {
                         toP = c.disabled_to ? (currentLang === "zh-CN" ? "[已禁用]" : "[Disabled]") : c.priority_to;
                     } else if (c.priority !== undefined) {
-                        toP = c.disabled ? (currentLang === "zh-CN" ? "[已禁用]" : "[Disabled]") : c.priority;
+                        toP = (c.disabled || (c.target && c.target.disabled)) ? (currentLang === "zh-CN" ? "[已禁用]" : "[Disabled]") : c.priority;
                     }
 
                     const name = c.name || c.auth_index || "Credential";
@@ -972,6 +1077,94 @@ const TemplateScripts = `
 
         function closeModal() {
             document.getElementById("diffModal").hidden = true;
+        }
+
+        async function openSamplesModal(authIndex, name) {
+            const modal = document.getElementById("samplesModal");
+            const title = document.getElementById("samplesModalTitle");
+            const sub = document.getElementById("samplesModalSubtitle");
+            const body = document.getElementById("samplesModalBody");
+            if (!modal || !body) return;
+
+            title.textContent = (name || authIndex) + " - " + t("samplesModalTitle");
+            sub.textContent = "ID: " + authIndex;
+            body.innerHTML = "<div class=\"empty-state\">" + t("loading") + "</div>";
+            modal.hidden = false;
+
+            try {
+                const path = SAMPLES_PATH + "?auth_index=" + encodeURIComponent(authIndex);
+                const data = await apiFetch(path);
+                const groups = (data && data.groups) || {};
+                const geminiData = (groups.gemini && groups.gemini.samples) || [];
+                const claudeData = (groups.claude_gpt && groups.claude_gpt.samples) || [];
+
+                const maxLen = Math.max(geminiData.length, claudeData.length);
+                if (maxLen === 0) {
+                    body.innerHTML = "<div class=\"empty-state\">" + t("noSamples") + "</div>";
+                    return;
+                }
+
+                function renderMiniMeter(val) {
+                    if (val === undefined || val === null || val === "-") return "<span style=\"color:var(--text-muted);\">-</span>";
+                    const num = Math.max(0, Math.min(100, parseInt(val, 10) || 0));
+                    let fillClass = "meter-fill-healthy";
+                    if (num <= 10) fillClass = "meter-fill-danger";
+                    else if (num <= 30) fillClass = "meter-fill-warning";
+
+                    return "<div style=\"display:flex; align-items:center; gap:8px; width:100%; min-width:85px; max-width:140px;\">" +
+                        "<div style=\"flex:1; height:5px; background:var(--meter-bg); border-radius:999px; overflow:hidden;\">" +
+                            "<div class=\"meter-fill " + fillClass + "\" style=\"width:" + num + "%; height:100%; border-radius:999px;\"></div>" +
+                        "</div>" +
+                        "<strong style=\"font-size:11px; font-family:monospace; min-width:32px; text-align:right;\">" + num + "%</strong>" +
+                    "</div>";
+                }
+
+                let html = "<table class=\"sample-table\">" +
+                    "<thead><tr>" +
+                        "<th style=\"width:36px; text-align:center;\">#</th>" +
+                        "<th style=\"width:150px;\">" + t("colObservedAt") + "</th>" +
+                        "<th style=\"width:110px;\">" + (currentLang === "zh-CN" ? "模型组" : "Group") + "</th>" +
+                        "<th>" + t("shortWindow") + "</th>" +
+                        "<th>" + t("longWindow") + "</th>" +
+                    "</tr></thead>";
+
+                for (let i = 0; i < maxLen; i++) {
+                    const g = geminiData[i];
+                    const c = claudeData[i];
+                    const timeRaw = (g && g.observed_at) || (c && c.observed_at);
+                    const timeStr = timeRaw ? new Date(timeRaw).toLocaleString(currentLang === "zh-CN" ? "zh-CN" : "en-US") : "-";
+
+                    const g5hMeter = g ? renderMiniMeter(g.short_window_rem) : "-";
+                    const g7dMeter = g ? renderMiniMeter(g.long_window_rem) : "-";
+                    const c5hMeter = c ? renderMiniMeter(c.short_window_rem) : "-";
+                    const c7dMeter = c ? renderMiniMeter(c.long_window_rem) : "-";
+
+                    html += "<tbody class=\"sample-group\">" +
+                        "<tr>" +
+                            "<td rowspan=\"2\" class=\"sample-group-bottom\" style=\"font-weight:700; text-align:center; vertical-align:middle; border-bottom:1px solid var(--border-color);\">" + (i + 1) + "</td>" +
+                            "<td rowspan=\"2\" class=\"sample-group-bottom\" style=\"vertical-align:middle; border-bottom:1px solid var(--border-color); font-size:12px; color:var(--text-secondary); font-family:monospace;\">" + escapeHTML(timeStr) + "</td>" +
+                            "<td style=\"border-bottom:1px dashed var(--border-subtle); padding:6px 10px;\"><span class=\"badge badge-subtle\" style=\"font-size:10px;\">🔵 Gemini</span></td>" +
+                            "<td style=\"border-bottom:1px dashed var(--border-subtle); padding:6px 10px;\">" + g5hMeter + "</td>" +
+                            "<td style=\"border-bottom:1px dashed var(--border-subtle); padding:6px 10px;\">" + g7dMeter + "</td>" +
+                        "</tr>" +
+                        "<tr>" +
+                            "<td class=\"sample-group-bottom\" style=\"border-bottom:1px solid var(--border-color); padding:6px 10px;\"><span class=\"badge badge-predicted\" style=\"font-size:10px;\">🟣 Claude/GPT</span></td>" +
+                            "<td class=\"sample-group-bottom\" style=\"border-bottom:1px solid var(--border-color); padding:6px 10px;\">" + c5hMeter + "</td>" +
+                            "<td class=\"sample-group-bottom\" style=\"border-bottom:1px solid var(--border-color); padding:6px 10px;\">" + c7dMeter + "</td>" +
+                        "</tr>" +
+                    "</tbody>";
+                }
+
+                html += "</table>";
+                body.innerHTML = html;
+            } catch (err) {
+                body.innerHTML = "<div class=\"empty-state\" style=\"color:var(--accent-red-text);\">" + escapeHTML(err.message) + "</div>";
+            }
+        }
+
+        function closeSamplesModal() {
+            const modal = document.getElementById("samplesModal");
+            if (modal) modal.hidden = true;
         }
 
         function applyFromModal() {
@@ -1032,11 +1225,36 @@ const TemplateScripts = `
             if (latestDiagnostics) {
                 var auditEl = document.getElementById("valLastAudit");
                 if (auditEl) auditEl.textContent = latestDiagnostics.latest_audit || "-";
-                var nextRunAt = latestDiagnostics.scheduler && latestDiagnostics.scheduler.next_run_at;
-                var nextStr = nextRunAt ? formatCountdown(nextRunAt) : (latestDiagnostics.scheduler && latestDiagnostics.scheduler.next_wait || "-");
+
+                var sched = latestDiagnostics.scheduler || {};
+                var isAutoApplyEnabled = false;
+                if (dynamicConfig && dynamicConfig.auto_apply !== undefined) {
+                    isAutoApplyEnabled = Boolean(dynamicConfig.auto_apply);
+                } else if (latestDiagnostics.management_api && latestDiagnostics.management_api.auto_apply !== undefined) {
+                    isAutoApplyEnabled = Boolean(latestDiagnostics.management_api.auto_apply);
+                }
+
+                var isPaused = scheduleConfig ? Boolean(scheduleConfig.paused) : Boolean(sched.paused);
+                var isSleeping = false;
+                if (scheduleConfig && scheduleConfig.window_enabled && scheduleConfig.window_start && scheduleConfig.window_end) {
+                    isSleeping = !isCurrentTimeInScheduleWindow(scheduleConfig.window_start, scheduleConfig.window_end);
+                } else if (sched.window_enabled && sched.window_start && sched.window_end) {
+                    isSleeping = !isCurrentTimeInScheduleWindow(sched.window_start, sched.window_end);
+                }
+
                 var el = document.getElementById("valNextProbe");
                 if (el) {
-                    el.innerHTML = (currentLang === "zh-CN" ? "下次调度: " : "Next run: ") + "<span class=\"meter-countdown\" data-scheduler-countdown=\"" + (nextRunAt || "") + "\">" + nextStr + "</span>";
+                    if (!isAutoApplyEnabled) {
+                        el.innerHTML = (currentLang === "zh-CN" ? "调度状态: " : "Schedule: ") + "<span style=\"color:var(--text-muted); font-weight:600;\">" + t("scheduleDisabled") + "</span>";
+                    } else if (isPaused) {
+                        el.innerHTML = (currentLang === "zh-CN" ? "调度状态: " : "Schedule: ") + "<span style=\"color:var(--accent-yellow-text); font-weight:600;\">" + t("schedulePaused") + "</span>";
+                    } else if (isSleeping) {
+                        el.innerHTML = (currentLang === "zh-CN" ? "调度状态: " : "Schedule: ") + "<span style=\"color:var(--accent-purple-text); font-weight:600;\">" + t("scheduleSleeping") + "</span>";
+                    } else {
+                        var nextRunAt = sched.next_run_at;
+                        var nextStr = nextRunAt ? formatCountdown(nextRunAt) : (sched.next_wait || "-");
+                        el.innerHTML = (currentLang === "zh-CN" ? "下次调度: " : "Next run: ") + "<span class=\"meter-countdown\" data-scheduler-countdown=\"" + (nextRunAt || "") + "\">" + nextStr + "</span>";
+                    }
                 }
             }
 
@@ -1088,8 +1306,32 @@ const TemplateScripts = `
 
                 const urgency = (item.urgency || 0).toFixed(2);
                 const burnRate = (item.cycle_burn_rate || 0).toFixed(2);
-                const currentP = item.current ? item.current.priority : (item.priority || "-");
-                const targetP = item.target ? (item.target.disabled ? (currentLang === "zh-CN" ? "[已禁用]" : "[Disabled]") : item.target.priority) : currentP;
+
+                let actualP = "-";
+                if (item.current) {
+                    if (item.current.disabled) actualP = currentLang === "zh-CN" ? "[已禁用]" : "[Disabled]";
+                    else if (item.current.priority_missing || item.current.priority === undefined || item.current.priority <= 0) actualP = t("unsetPriority");
+                    else actualP = item.current.priority;
+                } else if (item.priority_missing || item.priority === undefined || item.priority <= 0) {
+                    actualP = t("unsetPriority");
+                } else if (item.priority !== undefined) {
+                    actualP = item.disabled ? (currentLang === "zh-CN" ? "[已禁用]" : "[Disabled]") : item.priority;
+                }
+
+                let targetP = "-";
+                if (item.target) {
+                    if (item.target.disabled) targetP = currentLang === "zh-CN" ? "[已禁用]" : "[Disabled]";
+                    else targetP = item.target.priority;
+                } else {
+                    targetP = actualP;
+                }
+
+                let tagBadge = "";
+                if (isPredictedView) {
+                    tagBadge = "<span class=\"badge badge-predicted\">" + t("predictedBadge") + "</span>";
+                } else if (String(actualP) !== String(targetP)) {
+                    tagBadge = "<span class=\"badge badge-pending\">" + t("pendingApply") + "</span>";
+                }
 
                 let statusBadge = "<span class=\"badge badge-success\">" + t("statusActive") + "</span>";
                 if (item.target && item.target.disabled) {
@@ -1101,17 +1343,20 @@ const TemplateScripts = `
                 }
 
                 const formattedReason = formatReason(item.reason, isBoosted, item.target && item.target.disabled);
+                const authIdx = item.auth_index || "";
+                const credDisplayName = item.name || item.account || item.auth_index || "Credential";
 
                 card.innerHTML =
                     "<div class=\"cred-info\">" +
                         "<div class=\"cred-name\">" +
-                            "<span>" + escapeHTML(item.name || item.account || item.auth_index || "Credential") + "</span>" +
+                            "<span>" + escapeHTML(credDisplayName) + "</span>" +
                         "</div>" +
                         "<div class=\"cred-meta\">ID: " + escapeHTML(item.auth_index || "-") + " · " + escapeHTML(item.plan_type || "Antigravity") + "</div>" +
                         "<div class=\"cred-badge-row\">" +
                             statusBadge +
                             "<div class=\"metric-pill metric-pill-urgency\">" + t("urgencyLabel") + "<strong>" + urgency + "</strong></div>" +
                             "<div class=\"metric-pill metric-pill-burn\">" + t("burnLabel") + "<strong>" + burnRate + "</strong></div>" +
+                            "<button type=\"button\" class=\"btn-secondary\" style=\"min-height:20px; height:20px; padding:0 6px; font-size:11px; margin-left:auto; border-radius:4px;\" onclick=\"openSamplesModal('" + escapeHTML(authIdx) + "', '" + escapeHTML(credDisplayName) + "')\">📊 " + t("btnSamples") + "</button>" +
                         "</div>" +
                     "</div>" +
 
@@ -1136,10 +1381,13 @@ const TemplateScripts = `
                     "</div>" +
 
                     "<div class=\"cred-priority\">" +
-                        "<div class=\"priority-score-box\">" +
-                            "<span style=\"font-size:12px; color:var(--text-muted); font-weight:650;\">" + t("priority") + ":</span>" +
+                        "<div class=\"priority-score-box\" style=\"flex-wrap:wrap;\">" +
+                            "<span style=\"font-size:11.5px; color:var(--text-muted); font-weight:600;\">" + t("actualPriority") + ":</span>" +
+                            "<span style=\"font-size:12.5px; font-weight:700; color:var(--text-secondary); font-family:SFMono-Regular, Consolas, Menlo, monospace;\">" + actualP + "</span>" +
+                            "<span style=\"color:var(--border-color); margin:0 1px;\">|</span>" +
+                            "<span style=\"font-size:11.5px; color:var(--text-muted); font-weight:600;\">" + (isPredictedView ? t("predictedPriority") : t("targetPriority")) + ":</span>" +
                             "<span class=\"priority-score" + (isPredictedView ? " priority-predicted" : "") + "\">" + targetP + "</span>" +
-                            (isPredictedView ? " <span class=\"badge badge-predicted\">" + t("predictedBadge") + "</span>" : "") +
+                            tagBadge +
                         "</div>" +
                         "<div style=\"font-size:11px; color:var(--text-secondary);\">" + escapeHTML(formattedReason) + "</div>" +
                     "</div>";
@@ -1196,11 +1444,32 @@ const TemplateScripts = `
                 raw.textContent = JSON.stringify(latestDiagnostics, null, 2);
             }
             if (sched && latestDiagnostics && latestDiagnostics.scheduler) {
+                var isAutoApplyEnabled = false;
+                if (dynamicConfig && dynamicConfig.auto_apply !== undefined) {
+                    isAutoApplyEnabled = Boolean(dynamicConfig.auto_apply);
+                } else if (latestDiagnostics.management_api && latestDiagnostics.management_api.auto_apply !== undefined) {
+                    isAutoApplyEnabled = Boolean(latestDiagnostics.management_api.auto_apply);
+                }
+
+                var isPaused = scheduleConfig ? Boolean(scheduleConfig.paused) : Boolean(latestDiagnostics.scheduler.paused);
+                var isSleeping = false;
+                if (scheduleConfig && scheduleConfig.window_enabled && scheduleConfig.window_start && scheduleConfig.window_end) {
+                    isSleeping = !isCurrentTimeInScheduleWindow(scheduleConfig.window_start, scheduleConfig.window_end);
+                } else if (latestDiagnostics.scheduler.window_enabled && latestDiagnostics.scheduler.window_start && latestDiagnostics.scheduler.window_end) {
+                    isSleeping = !isCurrentTimeInScheduleWindow(latestDiagnostics.scheduler.window_start, latestDiagnostics.scheduler.window_end);
+                }
+
                 var nextRunAt = latestDiagnostics.scheduler.next_run_at;
                 var nextStr = nextRunAt ? formatCountdown(nextRunAt) : (latestDiagnostics.scheduler.next_wait || "-");
                 var intervalText = (currentLang === "zh-CN" ? "执行周期: " : "Interval: ") + (latestDiagnostics.scheduler.interval || "-");
-                var activeText = (currentLang === "zh-CN" ? "运行状态: " : "Active: ") + (latestDiagnostics.scheduler.worker_active ? (currentLang === "zh-CN" ? "运行中" : "Yes") : (currentLang === "zh-CN" ? "已暂停" : "No"));
+                var activeStatusText = !isAutoApplyEnabled ? (currentLang === "zh-CN" ? "已关闭" : "Disabled") : (isPaused ? (currentLang === "zh-CN" ? "已暂停" : "Paused") : (latestDiagnostics.scheduler.worker_active ? (currentLang === "zh-CN" ? "运行中" : "Yes") : (currentLang === "zh-CN" ? "已关闭" : "No")));
+                var activeText = (currentLang === "zh-CN" ? "运行状态: " : "Active: ") + activeStatusText;
                 var nextText = (currentLang === "zh-CN" ? "下次运行: " : "Next Run: ");
+
+                var nextDisplay = "<span class=\"meter-countdown\" data-scheduler-countdown=\"" + (nextRunAt || "") + "\">" + nextStr + "</span>";
+                if (!isAutoApplyEnabled) nextDisplay = "<span style=\"color:var(--text-muted); font-weight:600;\">" + t("scheduleDisabled") + "</span>";
+                else if (isPaused) nextDisplay = "<span style=\"color:var(--accent-yellow-text); font-weight:600;\">" + t("schedulePaused") + "</span>";
+                else if (isSleeping) nextDisplay = "<span style=\"color:var(--accent-purple-text); font-weight:600;\">" + t("scheduleSleeping") + "</span>";
 
                 sched.innerHTML =
                     "<div style=\"font-weight:700; color:var(--text-primary); display:flex; align-items:center; gap:6px;\">" +
@@ -1209,7 +1478,7 @@ const TemplateScripts = `
                     "<div style=\"display:flex; align-items:center; gap:8px; color:var(--text-secondary); font-size:12px; flex-wrap:wrap;\">" +
                         "<span>" + intervalText + "</span> · " +
                         "<span>" + activeText + "</span> · " +
-                        "<span>" + nextText + "<span class=\"meter-countdown\" data-scheduler-countdown=\"" + (nextRunAt || "") + "\">" + nextStr + "</span></span>" +
+                        "<span>" + nextText + nextDisplay + "</span>" +
                     "</div>";
             }
         }
@@ -1221,10 +1490,25 @@ const TemplateScripts = `
                     el.textContent = formatCountdown(resetTime);
                 }
             });
-            document.querySelectorAll("[data-scheduler-countdown]").forEach(function(el) {
-                var t = el.getAttribute("data-scheduler-countdown");
-                if (t) el.textContent = formatCountdown(t);
-            });
+
+            var isAutoApplyEnabled = false;
+            if (dynamicConfig && dynamicConfig.auto_apply !== undefined) {
+                isAutoApplyEnabled = Boolean(dynamicConfig.auto_apply);
+            } else if (latestDiagnostics && latestDiagnostics.management_api && latestDiagnostics.management_api.auto_apply !== undefined) {
+                isAutoApplyEnabled = Boolean(latestDiagnostics.management_api.auto_apply);
+            }
+            var isPaused = scheduleConfig ? Boolean(scheduleConfig.paused) : (latestDiagnostics && latestDiagnostics.scheduler && Boolean(latestDiagnostics.scheduler.paused));
+            var isSleeping = false;
+            if (scheduleConfig && scheduleConfig.window_enabled && scheduleConfig.window_start && scheduleConfig.window_end) {
+                isSleeping = !isCurrentTimeInScheduleWindow(scheduleConfig.window_start, scheduleConfig.window_end);
+            }
+
+            if (isAutoApplyEnabled && !isPaused && !isSleeping) {
+                document.querySelectorAll("[data-scheduler-countdown]").forEach(function(el) {
+                    var t = el.getAttribute("data-scheduler-countdown");
+                    if (t) el.textContent = formatCountdown(t);
+                });
+            }
             // Periodically refresh scheduler status indicator to catch window transitions
             if (scheduleConfig) {
                 renderScheduleStatus();
@@ -1431,6 +1715,8 @@ const TemplateScripts = `
                     body: JSON.stringify(newConfig)
                 });
                 renderScheduleStatus();
+                renderDashboard();
+                renderDiagnostics();
                 showToast(scheduleConfig.paused ? t("schedulePaused") : t("scheduleActive"), "info");
             } catch (err) {
                 showToast(err.message, "error");
@@ -1466,6 +1752,20 @@ const TemplateScripts = `
         async function fetchDynamicConfig() {
             try {
                 dynamicConfig = await apiFetch(CONFIG_PATH);
+                if (!userSelectedModelGroup && dynamicConfig && dynamicConfig.antigravity_model_group) {
+                    const select = document.getElementById("modelGroupSelect");
+                    if (select && select.value !== dynamicConfig.antigravity_model_group) {
+                        select.value = dynamicConfig.antigravity_model_group;
+                        updateCustomSelectDisplay();
+                        const menu = document.getElementById("customSelectMenu");
+                        if (menu) {
+                            menu.querySelectorAll(".custom-select-option").forEach(opt => {
+                                const isSelected = opt.getAttribute("data-value") === dynamicConfig.antigravity_model_group;
+                                opt.classList.toggle("selected", isSelected);
+                            });
+                        }
+                    }
+                }
                 renderDynamicConfigForm(dynamicConfig);
                 renderScheduleStatus();
             } catch (err) {
@@ -1785,11 +2085,14 @@ const TemplateScripts = `
             await saveDynamicConfig();
         }
 
-        // Initialize application
-        applyLanguage();
-        refreshDashboard();
-        fetchScheduleConfig();
-        fetchDynamicConfig();
-        countdownInterval = setInterval(updateAllCountdowns, 1000);
+        // Initialize application with deterministic dependency ordering
+        async function initializeApp() {
+            applyLanguage();
+            await fetchDynamicConfig();
+            await fetchScheduleConfig();
+            await refreshDashboard(true);
+            countdownInterval = setInterval(updateAllCountdowns, 1000);
+        }
+        initializeApp();
     </script>
 `

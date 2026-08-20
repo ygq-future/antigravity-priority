@@ -176,6 +176,10 @@ The plugin registers **resources** (static management dashboard) and **routes** 
   - Updates active schedule time window or toggles pause/resume.
 - `GET /v0/management/plugins/antigravity-priority/diagnostics`
   - Exports redacted scheduler diagnostic metrics, config warnings, background worker state, and run history.
+- `POST /v0/management/plugins/antigravity-priority/sync`
+  - Actively re-syncs latest credential files from CPA host and regenerates dual-group snapshots immediately.
+- `GET /v0/management/plugins/antigravity-priority/samples?auth_index=xxx`
+  - Retrieves multi-sample sliding window time-series quota observations for a specific credential.
 - `GET /v0/management/plugins/antigravity-priority/snapshot/latest`
   - Returns the latest dual-group redacted decision planning snapshot (`DualGroupSnapshot`).
 

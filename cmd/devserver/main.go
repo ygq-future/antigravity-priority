@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"antigravity-priority/internal/apply"
+	"antigravity-priority/internal/config"
 	"antigravity-priority/internal/management"
 	"antigravity-priority/internal/state"
 )
@@ -21,6 +22,24 @@ type devRunner struct {
 	scheduleConfig state.ScheduleConfig
 	dynamicConfig  state.DynamicConfig
 	latestAudit    string
+}
+
+func buildDevChanges(items []apply.SnapshotItem) []apply.SnapshotChange {
+	res := make([]apply.SnapshotChange, 0)
+	for _, item := range items {
+		if item.Current.Priority != item.Target.Priority || item.Current.Disabled != item.Target.Disabled {
+			res = append(res, apply.SnapshotChange{
+				Name:          item.Name,
+				AuthIndex:     item.AuthIndex,
+				Current:       item.Current,
+				Target:        item.Target,
+				EvidenceFresh: item.EvidenceFresh,
+				Reason:        item.Reason,
+				IsBoosted:     item.IsBoosted,
+			})
+		}
+	}
+	return res
 }
 
 func newDevRunner() *devRunner {
@@ -66,7 +85,7 @@ func newDevRunner() *devRunner {
 			LongWindowResetAt:    &longBoost,
 			LongWindowRemaining:  &rem85,
 		},
-		// 2. Tier 2 (Regular Active): Healthy account Alpha -> Priority 100 (REQ-10: Equal Clustering with Beta)
+		// 2. Tier 2 (Regular Active): Healthy account Alpha -> Priority 100 (Unset on host initially)
 		{
 			Name:                 "developer-account-01@gmail.com",
 			AuthIndex:            "auth_ag_002",
@@ -74,7 +93,7 @@ func newDevRunner() *devRunner {
 			Type:                 "antigravity",
 			Status:               "active",
 			PlanType:             "Antigravity Gemini Flash",
-			Current:              apply.Target{Priority: 50, Disabled: false},
+			Current:              apply.Target{Priority: 0, Disabled: false}, // Unset on host
 			Target:               apply.Target{Priority: 100, Disabled: false},
 			EvidenceFresh:        true,
 			Reason:               "fresh remaining positive",
@@ -91,7 +110,7 @@ func newDevRunner() *devRunner {
 			LongWindowResetAt:    &longHealthy,
 			LongWindowRemaining:  &rem80,
 		},
-		// 3. Tier 2 (Regular Active): Healthy account Beta -> Priority 100 (REQ-10: Equal Clustering with Alpha)
+		// 3. Tier 2 (Regular Active): Healthy account Beta -> Priority 98
 		{
 			Name:                 "developer-account-02@gmail.com",
 			AuthIndex:            "auth_ag_003",
@@ -100,11 +119,11 @@ func newDevRunner() *devRunner {
 			Status:               "active",
 			PlanType:             "Antigravity Gemini Flash",
 			Current:              apply.Target{Priority: 80, Disabled: false},
-			Target:               apply.Target{Priority: 100, Disabled: false},
+			Target:               apply.Target{Priority: 98, Disabled: false},
 			EvidenceFresh:        true,
 			Reason:               "fresh remaining positive",
 			IsBoosted:            false,
-			Urgency:              0.86, // Urgency delta = 0.02 <= 0.05 tolerance -> Assigned same priority 100!
+			Urgency:              0.86,
 			R7d:                  0.78,
 			T7d:                  0.62,
 			R5h:                  0.80,
@@ -116,7 +135,7 @@ func newDevRunner() *devRunner {
 			LongWindowResetAt:    &longHealthy,
 			LongWindowRemaining:  &rem80,
 		},
-		// 4. Tier 3 (Soft Depleted): 5h Short window exhausted -> Priority 1, Disabled false
+		// 4. Tier 3 (Soft Depleted): 5h Short window exhausted -> Priority -1, Disabled false
 		{
 			Name:                 "ci-runner-short-depleted@ci.org",
 			AuthIndex:            "auth_ag_004",
@@ -125,7 +144,7 @@ func newDevRunner() *devRunner {
 			Status:               "active",
 			PlanType:             "Antigravity Gemini Flash",
 			Current:              apply.Target{Priority: 100, Disabled: false},
-			Target:               apply.Target{Priority: 1, Disabled: false},
+			Target:               apply.Target{Priority: -1, Disabled: false},
 			EvidenceFresh:        true,
 			Reason:               "fresh short window depleted",
 			IsBoosted:            false,
@@ -218,62 +237,7 @@ func newDevRunner() *devRunner {
 		},
 	}
 
-	geminiChanges := []apply.SnapshotChange{
-		{
-			Name:          "work-gemini-pro@corp.com",
-			AuthIndex:     "auth_ag_001",
-			Current:       apply.Target{Priority: 100, Disabled: false},
-			Target:        apply.Target{Priority: 999, Disabled: false},
-			EvidenceFresh: true,
-			Reason:        "fresh boosted",
-			IsBoosted:     true,
-		},
-		{
-			Name:          "developer-account-01@gmail.com",
-			AuthIndex:     "auth_ag_002",
-			Current:       apply.Target{Priority: 50, Disabled: false},
-			Target:        apply.Target{Priority: 100, Disabled: false},
-			EvidenceFresh: true,
-			Reason:        "fresh remaining positive",
-			IsBoosted:     false,
-		},
-		{
-			Name:          "developer-account-02@gmail.com",
-			AuthIndex:     "auth_ag_003",
-			Current:       apply.Target{Priority: 80, Disabled: false},
-			Target:        apply.Target{Priority: 100, Disabled: false},
-			EvidenceFresh: true,
-			Reason:        "fresh remaining positive",
-			IsBoosted:     false,
-		},
-		{
-			Name:          "ci-runner-short-depleted@ci.org",
-			AuthIndex:     "auth_ag_004",
-			Current:       apply.Target{Priority: 100, Disabled: false},
-			Target:        apply.Target{Priority: 1, Disabled: false},
-			EvidenceFresh: true,
-			Reason:        "fresh short window depleted",
-			IsBoosted:     false,
-		},
-		{
-			Name:          "heavy-scraper-weekly-depleted@corp.io",
-			AuthIndex:     "auth_ag_005",
-			Current:       apply.Target{Priority: 100, Disabled: false},
-			Target:        apply.Target{Priority: -1, Disabled: true},
-			EvidenceFresh: true,
-			Reason:        "fresh weekly depleted",
-			IsBoosted:     false,
-		},
-		{
-			Name:          "rate-limited-cooldown@api.com",
-			AuthIndex:     "auth_ag_006",
-			Current:       apply.Target{Priority: 100, Disabled: false},
-			Target:        apply.Target{Priority: -1, Disabled: false},
-			EvidenceFresh: true,
-			Reason:        "429 rate limit cooldown",
-			IsBoosted:     false,
-		},
-	}
+	geminiChanges := buildDevChanges(geminiItems)
 
 	geminiSnapshot := apply.PlanSnapshot{
 		TotalItems:   len(geminiItems),
@@ -295,11 +259,7 @@ func newDevRunner() *devRunner {
 		}
 		claudeItems[i] = item
 	}
-	claudeChanges := make([]apply.SnapshotChange, len(geminiChanges))
-	for i, chg := range geminiChanges {
-		chg.Reason = "predicted: " + chg.Reason
-		claudeChanges[i] = chg
-	}
+	claudeChanges := buildDevChanges(claudeItems)
 	claudeSnapshot := apply.PlanSnapshot{
 		TotalItems:   len(claudeItems),
 		TotalChanges: len(claudeChanges),
@@ -409,95 +369,36 @@ func (d *devRunner) Run(ctx context.Context, request management.RunRequest) (app
 	kind := "dry_run"
 	if request.Mode == "apply" {
 		kind = "apply"
-		// Apply updates current priorities to match targets
 		for i := range d.geminiSnapshot.Items {
 			d.geminiSnapshot.Items[i].Current = d.geminiSnapshot.Items[i].Target
 		}
+		for i := range d.claudeSnapshot.Items {
+			d.claudeSnapshot.Items[i].Current = d.claudeSnapshot.Items[i].Target
+		}
+		d.geminiSnapshot.Changes = buildDevChanges(d.geminiSnapshot.Items)
+		d.claudeSnapshot.Changes = buildDevChanges(d.claudeSnapshot.Items)
 	}
 
-	// Construct realistic ChangeResult for Apply mode (Bug 1 verification)
-	changes := []apply.ChangeResult{
-		{
-			Name:              "work-gemini-pro@corp.com",
-			AuthIndex:         "auth_ag_001",
-			Provider:          "antigravity",
-			Status:            "success",
-			Success:           true,
-			PriorityAttempted: true,
-			PriorityFrom:      100,
-			PriorityTo:        999,
-			Reason:            "fresh boosted",
-		},
-		{
-			Name:              "developer-account-01@gmail.com",
-			AuthIndex:         "auth_ag_002",
-			Provider:          "antigravity",
-			Status:            "success",
-			Success:           true,
-			PriorityAttempted: true,
-			PriorityFrom:      50,
-			PriorityTo:        100,
-			Reason:            "fresh remaining positive",
-		},
-		{
-			Name:              "developer-account-02@gmail.com",
-			AuthIndex:         "auth_ag_003",
-			Provider:          "antigravity",
-			Status:            "success",
-			Success:           true,
-			PriorityAttempted: true,
-			PriorityFrom:      80,
-			PriorityTo:        100,
-			Reason:            "fresh remaining positive",
-		},
-		{
-			Name:              "ci-runner-short-depleted@ci.org",
-			AuthIndex:         "auth_ag_004",
-			Provider:          "antigravity",
-			Status:            "success",
-			Success:           true,
-			PriorityAttempted: true,
-			PriorityFrom:      100,
-			PriorityTo:        1,
-			Reason:            "fresh short window depleted",
-		},
-		{
-			Name:              "heavy-scraper-weekly-depleted@corp.io",
-			AuthIndex:         "auth_ag_005",
-			Provider:          "antigravity",
-			Status:            "success",
-			Success:           true,
-			PriorityAttempted: true,
-			DisabledAttempted: true,
-			PriorityFrom:      100,
-			PriorityTo:        -1,
-			DisabledFrom:      false,
-			DisabledTo:        true,
-			Reason:            "fresh weekly depleted",
-		},
-		{
-			Name:              "rate-limited-cooldown@api.com",
-			AuthIndex:         "auth_ag_006",
-			Provider:          "antigravity",
-			Status:            "success",
-			Success:           true,
-			PriorityAttempted: true,
-			PriorityFrom:      100,
-			PriorityTo:        -1,
-			Reason:            "429 rate limit cooldown",
-		},
+	activeChanges := d.geminiSnapshot.Changes
+	activeItems := d.geminiSnapshot.Items
+	if d.dynamicConfig.AntigravityModelGroup == "claude_gpt" {
+		activeChanges = d.claudeSnapshot.Changes
+		activeItems = d.claudeSnapshot.Items
 	}
 
 	result := apply.Result{
-		Attempted: len(changes),
-		Succeeded: len(changes),
+		Attempted: len(activeChanges),
+		Succeeded: len(activeChanges),
 		Failed:    0,
-		Skipped:   1,
+		Skipped:   len(activeItems) - len(activeChanges),
 		Snapshot:  d.geminiSnapshot,
-		Changes:   changes,
+		Changes:   make([]apply.ChangeResult, 0),
+	}
+	if d.dynamicConfig.AntigravityModelGroup == "claude_gpt" {
+		result.Snapshot = d.claudeSnapshot
 	}
 
-	d.latestAudit = fmt.Sprintf("%s completed: %d succeeded, 0 failed, 1 skipped", kind, len(changes))
+	d.latestAudit = fmt.Sprintf("%s completed: %d succeeded, 0 failed, %d skipped", kind, len(activeChanges), result.Skipped)
 	d.runHistory = append([]map[string]any{
 		{
 			"at":        now,
@@ -506,9 +407,9 @@ func (d *devRunner) Run(ctx context.Context, request management.RunRequest) (app
 			"attempted": result.Attempted,
 			"succeeded": result.Succeeded,
 			"failed":    0,
-			"skipped":   1,
+			"skipped":   result.Skipped,
 			"message":   d.latestAudit,
-			"snapshot":  d.geminiSnapshot,
+			"snapshot":  result.Snapshot,
 		},
 	}, d.runHistory...)
 
@@ -519,9 +420,18 @@ func (d *devRunner) Reset(ctx context.Context) (map[string]any, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	for i := range d.geminiSnapshot.Items {
-		d.geminiSnapshot.Items[i].Current.Priority = 0
-		d.geminiSnapshot.Items[i].Target.Priority = 0
+		if !d.geminiSnapshot.Items[i].Current.Disabled {
+			d.geminiSnapshot.Items[i].Current.Priority = 0
+		}
 	}
+	for i := range d.claudeSnapshot.Items {
+		if !d.claudeSnapshot.Items[i].Current.Disabled {
+			d.claudeSnapshot.Items[i].Current.Priority = 0
+		}
+	}
+	d.geminiSnapshot.Changes = buildDevChanges(d.geminiSnapshot.Items)
+	d.claudeSnapshot.Changes = buildDevChanges(d.claudeSnapshot.Items)
+
 	d.latestAudit = fmt.Sprintf("reset %d credential priorities to default", len(d.geminiSnapshot.Items))
 	now := time.Now().UTC()
 	d.runHistory = append([]map[string]any{
@@ -534,6 +444,7 @@ func (d *devRunner) Reset(ctx context.Context) (map[string]any, error) {
 			"failed":    0,
 			"skipped":   0,
 			"message":   d.latestAudit,
+			"snapshot":  d.geminiSnapshot,
 		},
 	}, d.runHistory...)
 	return map[string]any{
@@ -556,12 +467,87 @@ func (d *devRunner) Status(ctx context.Context) (management.StatusInfo, error) {
 func (d *devRunner) LatestSnapshot(ctx context.Context) (apply.DualGroupSnapshot, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	activeGroup := d.dynamicConfig.AntigravityModelGroup
+	if activeGroup == "" {
+		activeGroup = "gemini"
+	}
 	return apply.NewDualGroupSnapshot(
-		"gemini",
+		activeGroup,
 		time.Now().UTC(),
 		d.geminiSnapshot,
 		d.claudeSnapshot,
 	), nil
+}
+
+func (d *devRunner) SyncHost(ctx context.Context, modelGroup config.AntigravityModelGroup) (apply.DualGroupSnapshot, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	activeGroup := string(modelGroup)
+	if activeGroup == "" {
+		activeGroup = d.dynamicConfig.AntigravityModelGroup
+	}
+	if activeGroup == "" {
+		activeGroup = "gemini"
+	}
+	d.latestAudit = fmt.Sprintf("synchronized %d credentials from mock host at %s", len(d.geminiSnapshot.Items), time.Now().UTC().Format("15:04:05"))
+	return apply.NewDualGroupSnapshot(
+		activeGroup,
+		time.Now().UTC(),
+		d.geminiSnapshot,
+		d.claudeSnapshot,
+	), nil
+}
+
+func (d *devRunner) GetSamples(ctx context.Context, authIndex, modelGroup string) ([]state.QuotaSample, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	now := time.Now().UTC()
+	if modelGroup == "claude_gpt" {
+		return []state.QuotaSample{
+			{
+				ObservedAt:     now.Add(-45 * time.Minute),
+				ShortWindowRem: 90,
+				LongWindowRem:  80,
+			},
+			{
+				ObservedAt:     now.Add(-30 * time.Minute),
+				ShortWindowRem: 85,
+				LongWindowRem:  78,
+			},
+			{
+				ObservedAt:     now.Add(-15 * time.Minute),
+				ShortWindowRem: 80,
+				LongWindowRem:  75,
+			},
+			{
+				ObservedAt:     now,
+				ShortWindowRem: 75,
+				LongWindowRem:  72,
+			},
+		}, nil
+	}
+	return []state.QuotaSample{
+		{
+			ObservedAt:     now.Add(-45 * time.Minute),
+			ShortWindowRem: 95,
+			LongWindowRem:  85,
+		},
+		{
+			ObservedAt:     now.Add(-30 * time.Minute),
+			ShortWindowRem: 90,
+			LongWindowRem:  82,
+		},
+		{
+			ObservedAt:     now.Add(-15 * time.Minute),
+			ShortWindowRem: 85,
+			LongWindowRem:  80,
+		},
+		{
+			ObservedAt:     now,
+			ShortWindowRem: 80,
+			LongWindowRem:  78,
+		},
+	}, nil
 }
 
 func (d *devRunner) Diagnostics(ctx context.Context) (map[string]any, error) {

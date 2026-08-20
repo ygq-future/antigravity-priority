@@ -54,6 +54,13 @@ func (m *mockRunner) LatestSnapshot(ctx context.Context) (apply.DualGroupSnapsho
 	return apply.DualGroupSnapshot{}, nil
 }
 
+func (m *mockRunner) SyncHost(ctx context.Context, modelGroup config.AntigravityModelGroup) (apply.DualGroupSnapshot, error) {
+	if m.snapshotFunc != nil {
+		return m.snapshotFunc(ctx)
+	}
+	return apply.DualGroupSnapshot{}, nil
+}
+
 func (m *mockRunner) Diagnostics(ctx context.Context) (map[string]any, error) {
 	if m.diagnosticsFunc != nil {
 		return m.diagnosticsFunc(ctx)
@@ -78,6 +85,16 @@ func (m *mockRunner) SetDynamicConfig(ctx context.Context, cfg state.DynamicConf
 	m.dynamicConfig = cfg
 	m.scheduleConfig = cfg.Schedule
 	return nil
+}
+
+func (m *mockRunner) GetSamples(ctx context.Context, authIndex, modelGroup string) ([]state.QuotaSample, error) {
+	return []state.QuotaSample{
+		{
+			ObservedAt:     time.Now().UTC(),
+			ShortWindowRem: 85,
+			LongWindowRem:  80,
+		},
+	}, nil
 }
 
 func TestHandler_Run_DryRun_Success(t *testing.T) {
@@ -585,5 +602,76 @@ func TestHandler_SetDynamicConfig_InvalidJSON(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected status 400, got %d", rec.Code)
+	}
+}
+
+func TestHandler_Sync_Success(t *testing.T) {
+	runner := &mockRunner{
+		snapshotFunc: func(ctx context.Context) (apply.DualGroupSnapshot, error) {
+			primary := apply.PlanSnapshot{
+				TotalItems: 1,
+				Items: []apply.SnapshotItem{
+					{
+						Name:      "test-account",
+						AuthIndex: "auth_sync",
+						Current:   apply.Target{Priority: 100},
+						Target:    apply.Target{Priority: 99},
+					},
+				},
+			}
+			predicted := apply.PlanSnapshot{}
+			return apply.NewDualGroupSnapshot("gemini", time.Now().UTC(), primary, predicted), nil
+		},
+	}
+
+	handler := management.NewHandler(runner)
+	req := httptest.NewRequest(http.MethodPost, "/sync", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rec.Code)
+	}
+
+	var snap apply.DualGroupSnapshot
+	if err := json.Unmarshal(rec.Body.Bytes(), &snap); err != nil {
+		t.Fatalf("decode snapshot failed: %v", err)
+	}
+	if snap.ActiveModelGroup != "gemini" {
+		t.Errorf("expected active_model_group 'gemini', got %q", snap.ActiveModelGroup)
+	}
+}
+
+func TestHandler_GetSamples_Success(t *testing.T) {
+	runner := &mockRunner{}
+	handler := management.NewHandler(runner)
+	req := httptest.NewRequest(http.MethodGet, "/samples?auth_index=auth_test", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	var res map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+		t.Fatalf("decode samples failed: %v", err)
+	}
+	if res["auth_index"] != "auth_test" {
+		t.Errorf("expected auth_index 'auth_test', got %v", res["auth_index"])
+	}
+	groups, ok := res["groups"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected 'groups' object, got %v", res["groups"])
+	}
+	geminiGroup, ok := groups["gemini"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected 'gemini' group, got %v", groups["gemini"])
+	}
+	samples, ok := geminiGroup["samples"].([]any)
+	if !ok || len(samples) != 1 {
+		t.Fatalf("expected 1 sample for gemini, got %v", geminiGroup["samples"])
 	}
 }

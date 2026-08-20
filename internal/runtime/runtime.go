@@ -13,6 +13,7 @@ import (
 	"antigravity-priority/internal/config"
 	"antigravity-priority/internal/host"
 	"antigravity-priority/internal/management"
+	"antigravity-priority/internal/priority"
 	"antigravity-priority/internal/state"
 )
 
@@ -210,27 +211,134 @@ func (r *Runtime) ResetAllPriorities(ctx context.Context) (map[string]any, error
 		}
 	}
 
+	// Update credentials to reflect reset state (PriorityMissing = true, Priority = 0)
+	for i := range credentials {
+		credentials[i].Priority = 0
+		credentials[i].PriorityMissing = true
+	}
+	credentials, _, _ = enrichCredentialsFromAuthDocuments(ctx, client, credentials)
+
+	cachePath := r.cfg.StateCachePath
+	if strings.TrimSpace(cachePath) == "" {
+		cachePath = config.DefaultStateCachePath
+	}
+	store, _ := state.Load(ctx, cachePath)
+	now := r.clock.Now().UTC()
+
+	var primarySnapshot apply.PlanSnapshot
+	if store != nil {
+		evidence := store.BuildGroupEvidence(credentials, string(r.cfg.AntigravityModelGroup))
+		altGroup := alternateModelGroup(r.cfg.AntigravityModelGroup)
+		altEvidence := store.BuildGroupEvidence(credentials, string(altGroup))
+		plan := priority.PlanFreshOnly(credentials, evidence, priorityOptions(r.cfg, store, now))
+		altPlan := priority.PlanFreshOnly(credentials, altEvidence, priorityOptions(r.cfg, store, now))
+		primarySnapshot = apply.Snapshot(plan)
+		predictedSnapshot := apply.SnapshotPredicted(altPlan)
+		dualSnap := apply.NewDualGroupSnapshot(
+			string(r.cfg.AntigravityModelGroup), now, primarySnapshot, predictedSnapshot)
+		r.setDualSnapshot(dualSnap)
+	}
+
 	summary := fmt.Sprintf("reset %d Antigravity credentials priority to default unset state", resetCount)
 	res := apply.Result{
 		Attempted: resetCount,
 		Succeeded: resetCount,
-		Snapshot: apply.PlanSnapshot{
-			Items: make([]apply.SnapshotItem, 0),
-		},
+		Snapshot:  primarySnapshot,
 	}
+	snap := primarySnapshot
 	r.snapshotRunEntry(res, summary, RunHistoryEntry{
 		Kind:      KindReset,
 		Trigger:   string(TriggerManual),
 		Attempted: resetCount,
 		Succeeded: resetCount,
 		Message:   summary,
+		Snapshot:  &snap,
 	})
+
+	if store != nil {
+		resJSON, _ := json.Marshal(res)
+		histJSON, _ := json.Marshal(r.currentRunHistory())
+		store.SetRuntimeSnapshot(summary, resJSON, histJSON)
+		_ = store.SaveAtomic(ctx)
+	}
 
 	return map[string]any{
 		"ok":          true,
 		"message":     summary,
 		"reset_count": resetCount,
 	}, nil
+}
+
+// SyncHost re-reads credentials from CPA host, re-evaluates cached evidence, and updates the dual-group snapshot.
+func (r *Runtime) SyncHost(ctx context.Context, modelGroup config.AntigravityModelGroup) (apply.DualGroupSnapshot, error) {
+	if !r.runMu.TryLock() {
+		return apply.DualGroupSnapshot{}, ErrRunInProgress
+	}
+	defer r.runMu.Unlock()
+
+	r.mu.Lock()
+	cfg := r.cfg
+	r.mu.Unlock()
+
+	if r.hostCallbacks == nil {
+		return apply.DualGroupSnapshot{}, errMissingHostCallbacks
+	}
+	if modelGroup == "" {
+		modelGroup = cfg.AntigravityModelGroup
+	}
+
+	client := host.NewClient(r.hostCallbacks)
+	files, err := client.ListAuthFiles(ctx)
+	if err != nil {
+		return apply.DualGroupSnapshot{}, err
+	}
+
+	credentials := credentialsFromAuthFiles(files)
+	credentials, _, err = enrichCredentialsFromAuthDocuments(ctx, client, credentials)
+	if err != nil {
+		return apply.DualGroupSnapshot{}, err
+	}
+
+	cachePath := cfg.StateCachePath
+	if strings.TrimSpace(cachePath) == "" {
+		cachePath = config.DefaultStateCachePath
+	}
+	store, err := state.Load(ctx, cachePath)
+	if err != nil {
+		return apply.DualGroupSnapshot{}, err
+	}
+
+	now := r.clock.Now().UTC()
+	evidence := store.BuildGroupEvidence(credentials, string(modelGroup))
+	altGroup := alternateModelGroup(modelGroup)
+	altEvidence := store.BuildGroupEvidence(credentials, string(altGroup))
+
+	plan := priority.PlanFreshOnly(credentials, evidence, priorityOptions(cfg, store, now))
+	altPlan := priority.PlanFreshOnly(credentials, altEvidence, priorityOptions(cfg, store, now))
+
+	primarySnapshot := apply.Snapshot(plan)
+	predictedSnapshot := apply.SnapshotPredicted(altPlan)
+	dualSnap := apply.NewDualGroupSnapshot(string(modelGroup), now, primarySnapshot, predictedSnapshot)
+
+	r.setDualSnapshot(dualSnap)
+	return dualSnap, nil
+}
+
+// GetSamples returns the historical quota samples for a specific credential and model group.
+func (r *Runtime) GetSamples(ctx context.Context, authIndex, modelGroup string) ([]state.QuotaSample, error) {
+	r.mu.Lock()
+	cfg := r.cfg
+	r.mu.Unlock()
+
+	cachePath := cfg.StateCachePath
+	if strings.TrimSpace(cachePath) == "" {
+		cachePath = config.DefaultStateCachePath
+	}
+	store, err := state.Load(ctx, cachePath)
+	if err != nil {
+		return nil, err
+	}
+	return store.GetSamples(authIndex, modelGroup), nil
 }
 
 // AutoApply executes a background scheduled run respecting interval cooldown.
@@ -745,7 +853,7 @@ func (r *Runtime) triggerCooldown(ctx context.Context, authIndex, modelGroup, re
 func buildMetadata() Metadata {
 	return Metadata{
 		Name:             "Antigravity Priority",
-		Version:          "1.1.1",
+		Version:          "1.1.5",
 		Author:           "ygq-future",
 		GitHubRepository: "https://github.com/ygq-future/antigravity-priority",
 		Description:      "Intelligent quota pacing and adaptive burn-rate priority scheduler exclusively for Google Antigravity in CLIProxyAPI.",

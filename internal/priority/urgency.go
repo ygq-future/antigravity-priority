@@ -8,6 +8,9 @@ import (
 // MinUrgencyTimeHorizonHours is the minimum denominator in hours for Weekly Urgency calculation.
 const MinUrgencyTimeHorizonHours = 0.5
 
+// HoursInWeeklyCycle represents total hours in a standard 7-day week.
+const HoursInWeeklyCycle = 168.0
+
 // QuotaMetrics encapsulates extracted and computed double-window quota metrics.
 type QuotaMetrics struct {
 	R7d              float64
@@ -22,7 +25,7 @@ type QuotaMetrics struct {
 	IsShortDepleted  bool
 }
 
-// CalculateUrgency computes the Weekly Urgency Index: R_7d / max(T_7d, 0.5).
+// CalculateUrgency computes the Weekly Urgency Index (per-hour burn rate): R_7d / max(T_7d, 0.5).
 func CalculateUrgency(r7d float64, t7d float64) float64 {
 	if r7d <= 0 {
 		return 0
@@ -32,6 +35,28 @@ func CalculateUrgency(r7d float64, t7d float64) float64 {
 		denom = MinUrgencyTimeHorizonHours
 	}
 	return r7d / denom
+}
+
+// CalculateWeeklyPacingRatio scales per-hour urgency to a 168h week: (R_7d / max(T_7d, 0.5)) * 168.0.
+// A value of 1.0 represents nominal pacing; >1.0 indicates elevated burn pressure.
+func CalculateWeeklyPacingRatio(r7d float64, t7d float64) float64 {
+	return CalculateUrgency(r7d, t7d) * HoursInWeeklyCycle
+}
+
+// CalculateCompositeScore computes the multi-dimensional composite health and scheduling score:
+// - P_weekly: Weekly pacing ratio (weight 0.40)
+// - R_7d: Weekly remaining ratio (weight 0.30)
+// - R_5h: Short-window remaining ratio (weight 0.20)
+// - A_5h: Short-window reset advantage (1 - T_5h/5.0, weight 0.10)
+func CalculateCompositeScore(r7d float64, t7d float64, r5h float64, t5h float64) float64 {
+	pWeekly := CalculateWeeklyPacingRatio(r7d, t7d)
+
+	clampedR7d := math.Max(0.0, math.Min(1.0, r7d))
+	clampedR5h := math.Max(0.0, math.Min(1.0, r5h))
+	clampedT5h := math.Max(0.0, math.Min(5.0, t5h))
+	a5h := 1.0 - (clampedT5h / 5.0)
+
+	return 0.40*pWeekly + 0.30*clampedR7d + 0.20*clampedR5h + 0.10*a5h
 }
 
 // ExtractQuotaMetrics extracts normalized fractions and computes pacing metrics from probe evidence.
@@ -47,7 +72,7 @@ func ExtractQuotaMetrics(evidence ProbeEvidence, now time.Time) QuotaMetrics {
 	}
 
 	tRequired := CalculateTRequired(r7d, cCycle)
-	urgency := CalculateUrgency(r7d, t7d)
+	urgency := CalculateCompositeScore(r7d, t7d, r5h, t5h)
 
 	isWeeklyDepleted := isWeeklyDepletedEvidence(evidence, r7d)
 	isShortDepleted := !isWeeklyDepleted && isShortDepletedEvidence(evidence, r5h)

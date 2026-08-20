@@ -87,20 +87,6 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 		return err
 	}
 
-	// Probe-only: evidence collected and cached, no plan or apply needed (REQ-04).
-	if request.Trigger == TriggerProbe {
-		r.snapshotRunEntry(apply.Result{}, "probe completed", RunHistoryEntry{
-			Kind:    KindProbe,
-			Trigger: string(request.Trigger),
-			Message: fmt.Sprintf("probe completed: %d credentials probed", len(evidence)),
-		})
-		resJSON, _ := json.Marshal(apply.Result{})
-		histJSON, _ := json.Marshal(r.currentRunHistory())
-		store.SetRuntimeSnapshot("probe completed", resJSON, histJSON)
-		_ = store.SaveAtomic(ctx)
-		return nil
-	}
-
 	plan := priority.PlanFreshOnly(credentials, evidence, priorityOptions(request.Config, store, now))
 
 	// Build dual-group snapshot (REQ-05): compute predicted plan for the alternate model group.
@@ -112,6 +98,26 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 	dualSnap := apply.NewDualGroupSnapshot(
 		string(request.Config.AntigravityModelGroup), now, primarySnapshot, predictedSnapshot)
 	r.setDualSnapshot(dualSnap)
+
+	// Probe-only: evidence collected, dual snapshot updated, no apply executed (REQ-04).
+	if request.Trigger == TriggerProbe {
+		result := apply.Result{Snapshot: primarySnapshot}
+		audit := fmt.Sprintf("probe completed: %d credentials probed", len(evidence))
+		snap := primarySnapshot
+		r.snapshotRunEntry(result, audit, RunHistoryEntry{
+			Kind:      KindProbe,
+			Trigger:   string(request.Trigger),
+			Attempted: len(evidence),
+			Succeeded: len(evidence),
+			Message:   audit,
+			Snapshot:  &snap,
+		})
+		resJSON, _ := json.Marshal(result)
+		histJSON, _ := json.Marshal(r.currentRunHistory())
+		store.SetRuntimeSnapshot(audit, resJSON, histJSON)
+		_ = store.SaveAtomic(ctx)
+		return nil
+	}
 
 	if request.Trigger == TriggerManual {
 		result := apply.Result{Snapshot: primarySnapshot}
