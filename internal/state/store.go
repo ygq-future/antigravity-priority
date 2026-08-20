@@ -13,6 +13,7 @@ import (
 
 	"antigravity-priority/internal/config"
 	"antigravity-priority/internal/core"
+	"antigravity-priority/internal/priority"
 )
 
 // SchemaVersion is the current state cache document version.
@@ -543,14 +544,92 @@ func (s *Store) SetDynamicConfig(cfg DynamicConfig) {
 	s.dynamicConfig = &cfg
 }
 
-// GetActiveCooldowns returns a map of auth_index -> CooldownUntil for unexpired 429 rate limit cooldowns.
-func (s *Store) GetActiveCooldowns(now time.Time) map[string]time.Time {
+// GetCachedEvidence constructs a priority.ProbeEvidence from the persisted state entry for authIndex and modelGroup.
+func (s *Store) GetCachedEvidence(authIndex, modelGroup string) (priority.ProbeEvidence, bool) {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
+	entry, ok := s.entries[entryKey(authIndex, modelGroup)]
+	s.mu.RUnlock()
+
+	if !ok || entry.SchemaVersion != SchemaVersion {
+		return priority.ProbeEvidence{}, false
+	}
+
+	// A cached entry with LastError set is a recorded probe failure — return it
+	// as EvidenceStatusProbeFailed so planner can handle it.
+	if entry.LastError != "" {
+		return priority.ProbeEvidence{
+			Provider:    core.ProviderAntigravity,
+			AuthIndex:   entry.AuthIndex,
+			ObservedAt:  entry.ObservedAt,
+			Freshness:   core.FreshnessUnknown,
+			ProbeStatus: core.ProbeStatusUnknown,
+			Status:      priority.EvidenceStatusProbeFailed,
+		}, true
+	}
+
+	var resetAt *time.Time
+	if !entry.ResetAt.IsZero() {
+		r := entry.ResetAt
+		resetAt = &r
+	}
+	var shortResetAt *time.Time
+	if !entry.ShortWindowResetAt.IsZero() {
+		r := entry.ShortWindowResetAt
+		shortResetAt = &r
+	}
+	var longResetAt *time.Time
+	if !entry.LongWindowResetAt.IsZero() {
+		r := entry.LongWindowResetAt
+		longResetAt = &r
+	}
+
+	remaining := entry.Remaining
+	cycleBurnRate := entry.CycleBurnRate
+	if cycleBurnRate <= 0 {
+		cycleBurnRate = DefaultCycleBurnRate
+	}
+
+	return priority.ProbeEvidence{
+		Provider:             core.ProviderAntigravity,
+		AuthIndex:            entry.AuthIndex,
+		ObservedAt:           entry.ObservedAt,
+		ResetAt:              resetAt,
+		Remaining:            &remaining,
+		ShortWindowResetAt:   shortResetAt,
+		ShortWindowRemaining: entry.ShortWindowRemaining,
+		LongWindowResetAt:    longResetAt,
+		LongWindowRemaining:  entry.LongWindowRemaining,
+		Freshness:            core.FreshnessFresh,
+		ProbeStatus:          core.ProbeStatusReady,
+		Status:               priority.EvidenceStatusReady,
+		PlanType:             entry.PlanType,
+		EvidenceFresh:        true,
+		CycleBurnRate:        cycleBurnRate,
+	}, true
+}
+
+// BuildGroupEvidence constructs a list of priority.ProbeEvidence for all given credentials under the specified model group.
+func (s *Store) BuildGroupEvidence(credentials []core.Credential, modelGroup string) []priority.ProbeEvidence {
+	evidence := make([]priority.ProbeEvidence, 0, len(credentials))
+	for _, cred := range credentials {
+		if ev, ok := s.GetCachedEvidence(cred.AuthIndex, modelGroup); ok {
+			evidence = append(evidence, ev)
+		}
+	}
+	return evidence
+}
+
+// GetActiveCooldowns returns a map of auth_index -> CooldownUntil for unexpired 429 rate limit cooldowns.
+// Expired cooldown entries are automatically pruned.
+func (s *Store) GetActiveCooldowns(now time.Time) map[string]time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	active := make(map[string]time.Time)
 	for k, v := range s.cooldowns {
 		if now.Before(v.CooldownUntil) {
 			active[k] = v.CooldownUntil
+		} else {
+			delete(s.cooldowns, k)
 		}
 	}
 	return active

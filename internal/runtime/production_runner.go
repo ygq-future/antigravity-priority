@@ -65,7 +65,6 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 	if err != nil {
 		return err
 	}
-	store.ClearExpiredCooldowns(now)
 
 	forceProbe := request.Trigger == TriggerManualApply || request.Trigger == TriggerProbe
 	evidence, err := r.collectEvidenceForTrigger(ctx, collectInput{
@@ -107,7 +106,7 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 	// Build dual-group snapshot (REQ-05): compute predicted plan for the alternate model group.
 	primarySnapshot := apply.Snapshot(plan)
 	altGroup := alternateModelGroup(request.Config.AntigravityModelGroup)
-	altEvidence := buildCachedEvidenceForGroup(store, credentials, string(altGroup))
+	altEvidence := store.BuildGroupEvidence(credentials, string(altGroup))
 	altPlan := priority.PlanFreshOnly(credentials, altEvidence, priorityOptions(request.Config, store, now))
 	predictedSnapshot := apply.SnapshotPredicted(altPlan)
 	dualSnap := apply.NewDualGroupSnapshot(

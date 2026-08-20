@@ -3,8 +3,6 @@ package priority
 import (
 	"math"
 	"testing"
-
-	"antigravity-priority/internal/state"
 )
 
 func TestCalculateTRequired(t *testing.T) {
@@ -42,7 +40,7 @@ func TestCalculateTRequired(t *testing.T) {
 			name:          "zero/negative rate falls back to default 0.15",
 			r7d:           0.30,
 			cycleBurnRate: 0.0,
-			expected:      (0.30 / state.DefaultCycleBurnRate) * 5.0,
+			expected:      (0.30 / DefaultCycleBurnRate) * 5.0,
 		},
 		{
 			name:          "high burn rate 0.30 reduces required horizon",

@@ -3,8 +3,6 @@ package priority
 import (
 	"math"
 	"time"
-
-	"antigravity-priority/internal/state"
 )
 
 // MinUrgencyTimeHorizonHours is the minimum denominator in hours for Weekly Urgency calculation.
@@ -45,7 +43,7 @@ func ExtractQuotaMetrics(evidence ProbeEvidence, now time.Time) QuotaMetrics {
 
 	cCycle := evidence.CycleBurnRate
 	if cCycle <= 0 {
-		cCycle = state.DefaultCycleBurnRate
+		cCycle = DefaultCycleBurnRate
 	}
 
 	tRequired := CalculateTRequired(r7d, cCycle)

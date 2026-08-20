@@ -1,9 +1,5 @@
 package priority
 
-import (
-	"antigravity-priority/internal/state"
-)
-
 const (
 	// DefaultBoostStartPriority is the default starting priority for boosted credentials.
 	DefaultBoostStartPriority = 999
@@ -17,6 +13,8 @@ const (
 	DepletedPriority = -1
 	// ShortWindowHours represents the duration in hours of a single Antigravity short rolling window.
 	ShortWindowHours = 5.0
+	// DefaultCycleBurnRate is the baseline fraction of weekly quota burnable per 5h cycle.
+	DefaultCycleBurnRate = 0.15
 )
 
 // CalculateTRequired computes the physical time in hours required to burn remaining weekly quota:
@@ -26,7 +24,7 @@ func CalculateTRequired(r7d float64, cycleBurnRate float64) float64 {
 		return 0
 	}
 	if cycleBurnRate <= 0 {
-		cycleBurnRate = state.DefaultCycleBurnRate
+		cycleBurnRate = DefaultCycleBurnRate
 	}
 	return (r7d / cycleBurnRate) * ShortWindowHours
 }

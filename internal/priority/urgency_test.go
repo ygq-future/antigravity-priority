@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"antigravity-priority/internal/core"
-	"antigravity-priority/internal/state"
 )
 
 func TestCalculateUrgency(t *testing.T) {
@@ -192,8 +191,8 @@ func TestExtractQuotaMetrics(t *testing.T) {
 		if math.Abs(metrics.R5h-0.60) > 1e-9 {
 			t.Errorf("R5h fallback = %v; want 0.60", metrics.R5h)
 		}
-		if math.Abs(metrics.CycleBurnRate-state.DefaultCycleBurnRate) > 1e-9 {
-			t.Errorf("CycleBurnRate default = %v; want %v", metrics.CycleBurnRate, state.DefaultCycleBurnRate)
+		if math.Abs(metrics.CycleBurnRate-DefaultCycleBurnRate) > 1e-9 {
+			t.Errorf("CycleBurnRate default = %v; want %v", metrics.CycleBurnRate, DefaultCycleBurnRate)
 		}
 	})
 

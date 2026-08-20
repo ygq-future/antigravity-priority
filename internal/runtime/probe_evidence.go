@@ -50,8 +50,8 @@ func collectFreshEvidence(ctx context.Context, input collectInput) ([]priority.P
 			continue
 		}
 
-		if entry, ok := input.store.GetEntry(cred.AuthIndex, string(input.modelGroup)); ok && entry.SchemaVersion == state.SchemaVersion {
-			cachedEvidence = append(cachedEvidence, cachedEvidenceFromEntry(entry))
+		if ev, ok := input.store.GetCachedEvidence(cred.AuthIndex, string(input.modelGroup)); ok {
+			cachedEvidence = append(cachedEvidence, ev)
 		}
 	}
 
@@ -270,61 +270,6 @@ func recordAntigravityProbeResult(ctx context.Context, store *state.Store, resul
 	}, err
 }
 
-func cachedEvidenceFromEntry(entry state.Entry) priority.ProbeEvidence {
-	// A cached entry with LastError set is a recorded probe failure — return it
-	// as EvidenceStatusProbeFailed so withProbeFailureTemporaryDisables can handle it.
-	if entry.LastError != "" {
-		return priority.ProbeEvidence{
-			Provider:    core.ProviderAntigravity,
-			AuthIndex:   entry.AuthIndex,
-			ObservedAt:  entry.ObservedAt,
-			Freshness:   core.FreshnessUnknown,
-			ProbeStatus: core.ProbeStatusUnknown,
-			Status:      priority.EvidenceStatusProbeFailed,
-		}
-	}
-
-	var resetAt *time.Time
-	if !entry.ResetAt.IsZero() {
-		r := entry.ResetAt
-		resetAt = &r
-	}
-	var shortResetAt *time.Time
-	if !entry.ShortWindowResetAt.IsZero() {
-		r := entry.ShortWindowResetAt
-		shortResetAt = &r
-	}
-	var longResetAt *time.Time
-	if !entry.LongWindowResetAt.IsZero() {
-		r := entry.LongWindowResetAt
-		longResetAt = &r
-	}
-
-	remaining := entry.Remaining
-	cycleBurnRate := entry.CycleBurnRate
-	if cycleBurnRate <= 0 {
-		cycleBurnRate = state.DefaultCycleBurnRate
-	}
-
-	return priority.ProbeEvidence{
-		Provider:             core.ProviderAntigravity,
-		AuthIndex:            entry.AuthIndex,
-		ObservedAt:           entry.ObservedAt,
-		ResetAt:              resetAt,
-		Remaining:            &remaining,
-		ShortWindowResetAt:   shortResetAt,
-		ShortWindowRemaining: entry.ShortWindowRemaining,
-		LongWindowResetAt:    longResetAt,
-		LongWindowRemaining:  entry.LongWindowRemaining,
-		Freshness:            core.FreshnessFresh,
-		ProbeStatus:          core.ProbeStatusReady,
-		Status:               priority.EvidenceStatusReady,
-		PlanType:             entry.PlanType,
-		EvidenceFresh:        true,
-		CycleBurnRate:        cycleBurnRate,
-	}
-}
-
 func timeOrZero(t *time.Time) time.Time {
 	if t == nil {
 		return time.Time{}
@@ -346,18 +291,4 @@ func alternateModelGroup(group config.AntigravityModelGroup) config.AntigravityM
 		return config.AntigravityModelGroupGemini
 	}
 	return config.AntigravityModelGroupClaudeGPT
-}
-
-// buildCachedEvidenceForGroup constructs ProbeEvidence for a model group from the state store cache.
-// Used to build predicted priority snapshots for the alternate (non-primary) group.
-func buildCachedEvidenceForGroup(store *state.Store, credentials []core.Credential, modelGroup string) []priority.ProbeEvidence {
-	evidence := make([]priority.ProbeEvidence, 0, len(credentials))
-	for _, cred := range credentials {
-		entry, ok := store.GetEntry(cred.AuthIndex, modelGroup)
-		if !ok || entry.SchemaVersion != state.SchemaVersion {
-			continue
-		}
-		evidence = append(evidence, cachedEvidenceFromEntry(entry))
-	}
-	return evidence
 }

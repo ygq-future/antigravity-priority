@@ -9,7 +9,7 @@
 1. [提案 1: 将探测失败策略吸收进 Priority Planner (Absorb Probe Failure Policy) [已完成]](#1-将探测失败策略吸收进-priority-planner-已完成)
 2. [提案 2: 统一静态与动态配置至深度配置模块 (Unified Configuration Module) [已完成]](#2-统一静态与动态配置至深度配置模块-已完成)
 3. [提案 3: 拆分物理文档修改与主机 RPC 客户端 (Extract Document Patcher Adapter) [已完成]](#3-拆分物理文档修改与主机-rpc-客户端-已完成)
-4. [提案 4: 将状态缓存深化为高语义状态引擎 (Consolidate State Engine) [待处理]](#4-将状态缓存深化为高语义状态引擎)
+4. [提案 4: 将状态缓存深化为高语义状态引擎 (Consolidate State Engine) [已完成]](#4-将状态缓存深化为高语义状态引擎-已完成)
 
 ---
 
@@ -103,8 +103,9 @@
 
 ---
 
-## 4. 将状态缓存深化为高语义状态引擎
+## 4. 将状态缓存深化为高语义状态引擎 [已完成]
 
+- **状态**：`已完成 (Completed)`
 - **推荐评级**：`Worth exploring` (值得探索)
 - **依赖类别**：`in-process`
 - **涉及文件**：
@@ -112,24 +113,25 @@
   - `internal/state/estimator.go`
   - `internal/state/schedule.go`
   - `internal/runtime/production_runner.go`
+  - `internal/runtime/probe_evidence.go`
 
 ### 现状与缺陷 (Problem)
-`state.Store` 目前本质上是一个被动的线程安全 JSON 字典容器，向外暴露了 15 个细粒度的 Getter 和 Setter。
+`state.Store` 原先是一个被动的线程安全 JSON 字典容器，向外暴露了 15 个细粒度的 Getter 和 Setter。
 调用方（如 `production_runner.go`）必须显式编排复杂的内部状态变迁逻辑：
 - 手动调用 `store.ClearExpiredCooldowns(now)`；
 - 手动调用 `store.NeedsProbe(...)`；
-- 手动提取 `prevRate` 并调用 `UpdateSamplesAndCycleBurnRate(...)`；
-- 手动调用 `store.MarkProbeSuccess(...)` 与 `store.SaveAtomic(...)`。
+- 手动将 `state.Entry` 转换为 `priority.ProbeEvidence`；
+- 手动拼装备选模型组预测证据。
 
 此外，`estimator.go` 中依然残留着未被生产逻辑引用的旧版 `CalculateCycleBurnRate` 估算函数。
 
 ### 深化方案 (Solution)
 将 `state.Store` 深化为具备高杠杆的 **执行状态引擎 (Execution State Engine)**：
-- 提供语义化的高阶接口，如 `RecordProbeObservation(ctx, observation)`，将采样队列滑动窗口演进、EMA 平滑、持久化落盘封装在内部；
-- 提供 `ActiveCooldowns(now)` 与 `IsSchedulable(now)` 等高层查询，收敛冷却清理与调度窗口判定；
-- 清理 `estimator.go` 中遗留的死代码。
+- 提供语义化的高阶接口 `GetCachedEvidence` 与 `BuildGroupEvidence`，将采样队列滑动窗口演进、EMA 平滑、持久化落盘与证据生成封装在内部；
+- 提供 `GetActiveCooldowns(now)` 内部自动收敛过期冷却清理；
+- 彻底删除 `estimator.go` 中遗留的废弃单跨度估算死代码。
 
 ### 收益 (Benefits)
-- **Leverage**：调用方仅需 1 个语义化调用即可完成原本需要 5 步编排的状态变迁；
+- **Leverage**：调用方仅需 1 个语义化调用即可完成原本需要多步编排的状态变迁；
 - **Locality**：配额样本历史、燃尽率推算与熔断器状态转换完全封装在状态引擎内部；
-- **Deletion Test**：彻底删除未使用的冗余估算函数。
+- **Deletion Test**：删除未使用的冗余估算函数与运行时 80+ 行拼装代码。

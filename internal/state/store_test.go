@@ -469,3 +469,69 @@ func TestStore_Auxiliary_Coverage(t *testing.T) {
 		t.Fatalf("expected needing probe when ResetAt is reached")
 	}
 }
+
+func TestStore_GetCachedEvidence_And_BuildGroupEvidence(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	store, _ := state.Load(ctx, filepath.Join(tmpDir, "evidence_cache.json"))
+	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+
+	// 1. Non-existent entry returns false
+	if _, ok := store.GetCachedEvidence("non-existent", "gemini"); ok {
+		t.Errorf("expected false for non-existent entry")
+	}
+
+	// 2. Successful probe entry
+	shortRem := int64(80)
+	longRem := int64(90)
+	shortReset := now.Add(3 * time.Hour)
+	longReset := now.Add(70 * time.Hour)
+	_ = store.MarkProbeSuccess(ctx, state.ProbeSuccess{
+		AuthIndex:            "acc-1",
+		Provider:             core.ProviderAntigravity,
+		ModelGroup:           "gemini",
+		ObservedAt:           now,
+		ResetAt:              shortReset,
+		Remaining:            80,
+		ShortWindowResetAt:   shortReset,
+		ShortWindowRemaining: &shortRem,
+		LongWindowResetAt:    longReset,
+		LongWindowRemaining:  &longRem,
+	})
+
+	ev, ok := store.GetCachedEvidence("acc-1", "gemini")
+	if !ok {
+		t.Fatalf("expected true for cached ready evidence")
+	}
+	if ev.AuthIndex != "acc-1" || !ev.EvidenceFresh || ev.CycleBurnRate != state.DefaultCycleBurnRate {
+		t.Errorf("unexpected cached evidence: %+v", ev)
+	}
+
+	// 3. Failure entry returns EvidenceStatusProbeFailed
+	_ = store.MarkProbeFailure(ctx, state.ProbeFailure{
+		AuthIndex:  "acc-failed",
+		Provider:   core.ProviderAntigravity,
+		ModelGroup: "gemini",
+		ObservedAt: now,
+		Err:        errors.New("upstream failed"),
+	})
+
+	evFail, ok := store.GetCachedEvidence("acc-failed", "gemini")
+	if !ok {
+		t.Fatalf("expected true for cached failure evidence")
+	}
+	if evFail.Status != "probe_failed" {
+		t.Errorf("expected Status probe_failed, got %v", evFail.Status)
+	}
+
+	// 4. BuildGroupEvidence
+	creds := []core.Credential{
+		{AuthIndex: "acc-1"},
+		{AuthIndex: "acc-failed"},
+		{AuthIndex: "acc-missing"},
+	}
+	groupEv := store.BuildGroupEvidence(creds, "gemini")
+	if len(groupEv) != 2 {
+		t.Fatalf("expected 2 evidences from 3 credentials, got %d", len(groupEv))
+	}
+}
