@@ -55,7 +55,7 @@ func hasTopLevelPluginField(data string) bool {
 			continue
 		}
 		switch strings.TrimSpace(key) {
-		case KeyEnabled, KeyStateCachePath, KeyCachePath:
+		case KeyEnabled, KeyStateCachePath:
 			return true
 		}
 	}

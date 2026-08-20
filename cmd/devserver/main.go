@@ -361,6 +361,7 @@ func newDevRunner() *devRunner {
 			MaxConcurrency:           6,
 			MinChange:                1,
 			UrgencyTolerance:         0.05,
+			QuotaSampleCapacity:      6,
 			RateLimitCooldownMinutes: 5,
 			PriorityRules: state.PriorityRulesConfig{
 				Enabled:             true,
@@ -566,7 +567,15 @@ func (d *devRunner) LatestSnapshot(ctx context.Context) (apply.DualGroupSnapshot
 func (d *devRunner) Diagnostics(ctx context.Context) (map[string]any, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	nextWaitDuration := 14*time.Minute + 22*time.Second
+	interval, err := time.ParseDuration(d.dynamicConfig.Interval)
+	if err != nil || interval <= 0 {
+		interval = 15 * time.Minute
+	}
+	lastAuto := time.Now().Add(-10 * time.Second)
+	nextWaitDuration := interval - 10*time.Second
+	if nextWaitDuration <= 0 {
+		nextWaitDuration = interval
+	}
 	nextRunAt := time.Now().UTC().Add(nextWaitDuration)
 
 	return map[string]any{
@@ -577,8 +586,8 @@ func (d *devRunner) Diagnostics(ctx context.Context) (map[string]any, error) {
 		},
 		"scheduler": map[string]any{
 			"interval":           d.dynamicConfig.Interval,
-			"last_auto_apply_at": time.Now().Add(-5 * time.Minute),
-			"next_wait":          "14m22s",
+			"last_auto_apply_at": lastAuto,
+			"next_wait":          nextWaitDuration.String(),
 			"next_run_at":        nextRunAt.Format(time.RFC3339),
 			"worker_active":      true,
 			"paused":             d.scheduleConfig.Paused,

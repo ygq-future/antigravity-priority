@@ -41,8 +41,6 @@ const (
 	KeyQuotaSampleCapacity = "quota_sample_capacity"
 	// KeyStateCachePath is the JSON/YAML key for state_cache_path.
 	KeyStateCachePath = "state_cache_path"
-	// KeyCachePath is the legacy alias key for cache_path.
-	KeyCachePath = "cache_path"
 	// KeyPriorityRules is the JSON key for priority_rules.
 	KeyPriorityRules = "priority_rules"
 	// KeyBoostStartPriority is the JSON key for boost_start_priority.
@@ -131,7 +129,6 @@ type DynamicConfig struct {
 type rawConfig struct {
 	Enabled        *bool   `json:"enabled"`
 	StateCachePath *string `json:"state_cache_path"`
-	CachePath      *string `json:"cache_path"`
 }
 
 // Default returns the standard default configuration values.
@@ -291,8 +288,6 @@ func (raw rawConfig) applyTolerant(cfg Config) (Config, []string) {
 	}
 	if raw.StateCachePath != nil && strings.TrimSpace(*raw.StateCachePath) != "" {
 		cfg.StateCachePath = strings.TrimSpace(*raw.StateCachePath)
-	} else if raw.CachePath != nil && strings.TrimSpace(*raw.CachePath) != "" {
-		cfg.StateCachePath = strings.TrimSpace(*raw.CachePath)
 	}
 	return cfg, nil
 }

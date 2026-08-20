@@ -718,6 +718,7 @@ const TemplateScripts = `
             try {
                 const data = await apiFetch(DIAGNOSTICS_PATH);
                 latestDiagnostics = data;
+                renderDashboard();
                 renderHistory();
                 renderDiagnostics();
             } catch (err) {
@@ -969,8 +970,19 @@ const TemplateScripts = `
         function pad(n) { return n < 10 ? "0" + n : n; }
 
         function renderDashboard() {
+            if (latestDiagnostics) {
+                var auditEl = document.getElementById("valLastAudit");
+                if (auditEl) auditEl.textContent = latestDiagnostics.latest_audit || "-";
+                var nextRunAt = latestDiagnostics.scheduler && latestDiagnostics.scheduler.next_run_at;
+                var nextStr = nextRunAt ? formatCountdown(nextRunAt) : (latestDiagnostics.scheduler && latestDiagnostics.scheduler.next_wait || "-");
+                var el = document.getElementById("valNextProbe");
+                if (el) {
+                    el.innerHTML = (currentLang === "zh-CN" ? "下次调度: " : "Next run: ") + "<span class=\"meter-countdown\" data-scheduler-countdown=\"" + (nextRunAt || "") + "\">" + nextStr + "</span>";
+                }
+            }
+
             const container = document.getElementById("credentialsContainer");
-            if (!container) return;
+            if (!container || !latestSnapshot) return;
 
             const groupSelect = document.getElementById("modelGroupSelect");
             const selectedGroup = groupSelect ? groupSelect.value : "gemini";
@@ -992,14 +1004,6 @@ const TemplateScripts = `
             document.getElementById("valTotalDesc").textContent = activeCount + " " + (currentLang === "zh-CN" ? "活跃可用" : "active");
             document.getElementById("valBoosted").textContent = boostedCount;
             document.getElementById("valDepleted").textContent = depletedCount;
-
-            if (latestDiagnostics) {
-                document.getElementById("valLastAudit").textContent = latestDiagnostics.latest_audit || "-";
-                var nextRunAt = latestDiagnostics.scheduler && latestDiagnostics.scheduler.next_run_at;
-                var nextStr = nextRunAt ? formatCountdown(nextRunAt) : (latestDiagnostics.scheduler && latestDiagnostics.scheduler.next_wait || "-");
-                var el = document.getElementById("valNextProbe");
-                el.innerHTML = (currentLang === "zh-CN" ? "下次调度: " : "Next run: ") + "<span class=\"meter-countdown\" data-scheduler-countdown=\"" + (nextRunAt || "") + "\">" + nextStr + "</span>";
-            }
 
             container.innerHTML = "";
             if (items.length === 0) {
