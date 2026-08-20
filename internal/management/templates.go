@@ -16,7 +16,7 @@ const StatusHTML = `<!DOCTYPE html>
             <div class="brand-zone">
                 <h1>
                     <span data-i18n="title">Antigravity Priority</span>
-                    <span class="version-badge">v1.1.0</span>
+                    <span class="version-badge">v1.1.1</span>
                 </h1>
             </div>
             <div class="topbar-actions">
@@ -26,6 +26,9 @@ const StatusHTML = `<!DOCTYPE html>
                 </button>
                 <button type="button" class="btn-secondary" onclick="toggleLanguage()" aria-label="Toggle Language">
                     <span id="langLabel">EN / 中文</span>
+                </button>
+                <button type="button" class="btn-secondary" onclick="toggleTheme()" aria-label="Toggle Theme" id="btnThemeToggle" title="Toggle Theme">
+                    <span id="themeIcon">🌓</span>
                 </button>
             </div>
         </header>

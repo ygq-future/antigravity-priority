@@ -745,10 +745,18 @@ func (r *Runtime) triggerCooldown(ctx context.Context, authIndex, modelGroup, re
 func buildMetadata() Metadata {
 	return Metadata{
 		Name:             "Antigravity Priority",
-		Version:          "1.1.0",
+		Version:          "1.1.1",
 		Author:           "ygq-future",
 		GitHubRepository: "https://github.com/ygq-future/antigravity-priority",
 		Description:      "Intelligent quota pacing and adaptive burn-rate priority scheduler exclusively for Google Antigravity in CLIProxyAPI.",
+		ConfigFields: []ConfigField{
+			{
+				Name:         "state_cache_path",
+				Type:         "string",
+				Description:  "Persistent state cache file path",
+				DefaultValue: config.DefaultStateCachePath,
+			},
+		},
 	}
 }
 

@@ -80,6 +80,7 @@ const TemplateScripts = `
                 scheduleActive: "自动调度运行中",
                 schedulePaused: "自动调度已暂停",
                 scheduleSleeping: "调度休眠中 (不在运行时间)",
+                scheduleDisabled: "自动调度已关闭",
                 confirmResetTitle: "⚠️ 确认重置凭证优先级",
                 confirmResetMessage: "该操作将清除所有 Antigravity 凭证的自定义 priority 字段，恢复为宿主默认未分配状态。",
                 confirmApplyTitle: "⚡ 确认立即写回优先级",
@@ -206,6 +207,7 @@ const TemplateScripts = `
                 scheduleActive: "Auto Schedule: Running",
                 schedulePaused: "Auto Schedule: Paused",
                 scheduleSleeping: "Schedule: Sleeping (Outside Window)",
+                scheduleDisabled: "Auto Schedule: Disabled",
                 confirmResetTitle: "⚠️ Confirm Priority Reset",
                 confirmResetMessage: "This will clear all Antigravity credential custom priority fields, restoring them to host default unset state.",
                 confirmApplyTitle: "⚡ Confirm Immediate Apply",
@@ -266,7 +268,14 @@ const TemplateScripts = `
             }
         };
 
+        const LANG_STORAGE_KEY = "antigravity_priority_lang";
         let currentLang = "zh-CN";
+        try {
+            const savedLang = localStorage.getItem(LANG_STORAGE_KEY);
+            if (savedLang === "zh-CN" || savedLang === "en-US") {
+                currentLang = savedLang;
+            }
+        } catch (_) {}
         let latestSnapshot = null;
         let latestDiagnostics = null;
         let activeTab = "overview";
@@ -340,6 +349,36 @@ const TemplateScripts = `
             refreshDashboard();
         }
 
+        const THEME_STORAGE_KEY = "antigravity_priority_theme";
+
+        function updateThemeIcon(theme) {
+            const icon = document.getElementById("themeIcon");
+            if (!icon) return;
+            if (theme === "dark") {
+                icon.textContent = "🌙";
+            } else if (theme === "light") {
+                icon.textContent = "☀️";
+            } else {
+                icon.textContent = "🌓";
+            }
+        }
+
+        function toggleTheme() {
+            const currentTheme = document.documentElement.getAttribute("data-theme");
+            let nextTheme = "light";
+            if (!currentTheme) {
+                const isDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+                nextTheme = isDark ? "light" : "dark";
+            } else {
+                nextTheme = currentTheme === "dark" ? "light" : "dark";
+            }
+            document.documentElement.setAttribute("data-theme", nextTheme);
+            try {
+                localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+            } catch (_) {}
+            updateThemeIcon(nextTheme);
+        }
+
         function syncThemeFromParent() {
             try {
                 if (window.parent && window.parent !== window && window.parent.document && window.parent.document.documentElement) {
@@ -349,13 +388,16 @@ const TemplateScripts = `
                     const pTheme = pDoc.getAttribute("data-theme") || (pBody && pBody.getAttribute("data-theme"));
                     if (pTheme) {
                         document.documentElement.setAttribute("data-theme", pTheme);
+                        updateThemeIcon(pTheme);
                     } else {
                         document.documentElement.removeAttribute("data-theme");
+                        updateThemeIcon("system");
                     }
 
                     const isDark = pDoc.classList.contains("dark") || (pBody && pBody.classList.contains("dark")) || pTheme === "dark";
                     if (isDark) {
                         document.documentElement.setAttribute("data-theme", "dark");
+                        updateThemeIcon("dark");
                     }
 
                     const parentStyle = window.parent.getComputedStyle(pDoc);
@@ -385,6 +427,19 @@ const TemplateScripts = `
                         document.documentElement.style.setProperty('--bg-subtle', tert.trim());
                         document.documentElement.style.setProperty('--meter-bg', tert.trim());
                     }
+                    return;
+                }
+            } catch (_) {}
+
+            // Standalone or DevServer mode: restore saved theme
+            try {
+                const savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
+                if (savedTheme === "dark" || savedTheme === "light") {
+                    document.documentElement.setAttribute("data-theme", savedTheme);
+                    updateThemeIcon(savedTheme);
+                } else {
+                    const isDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+                    updateThemeIcon(isDark ? "dark" : "light");
                 }
             } catch (_) {}
         }
@@ -482,6 +537,9 @@ const TemplateScripts = `
 
         function toggleLanguage() {
             currentLang = currentLang === "zh-CN" ? "en-US" : "zh-CN";
+            try {
+                localStorage.setItem(LANG_STORAGE_KEY, currentLang);
+            } catch (_) {}
             applyLanguage();
             renderDashboard();
             renderHistory();
@@ -721,6 +779,7 @@ const TemplateScripts = `
                 renderDashboard();
                 renderHistory();
                 renderDiagnostics();
+                renderScheduleStatus();
             } catch (err) {
                 showToast(err.message, "error");
             }
@@ -1294,10 +1353,27 @@ const TemplateScripts = `
         function renderScheduleStatus() {
             var badge = document.getElementById("scheduleStatusBadge");
             var textEl = document.getElementById("scheduleStatusText");
-            if (!badge || !textEl || !scheduleConfig) return;
+            if (!badge || !textEl) return;
+
+            var isAutoApplyEnabled = false;
+            if (dynamicConfig && dynamicConfig.auto_apply !== undefined) {
+                isAutoApplyEnabled = Boolean(dynamicConfig.auto_apply);
+            } else if (latestDiagnostics && latestDiagnostics.management_api && latestDiagnostics.management_api.auto_apply !== undefined) {
+                isAutoApplyEnabled = Boolean(latestDiagnostics.management_api.auto_apply);
+            }
+
+            if (!isAutoApplyEnabled) {
+                badge.className = "schedule-status paused";
+                badge.title = currentLang === "zh-CN" ? "自动定时调度已关闭，点击前往配置中心开启" : "Auto-scheduling disabled. Click to open Config Center.";
+                badge.innerHTML = "⚪ <span id=\"scheduleStatusText\">" + t("scheduleDisabled") + "</span>";
+                return;
+            }
+
+            if (!scheduleConfig) return;
 
             if (scheduleConfig.paused) {
                 badge.className = "schedule-status paused";
+                badge.title = currentLang === "zh-CN" ? "点击恢复自动调度" : "Click to resume";
                 badge.innerHTML = "⏸ <span id=\"scheduleStatusText\">" + t("schedulePaused") + "</span>";
                 return;
             }
@@ -1309,6 +1385,7 @@ const TemplateScripts = `
 
             if (scheduleConfig.window_enabled && !windowActive) {
                 badge.className = "schedule-status sleeping";
+                badge.title = currentLang === "zh-CN" ? "当前时间不在生效时段内" : "Outside active schedule window";
                 badge.innerHTML = "🌙 <span id=\"scheduleStatusText\">" + t("scheduleSleeping") + "</span>";
                 return;
             }
@@ -1318,10 +1395,24 @@ const TemplateScripts = `
                 windowStr = " (" + scheduleConfig.window_start + "-" + scheduleConfig.window_end + ")";
             }
             badge.className = "schedule-status active";
+            badge.title = currentLang === "zh-CN" ? "点击暂停自动调度" : "Click to pause";
             badge.innerHTML = "🟢 <span id=\"scheduleStatusText\">" + t("scheduleActive") + windowStr + "</span>";
         }
 
         async function toggleSchedulePause() {
+            var isAutoApplyEnabled = false;
+            if (dynamicConfig && dynamicConfig.auto_apply !== undefined) {
+                isAutoApplyEnabled = Boolean(dynamicConfig.auto_apply);
+            } else if (latestDiagnostics && latestDiagnostics.management_api && latestDiagnostics.management_api.auto_apply !== undefined) {
+                isAutoApplyEnabled = Boolean(latestDiagnostics.management_api.auto_apply);
+            }
+
+            if (!isAutoApplyEnabled) {
+                switchTab("config");
+                showToast(currentLang === "zh-CN" ? "请在配置中心开启“自动定时调度”开关" : "Please enable 'Auto Periodic Scheduling' in Config Center", "info");
+                return;
+            }
+
             if (!scheduleConfig) {
                 await fetchScheduleConfig();
                 if (!scheduleConfig) return;
@@ -1376,6 +1467,7 @@ const TemplateScripts = `
             try {
                 dynamicConfig = await apiFetch(CONFIG_PATH);
                 renderDynamicConfigForm(dynamicConfig);
+                renderScheduleStatus();
             } catch (err) {
                 showToast(err.message, "error");
             }

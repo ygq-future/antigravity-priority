@@ -5,20 +5,20 @@ package management
 const TemplateCSS = `
         :root {
             color-scheme: light dark;
-            --bg-primary: #ffffff;
-            --bg-secondary: #ffffff;
-            --bg-tertiary: #f6f6f6;
+            --bg-primary: #f8fafc;
+            --bg-secondary: #f1f5f9;
+            --bg-tertiary: #e2e8f0;
             --bg-surface: #ffffff;
             --bg-card: #ffffff;
-            --bg-subtle: #f6f6f6;
-            --bg-hover: #f0f0f0;
-            --bg-overlay: rgba(45, 42, 38, 0.45);
-            --border-color: #e5e5e5;
-            --border-subtle: #f0eee9;
-            --border-focus: #8b8680;
-            --text-primary: #2d2a26;
-            --text-secondary: #6d6760;
-            --text-muted: #a29c95;
+            --bg-subtle: #f1f5f9;
+            --bg-hover: #e2e8f0;
+            --bg-overlay: rgba(15, 23, 42, 0.45);
+            --border-color: #e2e8f0;
+            --border-subtle: #f1f5f9;
+            --border-focus: #3b82f6;
+            --text-primary: #0f172a;
+            --text-secondary: #475569;
+            --text-muted: #94a3b8;
             --text-inverse: #ffffff;
             --accent-blue: #2563eb;
             --accent-blue-hover: #1d4ed8;
@@ -27,29 +27,29 @@ const TemplateCSS = `
             --accent-green: #10b981;
             --accent-green-subtle: #ecfdf5;
             --accent-green-text: #047857;
-            --accent-yellow: #d97706;
+            --accent-yellow: #f59e0b;
             --accent-yellow-subtle: #fffbeb;
             --accent-yellow-text: #b45309;
-            --accent-red: #c65746;
+            --accent-red: #ef4444;
             --accent-red-subtle: #fef2f2;
-            --accent-red-text: #991b1b;
+            --accent-red-text: #b91c1c;
             --accent-purple: #7c3aed;
             --accent-purple-subtle: #faf5ff;
             --accent-purple-text: #6d28d9;
-            --meter-bg: #e5e5e5;
+            --meter-bg: #e2e8f0;
             --meter-fill: #10b981;
-            --meter-warn: #e0aa14;
-            --meter-danger: #c65746;
+            --meter-warn: #f59e0b;
+            --meter-danger: #ef4444;
             --badge-boost-bg: #fdf4ff;
-            --badge-boost-border: #f0abfc;
-            --badge-boost-text: #a21caf;
+            --badge-boost-border: #f5d0fe;
+            --badge-boost-text: #9333ea;
             --diff-from-bg: #fee2e2;
             --diff-from-text: #991b1b;
             --diff-to-bg: #dcfce7;
             --diff-to-text: #166534;
-            --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
-            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.08), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
-            --shadow-lg: 0 10px 18px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -4px rgba(0, 0, 0, 0.04);
+            --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.04), 0 1px 2px -1px rgba(0, 0, 0, 0.03);
+            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.03);
+            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.06), 0 4px 6px -4px rgba(0, 0, 0, 0.03);
         }
 
         @media (prefers-color-scheme: dark) {
@@ -151,29 +151,51 @@ const TemplateCSS = `
         }
 
         :root[data-theme="light"] {
-            --bg-primary: #ffffff;
-            --bg-secondary: #f8fafc;
-            --bg-tertiary: #f1f5f9;
+            --bg-primary: #f8fafc;
+            --bg-secondary: #f1f5f9;
+            --bg-tertiary: #e2e8f0;
             --bg-surface: #ffffff;
             --bg-card: #ffffff;
-            --bg-subtle: #f8fafc;
-            --bg-hover: #f1f5f9;
+            --bg-subtle: #f1f5f9;
+            --bg-hover: #e2e8f0;
             --bg-overlay: rgba(15, 23, 42, 0.45);
             --border-color: #e2e8f0;
             --border-subtle: #f1f5f9;
             --border-focus: #3b82f6;
             --text-primary: #0f172a;
             --text-secondary: #475569;
-            --text-muted: #64748b;
+            --text-muted: #94a3b8;
             --text-inverse: #ffffff;
             --accent-blue: #2563eb;
             --accent-blue-hover: #1d4ed8;
             --accent-blue-subtle: #eff6ff;
             --accent-blue-text: #1d4ed8;
+            --accent-green: #10b981;
+            --accent-green-subtle: #ecfdf5;
+            --accent-green-text: #047857;
+            --accent-yellow: #f59e0b;
+            --accent-yellow-subtle: #fffbeb;
+            --accent-yellow-text: #b45309;
+            --accent-red: #ef4444;
+            --accent-red-subtle: #fef2f2;
+            --accent-red-text: #b91c1c;
+            --accent-purple: #7c3aed;
+            --accent-purple-subtle: #faf5ff;
+            --accent-purple-text: #6d28d9;
             --meter-bg: #e2e8f0;
-            --meter-fill: #2563eb;
-            --meter-warn: #d97706;
-            --meter-danger: #dc2626;
+            --meter-fill: #10b981;
+            --meter-warn: #f59e0b;
+            --meter-danger: #ef4444;
+            --badge-boost-bg: #fdf4ff;
+            --badge-boost-border: #f5d0fe;
+            --badge-boost-text: #9333ea;
+            --diff-from-bg: #fee2e2;
+            --diff-from-text: #991b1b;
+            --diff-to-bg: #dcfce7;
+            --diff-to-text: #166534;
+            --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.04), 0 1px 2px -1px rgba(0, 0, 0, 0.03);
+            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.03);
+            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.06), 0 4px 6px -4px rgba(0, 0, 0, 0.03);
         }
 
         * { box-sizing: border-box; }
@@ -518,7 +540,11 @@ const TemplateCSS = `
         .btn-danger {
             background: var(--accent-red-subtle);
             color: var(--accent-red-text);
-            border-color: var(--accent-red);
+            border-color: rgba(239, 68, 68, 0.2);
+        }
+        .btn-danger:hover {
+            background: rgba(239, 68, 68, 0.15);
+            border-color: rgba(239, 68, 68, 0.35);
         }
 
         button:disabled {
@@ -566,7 +592,7 @@ const TemplateCSS = `
 
         .badge-predicted {
             background: var(--accent-purple-subtle);
-            border: 1px solid var(--accent-purple);
+            border: 1px solid rgba(124, 58, 237, 0.2);
             color: var(--accent-purple-text);
             font-size: 10px;
         }
@@ -667,10 +693,10 @@ const TemplateCSS = `
             display: inline-flex;
             align-items: center;
             font-size: 11px;
-            padding: 1px 5px;
+            padding: 1px 6px;
             border-radius: 4px;
             background: var(--bg-subtle);
-            border: 1px solid var(--border-subtle);
+            border: 1px solid var(--border-color);
             color: var(--text-secondary);
         }
 
@@ -681,7 +707,7 @@ const TemplateCSS = `
 
         .metric-pill-urgency {
             background: var(--accent-blue-subtle) !important;
-            border-color: var(--accent-blue) !important;
+            border: 1px solid rgba(37, 99, 235, 0.2) !important;
             color: var(--accent-blue-text) !important;
         }
         .metric-pill-urgency strong {
@@ -690,7 +716,7 @@ const TemplateCSS = `
 
         .metric-pill-burn {
             background: var(--accent-purple-subtle) !important;
-            border-color: var(--accent-purple) !important;
+            border: 1px solid rgba(124, 58, 237, 0.2) !important;
             color: var(--accent-purple-text) !important;
         }
         .metric-pill-burn strong {
@@ -756,6 +782,9 @@ const TemplateCSS = `
         }
 
         .empty-state {
+            grid-column: 1 / -1;
+            width: 100%;
+            box-sizing: border-box;
             text-align: center;
             padding: 48px 20px;
             color: var(--text-muted);
@@ -861,13 +890,16 @@ const TemplateCSS = `
         }
 
         .config-card-title {
-            margin: 0 0 4px 0;
+            margin: 0 0 6px 0;
             font-size: 14px;
             font-weight: 750;
             color: var(--text-primary);
             display: flex;
             align-items: center;
             gap: 6px;
+            background: transparent !important;
+            border: none !important;
+            padding: 0 !important;
         }
 
         .config-form-grid {
@@ -986,12 +1018,17 @@ const TemplateCSS = `
         .config-floating-actions button {
             height: 38px;
             min-height: 38px;
-            padding: 0 16px;
+            padding: 0 18px;
             border-radius: 999px;
-            box-shadow: var(--shadow-lg);
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
             font-size: 13px;
             font-weight: 700;
             transition: all 0.2s ease;
+        }
+
+        .config-floating-actions button:hover:not(:disabled) {
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+            transform: translateY(-1px);
         }
 
         .config-floating-actions button:disabled {

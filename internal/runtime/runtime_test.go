@@ -175,6 +175,10 @@ func TestRuntime_Handle_Register(t *testing.T) {
 	if !envelope.Result.Capabilities["management"] {
 		t.Errorf("expected management capability to be true")
 	}
+
+	if len(envelope.Result.Metadata.ConfigFields) != 1 || envelope.Result.Metadata.ConfigFields[0].Name != "state_cache_path" {
+		t.Errorf("expected Metadata.ConfigFields to contain state_cache_path, got %+v", envelope.Result.Metadata.ConfigFields)
+	}
 }
 
 func TestRuntime_Handle_Reconfigure(t *testing.T) {
