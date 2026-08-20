@@ -21,9 +21,7 @@ refresh-cache.json
 coverage.out
 coverage.html
 
-# Legacy example source directory and plan
-example-src/
-ANTIGRAVITY_PLUGIN_PLAN.md
+# Local plugin store reference
 CLIProxyAPI-Plugins-Store/
 
 # AI Editors & Tools

@@ -26,6 +26,5 @@ linters-settings:
 
 issues:
   exclude-dirs:
-    - example-src
     - dist
     - package
