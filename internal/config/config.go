@@ -21,6 +21,45 @@ const (
 	// DefaultStateCachePath is the default path for persisting probe state and burn rate metrics inside CPA's persistent data directory.
 	DefaultStateCachePath = "data/antigravity-priority-cache.json"
 
+	// KeyEnabled is the JSON/YAML key for enabled.
+	KeyEnabled = "enabled"
+	// KeyAutoApply is the JSON key for auto_apply.
+	KeyAutoApply = "auto_apply"
+	// KeyInterval is the JSON key for interval.
+	KeyInterval = "interval"
+	// KeyAntigravityModelGroup is the JSON key for antigravity_model_group.
+	KeyAntigravityModelGroup = "antigravity_model_group"
+	// KeyMaxConcurrency is the JSON key for max_concurrency.
+	KeyMaxConcurrency = "max_concurrency"
+	// KeyMinChange is the JSON key for min_change.
+	KeyMinChange = "min_change"
+	// KeyUrgencyTolerance is the JSON key for urgency_tolerance.
+	KeyUrgencyTolerance = "urgency_tolerance"
+	// KeyRateLimitCooldownMinutes is the JSON key for rate_limit_cooldown_minutes.
+	KeyRateLimitCooldownMinutes = "rate_limit_cooldown_minutes"
+	// KeyQuotaSampleCapacity is the JSON key for quota_sample_capacity.
+	KeyQuotaSampleCapacity = "quota_sample_capacity"
+	// KeyStateCachePath is the JSON/YAML key for state_cache_path.
+	KeyStateCachePath = "state_cache_path"
+	// KeyCachePath is the legacy alias key for cache_path.
+	KeyCachePath = "cache_path"
+	// KeyPriorityRules is the JSON key for priority_rules.
+	KeyPriorityRules = "priority_rules"
+	// KeyBoostStartPriority is the JSON key for boost_start_priority.
+	KeyBoostStartPriority = "boost_start_priority"
+	// KeyNormalStartPriority is the JSON key for normal_start_priority.
+	KeyNormalStartPriority = "normal_start_priority"
+	// KeySchedule is the JSON key for schedule.
+	KeySchedule = "schedule"
+	// KeyPaused is the JSON key for paused.
+	KeyPaused = "paused"
+	// KeyWindowEnabled is the JSON key for window_enabled.
+	KeyWindowEnabled = "window_enabled"
+	// KeyWindowStart is the JSON key for window_start.
+	KeyWindowStart = "window_start"
+	// KeyWindowEnd is the JSON key for window_end.
+	KeyWindowEnd = "window_end"
+
 	// DefaultUrgencyTolerance is the default numerical delta threshold below which adjacent credentials share identical priority.
 	DefaultUrgencyTolerance = 0.05
 	// DefaultRateLimitCooldownMinutes is the default 429 rate limit reactive cooldown duration in minutes.
@@ -90,51 +129,9 @@ type DynamicConfig struct {
 }
 
 type rawConfig struct {
-	Enabled                  *bool              `json:"enabled"`
-	AutoApply                *bool              `json:"auto_apply"`
-	Interval                 *rawDuration       `json:"interval"`
-	AntigravityModelGroup    *string            `json:"antigravity_model_group"`
-	MaxConcurrency           *int               `json:"max_concurrency"`
-	MinChange                *int               `json:"min_change"`
-	UrgencyTolerance         *float64           `json:"urgency_tolerance"`
-	RateLimitCooldownMinutes *int               `json:"rate_limit_cooldown_minutes"`
-	QuotaSampleCapacity      *int               `json:"quota_sample_capacity"`
-	StateCachePath           *string            `json:"state_cache_path"`
-	CachePath                *string            `json:"cache_path"`
-	PriorityRules            *rawPriorityRules  `json:"priority_rules"`
-	Schedule                 *rawScheduleConfig `json:"schedule"`
-}
-
-type rawPriorityRules struct {
-	Enabled             *bool `json:"enabled"`
-	BoostStartPriority  *int  `json:"boost_start_priority"`
-	NormalStartPriority *int  `json:"normal_start_priority"`
-}
-
-type rawScheduleConfig struct {
-	Paused        *bool   `json:"paused"`
-	WindowEnabled *bool   `json:"window_enabled"`
-	WindowStart   *string `json:"window_start"`
-	WindowEnd     *string `json:"window_end"`
-}
-
-type rawDuration string
-
-func (duration *rawDuration) UnmarshalJSON(data []byte) error {
-	trimmed := bytes.TrimSpace(data)
-	if string(trimmed) == "null" {
-		return nil
-	}
-	var text string
-	if len(trimmed) > 0 && trimmed[0] == '"' {
-		if err := json.Unmarshal(data, &text); err != nil {
-			return err
-		}
-	} else {
-		text = string(trimmed)
-	}
-	*duration = rawDuration(text)
-	return nil
+	Enabled        *bool   `json:"enabled"`
+	StateCachePath *string `json:"state_cache_path"`
+	CachePath      *string `json:"cache_path"`
 }
 
 // Default returns the standard default configuration values.
@@ -251,8 +248,8 @@ func (dyn DynamicConfig) ApplyTo(base Config) (Config, error) {
 }
 
 // LoadBytes parses raw YAML or JSON bytes into a validated Config.
-// Field-level validation issues produce warnings with smooth fallback to defaults
-// rather than hard errors. Only structurally unparseable input returns an error.
+// In v1.1.0+, CPA host config.yaml only specifies enabled and state_cache_path;
+// all operational scheduling parameters are managed dynamically in DynamicConfig.
 func LoadBytes(data []byte) (Config, []string, error) {
 	raw, err := decodeRaw(data)
 	if err != nil {
@@ -269,16 +266,7 @@ func decodeRaw(data []byte) (rawConfig, error) {
 	}
 	var raw rawConfig
 	if trimmed[0] == '{' {
-		var generic map[string]any
-		if err := json.Unmarshal(trimmed, &generic); err != nil {
-			return rawConfig{}, invalid("config", "json", "must be valid JSON")
-		}
-		normalizePriorityRulesKeys(generic)
-		encoded, err := json.Marshal(generic)
-		if err != nil {
-			return rawConfig{}, invalid("config", "json", "must be encodable")
-		}
-		if err := json.Unmarshal(encoded, &raw); err != nil {
+		if err := json.Unmarshal(trimmed, &raw); err != nil {
 			return rawConfig{}, invalid("config", err.Error(), "must match config schema")
 		}
 		return raw, nil
@@ -298,144 +286,13 @@ func decodeRaw(data []byte) (rawConfig, error) {
 }
 
 func (raw rawConfig) applyTolerant(cfg Config) (Config, []string) {
-	var warnings []string
 	if raw.Enabled != nil {
 		cfg.Enabled = *raw.Enabled
-	}
-	if raw.AutoApply != nil {
-		cfg.AutoApply = *raw.AutoApply
-	}
-	if raw.AntigravityModelGroup != nil {
-		modelGroup, err := ParseAntigravityModelGroup(*raw.AntigravityModelGroup)
-		if err != nil {
-			warnings = append(warnings, fmt.Sprintf(
-				"antigravity_model_group=%q is invalid, falling back to default 'gemini'",
-				*raw.AntigravityModelGroup))
-		} else {
-			cfg.AntigravityModelGroup = modelGroup
-		}
-	}
-	if raw.Interval != nil {
-		parsed, normalized, err := parseDurationTolerant("interval", string(*raw.Interval))
-		if err != nil {
-			warnings = append(warnings, fmt.Sprintf(
-				"interval=%q is invalid, falling back to default '15m'",
-				string(*raw.Interval)))
-		} else {
-			cfg.Interval = parsed
-			if normalized != "" {
-				warnings = append(warnings, fmt.Sprintf(
-					"interval=%q normalized to '%s'",
-					string(*raw.Interval), normalized))
-			}
-		}
-	}
-	if raw.MaxConcurrency != nil {
-		if *raw.MaxConcurrency < MinMaxConcurrency || *raw.MaxConcurrency > MaxMaxConcurrency {
-			warnings = append(warnings, fmt.Sprintf(
-				"max_concurrency=%d is invalid (must be %d..%d), falling back to default '6'",
-				*raw.MaxConcurrency, MinMaxConcurrency, MaxMaxConcurrency))
-		} else {
-			cfg.MaxConcurrency = *raw.MaxConcurrency
-		}
-	}
-	if raw.MinChange != nil {
-		if *raw.MinChange < 0 {
-			warnings = append(warnings, fmt.Sprintf(
-				"min_change=%d is invalid (<0), falling back to default '1'",
-				*raw.MinChange))
-		} else {
-			cfg.MinChange = *raw.MinChange
-		}
-	}
-	if raw.UrgencyTolerance != nil {
-		if *raw.UrgencyTolerance <= 0 {
-			warnings = append(warnings, fmt.Sprintf(
-				"urgency_tolerance=%.4f is invalid (<=0), falling back to default '%.2f'",
-				*raw.UrgencyTolerance, DefaultUrgencyTolerance))
-		} else {
-			cfg.UrgencyTolerance = *raw.UrgencyTolerance
-		}
-	}
-	if raw.RateLimitCooldownMinutes != nil {
-		if *raw.RateLimitCooldownMinutes <= 0 {
-			warnings = append(warnings, fmt.Sprintf(
-				"rate_limit_cooldown_minutes=%d is invalid (<=0), falling back to default '%d'",
-				*raw.RateLimitCooldownMinutes, DefaultRateLimitCooldownMinutes))
-		} else {
-			cfg.RateLimitCooldownMinutes = *raw.RateLimitCooldownMinutes
-		}
-	}
-	if raw.QuotaSampleCapacity != nil {
-		if *raw.QuotaSampleCapacity < MinQuotaSampleCapacity || *raw.QuotaSampleCapacity > MaxQuotaSampleCapacity {
-			warnings = append(warnings, fmt.Sprintf(
-				"quota_sample_capacity=%d is invalid (must be %d..%d), falling back to default '%d'",
-				*raw.QuotaSampleCapacity, MinQuotaSampleCapacity, MaxQuotaSampleCapacity, DefaultQuotaSampleCapacity))
-		} else {
-			cfg.QuotaSampleCapacity = *raw.QuotaSampleCapacity
-		}
 	}
 	if raw.StateCachePath != nil && strings.TrimSpace(*raw.StateCachePath) != "" {
 		cfg.StateCachePath = strings.TrimSpace(*raw.StateCachePath)
 	} else if raw.CachePath != nil && strings.TrimSpace(*raw.CachePath) != "" {
 		cfg.StateCachePath = strings.TrimSpace(*raw.CachePath)
 	}
-	if raw.PriorityRules != nil {
-		rules, ruleWarnings := raw.PriorityRules.applyTolerant(cfg.PriorityRules)
-		cfg.PriorityRules = rules
-		warnings = append(warnings, ruleWarnings...)
-	}
-	if raw.Schedule != nil {
-		sched, schedWarnings := raw.Schedule.applyTolerant(cfg.Schedule)
-		cfg.Schedule = sched
-		warnings = append(warnings, schedWarnings...)
-	}
-	return cfg, warnings
-}
-
-func (raw *rawPriorityRules) applyTolerant(rules PriorityRules) (PriorityRules, []string) {
-	var warnings []string
-	if raw.Enabled != nil {
-		rules.Enabled = *raw.Enabled
-	}
-	if raw.BoostStartPriority != nil {
-		if *raw.BoostStartPriority < MinPriorityValue || *raw.BoostStartPriority > MaxPriorityValue {
-			warnings = append(warnings, fmt.Sprintf(
-				"priority_rules.boost_start_priority=%d is invalid (must be %d..%d), falling back to default '999'",
-				*raw.BoostStartPriority, MinPriorityValue, MaxPriorityValue))
-		} else {
-			rules.BoostStartPriority = *raw.BoostStartPriority
-		}
-	}
-	if raw.NormalStartPriority != nil {
-		if *raw.NormalStartPriority < MinPriorityValue || *raw.NormalStartPriority > MaxPriorityValue {
-			warnings = append(warnings, fmt.Sprintf(
-				"priority_rules.normal_start_priority=%d is invalid (must be %d..%d), falling back to default '100'",
-				*raw.NormalStartPriority, MinPriorityValue, MaxPriorityValue))
-		} else {
-			rules.NormalStartPriority = *raw.NormalStartPriority
-		}
-	}
-	return rules, warnings
-}
-
-func (raw *rawScheduleConfig) applyTolerant(sched ScheduleConfig) (ScheduleConfig, []string) {
-	var warnings []string
-	if raw.Paused != nil {
-		sched.Paused = *raw.Paused
-	}
-	if raw.WindowEnabled != nil {
-		sched.WindowEnabled = *raw.WindowEnabled
-	}
-	if raw.WindowStart != nil {
-		sched.WindowStart = strings.TrimSpace(*raw.WindowStart)
-	}
-	if raw.WindowEnd != nil {
-		sched.WindowEnd = strings.TrimSpace(*raw.WindowEnd)
-	}
-	if err := ValidateScheduleWindow(sched.WindowStart, sched.WindowEnd); err != nil {
-		warnings = append(warnings, fmt.Sprintf("schedule window %q-%q is invalid (%v), falling back to disabled", sched.WindowStart, sched.WindowEnd, err))
-		sched.WindowEnabled = false
-	}
-	return sched, warnings
+	return cfg, nil
 }

@@ -57,16 +57,37 @@ func NewHandler(runner Runner) *Handler {
 	}
 }
 
-// RouteSourceHeader marks internal routing origin (resource vs management).
-const RouteSourceHeader = "X-Antigravity-Priority-Route-Source"
+const (
+	// RouteSourceHeader marks internal routing origin (resource vs management).
+	RouteSourceHeader = "X-Antigravity-Priority-Route-Source"
+
+	// SourceResource marks requests originating from resource handler.
+	SourceResource = "resource"
+	// SourceManagement marks requests originating from management handler.
+	SourceManagement = "management"
+
+	// Management API Paths
+	PathStatus         = "/status"
+	PathRun            = "/run"
+	PathReset          = "/reset"
+	PathDiagnostics    = "/diagnostics"
+	PathSnapshotLatest = "/snapshot/latest"
+	PathScheduleConfig = "/schedule/config"
+	PathConfig         = "/config"
+
+	// URL Prefixes
+	PrefixResourcePlugin   = "/v0/resource/plugins/" + config.PluginID
+	PrefixManagementPlugin = "/v0/management/plugins/" + config.PluginID
+	PrefixLegacyPlugin     = "/plugins/" + config.PluginID
+)
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 	method := r.Method
 	source := r.Header.Get(RouteSourceHeader)
 
-	if source == "resource" {
-		if path == "/status" && method == http.MethodGet {
+	if source == SourceResource {
+		if path == PathStatus && method == http.MethodGet {
 			h.handleStatus(w, r)
 			return
 		}
@@ -75,23 +96,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch {
-	case (path == "/status" || path == "/v0/resource/plugins/"+config.PluginID+"/status" || path == "/v0/management/plugins/"+config.PluginID+"/status") && method == http.MethodGet:
+	case (path == PathStatus || path == PrefixResourcePlugin+PathStatus || path == PrefixManagementPlugin+PathStatus) && method == http.MethodGet:
 		h.handleStatus(w, r)
-	case (path == "/run" || path == "/v0/management/plugins/"+config.PluginID+"/run") && method == http.MethodPost:
+	case (path == PathRun || path == PrefixManagementPlugin+PathRun) && method == http.MethodPost:
 		h.handleRun(w, r)
-	case (path == "/reset" || path == "/v0/management/plugins/"+config.PluginID+"/reset") && method == http.MethodPost:
+	case (path == PathReset || path == PrefixManagementPlugin+PathReset) && method == http.MethodPost:
 		h.handleReset(w, r)
-	case (path == "/diagnostics" || path == "/v0/management/plugins/"+config.PluginID+"/diagnostics") && method == http.MethodGet:
+	case (path == PathDiagnostics || path == PrefixManagementPlugin+PathDiagnostics) && method == http.MethodGet:
 		h.handleDiagnostics(w, r)
-	case (path == "/snapshot/latest" || path == "/v0/management/plugins/"+config.PluginID+"/snapshot/latest") && method == http.MethodGet:
+	case (path == PathSnapshotLatest || path == PrefixManagementPlugin+PathSnapshotLatest) && method == http.MethodGet:
 		h.handleSnapshot(w, r)
-	case (path == "/schedule/config" || path == "/v0/management/plugins/"+config.PluginID+"/schedule/config") && method == http.MethodGet:
+	case (path == PathScheduleConfig || path == PrefixManagementPlugin+PathScheduleConfig) && method == http.MethodGet:
 		h.handleGetScheduleConfig(w, r)
-	case (path == "/schedule/config" || path == "/v0/management/plugins/"+config.PluginID+"/schedule/config") && method == http.MethodPost:
+	case (path == PathScheduleConfig || path == PrefixManagementPlugin+PathScheduleConfig) && method == http.MethodPost:
 		h.handleSetScheduleConfig(w, r)
-	case (path == "/config" || path == "/v0/management/plugins/"+config.PluginID+"/config") && method == http.MethodGet:
+	case (path == PathConfig || path == PrefixManagementPlugin+PathConfig) && method == http.MethodGet:
 		h.handleGetConfig(w, r)
-	case (path == "/config" || path == "/v0/management/plugins/"+config.PluginID+"/config") && method == http.MethodPost:
+	case (path == PathConfig || path == PrefixManagementPlugin+PathConfig) && method == http.MethodPost:
 		h.handleSetConfig(w, r)
 	default:
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")

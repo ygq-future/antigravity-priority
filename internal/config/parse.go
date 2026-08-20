@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"time"
 )
 
 func extractPluginConfigYAML(data string) string {
@@ -56,7 +55,7 @@ func hasTopLevelPluginField(data string) bool {
 			continue
 		}
 		switch strings.TrimSpace(key) {
-		case "enabled", "auto_apply", "interval", "antigravity_model_group", "max_concurrency", "min_change", "quota_sample_capacity", "state_cache_path", "cache_path", "priority_rules":
+		case KeyEnabled, KeyStateCachePath, KeyCachePath:
 			return true
 		}
 	}
@@ -131,117 +130,23 @@ func leadingSpaces(line string) int {
 
 func parseYAMLMap(data string) (map[string]any, error) {
 	result := map[string]any{}
-	priorityRules := map[string]any{}
-	section := ""
-	sectionIndent := -1
-
 	for _, line := range strings.Split(data, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "- ") || trimmed == "-" {
 			continue
 		}
 		indent := len(line) - len(strings.TrimLeft(line, " "))
+		if indent != 0 {
+			continue
+		}
 		key, value, ok := strings.Cut(trimmed, ":")
 		if !ok {
 			return nil, invalid("config", trimmed, "must use key: value syntax")
 		}
 		key, value = strings.TrimSpace(key), strings.TrimSpace(value)
-		if indent == 0 {
-			section = key
-			sectionIndent = indent
-			if key == "priority_rules" {
-				result[key] = priorityRules
-				continue
-			}
-			result[key] = yamlScalar(value)
-			continue
-		}
-		if section == "priority_rules" {
-			if indent <= sectionIndent {
-				continue
-			}
-			priorityRules[key] = yamlScalar(value)
-		}
+		result[key] = yamlScalar(value)
 	}
-	normalizePriorityRulesKeys(result)
 	return result, nil
-}
-
-func normalizePriorityRulesKeys(root map[string]any) {
-	if root == nil {
-		return
-	}
-	const prefix = "priority_rules."
-	flatKeys := make([]string, 0)
-	for key := range root {
-		if strings.HasPrefix(key, prefix) {
-			flatKeys = append(flatKeys, key)
-		}
-	}
-	if len(flatKeys) == 0 {
-		return
-	}
-	nested, _ := root["priority_rules"].(map[string]any)
-	if nested == nil {
-		nested = map[string]any{}
-		root["priority_rules"] = nested
-	}
-	for _, key := range flatKeys {
-		field := strings.TrimPrefix(key, prefix)
-		if field == "" {
-			delete(root, key)
-			continue
-		}
-		nested[field] = root[key]
-		delete(root, key)
-	}
-}
-
-func parseDuration(field string, value string) (time.Duration, error) {
-	text := yamlText(value)
-	durationText := text
-	if _, err := strconv.Atoi(text); err == nil {
-		durationText = text + "m"
-	}
-	parsed, err := time.ParseDuration(durationText)
-	if err != nil || parsed <= 0 {
-		return 0, invalid(field, text, "must be a positive duration")
-	}
-	return parsed, nil
-}
-
-// parseDurationTolerant parses a duration string with case normalization.
-// Returns (duration, normalizedForm, error). normalizedForm is non-empty when
-// case normalization was applied (e.g. "30M" → "30m").
-func parseDurationTolerant(field string, value string) (time.Duration, string, error) {
-	text := yamlText(value)
-	durationText := text
-	if _, err := strconv.Atoi(text); err == nil {
-		durationText = text + "m"
-	}
-
-	// Try parsing as-is first
-	parsed, err := time.ParseDuration(durationText)
-	if err == nil && parsed > 0 {
-		return parsed, "", nil
-	}
-
-	// Try case-normalized version
-	normalized := normalizeDurationCase(durationText)
-	if normalized != durationText {
-		parsed, err = time.ParseDuration(normalized)
-		if err == nil && parsed > 0 {
-			return parsed, normalized, nil
-		}
-	}
-
-	return 0, "", invalid(field, text, "must be a positive duration")
-}
-
-// normalizeDurationCase converts uppercase duration units to lowercase.
-// Supports: S→s, M→m (when not preceded by digit for ms), H→h, MS→ms.
-func normalizeDurationCase(s string) string {
-	return strings.ToLower(s)
 }
 
 func yamlScalar(value string) any {

@@ -14,6 +14,26 @@ const (
 	ManagementAuthStatusPath = "/v0/management/auth-files/status"
 	// RedactedValue is the placeholder string for sensitive headers and fields.
 	RedactedValue = "[REDACTED]"
+
+	// Host RPC Methods
+	MethodAuthList       = "host.auth.list"
+	MethodAuthGet        = "host.auth.get"
+	MethodAuthGetRuntime = "host.auth.get_runtime"
+	MethodAuthSave       = "host.auth.save"
+	MethodHTTPDo         = "host.http.do"
+
+	// Auth JSON Top-Level Field Names
+	FieldPriority       = "priority"
+	FieldDisabled       = "disabled"
+	FieldAccessToken    = "access_token"
+	FieldToken          = "token"
+	FieldProjectID      = "project_id"
+	FieldQuotaProjectID = "quota_project_id"
+	FieldProject        = "project"
+	FieldAccount        = "account"
+	FieldEmail          = "email"
+	FieldName           = "name"
+	FieldAuthIndex      = "auth_index"
 )
 
 // ErrInvalidRequest indicates an invalid host request.

@@ -90,7 +90,7 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 	// Probe-only: evidence collected and cached, no plan or apply needed (REQ-04).
 	if request.Trigger == TriggerProbe {
 		r.snapshotRunEntry(apply.Result{}, "probe completed", RunHistoryEntry{
-			Kind:    "probe",
+			Kind:    KindProbe,
 			Trigger: string(request.Trigger),
 			Message: fmt.Sprintf("probe completed: %d credentials probed", len(evidence)),
 		})
@@ -118,7 +118,7 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 		audit := "dry-run plan generated"
 		snap := primarySnapshot
 		r.snapshotRunEntry(result, audit, RunHistoryEntry{
-			Kind:      "dry_run",
+			Kind:      KindDryRun,
 			Trigger:   string(request.Trigger),
 			Attempted: result.Attempted,
 			Succeeded: result.Succeeded,
@@ -148,7 +148,7 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 		result.Attempted+result.Skipped, result.Succeeded, result.Failed, result.Skipped)
 
 	r.snapshotRunEntry(result, summary, RunHistoryEntry{
-		Kind:      "apply",
+		Kind:      KindApply,
 		Trigger:   string(request.Trigger),
 		Attempted: result.Attempted,
 		Succeeded: result.Succeeded,

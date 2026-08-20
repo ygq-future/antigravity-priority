@@ -21,6 +21,16 @@ const (
 	EvidenceStatusUnsupported EvidenceStatus = "unsupported"
 	// EvidenceStatusUnavailable indicates the credential is currently unavailable.
 	EvidenceStatusUnavailable EvidenceStatus = "unavailable"
+
+	// Decision Reasons
+	ReasonKeepCurrentState         = "keep current state"
+	ReasonDisabledOnHost           = "disabled on host"
+	ReasonFailedQuotaFetch         = "failedQuotaFetch"
+	ReasonFreshWeeklyDepleted      = "fresh weekly depleted"
+	ReasonFreshShortWindowDepleted = "fresh short window depleted"
+	ReasonFreshBoosted             = "fresh boosted"
+	ReasonFreshRemainingPositive   = "fresh remaining positive"
+	Reason429Cooldown              = "429 rate limit cooldown"
 )
 
 // ProbeEvidence represents the per-credential quota evidence produced during a scheduling round.
@@ -157,13 +167,13 @@ func initialItems(credentials []core.Credential, evidenceByAuthIndex map[string]
 			Priority:   credential.Priority,
 			Disabled:   credential.Disabled,
 			PlanType:   credential.PlanType,
-			Reason:     "keep current state",
+			Reason:     ReasonKeepCurrentState,
 		}
 
 		if credential.Disabled {
 			item.Disabled = true
 			item.Priority = DepletedPriority
-			item.Reason = "disabled on host"
+			item.Reason = ReasonDisabledOnHost
 			items[index] = item
 			continue
 		}
@@ -173,7 +183,7 @@ func initialItems(credentials []core.Credential, evidenceByAuthIndex map[string]
 			if evidence.Status == EvidenceStatusProbeFailed {
 				item.Disabled = true
 				item.EvidenceFresh = true
-				item.Reason = "failedQuotaFetch"
+				item.Reason = ReasonFailedQuotaFetch
 				items[index] = item
 				continue
 			}
@@ -203,19 +213,19 @@ func initialItems(credentials []core.Credential, evidenceByAuthIndex map[string]
 				// Tier 3: Weekly hard depletion has highest precedence
 				item.Priority = DepletedPriority
 				item.Disabled = true
-				item.Reason = "fresh weekly depleted"
+				item.Reason = ReasonFreshWeeklyDepleted
 			case metrics.IsShortDepleted:
 				// Tier 3: Short-window soft depletion
 				item.Priority = DepletedPriority
 				item.Disabled = false
-				item.Reason = "fresh short window depleted"
+				item.Reason = ReasonFreshShortWindowDepleted
 			default:
 				// Healthy candidate
 				item.Disabled = false
 				if item.IsBoosted {
-					item.Reason = "fresh boosted"
+					item.Reason = ReasonFreshBoosted
 				} else {
-					item.Reason = "fresh remaining positive"
+					item.Reason = ReasonFreshRemainingPositive
 				}
 			}
 		}
@@ -242,7 +252,7 @@ func planFreshPositive(items []PlanItem, options Options) {
 		if cooldownUntil, inCooldown := options.CooldownAuthIndexes[item.Credential.AuthIndex]; inCooldown && options.Now.Before(cooldownUntil) {
 			items[index].Priority = DepletedPriority
 			items[index].Disabled = false
-			items[index].Reason = "429 rate limit cooldown"
+			items[index].Reason = Reason429Cooldown
 			continue
 		}
 		if item.IsBoosted {
@@ -275,7 +285,7 @@ func planFreshPositive(items []PlanItem, options Options) {
 			}
 			items[index].Priority = currentPriority
 			items[index].Disabled = false
-			items[index].Reason = "fresh boosted"
+			items[index].Reason = ReasonFreshBoosted
 		}
 	}
 
@@ -302,7 +312,7 @@ func planFreshPositive(items []PlanItem, options Options) {
 			}
 			items[index].Priority = currentPriority
 			items[index].Disabled = false
-			items[index].Reason = "fresh remaining positive"
+			items[index].Reason = ReasonFreshRemainingPositive
 		}
 	}
 }

@@ -29,7 +29,7 @@ func enrichCredentialsFromAuthDocuments(ctx context.Context, client *host.Client
 		}
 		if len(rawJSON) > 0 {
 			enriched[index].RawJSON = rawJSON
-			enriched[index].PriorityMissing = enriched[index].PriorityMissing || topLevelFieldMissing(rawJSON, "priority")
+			enriched[index].PriorityMissing = enriched[index].PriorityMissing || topLevelFieldMissing(rawJSON, host.FieldPriority)
 			enriched[index].Account = firstNonEmpty(enriched[index].Account, accountFromJSON(rawJSON))
 			enriched[index].Email = firstNonEmpty(enriched[index].Email, emailFromJSON(rawJSON))
 			if dis, ok := disabledFromJSON(rawJSON); ok {

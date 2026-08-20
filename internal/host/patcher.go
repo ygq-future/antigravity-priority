@@ -48,7 +48,7 @@ func (p *DocumentPatcher) ResetPriority(ctx context.Context, path string) error 
 	if err != nil {
 		return fmt.Errorf("read auth document: %w", err)
 	}
-	patched, err := deleteTopLevelFieldBytes(raw, "priority")
+	patched, err := deleteTopLevelFieldBytes(raw, FieldPriority)
 	if err != nil {
 		return err
 	}
@@ -83,7 +83,7 @@ func patchPriorityBytes(raw []byte, priority int) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("encode priority: %w", err)
 	}
-	return patchTopLevelFieldBytes(raw, "priority", encodedPriority)
+	return patchTopLevelFieldBytes(raw, FieldPriority, encodedPriority)
 }
 
 func deleteTopLevelFieldBytes(raw []byte, field string) ([]byte, error) {
@@ -103,7 +103,7 @@ func patchDisabledBytes(raw []byte, disabled bool) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("encode disabled: %w", err)
 	}
-	return patchTopLevelFieldBytes(raw, "disabled", encodedDisabled)
+	return patchTopLevelFieldBytes(raw, FieldDisabled, encodedDisabled)
 }
 
 func patchTopLevelFieldBytes(raw []byte, field string, encodedValue []byte) ([]byte, error) {

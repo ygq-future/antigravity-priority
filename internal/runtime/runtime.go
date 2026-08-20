@@ -112,27 +112,27 @@ func New(options Options) *Runtime {
 // Handle routes CPA JSON-RPC method calls to their respective handlers.
 func (r *Runtime) Handle(ctx context.Context, method string, request []byte) []byte {
 	switch method {
-	case "plugin.register":
+	case MethodPluginRegister:
 		parsed, err := decodeRegisterRequest(request)
 		if err != nil {
 			return failure(err)
 		}
 		result, err := r.Register(ctx, parsed)
 		return envelopeRegister(result, err)
-	case "plugin.reconfigure":
+	case MethodPluginReconfigure:
 		parsed, err := decodeReconfigureRequest(request)
 		if err != nil {
 			return failure(err)
 		}
 		result, err := r.Reconfigure(ctx, parsed)
 		return envelopeRegister(result, err)
-	case "plugin.shutdown":
+	case MethodPluginShutdown:
 		return envelopeStatus(r.Shutdown(ctx))
-	case "management.register":
+	case MethodManagementRegister:
 		return r.registerManagement()
-	case "management.handle":
+	case MethodManagementHandle:
 		return r.handleManagement(ctx, request)
-	case "filter.response", "filter.complete", "filter.error", "filter.outbound", "filter.inbound":
+	case MethodFilterResponse, MethodFilterComplete, MethodFilterError, MethodFilterOutbound, MethodFilterInbound:
 		return r.handleFilterEvent(ctx, request)
 	default:
 		return failure(fmt.Errorf("%w: method %q", ErrInvalidRequest, method))
@@ -219,8 +219,8 @@ func (r *Runtime) ResetAllPriorities(ctx context.Context) (map[string]any, error
 		},
 	}
 	r.snapshotRunEntry(res, summary, RunHistoryEntry{
-		Kind:      "reset",
-		Trigger:   "manual",
+		Kind:      KindReset,
+		Trigger:   string(TriggerManual),
 		Attempted: resetCount,
 		Succeeded: resetCount,
 		Message:   summary,
@@ -312,7 +312,7 @@ func (r *Runtime) runAuto(ctx context.Context) error {
 	if runErr != nil {
 		if !errors.Is(runErr, context.Canceled) && !errors.Is(runErr, context.DeadlineExceeded) {
 			r.snapshotRunEntry(apply.Result{}, runErr.Error(), RunHistoryEntry{
-				Kind:    "auto_apply",
+				Kind:    KindAutoApply,
 				Trigger: string(TriggerAutoApply),
 				Message: "auto_apply error: " + runErr.Error(),
 			})
@@ -525,7 +525,7 @@ func (r *Runtime) snapshotRunEntry(result apply.Result, audit string, entry RunH
 		entry.At = r.clock.Now().UTC()
 	}
 	if entry.Kind == "" {
-		entry.Kind = "apply"
+		entry.Kind = KindApply
 	}
 	history := make([]RunHistoryEntry, 0, maxRunHistory)
 	history = append(history, entry)
@@ -674,11 +674,11 @@ func registrationResult() RegisterResult {
 		SchemaVersion: 1,
 		Metadata:      buildMetadata(),
 		Capabilities: map[string]bool{
-			"management_api":  true,
-			"management":      true,
-			"filter.response": true,
-			"filter.complete": true,
-			"filter.error":    true,
+			"management_api":      true,
+			"management":          true,
+			MethodFilterResponse: true,
+			MethodFilterComplete: true,
+			MethodFilterError:    true,
 		},
 	}
 }

@@ -56,17 +56,17 @@ type managementRunner struct {
 func (r *Runtime) registerManagement() []byte {
 	result := managementRegistration{
 		Routes: []managementRoute{
-			{Method: http.MethodPost, Path: "/plugins/" + config.PluginID + "/run"},
-			{Method: http.MethodPost, Path: "/plugins/" + config.PluginID + "/reset"},
-			{Method: http.MethodGet, Path: "/plugins/" + config.PluginID + "/diagnostics"},
-			{Method: http.MethodGet, Path: "/plugins/" + config.PluginID + "/snapshot/latest"},
-			{Method: http.MethodGet, Path: "/plugins/" + config.PluginID + "/schedule/config"},
-			{Method: http.MethodPost, Path: "/plugins/" + config.PluginID + "/schedule/config"},
-			{Method: http.MethodGet, Path: "/plugins/" + config.PluginID + "/config"},
-			{Method: http.MethodPost, Path: "/plugins/" + config.PluginID + "/config"},
+			{Method: http.MethodPost, Path: management.PrefixLegacyPlugin + management.PathRun},
+			{Method: http.MethodPost, Path: management.PrefixLegacyPlugin + management.PathReset},
+			{Method: http.MethodGet, Path: management.PrefixLegacyPlugin + management.PathDiagnostics},
+			{Method: http.MethodGet, Path: management.PrefixLegacyPlugin + management.PathSnapshotLatest},
+			{Method: http.MethodGet, Path: management.PrefixLegacyPlugin + management.PathScheduleConfig},
+			{Method: http.MethodPost, Path: management.PrefixLegacyPlugin + management.PathScheduleConfig},
+			{Method: http.MethodGet, Path: management.PrefixLegacyPlugin + management.PathConfig},
+			{Method: http.MethodPost, Path: management.PrefixLegacyPlugin + management.PathConfig},
 		},
 		Resources: []managementResource{
-			{Path: "/status", Menu: "Antigravity Priority", Description: "Shows Antigravity priority status and audit summary."},
+			{Path: management.PathStatus, Menu: "Antigravity Priority", Description: "Shows Antigravity priority status and audit summary."},
 		},
 	}
 	return envelopeManagement(result, nil)
@@ -186,25 +186,25 @@ func (r ManagementRequest) toHTTPRequest(ctx context.Context) (*http.Request, er
 }
 
 func normalizeManagementPath(path string) (normalized string, source string) {
-	resourcePrefix := "/v0/resource/plugins/" + config.PluginID
-	managementPrefix := "/v0/management/plugins/" + config.PluginID
-	legacyRoutePrefix := "/plugins/" + config.PluginID
+	resourcePrefix := management.PrefixResourcePlugin
+	managementPrefix := management.PrefixManagementPlugin
+	legacyRoutePrefix := management.PrefixLegacyPlugin
 
 	switch {
 	case path == resourcePrefix:
-		return "/", "resource"
+		return "/", management.SourceResource
 	case strings.HasPrefix(path, resourcePrefix+"/"):
-		return strings.TrimPrefix(path, resourcePrefix), "resource"
+		return strings.TrimPrefix(path, resourcePrefix), management.SourceResource
 	case path == managementPrefix:
-		return "/", "management"
+		return "/", management.SourceManagement
 	case strings.HasPrefix(path, managementPrefix+"/"):
-		return strings.TrimPrefix(path, managementPrefix), "management"
+		return strings.TrimPrefix(path, managementPrefix), management.SourceManagement
 	case path == legacyRoutePrefix:
-		return "/", "management"
+		return "/", management.SourceManagement
 	case strings.HasPrefix(path, legacyRoutePrefix+"/"):
-		return strings.TrimPrefix(path, legacyRoutePrefix), "management"
+		return strings.TrimPrefix(path, legacyRoutePrefix), management.SourceManagement
 	default:
-		return path, "management"
+		return path, management.SourceManagement
 	}
 }
 

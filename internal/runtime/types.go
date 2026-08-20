@@ -19,6 +19,27 @@ var ErrShutdown = errors.New("runtime: shutdown")
 // ErrInvalidRequest indicates that the CPA JSON envelope request is invalid.
 var ErrInvalidRequest = errors.New("runtime: invalid request")
 
+const (
+	// Plugin JSON-RPC Methods
+	MethodPluginRegister     = "plugin.register"
+	MethodPluginReconfigure  = "plugin.reconfigure"
+	MethodPluginShutdown     = "plugin.shutdown"
+	MethodManagementRegister = "management.register"
+	MethodManagementHandle   = "management.handle"
+	MethodFilterResponse     = "filter.response"
+	MethodFilterComplete     = "filter.complete"
+	MethodFilterError        = "filter.error"
+	MethodFilterOutbound     = "filter.outbound"
+	MethodFilterInbound      = "filter.inbound"
+
+	// Run History Kinds
+	KindApply     = "apply"
+	KindDryRun    = "dry_run"
+	KindProbe     = "probe"
+	KindReset     = "reset"
+	KindAutoApply = "auto_apply"
+)
+
 // Trigger represents the initiator of a scheduling execution.
 type Trigger string
 

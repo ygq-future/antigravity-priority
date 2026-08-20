@@ -158,7 +158,7 @@ func (hostCallbackAdapter) ListAuthFiles(ctx context.Context) ([]host.AuthFile, 
 	var response struct {
 		Files []host.AuthFile `json:"files"`
 	}
-	if err := callHost(ctx, "host.auth.list", map[string]any{}, &response); err != nil {
+	if err := callHost(ctx, host.MethodAuthList, map[string]any{}, &response); err != nil {
 		return nil, err
 	}
 	return response.Files, nil
@@ -166,7 +166,7 @@ func (hostCallbackAdapter) ListAuthFiles(ctx context.Context) ([]host.AuthFile, 
 
 func (hostCallbackAdapter) GetAuth(ctx context.Context, authIndex string) (host.AuthDocument, error) {
 	var response host.AuthDocument
-	if err := callHost(ctx, "host.auth.get", map[string]string{"auth_index": authIndex}, &response); err != nil {
+	if err := callHost(ctx, host.MethodAuthGet, map[string]string{host.FieldAuthIndex: authIndex}, &response); err != nil {
 		return host.AuthDocument{}, err
 	}
 	return response, nil
@@ -174,7 +174,7 @@ func (hostCallbackAdapter) GetAuth(ctx context.Context, authIndex string) (host.
 
 func (hostCallbackAdapter) GetRuntime(ctx context.Context, authIndex string) (host.RuntimeAuth, error) {
 	var response host.RuntimeAuth
-	if err := callHost(ctx, "host.auth.get_runtime", map[string]string{"auth_index": authIndex}, &response); err != nil {
+	if err := callHost(ctx, host.MethodAuthGetRuntime, map[string]string{host.FieldAuthIndex: authIndex}, &response); err != nil {
 		return host.RuntimeAuth{}, err
 	}
 	return response, nil
@@ -182,12 +182,12 @@ func (hostCallbackAdapter) GetRuntime(ctx context.Context, authIndex string) (ho
 
 func (hostCallbackAdapter) SaveAuth(ctx context.Context, name string, doc json.RawMessage) error {
 	var response json.RawMessage
-	return callHost(ctx, "host.auth.save", map[string]any{"name": name, "json": doc}, &response)
+	return callHost(ctx, host.MethodAuthSave, map[string]any{host.FieldName: name, "json": doc}, &response)
 }
 
 func (hostCallbackAdapter) HTTPDo(ctx context.Context, request host.HTTPRequest) (host.HTTPResponse, error) {
 	var response host.HTTPResponse
-	if err := callHost(ctx, "host.http.do", request, &response); err != nil {
+	if err := callHost(ctx, host.MethodHTTPDo, request, &response); err != nil {
 		return host.HTTPResponse{}, err
 	}
 	return response, nil

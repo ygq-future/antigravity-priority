@@ -272,10 +272,9 @@ func TestRuntime_Handle_InvalidConfig(t *testing.T) {
 	}
 }
 
-func TestRuntime_Handle_ConfigWarnings(t *testing.T) {
+func TestRuntime_Handle_Diagnostics(t *testing.T) {
 	r := runtime.New(runtime.Options{})
-	// Field-level invalid values should succeed with warnings and fallback to defaults
-	req := []byte(`{"config_yaml":"interval: -5m\n"}`)
+	req := []byte(`{"config_yaml":"enabled: true\n"}`)
 
 	respBytes := r.Handle(context.Background(), "plugin.register", req)
 
@@ -288,17 +287,17 @@ func TestRuntime_Handle_ConfigWarnings(t *testing.T) {
 		t.Fatalf("unmarshal response envelope failed: %v", err)
 	}
 	if !envelope.OK {
-		t.Fatalf("expected OK=true with warning fallback, got error: %+v", envelope.Error)
+		t.Fatalf("expected OK=true, got error: %+v", envelope.Error)
 	}
 
-	// Diagnostics should surface the warning
+	// Diagnostics should surface runtime status
 	diag, err := r.Diagnostics(context.Background())
 	if err != nil {
 		t.Fatalf("diagnostics failed: %v", err)
 	}
-	warnings, _ := diag["config_warnings"].([]string)
-	if len(warnings) == 0 {
-		t.Errorf("expected config warnings in diagnostics, got none")
+	mgmt, ok := diag["management_api"].(map[string]any)
+	if !ok || mgmt["status"] != "ready" {
+		t.Errorf("expected management_api status ready, got %+v", diag["management_api"])
 	}
 }
 

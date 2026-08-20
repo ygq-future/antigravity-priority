@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"time"
 
+	"antigravity-priority/internal/config"
 	"antigravity-priority/internal/core"
 	"antigravity-priority/internal/host"
 	"antigravity-priority/internal/priority"
@@ -237,12 +238,12 @@ func SnapshotPredicted(plan priority.Plan) PlanSnapshot {
 	snap := newPlanSnapshot(plan)
 	for i := range snap.Items {
 		snap.Items[i].IsPredicted = true
-		if snap.Items[i].Reason != "" && snap.Items[i].Reason != "keep current state" {
+		if snap.Items[i].Reason != "" && snap.Items[i].Reason != priority.ReasonKeepCurrentState {
 			snap.Items[i].Reason = "predicted: " + snap.Items[i].Reason
 		}
 	}
 	for i := range snap.Changes {
-		if snap.Changes[i].Reason != "" && snap.Changes[i].Reason != "keep current state" {
+		if snap.Changes[i].Reason != "" && snap.Changes[i].Reason != priority.ReasonKeepCurrentState {
 			snap.Changes[i].Reason = "predicted: " + snap.Changes[i].Reason
 		}
 	}
@@ -251,9 +252,9 @@ func SnapshotPredicted(plan priority.Plan) PlanSnapshot {
 
 // NewDualGroupSnapshot builds a DualGroupSnapshot from primary and predicted plan snapshots.
 func NewDualGroupSnapshot(activeGroup string, observedAt time.Time, primary PlanSnapshot, predicted PlanSnapshot) DualGroupSnapshot {
-	altGroup := "claude_gpt"
-	if activeGroup == "claude_gpt" {
-		altGroup = "gemini"
+	altGroup := string(config.AntigravityModelGroupClaudeGPT)
+	if activeGroup == string(config.AntigravityModelGroupClaudeGPT) {
+		altGroup = string(config.AntigravityModelGroupGemini)
 	}
 	return DualGroupSnapshot{
 		ActiveModelGroup: activeGroup,
