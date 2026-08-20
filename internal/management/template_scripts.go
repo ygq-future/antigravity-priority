@@ -1668,7 +1668,7 @@ const TemplateScripts = `
             if (!confirmed) return;
 
             var defaultCfg = {
-                auto_apply: true,
+                auto_apply: false,
                 interval: "15m",
                 antigravity_model_group: "gemini",
                 max_concurrency: 6,

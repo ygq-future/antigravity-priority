@@ -109,7 +109,15 @@ plugins:
   configs:
     antigravity-priority:
       enabled: true
+      # state_cache_path: "data/antigravity-priority-cache.json" # Optional custom cache path
 ```
+
+| Host Parameter | Default | Required | Description |
+| :--- | :--- | :--- | :--- |
+| **`enabled`** | `true` | Yes | Global plugin switch. When `false`, all scheduling and background workers are halted. |
+| **`state_cache_path`** | `data/antigravity-priority-cache.json` | No | File path for persisting state snapshots, dynamic configuration, and adaptive burn rates. |
+
+> **⚠️ Path Migration Note**: The plugin does not perform automatic hot migration across storage paths. If `state_cache_path` is changed mid-operation, the plugin treats missing new paths as clean cold starts. To retain existing dynamic configuration, run history, and learned burn rates, stop CPA/plugin and manually move or copy the existing cache file to the new path before updating the configuration.
 
 ### 2. UI Dynamic Config Center (Zero-Restart Hot Reload)
 
@@ -117,19 +125,20 @@ In the **`⚙️ Config Center`** tab of the management dashboard, the following
 
 | Setting | Default | Range/Options | Description |
 | :--- | :--- | :--- | :--- |
-| **Auto Periodic Scheduling (`auto_apply`)** | `true` | On / Off | When true, scheduled background runs automatically probe and commit priority updates. |
+| **Auto Periodic Scheduling (`auto_apply`)** | `false` | On / Off | When true, scheduled background runs automatically probe and commit priority updates. |
 | **Scheduling Interval (`interval`)** | `15m` | `5m`, `15m`, `30m`, `1h`, custom | Background execution interval. Changes take effect immediately without restarting. |
 | **Primary Model Group (`antigravity_model_group`)** | `gemini` | `gemini` / `claude_gpt` | Primary model group used as the basis for host priority write-backs. |
 | **Active Schedule Window (`schedule_window`)** | `All day` | `HH:MM` to `HH:MM` | Daily active time window (e.g. `09:00-23:00`, supports cross-midnight like `22:00-06:00`). Sleeps outside window. |
-| **Max Probe Concurrency (`max_concurrency`)** | `6` | `1 ~ 32` | Maximum concurrent goroutines for quota probe requests to Google API. |
+| **Max Probe Concurrency (`max_concurrency`)** | `6` | `1 ~ 32` (up to 64 in backend) | Maximum concurrent goroutines for quota probe requests to Google API. |
 | **Priority Min Change Threshold (`min_change`)** | `1` | `0 ~ 100` | Minimum priority delta required to trigger a write-back to host. |
 | **Urgency Bucket Tolerance (`urgency_tolerance`)** | `0.05` | `0.00 ~ 0.50` | Accounts within this tolerance share the same priority for round-robin balancing. |
-| **429 Cooldown Duration (`rate_limit_cooldown_minutes`)** | `5` | `1 ~ 60` (min) | Cooldown duration demoting account to `-1` fallback tier on 429 errors. |
+| **Adaptive Sample Capacity (`quota_sample_capacity`)** | `6` | `2 ~ 30` | Sliding window sample count retained for burn rate estimation. |
+| **429 Cooldown Duration (`rate_limit_cooldown_minutes`)** | `5` | `≥ 1` (recommended `1 ~ 1440` min) | Cooldown duration demoting account to `-1` fallback tier on 429 errors (defaults to 5 if `<= 0`). |
 | **Enable Double-Window Rules (`priority_rules.enabled`)** | `true` | On / Off | Enables multi-tier double-window priority decision algorithms. |
 | **Boost Start Priority (`boost_start_priority`)** | `999` | `1 ~ 999` | Base priority for tier-1 boosted credentials. |
 | **Normal Healthy Start Priority (`normal_start_priority`)** | `100` | `1 ~ 999` | Base priority for tier-2 regular healthy credentials. |
 
-> **Persistence Guarantee**: All settings changed in the UI Config Center are atomically saved to `data/antigravity-priority-cache.json`, surviving CPA container restarts and taking precedence over initial YAML values.
+> **Persistence Guarantee**: All settings changed in the UI Config Center are atomically saved to the active persistence cache file (defaults to `data/antigravity-priority-cache.json`), surviving CPA container restarts and taking precedence over initial YAML values.
 
 ---
 
