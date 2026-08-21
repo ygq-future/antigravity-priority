@@ -19,7 +19,7 @@ type PlanSnapshot struct {
 	Changes      []SnapshotChange `json:"changes"`
 }
 
-// Snapshot returns the redacted snapshot of a plan for dry-run and diagnostics reuse.
+// Snapshot returns the redacted snapshot of a plan for snapshot and diagnostics reuse.
 func Snapshot(plan priority.Plan) PlanSnapshot {
 	return newPlanSnapshot(plan)
 }
@@ -69,8 +69,9 @@ type SnapshotChange struct {
 
 // Target represents the priority and disabled target state.
 type Target struct {
-	Priority int  `json:"priority"`
-	Disabled bool `json:"disabled"`
+	Priority        int  `json:"priority"`
+	PriorityMissing bool `json:"priority_missing,omitempty"`
+	Disabled        bool `json:"disabled"`
 }
 
 // AuditEvent is the redacted audit event recorded before writing to the host.
@@ -139,7 +140,7 @@ func snapshotItem(item priority.PlanItem) SnapshotItem {
 		Type:                 redactString(string(credential.Type)),
 		Status:               redactString(string(credential.Status)),
 		PlanType:             redactString(string(item.PlanType)),
-		Current:              target(credential.Priority, credential.Disabled),
+		Current:              currentTarget(credential.Priority, credential.PriorityMissing, credential.Disabled),
 		Target:               target(item.Priority, item.Disabled),
 		EvidenceFresh:        item.EvidenceFresh || item.ForceWrite,
 		Reason:               redactString(item.Reason),
@@ -166,7 +167,7 @@ func snapshotChange(change priority.Change) SnapshotChange {
 		AuthIndex:     redactString(credential.AuthIndex),
 		Account:       redactString(credential.Account),
 		Email:         redactString(credential.Email),
-		Current:       target(credential.Priority, credential.Disabled),
+		Current:       currentTarget(credential.Priority, credential.PriorityMissing, credential.Disabled),
 		Target:        target(change.Priority, change.Disabled),
 		EvidenceFresh: change.EvidenceFresh,
 		Reason:        redactString(change.Reason),
@@ -181,6 +182,10 @@ func resultName(credential core.Credential) string {
 		}
 	}
 	return ""
+}
+
+func currentTarget(priority int, priorityMissing bool, disabled bool) Target {
+	return Target{Priority: priority, PriorityMissing: priorityMissing, Disabled: disabled}
 }
 
 func target(priority int, disabled bool) Target {

@@ -97,13 +97,13 @@ func (m *mockRunner) GetSamples(ctx context.Context, authIndex, modelGroup strin
 	}, nil
 }
 
-func TestHandler_Run_DryRun_Success(t *testing.T) {
+func TestHandler_Run_Probe_Success(t *testing.T) {
 	called := false
 	runner := &mockRunner{
 		runFunc: func(ctx context.Context, req management.RunRequest) (apply.Result, error) {
 			called = true
-			if req.Mode != "dry-run" {
-				t.Errorf("expected mode 'dry-run', got %q", req.Mode)
+			if req.Mode != "probe" {
+				t.Errorf("expected mode 'probe', got %q", req.Mode)
 			}
 			if req.AntigravityModelGroup != config.AntigravityModelGroupClaudeGPT {
 				t.Errorf("expected model group 'claude_gpt', got %q", req.AntigravityModelGroup)
@@ -116,7 +116,7 @@ func TestHandler_Run_DryRun_Success(t *testing.T) {
 	}
 
 	handler := management.NewHandler(runner)
-	req := httptest.NewRequest(http.MethodPost, "/run?mode=dry-run&antigravity_model_group=claude_gpt", nil)
+	req := httptest.NewRequest(http.MethodPost, "/run?mode=probe&antigravity_model_group=claude_gpt", nil)
 	rec := httptest.NewRecorder()
 
 	handler.ServeHTTP(rec, req)
@@ -180,7 +180,7 @@ func TestHandler_Run_InvalidMode(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &errResp); err != nil {
 		t.Fatalf("unmarshal error resp failed: %v", err)
 	}
-	if errResp["error"] != "invalid mode: must be 'dry-run', 'apply', or 'probe'" {
+	if errResp["error"] != "invalid mode: must be 'apply' or 'probe'" {
 		t.Errorf("unexpected error message: %q", errResp["error"])
 	}
 }
@@ -201,7 +201,7 @@ func TestHandler_Run_ConcurrencyConflict(t *testing.T) {
 
 	// Start first request
 	go func() {
-		req := httptest.NewRequest(http.MethodPost, "/run?mode=dry-run", nil)
+		req := httptest.NewRequest(http.MethodPost, "/run?mode=probe", nil)
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
 	}()

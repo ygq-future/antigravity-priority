@@ -247,11 +247,7 @@ func (r managementRunner) Run(ctx context.Context, request management.RunRequest
 		result, _ := r.runtime.currentRunSnapshot()
 		return result, nil
 	}
-	if err := r.runtime.DryRun(ctx, request.AntigravityModelGroup, request.AuthIndexes); err != nil {
-		return apply.Result{}, err
-	}
-	result, _ := r.runtime.currentRunSnapshot()
-	return result, nil
+	return apply.Result{}, fmt.Errorf("unsupported run mode: %s", request.Mode)
 }
 
 func (r managementRunner) Reset(ctx context.Context) (map[string]any, error) {

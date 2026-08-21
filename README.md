@@ -32,7 +32,7 @@ CLIProxyAPI (CPA) 专精型 **Google Antigravity 凭证智能配额调度与自�
 - **自适应动态学习率（Adaptive $C_{\text{cycle}}$）**：基于连续探测增量自动推算每个账号真实的周期消耗能力并平滑收敛，无需用户手动猜测和配置复杂的数学系数。
 - **自愈式软降级与硬禁用**：5 小时短窗耗尽仅软降级优先级至 `-1`（重置后自动静默自愈），7 天周额度耗尽写入宿主硬禁用 `disabled = true`。
 - **UI 动态配置中心（免重启热生效）**：CPA 宿主 YAML 仅需保留 `enabled: true`，所有业务与调度参数统一在 Web UI **`⚙️ 配置中心`** 可视化调节并即时热生效。
-- **嵌入式双主题仪表盘**：零外部 CDN，严格 CSP 安全，完全自适应 CPA 宿主主题，提供配额监控、双组即时预测切换、试运行/写回控制与全链路数据安全脱敏。
+- **嵌入式双主题仪表盘**：零外部 CDN，严格 CSP 安全，完全自适应 CPA 宿主主题，提供配额监控、双组即时预测切换、变动 Diff 确认写回控制与全链路数据安全脱敏。
 
 ---
 
@@ -50,9 +50,9 @@ CLIProxyAPI (CPA) 专精型 **Google Antigravity 凭证智能配额调度与自�
        - Tier 1 (Boosted) : 提权区间 -> 分配 999, 998... (按周紧迫度降序)
        - Tier 2 (Regular) : 常规健康 -> 分配 100, 99... (按周紧迫度降序，短窗重置时间平局决胜)
        - Tier 3 (Depleted): 周耗尽 hard-disable > 短窗耗尽 soft-fallback (-1)
-  -> 根据运行模式决定是否写回
+  -> 根据运行模式执行
        - apply：通过 host.auth.save 写回优先级与启用状态 (min_change 过滤微小变动)
-       - dry-run / preview：仅更新内存状态、脱敏诊断与快照
+       - probe / sync：仅更新内存状态、脱敏诊断与快照
   -> 在管理页面展示脱敏后的双窗口仪表、紧迫度评分、提权状态与审计摘要
 ```
 
@@ -153,19 +153,17 @@ plugins:
   - **核心功能**：
     - **概览与仪表盘**：5h/7d 双窗口配额进度条、自适应秒级倒计时、自适应消耗速率 $C_{\text{cycle}}$、周紧迫度得分与 🚀 提权状态；支持单行/双列网格切换与容器内独立滚动。
     - **双模型组即时切换**：随时切换 Gemini 或 Claude/GPT 视图，非主控组智能标注 `🔮 预测优先级`。
-    - **两阶段控制**：提供 `📡 获取最新配额 (10s冷却)`、`🔍 试运行 (0网络开销)`、`⚡ 立即写回`、`🔄 重置默认`。
-    - **执行历史**：最近 10 次执行记录，支持点击 `🔍 查看明细` 弹窗对比 Apply 实际写回或 Dry-Run 前后配额变动。
+    - **两阶段控制**：提供 `📡 刷新配额 (10s冷却)`、`⚡ 立即写回 (带Diff确认)`、`🔄 重置默认`。
+    - **执行历史**：最近 10 次执行记录，支持点击 `🔍 查看明细` 弹窗查看 Apply 实际写回或 Probe 探测快照明细。
     - **系统诊断**：调度器与 Worker 实时运行状态，配置警告条呈现，Raw JSON 一键 Copy。
     - **⚙️ 配置中心**：在线修改所有调度与算法参数，0 秒热生效与一键恢复默认。
 
 ### 管理 API（动态接口，需 Management Key 鉴权）
 
-- `POST /v0/management/plugins/antigravity-priority/run?mode=dry-run`
-  - 纯基于内存缓存计算最新优先级规划（试运行），**0 网络开销、不修改宿主凭证**。
 - `POST /v0/management/plugins/antigravity-priority/run?mode=probe`
-  - 触发一次向 Google API 的全量配额探测并更新本地缓存，**不执行写回**。
+  - 触发一次向 Google API 的全量配额探测并更新本地缓存与快照，**不执行写回**。
 - `POST /v0/management/plugins/antigravity-priority/run?mode=apply`
-  - 触发计算并将最新计算得到的优先级与启用状态**写回 CPA 宿主**。
+  - 触发全量探测计算并将最新得到的优先级与启用状态**写回 CPA 宿主**。
 - `GET /v0/management/plugins/antigravity-priority/config`
   - 获取当前完整运行时配置。
 - `POST /v0/management/plugins/antigravity-priority/config`

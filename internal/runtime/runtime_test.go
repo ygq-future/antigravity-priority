@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -97,6 +99,12 @@ func (m *mockHost) PatchPriority(ctx context.Context, authIndex string, priority
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.patchedPriorities[authIndex] = priority
+	for i := range m.files {
+		if m.files[i].AuthIndex == authIndex {
+			m.files[i].Priority = priority
+			m.files[i].PriorityMissing = false
+		}
+	}
 	return nil
 }
 
@@ -104,6 +112,11 @@ func (m *mockHost) PatchDisabled(ctx context.Context, name string, disabled bool
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.patchedDisabled[name] = disabled
+	for i := range m.files {
+		if m.files[i].Name == name || m.files[i].AuthIndex == name {
+			m.files[i].Disabled = disabled
+		}
+	}
 	return nil
 }
 
@@ -355,11 +368,11 @@ func TestRuntime_Handle_ManagementHandle(t *testing.T) {
 		Sleeper: testSleeper{},
 	})
 
-	// 1. POST /v0/management/plugins/antigravity-priority/run with mode=dry-run
+	// 1. POST /v0/management/plugins/antigravity-priority/run with mode=probe
 	mgmtReq := map[string]any{
 		"Method": "POST",
 		"Path":   "/v0/management/plugins/antigravity-priority/run",
-		"Query":  "mode=dry-run",
+		"Query":  "mode=probe",
 	}
 	reqBytes, _ := json.Marshal(mgmtReq)
 	respBytes := r.Handle(context.Background(), "management.handle", reqBytes)
@@ -425,13 +438,13 @@ func TestRuntime_SingleFlight_Conflict(t *testing.T) {
 	})
 
 	go func() {
-		_ = r.DryRun(context.Background(), config.AntigravityModelGroupGemini, nil)
+		_ = r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil)
 	}()
 
 	<-enteredChan
 
-	if err := r.DryRun(context.Background(), config.AntigravityModelGroupGemini, nil); !errors.Is(err, runtime.ErrRunInProgress) {
-		t.Errorf("expected ErrRunInProgress on DryRun, got %v", err)
+	if err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); !errors.Is(err, runtime.ErrRunInProgress) {
+		t.Errorf("expected ErrRunInProgress on Probe, got %v", err)
 	}
 	if err := r.ManualApply(context.Background(), config.AntigravityModelGroupGemini, nil); !errors.Is(err, runtime.ErrRunInProgress) {
 		t.Errorf("expected ErrRunInProgress on ManualApply, got %v", err)
@@ -513,9 +526,9 @@ func TestRuntime_ProductionRunner_ConcurrentProbes(t *testing.T) {
 		Sleeper: testSleeper{},
 	})
 
-	err := r.DryRun(context.Background(), config.AntigravityModelGroupGemini, nil)
+	err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil)
 	if err != nil {
-		t.Fatalf("dry run failed: %v", err)
+		t.Fatalf("probe failed: %v", err)
 	}
 
 	snap, err := r.LatestSnapshot(context.Background())
@@ -639,9 +652,9 @@ func TestRuntime_ProductionRunner_PhysicalAuthJSONPath(t *testing.T) {
 		Sleeper: testSleeper{},
 	})
 
-	err := r.DryRun(context.Background(), config.AntigravityModelGroupGemini, nil)
+	err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil)
 	if err != nil {
-		t.Fatalf("dry run with auth path failed: %v", err)
+		t.Fatalf("probe with auth path failed: %v", err)
 	}
 }
 
@@ -670,6 +683,10 @@ func TestRuntime_ProductionRunner_Apply_Full(t *testing.T) {
 		Clock:   &testClock{now: time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)},
 		Sleeper: testSleeper{},
 	})
+
+	cachePath := filepath.Join(tempDir, "state_apply_full.json")
+	req := []byte(fmt.Sprintf(`{"config_yaml":"enabled: true\nstate_cache_path: %q\n"}`, cachePath))
+	r.Handle(context.Background(), "plugin.register", req)
 
 	err := r.ManualApply(context.Background(), config.AntigravityModelGroupGemini, nil)
 	if err != nil {
@@ -700,6 +717,74 @@ func TestRuntime_ProductionRunner_Apply_Full(t *testing.T) {
 	}
 }
 
+func TestRuntime_ProductionRunner_ZeroChange_Apply_Omitted(t *testing.T) {
+	tempDir := t.TempDir()
+	authFilePath := filepath.Join(tempDir, "auth_zero_change.json")
+	// Initialize file with priority 999 which matches the planner's boosted target priority
+	_ = os.WriteFile(authFilePath, []byte(`{"access_token":"token_123","project_id":"proj_123","priority":999}`), 0o600)
+
+	mock := newMockHost()
+	mock.files = []host.AuthFile{
+		{
+			Name:            "test-account-zero-1",
+			AuthIndex:       "auth_zero_1",
+			Provider:        string(core.ProviderAntigravity),
+			Type:            string(core.CredentialTypeAntigravity),
+			Priority:        999,
+			PriorityMissing: false,
+		},
+	}
+	mock.authDocs["auth_zero_1"] = host.AuthDocument{
+		AuthIndex: "auth_zero_1",
+		Path:      authFilePath,
+		JSON:      json.RawMessage(`{"access_token":"token_123","project_id":"proj_123","priority":999}`),
+	}
+
+	r := runtime.New(runtime.Options{
+		Host:    mock,
+		Clock:   &testClock{now: time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)},
+		Sleeper: testSleeper{},
+	})
+
+	cachePath := filepath.Join(tempDir, "state_zero.json")
+	req := []byte(fmt.Sprintf(`{"config_yaml":"enabled: true\nstate_cache_path: %q\n"}`, cachePath))
+	r.Handle(context.Background(), "plugin.register", req)
+
+	initialDiag, _ := r.Diagnostics(context.Background())
+	initialHistLen := len(initialDiag["run_history"].([]runtime.RunHistoryEntry))
+
+	// First run: all credentials already in sync (Priority 100 == Target 100)
+	err := r.ManualApply(context.Background(), config.AntigravityModelGroupGemini, nil)
+	if err != nil {
+		t.Fatalf("manual apply failed: %v", err)
+	}
+
+	diag, err := r.Diagnostics(context.Background())
+	if err != nil {
+		t.Fatalf("diagnostics failed: %v", err)
+	}
+
+	// Verify audit summary indicates in sync
+	latestAudit, _ := diag["latest_audit"].(string)
+	if !strings.Contains(latestAudit, "in sync") {
+		t.Errorf("expected latest_audit to contain 'in sync', got %q", latestAudit)
+	}
+
+	// Verify no host patches were executed
+	if len(mock.patchedPriorities) != 0 {
+		t.Errorf("expected 0 host patches for zero-change apply, got %+v", mock.patchedPriorities)
+	}
+
+	// Verify runHistory does NOT contain useless 0-change apply entries
+	runHistory, ok := diag["run_history"].([]runtime.RunHistoryEntry)
+	if !ok {
+		t.Fatalf("expected run_history in diagnostics")
+	}
+	if len(runHistory) != initialHistLen {
+		t.Errorf("expected run_history length %d for zero-change apply, got %d entries: %+v", initialHistLen, len(runHistory), runHistory)
+	}
+}
+
 func TestRuntime_ProductionRunner_ProbeFailure(t *testing.T) {
 	mock := newMockHost()
 	mock.files = []host.AuthFile{
@@ -723,9 +808,9 @@ func TestRuntime_ProductionRunner_ProbeFailure(t *testing.T) {
 		Sleeper: testSleeper{},
 	})
 
-	err := r.DryRun(context.Background(), config.AntigravityModelGroupGemini, nil)
+	err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil)
 	if err != nil {
-		t.Fatalf("dry run failed: %v", err)
+		t.Fatalf("probe failed: %v", err)
 	}
 
 	snap, err := r.LatestSnapshot(context.Background())

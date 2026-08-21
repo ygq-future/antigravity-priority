@@ -172,11 +172,6 @@ func (r *Runtime) Reconfigure(ctx context.Context, req ReconfigureRequest) (Regi
 	return registrationResult(), nil
 }
 
-// DryRun triggers a dry-run scheduling calculation without host write-back.
-func (r *Runtime) DryRun(ctx context.Context, modelGroup config.AntigravityModelGroup, authIndexes []string) error {
-	return r.run(ctx, TriggerManual, modelGroup, authIndexes)
-}
-
 // ManualApply triggers an immediate priority calculation and host write-back.
 func (r *Runtime) ManualApply(ctx context.Context, modelGroup config.AntigravityModelGroup, authIndexes []string) error {
 	return r.run(ctx, TriggerManualApply, modelGroup, authIndexes)
@@ -248,7 +243,7 @@ func (r *Runtime) ResetAllPriorities(ctx context.Context) (map[string]any, error
 	snap := primarySnapshot
 	r.snapshotRunEntry(res, summary, RunHistoryEntry{
 		Kind:      KindReset,
-		Trigger:   string(TriggerManual),
+		Trigger:   string(TriggerManualApply),
 		Attempted: resetCount,
 		Succeeded: resetCount,
 		Message:   summary,
@@ -358,7 +353,7 @@ func (r *Runtime) run(ctx context.Context, trigger Trigger, modelGroup config.An
 	}
 	defer cleanup()
 
-	if !cfg.Enabled && trigger != TriggerManual {
+	if !cfg.Enabled && trigger != TriggerManualApply {
 		return errors.New("plugin is disabled")
 	}
 

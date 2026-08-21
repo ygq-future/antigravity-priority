@@ -32,7 +32,7 @@ A high-performance, single-provider priority scheduler and quota management plug
 - **Adaptive Online Learning ($C_{\text{cycle}}$)**: Automatically measures and smooths real consumption velocity without requiring manual coefficient tuning.
 - **Self-Healing Soft Fallback & Hard Disabling**: Soft-depletes 5-hour burst exhaustion for automatic recovery upon reset, and hard-disables exhausted 7-day weekly accounts.
 - **Web UI Dynamic Config Center**: CPA host YAML only requires `enabled: true`. All scheduling intervals, concurrency, model groups, and scoring rules are visually managed with instant zero-restart hot-reloads.
-- **Embedded Dual-Theme Dashboard**: Zero external CDN, strictly CSP-compliant, providing real-time quota meters, instant prediction switching, dry-run/apply controls, and end-to-end data redaction.
+- **Embedded Dual-Theme Dashboard**: Zero external CDN, strictly CSP-compliant, providing real-time quota meters, instant prediction switching, write-back diff confirmation controls, and end-to-end data redaction.
 
 ---
 
@@ -50,9 +50,9 @@ Load plugin
        - Tier 1 (Boosted) : Dynamic boost zone -> Priorities 999, 998... (Weekly Urgency descending)
        - Tier 2 (Regular) : Healthy accounts  -> Priorities 100, 99... (Weekly Urgency descending, 5h reset tie-break)
        - Tier 3 (Depleted): Weekly hard-disable > 5h soft-fallback (-1)
-  -> Decide write-back by execution mode
+  -> Execute according to run mode
        - apply: write priority and enabled state via host.auth.save (min_change filter)
-       - dry-run / preview: update in-memory state, redacted diagnostics, and snapshot only
+       - probe / sync: update in-memory state, redacted diagnostics, and snapshot only
   -> Display double-window meters, urgency scores, boost badges, and audit summary on management page
 ```
 
@@ -153,19 +153,17 @@ The plugin registers **resources** (static management dashboard) and **routes** 
   - **Key Features**:
     - **Overview & Meters**: Real-time 5h/7d quota meters, adaptive countdown timers, learned $C_{\text{cycle}}$, urgency scores, and 🚀 boost badges; list/dual-column view toggle and scroll containment.
     - **Instant Model Group Switching**: Toggle between Gemini and Claude/GPT views with smart `🔮 Predicted Priority` badges.
-    - **Two-Stage Control**: `📡 Fetch Quota (10s cooldown)`, `🔍 Dry-Run (0 network calls)`, `⚡ Apply Now`, `🔄 Reset to Default`.
-    - **Execution History**: Last 10 runs with `🔍 View Details` modal for side-by-side Apply write-back or Dry-Run predicted shifts.
+    - **Two-Stage Control**: `📡 Fetch Quota (10s cooldown)`, `⚡ Apply Now (with Diff confirmation)`, `🔄 Reset to Default`.
+    - **Execution History**: Last 10 runs with `🔍 View Details` modal to inspect Apply write-back or Probe snapshots.
     - **System Diagnostics**: Worker status, config warning alerts, and one-click JSON Copy.
     - **⚙️ Config Center**: Online management of all scheduling and algorithm parameters with instant hot reload.
 
 ### Management API (Dynamic, Key Required)
 
-- `POST /v0/management/plugins/antigravity-priority/run?mode=dry-run`
-  - Runs in-memory priority planning (simulation) using cached quota, **0 network overhead, host credentials unmodified**.
 - `POST /v0/management/plugins/antigravity-priority/run?mode=probe`
-  - Triggers a fresh network quota probe against Google API and updates local cache, **no priority write-back**.
+  - Triggers a fresh network quota probe against Google API and updates local cache and snapshot, **no priority write-back**.
 - `POST /v0/management/plugins/antigravity-priority/run?mode=apply`
-  - Runs probe/plan and **commits updated priorities and disabled states to CPA host**.
+  - Runs fresh probe/planning and **commits updated priorities and disabled states to CPA host**.
 - `GET /v0/management/plugins/antigravity-priority/config`
   - Retrieves current full runtime configuration.
 - `POST /v0/management/plugins/antigravity-priority/config`

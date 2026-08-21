@@ -34,7 +34,6 @@ const (
 
 	// Run History Kinds
 	KindApply     = "apply"
-	KindDryRun    = "dry_run"
 	KindProbe     = "probe"
 	KindReset     = "reset"
 	KindAutoApply = "auto_apply"
@@ -44,8 +43,6 @@ const (
 type Trigger string
 
 const (
-	// TriggerManual indicates a manual dry-run execution.
-	TriggerManual Trigger = "manual"
 	// TriggerManualApply indicates a manual write-back execution.
 	TriggerManualApply Trigger = "manual_apply"
 	// TriggerAutoApply indicates a background scheduled auto-apply execution.

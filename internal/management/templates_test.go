@@ -178,7 +178,7 @@ func TestStatusHTML_ContainsRequiredUIElements(t *testing.T) {
 		{"Model Group dropdown", "modelGroupSelect"},
 		{"Gemini model group option", "gemini"},
 		{"Claude GPT model group option", "claude_gpt"},
-		{"Dry-Run action button", "btnDryRun"},
+		{"Probe action button", "btnProbe"},
 		{"Apply action button", "btnApply"},
 		{"Diff modal container", "diffModal"},
 		{"System font stack", "-apple-system"},
@@ -194,6 +194,19 @@ func TestStatusHTML_ContainsRequiredUIElements(t *testing.T) {
 		if !strings.Contains(html, c.contains) {
 			t.Errorf("StatusHTML missing %s (search string: %q)", c.name, c.contains)
 		}
+	}
+
+	// Verify old inaccurate "宿主已手动禁用" is removed
+	if strings.Contains(html, "宿主已手动禁用") {
+		t.Errorf("StatusHTML should not contain '宿主已手动禁用'")
+	}
+	// Verify "priority <= 0" is removed
+	if strings.Contains(html, "priority <= 0") {
+		t.Errorf("StatusHTML should not contain 'priority <= 0'")
+	}
+	// Verify no double "} else {" syntax error
+	if strings.Contains(html, "} else {\n                summary.textContent") || strings.Contains(html, "} else {\r\n                summary.textContent") {
+		t.Errorf("StatusHTML should not contain duplicate else block")
 	}
 }
 

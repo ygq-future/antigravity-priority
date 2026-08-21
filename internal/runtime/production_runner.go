@@ -26,7 +26,7 @@ const (
 )
 
 func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) error {
-	if !request.Config.Enabled && request.Trigger != TriggerManual {
+	if !request.Config.Enabled && request.Trigger != TriggerManualApply {
 		return nil
 	}
 	if request.Trigger == TriggerAutoApply && !request.Config.AutoApply {
@@ -119,24 +119,19 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 		return nil
 	}
 
-	if request.Trigger == TriggerManual {
+	if len(plan.Changes) == 0 {
 		result := apply.Result{Snapshot: primarySnapshot}
-		audit := "dry-run plan generated"
-		snap := primarySnapshot
-		r.snapshotRunEntry(result, audit, RunHistoryEntry{
-			Kind:      KindDryRun,
-			Trigger:   string(request.Trigger),
-			Attempted: result.Attempted,
-			Succeeded: result.Succeeded,
-			Failed:    result.Failed,
-			Skipped:   result.Skipped,
-			Message:   audit,
-			Snapshot:  &snap,
-		})
+		summary := fmt.Sprintf("all %d credentials in sync, no changes required", len(primarySnapshot.Items))
+		r.mu.Lock()
+		r.latestResult = result
+		r.latestAudit = summary
+		r.mu.Unlock()
 		resJSON, _ := json.Marshal(result)
 		histJSON, _ := json.Marshal(r.currentRunHistory())
-		store.SetRuntimeSnapshot(audit, resJSON, histJSON)
-		_ = store.SaveAtomic(ctx)
+		store.SetRuntimeSnapshot(summary, resJSON, histJSON)
+		if err := store.SaveAtomic(ctx); err != nil {
+			return err
+		}
 		return nil
 	}
 

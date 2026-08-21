@@ -60,7 +60,7 @@
 - **Apply Layer (`internal/apply`, `internal/host`)**：
   - 仅负责根据 `Plan` 门禁（Fresh Evidence、`ForceWrite` 与 `min_change`）执行宿主 `PatchPriority` / `PatchDisabled` 及全脱敏审计落盘。
 - **Application Layer (`internal/runtime`)**：
-  - 唯一拥有 `DryRun` 与 `Apply` 用例执行所有权；
+  - 唯一拥有调度用例执行所有权（`ManualApply` / `AutoApply` / `Probe` / `SyncHost` / `ResetAllPriorities`）；
   - 统一协调 Ticker 定时器与单飞互斥锁（`runMu`）。
 - **Adapters (`main.go`, `internal/management`)**：
   - CGO ABI 导出与 HTTP Management API 仅作为薄适配器层透传调用 Runtime 用例，**严禁自行计算或改写优先级逻辑**；

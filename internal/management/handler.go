@@ -156,8 +156,8 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) handleRun(w http.ResponseWriter, r *http.Request) {
 	mode := r.URL.Query().Get("mode")
-	if mode != "dry-run" && mode != "apply" && mode != "probe" {
-		h.writeJSONError(w, http.StatusBadRequest, "invalid mode: must be 'dry-run', 'apply', or 'probe'")
+	if mode != "apply" && mode != "probe" {
+		h.writeJSONError(w, http.StatusBadRequest, "invalid mode: must be 'apply' or 'probe'")
 		return
 	}
 

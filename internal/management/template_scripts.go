@@ -32,7 +32,6 @@ const TemplateScripts = `
                 optClaudeGPT: "Claude 与 GPT 模型",
                 btnRefresh: "刷新",
                 btnKey: "密钥",
-                btnDryRun: "试运行",
                 btnApply: "立即写回",
                 btnReset: "重置优先级",
                 btnProbe: "刷新配额",
@@ -70,10 +69,9 @@ const TemplateScripts = `
                 help429Title: "⏳ 429 熔断冷却与自动自愈",
                 help429Desc: "遭遇 Google 429 速率限制时自动临时降级为 -1，冷却期结束后在下次调度中自动探测自愈，无需人工介入。",
                 btnClose: "关闭",
-                btnApplyNow: "立即写回",
-                previewTitle: "试运行计划预览",
-                applyTitle: "写回执行结果",
+                btnConfirmApply: "确认写回",
                 noChanges: "本次调度无优先级或禁用状态变化",
+                noChangesToApply: "所有凭证已处于最优状态，无待写回变更",
                 statusActive: "正常活跃",
                 statusBoosted: "🚀 动态 Boost",
                 statusWeeklyDepleted: "周额度耗尽",
@@ -171,7 +169,6 @@ const TemplateScripts = `
                 optClaudeGPT: "Claude & GPT Models",
                 btnRefresh: "Refresh",
                 btnKey: "Key",
-                btnDryRun: "Dry-Run",
                 btnApply: "Apply",
                 btnReset: "Reset Priority",
                 btnProbe: "Fetch Quota",
@@ -209,10 +206,9 @@ const TemplateScripts = `
                 help429Title: "⏳ 429 Cooldown & Self-Healing",
                 help429Desc: "Temporarily demotes credentials to -1 on 429 rate limit errors, automatically probing and restoring them after the cooldown expires.",
                 btnClose: "Close",
-                btnApplyNow: "Apply",
-                previewTitle: "Dry-Run Plan Preview",
-                applyTitle: "Apply Execution Result",
+                btnConfirmApply: "Confirm Apply",
                 noChanges: "No priority or status changes required",
+                noChangesToApply: "All credentials are in optimal state, no changes to apply",
                 statusActive: "Active",
                 statusBoosted: "🚀 Boosted",
                 statusWeeklyDepleted: "Weekly Depleted",
@@ -523,7 +519,7 @@ const TemplateScripts = `
                 return currentLang === "zh-CN" ? "状态最优" : "In Sync";
             }
             if (lower.indexOf("disabled on host") >= 0) {
-                return currentLang === "zh-CN" ? "宿主已手动禁用" : "Disabled on Host";
+                return currentLang === "zh-CN" ? "已禁用" : "Disabled";
             }
             return reason;
         }
@@ -532,9 +528,6 @@ const TemplateScripts = `
             var k = (kind || "").toLowerCase();
             if (k === "apply" || k === "auto_apply" || k === "manual_apply") {
                 return currentLang === "zh-CN" ? "立即写回" : "APPLY";
-            }
-            if (k === "dry_run" || k === "dry-run") {
-                return currentLang === "zh-CN" ? "试运行" : "DRY-RUN";
             }
             if (k === "probe") {
                 return currentLang === "zh-CN" ? "配额探测" : "PROBE";
@@ -874,6 +867,23 @@ const TemplateScripts = `
             }
         }
 
+        function extractChanges(result) {
+            if (!result) return [];
+            if (Array.isArray(result.changes) && result.changes.length > 0) {
+                return result.changes;
+            }
+            if (result.snapshot && Array.isArray(result.snapshot.changes) && result.snapshot.changes.length > 0) {
+                return result.snapshot.changes;
+            }
+            if (result.snapshot && Array.isArray(result.snapshot.items) && result.snapshot.items.length > 0) {
+                return result.snapshot.items;
+            }
+            if (Array.isArray(result.items) && result.items.length > 0) {
+                return result.items;
+            }
+            return [];
+        }
+
         async function triggerApplyWithConfirm() {
             const groupSelect = document.getElementById("modelGroupSelect");
             const selectedGroup = groupSelect ? groupSelect.value : "gemini";
@@ -888,11 +898,16 @@ const TemplateScripts = `
                 showToast(currentLang === "zh-CN" ? "未发现有效凭证，无需执行写回" : "No credentials found to apply", "info");
                 return;
             }
+            const changes = groupData.changes || [];
+            if (changes.length === 0) {
+                showToast(t("noChangesToApply"), "info");
+                return;
+            }
 
             // Show changes preview modal with direct confirm button
             showModal("apply-confirm", {
                 snapshot: groupData,
-                changes: groupData.changes || [],
+                changes: changes,
                 items: items
             }, false);
         }
@@ -907,48 +922,22 @@ const TemplateScripts = `
             try {
                 const path = RUN_PATH + "?mode=apply&antigravity_model_group=" + encodeURIComponent(group);
                 const result = await apiFetch(path, { method: "POST" });
-                showToast(currentLang === "zh-CN" ? "已成功写回 CPA 宿主凭证优先级" : "Applied credential priorities to CPA host successfully", "success");
-                await refreshDashboard();
-            } catch (err) {
-                showToast(err.message, "error");
-            } finally {
-                if (btnApp) btnApp.disabled = false;
-            }
-        }
-
-        async function triggerRun(mode) {
-            if (mode === "apply") {
-                await executeDirectApply();
-                return;
-            }
-
-            const groupSelect = document.getElementById("modelGroupSelect");
-            const group = groupSelect ? groupSelect.value : "gemini";
-            const btnDry = document.getElementById("btnDryRun");
-            const btnApp = document.getElementById("btnApply");
-
-            if (btnDry) btnDry.disabled = true;
-            if (btnApp) btnApp.disabled = true;
-
-            try {
-                const path = RUN_PATH + "?mode=" + encodeURIComponent(mode) + "&antigravity_model_group=" + encodeURIComponent(group);
-                const result = await apiFetch(path, { method: "POST" });
-                const items = (result && result.snapshot && result.snapshot.items) || (result && result.items) || [];
-                if (items.length === 0) {
-                    showToast(currentLang === "zh-CN" ? "未发现有效 Antigravity 凭证" : "No Antigravity credentials found", "info");
+                const succeeded = (result && result.succeeded !== undefined) ? result.succeeded : 0;
+                const attempted = (result && result.attempted !== undefined) ? result.attempted : 0;
+                if (succeeded > 0 || attempted > 0) {
+                    showToast(currentLang === "zh-CN" ? "已成功写回 CPA 宿主凭证优先级" : "Applied credential priorities to CPA host successfully", "success");
                 } else {
-                    showModal(mode, result, false);
+                    showToast(t("noChangesToApply"), "info");
                 }
                 await refreshDashboard();
             } catch (err) {
                 showToast(err.message, "error");
             } finally {
-                if (btnDry) btnDry.disabled = false;
                 if (btnApp) btnApp.disabled = false;
             }
         }
 
-        // Show Modal: Distinguish Dry-Run (Quota & Metrics diff) vs Apply Confirm vs History
+        // Show Modal: Apply Confirm vs History Details Snapshot
         function showModal(mode, result, isFromHistory) {
             const modal = document.getElementById("diffModal");
             const title = document.getElementById("modalTitle");
@@ -956,100 +945,43 @@ const TemplateScripts = `
             const list = document.getElementById("modalDiffList");
             const btnApply = document.getElementById("btnModalApply");
 
-            const changes = (result && result.changes) || (result && result.snapshot && result.snapshot.changes) || [];
-            const items = (result && result.snapshot && result.snapshot.items) || [];
+            const isApplyConfirm = (mode === "apply-confirm");
+            const changes = extractChanges(result);
 
-            if (mode === "apply-confirm") {
+            if (isApplyConfirm) {
                 title.textContent = t("confirmApplyTitle");
                 btnApply.hidden = false;
-                btnApply.textContent = currentLang === "zh-CN" ? "确认写回" : "Confirm Apply";
+                btnApply.textContent = t("btnConfirmApply");
                 btnApply.onclick = executeDirectApply;
-                summary.textContent = (currentLang === "zh-CN" ? "待写回凭证数量: " : "Credentials to update: ") + (changes.length || items.length);
-            } else if (mode === "dry-run") {
-                title.textContent = t("previewTitle");
-                btnApply.hidden = isFromHistory === true;
-                btnApply.textContent = t("btnApplyNow");
-                btnApply.onclick = applyFromModal;
-                summary.textContent = "Attempted: " + (result.attempted || changes.length) + ", Succeeded: " + (result.succeeded || 0) + ", Failed: " + (result.failed || 0) + ", Skipped: " + (result.skipped || 0);
+                summary.textContent = (currentLang === "zh-CN" ? "待写回凭证数量: " : "Credentials to update: ") + changes.length;
             } else {
-                title.textContent = t("applyTitle");
+                title.textContent = currentLang === "zh-CN" ? "执行明细快照" : "Execution Details Snapshot";
                 btnApply.hidden = true;
-                summary.textContent = "Attempted: " + (result.attempted || changes.length) + ", Succeeded: " + (result.succeeded || 0) + ", Failed: " + (result.failed || 0) + ", Skipped: " + (result.skipped || 0);
+                summary.textContent = (currentLang === "zh-CN" ? "成功: " : "Succeeded: ") + (result.succeeded || 0) + ", " +
+                    (currentLang === "zh-CN" ? "失败: " : "Failed: ") + (result.failed || 0) + ", " +
+                    (currentLang === "zh-CN" ? "跳过: " : "Skipped: ") + (result.skipped || 0);
             }
 
             list.innerHTML = "";
-            if (changes.length === 0 && items.length === 0) {
+            if (changes.length === 0) {
                 list.innerHTML = "<div class=\"empty-state\">" + t("noChanges") + "</div>";
-            } else if (mode === "dry-run") {
-                // Dry-Run Mode: Show Detailed Metric Changes & Predictions
-                var displayList = items.length > 0 ? items : changes;
-                displayList.forEach(c => {
-                    const row = document.createElement("div");
-                    row.className = "diff-card";
-
-                    const name = c.name || c.auth_index || "Credential";
-                    const isBoost = Boolean(c.is_boosted || (c.reason && c.reason.indexOf("boost") >= 0));
-                    const reasonText = formatReason(c.reason, isBoost, c.target && c.target.disabled);
-
-                    let r5hText = c.r5h !== undefined ? Math.round(c.r5h * 100) + "%" : "-";
-                    let r7dText = c.r7d !== undefined ? Math.round(c.r7d * 100) + "%" : "-";
-                    let urgText = c.urgency !== undefined ? c.urgency.toFixed(2) : "-";
-                    let burnText = c.cycle_burn_rate !== undefined ? c.cycle_burn_rate.toFixed(2) : "-";
-
-                    let fromP = "-";
-                    if (c.current && c.current.priority !== undefined) {
-                        fromP = c.current.disabled ? (currentLang === "zh-CN" ? "[已禁用]" : "[Disabled]") : (c.current.priority_missing || c.current.priority <= 0 ? t("unsetPriority") : c.current.priority);
-                    } else if (c.priority_from !== undefined) {
-                        fromP = c.disabled_from ? (currentLang === "zh-CN" ? "[已禁用]" : "[Disabled]") : (c.priority_missing || c.priority_from <= 0 ? t("unsetPriority") : c.priority_from);
-                    }
-
-                    let toP = "-";
-                    if (c.target && c.target.priority !== undefined) {
-                        toP = c.target.disabled ? (currentLang === "zh-CN" ? "[已禁用]" : "[Disabled]") : c.target.priority;
-                    } else if (c.priority_to !== undefined) {
-                        toP = c.disabled_to ? (currentLang === "zh-CN" ? "[已禁用]" : "[Disabled]") : c.priority_to;
-                    } else if (c.priority !== undefined) {
-                        toP = (c.disabled || (c.target && c.target.disabled)) ? (currentLang === "zh-CN" ? "[已禁用]" : "[Disabled]") : c.priority;
-                    }
-
-                    row.innerHTML = "<div>" +
-                        "<div style=\"font-weight:700; font-size:13px; display:flex; align-items:center; gap:6px;\">" +
-                            "<span>" + escapeHTML(name) + "</span>" +
-                            (isBoost ? "<span class=\"badge badge-boost\">🚀 Boost</span>" : "") +
-                            "<span class=\"badge badge-subtle\">" + escapeHTML(reasonText) + "</span>" +
-                        "</div>" +
-                        "<div style=\"font-size:11px; color:var(--text-muted); margin-top:2px; display:flex; gap:8px; flex-wrap:wrap;\">" +
-                            "<span>5h: <strong>" + r5hText + "</strong></span>" +
-                            "<span>7d: <strong>" + r7dText + "</strong></span>" +
-                            "<span>" + t("urgencyLabel") + ": <strong>" + urgText + "</strong></span>" +
-                            "<span>" + t("burnLabel") + ": <strong>" + burnText + "</strong></span>" +
-                        "</div>" +
-                    "</div>" +
-                    "<div class=\"diff-value-box\">" +
-                        "<span class=\"diff-from\">" + fromP + "</span>" +
-                        "<span>&rarr;</span>" +
-                        "<span class=\"diff-to\">" + toP + "</span>" +
-                    "</div>";
-                    list.appendChild(row);
-                });
             } else {
-                // Apply Mode: Show Concrete Priority & Disabled Diff
                 changes.forEach(c => {
                     const row = document.createElement("div");
                     row.className = "diff-card";
                     let fromP = "-";
-                    if (c.current && c.current.priority !== undefined) {
-                        fromP = c.current.disabled ? (currentLang === "zh-CN" ? "[已禁用]" : "[Disabled]") : (c.current.priority_missing || c.current.priority <= 0 ? t("unsetPriority") : c.current.priority);
-                    } else if (c.priority_from !== undefined) {
-                        fromP = c.disabled_from ? (currentLang === "zh-CN" ? "[已禁用]" : "[Disabled]") : (c.priority_missing || c.priority_from <= 0 ? t("unsetPriority") : c.priority_from);
+                    if (c.current && c.current.priority !== undefined && c.current.priority !== null) {
+                        fromP = c.current.disabled ? (currentLang === "zh-CN" ? "[已禁用]" : "[Disabled]") : (c.current.priority_missing ? t("unsetPriority") : c.current.priority);
+                    } else if (c.priority_from !== undefined && c.priority_from !== null) {
+                        fromP = c.disabled_from ? (currentLang === "zh-CN" ? "[已禁用]" : "[Disabled]") : (c.priority_missing ? t("unsetPriority") : c.priority_from);
                     }
 
                     let toP = "-";
-                    if (c.target && c.target.priority !== undefined) {
-                        toP = c.target.disabled ? (currentLang === "zh-CN" ? "[已禁用]" : "[Disabled]") : c.target.priority;
-                    } else if (c.priority_to !== undefined) {
-                        toP = c.disabled_to ? (currentLang === "zh-CN" ? "[已禁用]" : "[Disabled]") : c.priority_to;
-                    } else if (c.priority !== undefined) {
+                    if (c.target && c.target.priority !== undefined && c.target.priority !== null) {
+                        toP = c.target.disabled ? (currentLang === "zh-CN" ? "[已禁用]" : "[Disabled]") : (c.target.priority_missing ? t("unsetPriority") : c.target.priority);
+                    } else if (c.priority_to !== undefined && c.priority_to !== null) {
+                        toP = c.disabled_to ? (currentLang === "zh-CN" ? "[已禁用]" : "[Disabled]") : (c.priority_missing_to ? t("unsetPriority") : c.priority_to);
+                    } else if (c.priority !== undefined && c.priority !== null) {
                         toP = (c.disabled || (c.target && c.target.disabled)) ? (currentLang === "zh-CN" ? "[已禁用]" : "[Disabled]") : c.priority;
                     }
 
@@ -1165,11 +1097,6 @@ const TemplateScripts = `
         function closeSamplesModal() {
             const modal = document.getElementById("samplesModal");
             if (modal) modal.hidden = true;
-        }
-
-        function applyFromModal() {
-            closeModal();
-            triggerApplyWithConfirm();
         }
 
         async function triggerReset() {
@@ -1310,17 +1237,18 @@ const TemplateScripts = `
                 let actualP = "-";
                 if (item.current) {
                     if (item.current.disabled) actualP = currentLang === "zh-CN" ? "[已禁用]" : "[Disabled]";
-                    else if (item.current.priority_missing || item.current.priority === undefined || item.current.priority <= 0) actualP = t("unsetPriority");
+                    else if (item.current.priority_missing || item.current.priority === undefined || item.current.priority === null) actualP = t("unsetPriority");
                     else actualP = item.current.priority;
-                } else if (item.priority_missing || item.priority === undefined || item.priority <= 0) {
+                } else if (item.priority_missing || item.priority === undefined || item.priority === null) {
                     actualP = t("unsetPriority");
-                } else if (item.priority !== undefined) {
+                } else if (item.priority !== undefined && item.priority !== null) {
                     actualP = item.disabled ? (currentLang === "zh-CN" ? "[已禁用]" : "[Disabled]") : item.priority;
                 }
 
                 let targetP = "-";
                 if (item.target) {
                     if (item.target.disabled) targetP = currentLang === "zh-CN" ? "[已禁用]" : "[Disabled]";
+                    else if (item.target.priority_missing || item.target.priority === undefined || item.target.priority === null) targetP = t("unsetPriority");
                     else targetP = item.target.priority;
                 } else {
                     targetP = actualP;
@@ -1744,9 +1672,8 @@ const TemplateScripts = `
                 skipped: entry.skipped || 0
             };
 
-            var mode = (entry.kind || "").toLowerCase().indexOf("apply") >= 0 ? "apply" : "dry-run";
             // Strictly read-only for historical detail modal
-            showModal(mode, result, true);
+            showModal("history", result, true);
         }
 
         async function fetchDynamicConfig() {

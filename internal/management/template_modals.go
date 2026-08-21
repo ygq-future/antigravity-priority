@@ -31,7 +31,7 @@ const TemplateModals = `
             <div id="modalDiffList" class="modal-body"></div>
             <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:6px;">
                 <button type="button" class="btn-secondary" onclick="closeModal()" data-i18n="btnClose">关闭</button>
-                <button type="button" class="btn-primary" id="btnModalApply" onclick="applyFromModal()" data-i18n="btnApplyNow">立即写回</button>
+                <button type="button" class="btn-primary" id="btnModalApply" onclick="executeDirectApply()" data-i18n="btnConfirmApply">确认写回</button>
             </div>
         </div>
     </div>

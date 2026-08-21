@@ -61,9 +61,6 @@ const TemplateOverview = `
                 <button type="button" class="btn-secondary" onclick="triggerProbe()" id="btnProbe">
                     <span>📡 <span data-i18n="btnProbe">刷新配额</span></span>
                 </button>
-                <button type="button" class="btn-secondary" onclick="triggerRun('dry-run')" id="btnDryRun">
-                    <span>🔍 <span data-i18n="btnDryRun">试运行</span></span>
-                </button>
                 <button type="button" class="btn-primary" onclick="triggerApplyWithConfirm()" id="btnApply">
                     <span>⚡ <span data-i18n="btnApply">立即写回</span></span>
                 </button>

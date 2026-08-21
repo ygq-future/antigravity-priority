@@ -27,7 +27,7 @@ type devRunner struct {
 func buildDevChanges(items []apply.SnapshotItem) []apply.SnapshotChange {
 	res := make([]apply.SnapshotChange, 0)
 	for _, item := range items {
-		if item.Current.Priority != item.Target.Priority || item.Current.Disabled != item.Target.Disabled {
+		if item.Current.Priority != item.Target.Priority || item.Current.Disabled != item.Target.Disabled || item.Current.PriorityMissing {
 			res = append(res, apply.SnapshotChange{
 				Name:          item.Name,
 				AuthIndex:     item.AuthIndex,
@@ -93,7 +93,7 @@ func newDevRunner() *devRunner {
 			Type:                 "antigravity",
 			Status:               "active",
 			PlanType:             "Antigravity Gemini Flash",
-			Current:              apply.Target{Priority: 0, Disabled: false}, // Unset on host
+			Current:              apply.Target{Priority: 0, PriorityMissing: true, Disabled: false}, // Unset on host
 			Target:               apply.Target{Priority: 100, Disabled: false},
 			EvidenceFresh:        true,
 			Reason:               "fresh remaining positive",
@@ -282,13 +282,13 @@ func newDevRunner() *devRunner {
 		},
 		{
 			"at":        now.Add(-25 * time.Minute),
-			"kind":      "dry_run",
-			"trigger":   "manual",
+			"kind":      "apply",
+			"trigger":   "manual_apply",
 			"attempted": 6,
 			"succeeded": 6,
 			"failed":    0,
 			"skipped":   1,
-			"message":   "dry-run simulation completed",
+			"message":   "manual_apply credentials=7 succeeded=6 failed=0 skipped=1",
 			"snapshot":  geminiSnapshot,
 		},
 		{
@@ -351,7 +351,7 @@ func (d *devRunner) Run(ctx context.Context, request management.RunRequest) (app
 			{
 				"at":        now,
 				"kind":      "probe",
-				"trigger":   "manual",
+				"trigger":   "probe",
 				"attempted": len(d.geminiSnapshot.Items),
 				"succeeded": len(d.geminiSnapshot.Items),
 				"failed":    0,
@@ -366,31 +366,43 @@ func (d *devRunner) Run(ctx context.Context, request management.RunRequest) (app
 		}, nil
 	}
 
-	kind := "dry_run"
-	if request.Mode == "apply" {
-		kind = "apply"
-		for i := range d.geminiSnapshot.Items {
-			d.geminiSnapshot.Items[i].Current = d.geminiSnapshot.Items[i].Target
-		}
-		for i := range d.claudeSnapshot.Items {
-			d.claudeSnapshot.Items[i].Current = d.claudeSnapshot.Items[i].Target
-		}
-		d.geminiSnapshot.Changes = buildDevChanges(d.geminiSnapshot.Items)
-		d.claudeSnapshot.Changes = buildDevChanges(d.claudeSnapshot.Items)
+	if request.Mode != "apply" {
+		return apply.Result{}, fmt.Errorf("unsupported mode: %s", request.Mode)
 	}
 
-	activeChanges := d.geminiSnapshot.Changes
+	activeChangesBefore := d.geminiSnapshot.Changes
 	activeItems := d.geminiSnapshot.Items
 	if d.dynamicConfig.AntigravityModelGroup == "claude_gpt" {
-		activeChanges = d.claudeSnapshot.Changes
+		activeChangesBefore = d.claudeSnapshot.Changes
 		activeItems = d.claudeSnapshot.Items
 	}
 
+	if len(activeChangesBefore) == 0 {
+		d.latestAudit = fmt.Sprintf("all %d credentials in sync, no changes required", len(activeItems))
+		return apply.Result{
+			Attempted: 0,
+			Succeeded: 0,
+			Skipped:   len(activeItems),
+			Snapshot:  d.geminiSnapshot,
+		}, nil
+	}
+
+	for i := range d.geminiSnapshot.Items {
+		d.geminiSnapshot.Items[i].Current = d.geminiSnapshot.Items[i].Target
+		d.geminiSnapshot.Items[i].Current.PriorityMissing = false
+	}
+	for i := range d.claudeSnapshot.Items {
+		d.claudeSnapshot.Items[i].Current = d.claudeSnapshot.Items[i].Target
+		d.claudeSnapshot.Items[i].Current.PriorityMissing = false
+	}
+	d.geminiSnapshot.Changes = buildDevChanges(d.geminiSnapshot.Items)
+	d.claudeSnapshot.Changes = buildDevChanges(d.claudeSnapshot.Items)
+
 	result := apply.Result{
-		Attempted: len(activeChanges),
-		Succeeded: len(activeChanges),
+		Attempted: len(activeChangesBefore),
+		Succeeded: len(activeChangesBefore),
 		Failed:    0,
-		Skipped:   len(activeItems) - len(activeChanges),
+		Skipped:   len(activeItems) - len(activeChangesBefore),
 		Snapshot:  d.geminiSnapshot,
 		Changes:   make([]apply.ChangeResult, 0),
 	}
@@ -398,12 +410,26 @@ func (d *devRunner) Run(ctx context.Context, request management.RunRequest) (app
 		result.Snapshot = d.claudeSnapshot
 	}
 
-	d.latestAudit = fmt.Sprintf("%s completed: %d succeeded, 0 failed, %d skipped", kind, len(activeChanges), result.Skipped)
+	for _, c := range activeChangesBefore {
+		result.Changes = append(result.Changes, apply.ChangeResult{
+			Name:            c.Name,
+			AuthIndex:       c.AuthIndex,
+			Status:          apply.ChangeStatusSuccess,
+			Success:         true,
+			PriorityFrom:    c.Current.Priority,
+			PriorityMissing: c.Current.PriorityMissing,
+			PriorityTo:      c.Target.Priority,
+			DisabledFrom:    c.Current.Disabled,
+			DisabledTo:      c.Target.Disabled,
+		})
+	}
+
+	d.latestAudit = fmt.Sprintf("apply completed: %d succeeded, 0 failed, %d skipped", len(activeChangesBefore), result.Skipped)
 	d.runHistory = append([]map[string]any{
 		{
 			"at":        now,
-			"kind":      kind,
-			"trigger":   "manual",
+			"kind":      "apply",
+			"trigger":   "manual_apply",
 			"attempted": result.Attempted,
 			"succeeded": result.Succeeded,
 			"failed":    0,
@@ -422,11 +448,13 @@ func (d *devRunner) Reset(ctx context.Context) (map[string]any, error) {
 	for i := range d.geminiSnapshot.Items {
 		if !d.geminiSnapshot.Items[i].Current.Disabled {
 			d.geminiSnapshot.Items[i].Current.Priority = 0
+			d.geminiSnapshot.Items[i].Current.PriorityMissing = true
 		}
 	}
 	for i := range d.claudeSnapshot.Items {
 		if !d.claudeSnapshot.Items[i].Current.Disabled {
 			d.claudeSnapshot.Items[i].Current.Priority = 0
+			d.claudeSnapshot.Items[i].Current.PriorityMissing = true
 		}
 	}
 	d.geminiSnapshot.Changes = buildDevChanges(d.geminiSnapshot.Items)

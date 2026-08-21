@@ -254,3 +254,84 @@ func TestRedactedErrors(t *testing.T) {
 		t.Errorf("redactedErrors expected to contain REDACTED: %s", encoded)
 	}
 }
+
+func TestSnapshot_PriorityMissing_Preservation(t *testing.T) {
+	plan := priority.Plan{
+		Items: []priority.PlanItem{
+			{
+				Credential: core.Credential{
+					AuthIndex:       "unset-cred",
+					Priority:        0,
+					PriorityMissing: true,
+					Disabled:        false,
+				},
+				Priority: 100,
+				Disabled: false,
+			},
+			{
+				Credential: core.Credential{
+					AuthIndex:       "zero-cred",
+					Priority:        0,
+					PriorityMissing: false,
+					Disabled:        false,
+				},
+				Priority: 100,
+				Disabled: false,
+			},
+			{
+				Credential: core.Credential{
+					AuthIndex:       "depleted-cred",
+					Priority:        -1,
+					PriorityMissing: false,
+					Disabled:        false,
+				},
+				Priority: -1,
+				Disabled: false,
+			},
+		},
+		Changes: []priority.Change{
+			{
+				Credential: core.Credential{
+					AuthIndex:       "unset-cred",
+					Priority:        0,
+					PriorityMissing: true,
+				},
+				Priority: 100,
+			},
+		},
+	}
+
+	snapshot := apply.Snapshot(plan)
+	if len(snapshot.Items) != 3 {
+		t.Fatalf("expected 3 items, got %d", len(snapshot.Items))
+	}
+
+	// 1. Unset credential: Priority 0 and PriorityMissing true
+	if !snapshot.Items[0].Current.PriorityMissing {
+		t.Errorf("expected Items[0].Current.PriorityMissing=true, got false")
+	}
+	if snapshot.Items[0].Current.Priority != 0 {
+		t.Errorf("expected Items[0].Current.Priority=0, got %d", snapshot.Items[0].Current.Priority)
+	}
+
+	// 2. Explicit zero credential: Priority 0 and PriorityMissing false
+	if snapshot.Items[1].Current.PriorityMissing {
+		t.Errorf("expected Items[1].Current.PriorityMissing=false, got true")
+	}
+	if snapshot.Items[1].Current.Priority != 0 {
+		t.Errorf("expected Items[1].Current.Priority=0, got %d", snapshot.Items[1].Current.Priority)
+	}
+
+	// 3. Depleted credential: Priority -1 and PriorityMissing false
+	if snapshot.Items[2].Current.PriorityMissing {
+		t.Errorf("expected Items[2].Current.PriorityMissing=false, got true")
+	}
+	if snapshot.Items[2].Current.Priority != -1 {
+		t.Errorf("expected Items[2].Current.Priority=-1, got %d", snapshot.Items[2].Current.Priority)
+	}
+
+	// 4. Changes check
+	if !snapshot.Changes[0].Current.PriorityMissing {
+		t.Errorf("expected Changes[0].Current.PriorityMissing=true, got false")
+	}
+}
