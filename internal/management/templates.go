@@ -8,7 +8,7 @@ const StatusHTML = `<!DOCTYPE html>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Antigravity Priority</title>
-    <style>` + TemplateCSS + `</style>
+    <style>` + templateCSS + `</style>
 </head>
 <body>
     <div class="container">
@@ -46,7 +46,7 @@ const StatusHTML = `<!DOCTYPE html>
 	TemplateConfig +
 	TemplateHelp +
 	TemplateModals +
-	TemplateScripts +
+	templateScripts +
 	`
     </div>
 </body>
