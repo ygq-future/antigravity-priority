@@ -37,6 +37,7 @@ const (
 	KindProbe     = "probe"
 	KindReset     = "reset"
 	KindAutoApply = "auto_apply"
+	KindCooldown  = "cooldown"
 )
 
 // Trigger represents the initiator of a scheduling execution.
@@ -84,14 +85,14 @@ type TickerFactory interface {
 
 // RunHistoryEntry records the execution outcome of a scheduling run.
 type RunHistoryEntry struct {
-	Kind      string             `json:"kind"`
-	Trigger   string             `json:"trigger"`
-	At        time.Time          `json:"at"`
-	Attempted int                `json:"attempted"`
-	Succeeded int                `json:"succeeded"`
-	Failed    int                `json:"failed"`
-	Skipped   int                `json:"skipped"`
-	Message   string             `json:"message"`
+	Kind      string              `json:"kind"`
+	Trigger   string              `json:"trigger"`
+	At        time.Time           `json:"at"`
+	Attempted int                 `json:"attempted"`
+	Succeeded int                 `json:"succeeded"`
+	Failed    int                 `json:"failed"`
+	Skipped   int                 `json:"skipped"`
+	Message   string              `json:"message"`
 	Snapshot  *apply.PlanSnapshot `json:"snapshot,omitempty"`
 }
 

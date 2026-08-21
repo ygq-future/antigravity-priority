@@ -1,6 +1,6 @@
 # 15 — Urgency Tolerance Zero Means Exact Clustering
 
-**Status:** ready-for-agent
+**Status:** completed
 
 **What to fix:** Preserve `urgency_tolerance = 0` as a valid, explicit value meaning no non-zero score difference may share a priority bucket.
 
@@ -12,7 +12,7 @@
 - Default remains 0.05 only when no value has ever been configured or defaults are explicitly restored.
 
 ## Acceptance Criteria
-- [ ] Saving 0 returns and persists 0 and Runtime uses 0.
-- [ ] Planner test proves score deltas of 0 share a tier while any positive delta does not.
-- [ ] Values below 0 or above 0.5 are rejected consistently by frontend and backend.
-- [ ] Reload/reconfigure does not normalize an explicitly saved 0 to 0.05.
+- [x] Saving 0 returns and persists 0 and Runtime uses 0.
+- [x] Planner test proves score deltas of 0 share a tier while any positive delta does not.
+- [x] Values below 0 or above 0.5 are rejected consistently by frontend and backend.
+- [x] Reload/reconfigure does not normalize an explicitly saved 0 to 0.05.

@@ -1,6 +1,7 @@
 package priority
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
@@ -11,6 +12,53 @@ func int64Ptr(v int64) *int64 {
 	return &v
 }
 
+func TestPlanFreshOnlyRequiresExplicitDecisionTime(t *testing.T) {
+	t.Run("zero decision time is rejected", func(t *testing.T) {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("expected zero decision time to be rejected")
+			}
+		}()
+		PlanFreshOnly(nil, nil, Options{})
+	})
+
+	t.Run("identical inputs produce identical replayable plans", func(t *testing.T) {
+		now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
+		options := Options{Now: now, BoostStartPriority: 999, NormalStartPriority: 100}
+		first := PlanFreshOnly(nil, nil, options)
+		second := PlanFreshOnly(nil, nil, options)
+		if !reflect.DeepEqual(first, second) {
+			t.Fatalf("plans differ: first=%#v second=%#v", first, second)
+		}
+		if !first.DecidedAt.Equal(now) {
+			t.Fatalf("DecidedAt = %v; want %v", first.DecidedAt, now)
+		}
+	})
+}
+
+func TestPlanFreshOnlyZeroToleranceClustersOnlyExactlyEqualScores(t *testing.T) {
+	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
+	reset5h := now.Add(4 * time.Hour)
+	reset7d := now.Add(100 * time.Hour)
+	credentials := []core.Credential{{AuthIndex: "equal-a"}, {AuthIndex: "equal-b"}, {AuthIndex: "different"}}
+	evidence := []ProbeEvidence{
+		{AuthIndex: "equal-a", ShortWindowRemaining: int64Ptr(80), ShortWindowResetAt: &reset5h, LongWindowRemaining: int64Ptr(80), LongWindowResetAt: &reset7d, EvidenceFresh: true, Freshness: core.FreshnessFresh, ProbeStatus: core.ProbeStatusReady, Status: EvidenceStatusReady},
+		{AuthIndex: "equal-b", ShortWindowRemaining: int64Ptr(80), ShortWindowResetAt: &reset5h, LongWindowRemaining: int64Ptr(80), LongWindowResetAt: &reset7d, EvidenceFresh: true, Freshness: core.FreshnessFresh, ProbeStatus: core.ProbeStatusReady, Status: EvidenceStatusReady},
+		{AuthIndex: "different", ShortWindowRemaining: int64Ptr(80), ShortWindowResetAt: &reset5h, LongWindowRemaining: int64Ptr(79), LongWindowResetAt: &reset7d, EvidenceFresh: true, Freshness: core.FreshnessFresh, ProbeStatus: core.ProbeStatusReady, Status: EvidenceStatusReady},
+	}
+	plan := PlanFreshOnly(credentials, evidence, Options{Now: now, BoostStartPriority: 999, NormalStartPriority: 100, UrgencyTolerance: 0})
+	priorities := map[string]int{}
+	for _, item := range plan.Items {
+		priorities[item.Credential.AuthIndex] = item.Priority
+	}
+	if priorities["equal-a"] != priorities["equal-b"] {
+		t.Fatalf("equal scores did not share tier: %#v", priorities)
+	}
+	if priorities["different"] == priorities["equal-a"] {
+		t.Fatalf("positive score difference shared zero-tolerance tier: %#v", priorities)
+	}
+}
+
 func TestPlanFreshOnly(t *testing.T) {
 	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
 	defaultOptions := Options{
@@ -18,6 +66,7 @@ func TestPlanFreshOnly(t *testing.T) {
 		BoostStartPriority:  999,
 		NormalStartPriority: 100,
 		MinChange:           1,
+		UrgencyTolerance:    0.05,
 	}
 
 	t.Run("acceptance: boosted tier clustering with tolerance", func(t *testing.T) {
@@ -621,7 +670,7 @@ func TestPlanFreshOnly(t *testing.T) {
 	})
 
 	t.Run("handles empty credentials and options normalization gracefully", func(t *testing.T) {
-		emptyPlan := PlanFreshOnly(nil, nil, Options{})
+		emptyPlan := PlanFreshOnly(nil, nil, Options{Now: now})
 		if len(emptyPlan.Items) != 0 || len(emptyPlan.Changes) != 0 {
 			t.Errorf("empty plan should have 0 items and changes")
 		}

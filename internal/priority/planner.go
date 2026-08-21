@@ -99,12 +99,16 @@ type Change struct {
 
 // Plan encapsulates the complete immutable priority scheduling decision and change set.
 type Plan struct {
-	Items   []PlanItem
-	Changes []Change
+	DecidedAt time.Time
+	Items     []PlanItem
+	Changes   []Change
 }
 
 // PlanFreshOnly produces an immutable Plan based on fresh probe evidence and current credentials.
 func PlanFreshOnly(credentials []core.Credential, evidence []ProbeEvidence, options Options) Plan {
+	if options.Now.IsZero() {
+		panic("priority: explicit decision time is required")
+	}
 	normalizedOptions := normalizeOptions(options)
 	evidenceByAuthIndex := freshEvidenceByAuthIndex(evidence)
 	items := initialItems(credentials, evidenceByAuthIndex, normalizedOptions)
@@ -112,15 +116,14 @@ func PlanFreshOnly(credentials []core.Credential, evidence []ProbeEvidence, opti
 	ensureUniquePriorities(items, normalizedOptions)
 	SortPlanItems(items)
 	return Plan{
-		Items:   items,
-		Changes: changes(items, normalizedOptions),
+		DecidedAt: normalizedOptions.Now.UTC(),
+		Items:     items,
+		Changes:   changes(items, normalizedOptions),
 	}
 }
 
 func normalizeOptions(options Options) Options {
-	if options.Now.IsZero() {
-		options.Now = time.Now().UTC()
-	}
+	options.Now = options.Now.UTC()
 	if options.BoostStartPriority <= 0 {
 		options.BoostStartPriority = DefaultBoostStartPriority
 	}
@@ -135,9 +138,6 @@ func normalizeOptions(options Options) Options {
 	}
 	if options.MinChange < 0 {
 		options.MinChange = 0
-	}
-	if options.UrgencyTolerance <= 0 {
-		options.UrgencyTolerance = 0.05
 	}
 	return options
 }
@@ -246,9 +246,6 @@ func initialItems(credentials []core.Credential, evidenceByAuthIndex map[string]
 
 func planFreshPositive(items []PlanItem, options Options) {
 	tolerance := options.UrgencyTolerance
-	if tolerance <= 0 {
-		tolerance = 0.05
-	}
 
 	boostedIndices := make([]int, 0)
 	regularIndices := make([]int, 0)

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -324,7 +325,6 @@ func newDevRunner() *devRunner {
 			QuotaSampleCapacity:      6,
 			RateLimitCooldownMinutes: 5,
 			PriorityRules: state.PriorityRulesConfig{
-				Enabled:             true,
 				BoostStartPriority:  999,
 				NormalStartPriority: 100,
 			},
@@ -499,31 +499,50 @@ func (d *devRunner) LatestSnapshot(ctx context.Context) (apply.DualGroupSnapshot
 	if activeGroup == "" {
 		activeGroup = "gemini"
 	}
-	return apply.NewDualGroupSnapshot(
-		activeGroup,
-		time.Now().UTC(),
-		d.geminiSnapshot,
-		d.claudeSnapshot,
-	), nil
+	return d.dualSnapshot(activeGroup), nil
 }
 
 func (d *devRunner) SyncHost(ctx context.Context, modelGroup config.AntigravityModelGroup) (apply.DualGroupSnapshot, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	activeGroup := string(modelGroup)
-	if activeGroup == "" {
-		activeGroup = d.dynamicConfig.AntigravityModelGroup
-	}
+	activeGroup := d.dynamicConfig.AntigravityModelGroup
 	if activeGroup == "" {
 		activeGroup = "gemini"
 	}
 	d.latestAudit = fmt.Sprintf("synchronized %d credentials from mock host at %s", len(d.geminiSnapshot.Items), time.Now().UTC().Format("15:04:05"))
-	return apply.NewDualGroupSnapshot(
-		activeGroup,
-		time.Now().UTC(),
-		d.geminiSnapshot,
-		d.claudeSnapshot,
-	), nil
+	return d.dualSnapshot(activeGroup), nil
+}
+
+func (d *devRunner) dualSnapshot(activeGroup string) apply.DualGroupSnapshot {
+	primary := devSnapshotRole(d.geminiSnapshot, false)
+	predicted := devSnapshotRole(d.claudeSnapshot, true)
+	if activeGroup == "claude_gpt" {
+		primary = devSnapshotRole(d.claudeSnapshot, false)
+		predicted = devSnapshotRole(d.geminiSnapshot, true)
+	}
+	return apply.NewDualGroupSnapshot(activeGroup, time.Now().UTC(), primary, predicted)
+}
+
+func devSnapshotRole(snapshot apply.PlanSnapshot, predicted bool) apply.PlanSnapshot {
+	copy := snapshot
+	copy.Items = append([]apply.SnapshotItem(nil), snapshot.Items...)
+	copy.Changes = append([]apply.SnapshotChange(nil), snapshot.Changes...)
+	for index := range copy.Items {
+		copy.Items[index].IsPredicted = predicted
+		copy.Items[index].Reason = devReasonRole(copy.Items[index].Reason, predicted)
+	}
+	for index := range copy.Changes {
+		copy.Changes[index].Reason = devReasonRole(copy.Changes[index].Reason, predicted)
+	}
+	return copy
+}
+
+func devReasonRole(reason string, predicted bool) string {
+	reason = strings.TrimPrefix(reason, "predicted: ")
+	if predicted && reason != "" {
+		return "predicted: " + reason
+	}
+	return reason
 }
 
 func (d *devRunner) GetSamples(ctx context.Context, authIndex, modelGroup string) ([]state.QuotaSample, error) {
@@ -591,6 +610,13 @@ func (d *devRunner) Diagnostics(ctx context.Context) (map[string]any, error) {
 		nextWaitDuration = interval
 	}
 	nextRunAt := time.Now().UTC().Add(nextWaitDuration)
+	var latestApply map[string]any
+	for _, entry := range d.runHistory {
+		if entry["kind"] == "apply" {
+			latestApply = entry
+			break
+		}
+	}
 
 	return map[string]any{
 		"management_api": map[string]any{
@@ -619,6 +645,7 @@ func (d *devRunner) Diagnostics(ctx context.Context) (map[string]any, error) {
 			},
 		},
 		"latest_audit": d.latestAudit,
+		"latest_apply": latestApply,
 		"last_result": apply.Result{
 			Attempted: 6,
 			Succeeded: 6,

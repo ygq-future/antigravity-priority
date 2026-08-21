@@ -125,8 +125,6 @@ const TemplateScripts = `
                 cfgCooldownMinutesHint: "遭遇 429 限流时临时降级至 -1 的冷却期 (1-1440)",
                 statusCooldown: "⏳ 429 冷却中",
                 cfgCardRulesTitle: "优先级分值规则 (Priority Rules)",
-                cfgRulesEnabled: "启用双窗口优先级规则",
-                cfgRulesEnabledHint: "基于 5h 短窗口与 7d 长窗口配额综合决策",
                 cfgBoostStart: "🚀 动态 Boost 起始优先级",
                 cfgBoostStartHint: "充裕且即将重置的第一梯队凭证起始优先级 (1-999)",
                 cfgNormalStart: "常规健康凭证起始优先级",
@@ -299,8 +297,6 @@ const TemplateScripts = `
                 cfgCooldownMinutesHint: "Cooldown period demoting account to -1 on 429 errors (1-1440)",
                 statusCooldown: "⏳ 429 Cooldown",
                 cfgCardRulesTitle: "Priority Scoring Rules",
-                cfgRulesEnabled: "Enable Double-Window Priority Rules",
-                cfgRulesEnabledHint: "Decide priority based on 5h short and 7d long window quotas",
                 cfgBoostStart: "🚀 Dynamic Boost Start Priority",
                 cfgBoostStartHint: "Base priority for top-tier abundant credentials (1-999)",
                 cfgNormalStart: "Normal Healthy Start Priority",
@@ -843,6 +839,7 @@ const TemplateScripts = `
             if (tabId === "history") fetchDiagnostics();
             if (tabId === "diagnostics") fetchDiagnostics();
             if (tabId === "config") fetchDynamicConfig();
+			if (tabId === "overview") refreshDashboard(true);
         }
 
         function getAuthHeader() {
@@ -915,9 +912,7 @@ const TemplateScripts = `
 
         async function syncHost() {
             try {
-                const groupSelect = document.getElementById("modelGroupSelect");
-                const group = groupSelect ? groupSelect.value : "gemini";
-                const data = await apiFetch(SYNC_PATH + "?antigravity_model_group=" + encodeURIComponent(group), { method: "POST" });
+				const data = await apiFetch(SYNC_PATH, { method: "POST" });
                 latestSnapshot = data;
                 renderDashboard();
                 showToast(t("syncSuccess"), "success");
@@ -1565,17 +1560,11 @@ const TemplateScripts = `
             }
 
             // --- 3. KPI Card 3: Latest Apply Health ---
-            var lastRes = latestDiagnostics.last_result || {};
-            var history = latestDiagnostics.run_history || [];
-            var latestApply = history.find(function(h) {
-                var k = (h.kind || "").toLowerCase();
-                return k === "apply" || k === "manual_apply" || k === "auto_apply";
-            }) || (history.length > 0 ? history[0] : null);
-
-            var succ = lastRes.succeeded !== undefined ? lastRes.succeeded : (lastRes.Succeeded !== undefined ? lastRes.Succeeded : (latestApply ? (latestApply.succeeded || 0) : 0));
-            var fail = lastRes.failed !== undefined ? lastRes.failed : (lastRes.Failed !== undefined ? lastRes.Failed : (latestApply ? (latestApply.failed || 0) : 0));
-            var skip = lastRes.skipped !== undefined ? lastRes.skipped : (lastRes.Skipped !== undefined ? lastRes.Skipped : (latestApply ? (latestApply.skipped || 0) : 0));
-            var attempted = lastRes.attempted !== undefined ? lastRes.attempted : (lastRes.Attempted !== undefined ? lastRes.Attempted : (latestApply ? (latestApply.attempted || 0) : 0));
+			var latestApply = latestDiagnostics.latest_apply || null;
+			var succ = latestApply ? (latestApply.succeeded || 0) : 0;
+			var fail = latestApply ? (latestApply.failed || 0) : 0;
+			var skip = latestApply ? (latestApply.skipped || 0) : 0;
+			var attempted = latestApply ? (latestApply.attempted || 0) : 0;
             var lastRunTime = (latestApply && latestApply.at) || null;
 
             var applyBadge = document.getElementById("diagApplyBadge");
@@ -1681,7 +1670,7 @@ const TemplateScripts = `
             var auditText = document.getElementById("diagAuditText");
             var auditPills = document.getElementById("diagAuditPills");
             if (auditText) {
-                auditText.textContent = latestDiagnostics.latest_audit || (currentLang === "zh-CN" ? "暂无审计记录" : "No audit stream recorded");
+				auditText.textContent = latestApply ? (latestApply.message || "-") : (currentLang === "zh-CN" ? "尚无 Apply 写入记录" : "No Apply write recorded yet");
             }
             if (auditPills) {
                 var succCount = succ;
@@ -1991,13 +1980,12 @@ const TemplateScripts = `
             var urgencyTol = (document.getElementById("cfgUrgencyTolerance") && document.getElementById("cfgUrgencyTolerance").value) || "";
             var sampleCapacity = (document.getElementById("cfgSampleCapacity") && document.getElementById("cfgSampleCapacity").value) || "";
             var cooldownMin = (document.getElementById("cfgCooldownMinutes") && document.getElementById("cfgCooldownMinutes").value) || "";
-            var rulesEnabled = Boolean(document.getElementById("cfgRulesEnabled") && document.getElementById("cfgRulesEnabled").checked);
             var boostStart = (document.getElementById("cfgBoostStartPriority") && document.getElementById("cfgBoostStartPriority").value) || "";
             var normalStart = (document.getElementById("cfgNormalStartPriority") && document.getElementById("cfgNormalStartPriority").value) || "";
 
             return JSON.stringify({
                 autoApply, interval, modelGroup, windowEnabled, windowStart, windowEnd,
-                maxConcurrency, minChange, urgencyTol, sampleCapacity, cooldownMin, rulesEnabled, boostStart, normalStart
+                maxConcurrency, minChange, urgencyTol, sampleCapacity, cooldownMin, boostStart, normalStart
             });
         }
 
@@ -2073,9 +2061,6 @@ const TemplateScripts = `
             if (cooldownMin) cooldownMin.value = cfg.rate_limit_cooldown_minutes !== undefined ? cfg.rate_limit_cooldown_minutes : 5;
 
             var rules = cfg.priority_rules || {};
-            var rulesEnabled = document.getElementById("cfgRulesEnabled");
-            if (rulesEnabled) rulesEnabled.checked = rules.enabled !== false;
-
             var boostStart = document.getElementById("cfgBoostStartPriority");
             if (boostStart) boostStart.value = rules.boost_start_priority || 999;
 
@@ -2126,6 +2111,27 @@ const TemplateScripts = `
         });
 
         // Comprehensive Frontend Value Validation
+        function parseGoDurationMillis(value) {
+            var text = String(value || "").trim();
+            if (!text) return NaN;
+			if (text.charAt(0) === "+") text = text.slice(1);
+            var units = { ns: 0.000001, us: 0.001, "µs": 0.001, "μs": 0.001, ms: 1, s: 1000, m: 60000, h: 3600000 };
+            var token = /([0-9]+(?:\.[0-9]*)?|\.[0-9]+)(ns|us|µs|μs|ms|s|m|h)/g;
+            var total = 0;
+            var consumed = "";
+            var match;
+            while ((match = token.exec(text)) !== null) {
+                consumed += match[0];
+                total += Number(match[1]) * units[match[2]];
+            }
+            return consumed === text ? total : NaN;
+        }
+
+        function parseStrictInteger(value) {
+            var text = String(value || "").trim();
+            return /^-?\d+$/.test(text) ? Number(text) : NaN;
+        }
+
         async function saveDynamicConfig() {
             var btn = document.getElementById("btnSaveConfig");
             if (btn) btn.disabled = true;
@@ -2138,7 +2144,7 @@ const TemplateScripts = `
                 if (intervalSelect) {
                     if (intervalSelect.value === "custom") {
                         interval = (intervalCustom && intervalCustom.value.trim()) || "";
-                        if (!interval || !/^([1-9]\d*)(s|m|h)$/.test(interval)) {
+						if (!interval || parseGoDurationMillis(interval) < 60000) {
                             showToast(t("valErrInterval"), "error");
                             if (intervalCustom) intervalCustom.focus();
                             updateSaveButtonState();
@@ -2163,14 +2169,14 @@ const TemplateScripts = `
                     }
                 }
 
-                var maxConcurrency = parseInt((document.getElementById("cfgMaxConcurrency") && document.getElementById("cfgMaxConcurrency").value) || "6", 10);
+				var maxConcurrency = parseStrictInteger((document.getElementById("cfgMaxConcurrency") && document.getElementById("cfgMaxConcurrency").value) || "6");
                 if (isNaN(maxConcurrency) || maxConcurrency < 1 || maxConcurrency > 32) {
                     showToast(t("valErrConcurrency"), "error");
                     updateSaveButtonState();
                     return;
                 }
 
-                var minChange = parseInt((document.getElementById("cfgMinChange") && document.getElementById("cfgMinChange").value) || "1", 10);
+				var minChange = parseStrictInteger((document.getElementById("cfgMinChange") && document.getElementById("cfgMinChange").value) || "1");
                 if (isNaN(minChange) || minChange < 0 || minChange > 100) {
                     showToast(t("valErrMinChange"), "error");
                     updateSaveButtonState();
@@ -2178,30 +2184,29 @@ const TemplateScripts = `
                 }
 
                 var urgencyTolRaw = (document.getElementById("cfgUrgencyTolerance") && document.getElementById("cfgUrgencyTolerance").value) || "0.05";
-                var urgencyTol = parseFloat(urgencyTolRaw);
-                if (isNaN(urgencyTol) || urgencyTol < 0.0 || urgencyTol > 0.50 || !/^\d+(\.\d{1,2})?$/.test(urgencyTolRaw)) {
+				var urgencyTol = Number(urgencyTolRaw);
+				if (urgencyTolRaw.trim() === "" || isNaN(urgencyTol) || urgencyTol < 0.0 || urgencyTol > 0.50) {
                     showToast(t("valErrUrgencyTol"), "error");
                     updateSaveButtonState();
                     return;
                 }
 
-                var sampleCapacity = parseInt((document.getElementById("cfgSampleCapacity") && document.getElementById("cfgSampleCapacity").value) || "6", 10);
+				var sampleCapacity = parseStrictInteger((document.getElementById("cfgSampleCapacity") && document.getElementById("cfgSampleCapacity").value) || "6");
                 if (isNaN(sampleCapacity) || sampleCapacity < 2 || sampleCapacity > 30) {
                     showToast(t("valErrSampleCapacity"), "error");
                     updateSaveButtonState();
                     return;
                 }
 
-                var cooldownMin = parseInt((document.getElementById("cfgCooldownMinutes") && document.getElementById("cfgCooldownMinutes").value) || "5", 10);
+				var cooldownMin = parseStrictInteger((document.getElementById("cfgCooldownMinutes") && document.getElementById("cfgCooldownMinutes").value) || "5");
                 if (isNaN(cooldownMin) || cooldownMin < 1 || cooldownMin > 1440) {
                     showToast(t("valErrCooldown"), "error");
                     updateSaveButtonState();
                     return;
                 }
 
-                var rulesEnabled = Boolean(document.getElementById("cfgRulesEnabled") && document.getElementById("cfgRulesEnabled").checked);
-                var boostStart = parseInt((document.getElementById("cfgBoostStartPriority") && document.getElementById("cfgBoostStartPriority").value) || "999", 10);
-                var normalStart = parseInt((document.getElementById("cfgNormalStartPriority") && document.getElementById("cfgNormalStartPriority").value) || "100", 10);
+				var boostStart = parseStrictInteger((document.getElementById("cfgBoostStartPriority") && document.getElementById("cfgBoostStartPriority").value) || "999");
+				var normalStart = parseStrictInteger((document.getElementById("cfgNormalStartPriority") && document.getElementById("cfgNormalStartPriority").value) || "100");
 
                 if (isNaN(boostStart) || boostStart < 1 || boostStart > 999 || isNaN(normalStart) || normalStart < 1 || normalStart > 999) {
                     showToast(t("valErrPriorityRange"), "error");
@@ -2224,7 +2229,6 @@ const TemplateScripts = `
                     rate_limit_cooldown_minutes: cooldownMin,
                     quota_sample_capacity: sampleCapacity,
                     priority_rules: {
-                        enabled: rulesEnabled,
                         boost_start_priority: boostStart,
                         normal_start_priority: normalStart
                     },
@@ -2270,7 +2274,6 @@ const TemplateScripts = `
                 quota_sample_capacity: 6,
                 rate_limit_cooldown_minutes: 5,
                 priority_rules: {
-                    enabled: true,
                     boost_start_priority: 999,
                     normal_start_priority: 100
                 },

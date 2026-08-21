@@ -215,6 +215,18 @@ func TestStatusHTML_ContainsRequiredUIElements(t *testing.T) {
 	if strings.Contains(html, "priority <= 0") {
 		t.Errorf("StatusHTML should not contain 'priority <= 0'")
 	}
+	if strings.Contains(html, "cfgRulesEnabled") || strings.Contains(html, "enabled: rulesEnabled") {
+		t.Error("StatusHTML must not expose the removed priority_rules.enabled switch")
+	}
+	if !strings.Contains(html, `if (tabId === "overview") refreshDashboard(true)`) {
+		t.Error("returning to Overview must use the same synchronized refresh path")
+	}
+	if !strings.Contains(html, "latestDiagnostics.latest_apply") || !strings.Contains(html, "No Apply write recorded yet") {
+		t.Error("diagnostics write-health UI must use latest_apply and expose the no-Apply state")
+	}
+	if strings.Contains(html, `SYNC_PATH + "?antigravity_model_group="`) {
+		t.Error("dashboard view selector must not be sent as write-back/control authority")
+	}
 	// Verify no double "} else {" syntax error
 	if strings.Contains(html, "} else {\n                summary.textContent") || strings.Contains(html, "} else {\r\n                summary.textContent") {
 		t.Errorf("StatusHTML should not contain duplicate else block")

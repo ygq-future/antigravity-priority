@@ -512,7 +512,6 @@ func TestHandler_GetDynamicConfig(t *testing.T) {
 			UrgencyTolerance:         0.05,
 			RateLimitCooldownMinutes: 5,
 			PriorityRules: state.PriorityRulesConfig{
-				Enabled:             true,
 				BoostStartPriority:  990,
 				NormalStartPriority: 150,
 			},
@@ -559,13 +558,16 @@ func TestHandler_GetDynamicConfig(t *testing.T) {
 	if cfg.RateLimitCooldownMinutes != 5 {
 		t.Errorf("expected RateLimitCooldownMinutes=5, got %d", cfg.RateLimitCooldownMinutes)
 	}
+	if strings.Contains(rec.Body.String(), `"priority_rules":{"enabled"`) {
+		t.Fatalf("GET /config exposed removed priority_rules.enabled: %s", rec.Body.String())
+	}
 }
 
 func TestHandler_SetDynamicConfig_Success(t *testing.T) {
 	runner := &mockRunner{}
 	handler := management.NewHandler(runner)
 
-	body := `{"auto_apply":true,"interval":"20m","antigravity_model_group":"gemini","max_concurrency":4,"min_change":3,"urgency_tolerance":0.08,"rate_limit_cooldown_minutes":10,"priority_rules":{"enabled":true,"boost_start_priority":995,"normal_start_priority":120},"schedule":{"paused":false,"window_enabled":true,"window_start":"09:00","window_end":"18:00"}}`
+	body := `{"auto_apply":true,"interval":"20m","antigravity_model_group":"gemini","max_concurrency":4,"min_change":3,"urgency_tolerance":0.08,"rate_limit_cooldown_minutes":10,"quota_sample_capacity":6,"priority_rules":{"boost_start_priority":995,"normal_start_priority":120},"schedule":{"paused":false,"window_enabled":true,"window_start":"09:00","window_end":"18:00"}}`
 	req := httptest.NewRequest(http.MethodPost, "/config", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 

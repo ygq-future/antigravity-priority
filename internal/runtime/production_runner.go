@@ -49,13 +49,6 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 		cachePath = config.DefaultStateCachePath
 	}
 
-	if len(credentials) == 0 {
-		// Ensure state cache file is initialized on disk even if no credentials exist
-		if store, err := state.Load(ctx, cachePath); err == nil {
-			_ = store.SaveAtomic(ctx)
-		}
-		return nil
-	}
 	credentials, authMaterials, err := enrichCredentialsFromAuthDocuments(ctx, client, credentials)
 	if err != nil {
 		return err
@@ -66,7 +59,7 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 		return err
 	}
 
-	forceProbe := request.Trigger == TriggerManualApply || request.Trigger == TriggerProbe
+	forceProbe := request.Trigger == TriggerManualApply || request.Trigger == TriggerProbe || request.Trigger == TriggerAutoApply
 	evidence, err := r.collectEvidenceForTrigger(ctx, collectInput{
 		client:         client,
 		store:          store,
@@ -87,12 +80,27 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 		return err
 	}
 
+	// Reconcile against the authoritative Host inventory after the potentially
+	// slow Google requests. Credentials may have been added, removed, disabled,
+	// or reprioritized while probing was in flight.
+	files, err = client.ListAuthFiles(ctx)
+	if err != nil {
+		return err
+	}
+	credentials = credentialsFromAuthFiles(files)
+	credentials = filterCredentialsByAuthIndex(credentials, request.AuthIndexes)
+	credentials, _, err = enrichCredentialsFromAuthDocuments(ctx, client, credentials)
+	if err != nil {
+		return err
+	}
+	evidence = currentRoundEvidence(store, credentials, request.Config.AntigravityModelGroup, now)
+
 	plan := priority.PlanFreshOnly(credentials, evidence, priorityOptions(request.Config, store, now))
 
 	// Build dual-group snapshot (REQ-05): compute predicted plan for the alternate model group.
 	primarySnapshot := apply.Snapshot(plan)
 	altGroup := alternateModelGroup(request.Config.AntigravityModelGroup)
-	altEvidence := store.BuildGroupEvidence(credentials, string(altGroup))
+	altEvidence := currentRoundEvidence(store, credentials, altGroup, now)
 	altPlan := priority.PlanFreshOnly(credentials, altEvidence, priorityOptions(request.Config, store, now))
 	predictedSnapshot := apply.SnapshotPredicted(altPlan)
 	dualSnap := apply.NewDualGroupSnapshot(
@@ -166,6 +174,17 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 		return err
 	}
 	return nil
+}
+
+func currentRoundEvidence(store *state.Store, credentials []core.Credential, group config.AntigravityModelGroup, observedAt time.Time) []priority.ProbeEvidence {
+	all := store.BuildGroupEvidence(credentials, string(group))
+	current := make([]priority.ProbeEvidence, 0, len(all))
+	for _, item := range all {
+		if item.ObservedAt.Equal(observedAt) {
+			current = append(current, item)
+		}
+	}
+	return current
 }
 
 func (r *Runtime) collectEvidenceForTrigger(ctx context.Context, input collectInput, trigger Trigger) ([]priority.ProbeEvidence, error) {
@@ -247,30 +266,16 @@ func filterCredentialsByAuthIndex(credentials []core.Credential, authIndexes []s
 }
 
 func priorityOptions(cfg config.Config, store *state.Store, now time.Time) priority.Options {
-	boostStart := 999
-	normalStart := 100
-	if cfg.PriorityRules.Enabled {
-		if cfg.PriorityRules.BoostStartPriority > 0 {
-			boostStart = cfg.PriorityRules.BoostStartPriority
-		}
-		if cfg.PriorityRules.NormalStartPriority > 0 {
-			normalStart = cfg.PriorityRules.NormalStartPriority
-		}
-	}
-	tolerance := cfg.UrgencyTolerance
-	if tolerance <= 0 {
-		tolerance = config.DefaultUrgencyTolerance
-	}
 	var cooldowns map[string]time.Time
 	if store != nil {
 		cooldowns = store.GetActiveCooldowns(now)
 	}
 	return priority.Options{
 		Now:                 now,
-		BoostStartPriority:  boostStart,
-		NormalStartPriority: normalStart,
+		BoostStartPriority:  cfg.PriorityRules.BoostStartPriority,
+		NormalStartPriority: cfg.PriorityRules.NormalStartPriority,
 		MinChange:           cfg.MinChange,
-		UrgencyTolerance:    tolerance,
+		UrgencyTolerance:    cfg.UrgencyTolerance,
 		CooldownAuthIndexes: cooldowns,
 	}
 }

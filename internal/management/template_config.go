@@ -194,21 +194,6 @@ const TemplateConfig = `
                     </h3>
 
                     <div class="config-form-grid">
-                        <div class="form-row full-width">
-                            <div class="form-label-box">
-                                <span class="form-title" data-i18n="cfgRulesEnabled">启用双窗口优先级规则</span>
-                                <span class="form-hint" data-i18n="cfgRulesEnabledHint">基于 5h 短窗口与 7d 长窗口配额综合决策</span>
-                            </div>
-                            <div class="form-input-group">
-                                <label class="toggle-label">
-                                    <span class="toggle-switch">
-                                        <input type="checkbox" id="cfgRulesEnabled">
-                                        <span class="toggle-slider"></span>
-                                    </span>
-                                </label>
-                            </div>
-                        </div>
-
                         <div class="form-row">
                             <div class="form-label-box">
                                 <span class="form-title" data-i18n="cfgBoostStart">🚀 动态 Boost 起始优先级</span>

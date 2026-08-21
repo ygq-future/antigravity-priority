@@ -1,6 +1,6 @@
 # 16 — Planner Requires Explicit Decision Time
 
-**Status:** ready-for-agent
+**Status:** completed
 
 **What to fix:** Remove the Planner's hidden wall-clock fallback so a Plan is a deterministic function of credentials, quota evidence, learned state, configuration, and an explicit decision time.
 
@@ -11,7 +11,7 @@
 - The explicit decision time used for planning is available to snapshots/audit so a decision can be replayed.
 
 ## Acceptance Criteria
-- [ ] Static/source test proves `internal/priority` contains no wall-clock read in the planning path.
-- [ ] Calling Planner twice with identical inputs and explicit `Now` produces deeply equal Plans.
-- [ ] Boundary tests for window reset and Dynamic Boost Horizon use pinned time and are deterministic.
-- [ ] All Runtime planning use cases pass the same round timestamp into both model-group calculations.
+- [x] Static/source test proves `internal/priority` contains no wall-clock read in the planning path.
+- [x] Calling Planner twice with identical inputs and explicit `Now` produces deeply equal Plans.
+- [x] Boundary tests for window reset and Dynamic Boost Horizon use pinned time and are deterministic.
+- [x] All Runtime planning use cases pass the same round timestamp into both model-group calculations.

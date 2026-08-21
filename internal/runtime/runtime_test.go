@@ -24,12 +24,15 @@ import (
 type mockHost struct {
 	mu                sync.Mutex
 	files             []host.AuthFile
+	listResponses     [][]host.AuthFile
 	authDocs          map[string]host.AuthDocument
 	patchedPriorities map[string]int
 	patchedDisabled   map[string]bool
 	httpResponse      host.HTTPResponse
 	httpErr           error
 	httpCalls         []host.HTTPRequest
+	operations        []string
+	afterHTTP         func(*mockHost)
 }
 
 func newMockHost() *mockHost {
@@ -43,14 +46,20 @@ func newMockHost() *mockHost {
 				"models": {
 					"gemini-2.5-pro": {
 						"quotaInfo": {
-							"remainingFraction": 0.8,
-							"resetTime": "2026-08-18T17:00:00Z"
+							"windows": [{
+								"name": "5h",
+								"remainingFraction": 0.8,
+								"resetTime": "2026-08-18T17:00:00Z"
+							}]
 						}
 					},
 					"gemini-2.5-flash": {
 						"quotaInfo": {
-							"remainingFraction": 0.9,
-							"resetTime": "2026-08-25T12:00:00Z"
+							"windows": [{
+								"name": "7d",
+								"remainingFraction": 0.9,
+								"resetTime": "2026-08-25T12:00:00Z"
+							}]
 						}
 					}
 				}
@@ -62,6 +71,12 @@ func newMockHost() *mockHost {
 func (m *mockHost) ListAuthFiles(ctx context.Context) ([]host.AuthFile, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.operations = append(m.operations, "host-sync")
+	if len(m.listResponses) > 0 {
+		files := m.listResponses[0]
+		m.listResponses = m.listResponses[1:]
+		return append([]host.AuthFile(nil), files...), nil
+	}
 	return append([]host.AuthFile(nil), m.files...), nil
 }
 
@@ -87,8 +102,16 @@ func (m *mockHost) SaveAuth(ctx context.Context, name string, doc json.RawMessag
 
 func (m *mockHost) HTTPDo(ctx context.Context, req host.HTTPRequest) (host.HTTPResponse, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.httpCalls = append(m.httpCalls, req)
+	m.operations = append(m.operations, "google-probe")
+	hook := m.afterHTTP
+	m.afterHTTP = nil
+	m.mu.Unlock()
+	if hook != nil {
+		hook(m)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.httpErr != nil {
 		return host.HTTPResponse{}, m.httpErr
 	}
@@ -99,6 +122,7 @@ func (m *mockHost) PatchPriority(ctx context.Context, authIndex string, priority
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.patchedPriorities[authIndex] = priority
+	m.operations = append(m.operations, "host-patch")
 	for i := range m.files {
 		if m.files[i].AuthIndex == authIndex {
 			m.files[i].Priority = priority
@@ -189,8 +213,8 @@ func TestRuntime_Handle_Register(t *testing.T) {
 		t.Errorf("expected management capability to be true")
 	}
 
-	if len(envelope.Result.Metadata.ConfigFields) != 1 || envelope.Result.Metadata.ConfigFields[0].Name != "state_cache_path" {
-		t.Errorf("expected Metadata.ConfigFields to contain state_cache_path, got %+v", envelope.Result.Metadata.ConfigFields)
+	if len(envelope.Result.Metadata.ConfigFields) != 0 {
+		t.Errorf("expected Metadata.ConfigFields to remain empty, got %+v", envelope.Result.Metadata.ConfigFields)
 	}
 }
 
@@ -618,11 +642,116 @@ func TestRuntime_ProductionRunner_CachedEvidence(t *testing.T) {
 		Clock:   &testClock{now: time.Date(2026, 8, 18, 12, 5, 0, 0, time.UTC)},
 		Sleeper: testSleeper{},
 	})
+	_, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dyn, _ := r.GetDynamicConfig(context.Background())
+	dyn.AutoApply = true
+	if err := r.SetDynamicConfig(context.Background(), dyn); err != nil {
+		t.Fatal(err)
+	}
 
-	// AutoApply checks store.NeedsProbe -> false (fresh cached) -> uses cached evidence without HTTP call
-	err := r.AutoApply(context.Background())
+	// AutoApply must probe even though the cached observation is still within TTL.
+	err = r.AutoApply(context.Background())
 	if err != nil {
 		t.Fatalf("auto apply failed: %v", err)
+	}
+	if len(mock.httpCalls) == 0 {
+		t.Fatal("expected AutoApply to force a current-round Google probe")
+	}
+	if got := strings.Join(mock.operations, ","); !strings.HasPrefix(got, "host-sync,google-probe,host-sync") {
+		t.Fatalf("operation order = %s; want host-sync,google-probe,host-sync before planning/apply", got)
+	}
+}
+
+func TestRuntime_ProbeReconcilesHostChangesBeforePlanning(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	mock := newMockHost()
+	mock.files = []host.AuthFile{{Name: "deleted", AuthIndex: "auth-deleted", Provider: "antigravity", Priority: 50}}
+	mock.afterHTTP = func(m *mockHost) {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		m.files = []host.AuthFile{{Name: "added", AuthIndex: "auth-added", Provider: "antigravity", Priority: 77}}
+	}
+	r := runtime.New(runtime.Options{Host: mock, Clock: &testClock{now: time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)}, Sleeper: testSleeper{}})
+	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := r.LatestSnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := snapshot.Groups["gemini"].Items
+	if len(items) != 1 || items[0].AuthIndex != "auth-added" || items[0].Target.Priority != 77 {
+		t.Fatalf("post-probe snapshot items = %#v; want newly added credential unchanged", items)
+	}
+	if _, patched := mock.patchedPriorities["auth-deleted"]; patched {
+		t.Fatal("deleted credential received a write")
+	}
+}
+
+func TestRuntime_ProbeUsesPostProbePriorityAndDisabledState(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	mock := newMockHost()
+	mock.files = []host.AuthFile{{Name: "changed", AuthIndex: "auth-changed", Provider: "antigravity", Priority: 50}}
+	mock.afterHTTP = func(m *mockHost) {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		m.files[0].Priority = 77
+		m.files[0].Disabled = true
+	}
+	r := runtime.New(runtime.Options{Host: mock, Clock: &testClock{now: time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)}, Sleeper: testSleeper{}})
+	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot, err := r.LatestSnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := snapshot.Groups["gemini"].Items
+	if len(items) != 1 || items[0].Current.Priority != 77 || !items[0].Current.Disabled {
+		t.Fatalf("post-probe current state = %#v; want priority=77 disabled=true", items)
+	}
+	if strings.Contains(strings.Join(mock.operations, ","), "host-patch") {
+		t.Fatalf("Probe must not patch Host: %v", mock.operations)
+	}
+}
+
+func TestRuntime_ProbeStillPerformsSecondHostSyncWhenInitialInventoryIsEmpty(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	mock := newMockHost()
+	mock.listResponses = [][]host.AuthFile{
+		{},
+		{{Name: "late-addition", AuthIndex: "auth-added", Provider: "antigravity", Priority: 77}},
+	}
+	r := runtime.New(runtime.Options{Host: mock, Clock: &testClock{now: time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)}, Sleeper: testSleeper{}})
+	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot, err := r.LatestSnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := snapshot.Groups["gemini"].Items
+	if len(items) != 1 || items[0].AuthIndex != "auth-added" || items[0].Target.Priority != 77 {
+		t.Fatalf("post-probe snapshot items = %#v; want late addition unchanged", items)
+	}
+	if got := strings.Join(mock.operations, ","); got != "host-sync,host-sync" {
+		t.Fatalf("operation order = %s; want two host syncs even with empty initial inventory", got)
 	}
 }
 
@@ -704,6 +833,19 @@ func TestRuntime_ProductionRunner_Apply_Full(t *testing.T) {
 	if lastResult.Succeeded == 0 {
 		t.Errorf("expected at least 1 succeeded apply change, got %+v", lastResult)
 	}
+	latestApply, ok := diag["latest_apply"].(*runtime.RunHistoryEntry)
+	if !ok || latestApply == nil || latestApply.Succeeded == 0 {
+		t.Fatalf("expected latest_apply diagnostics record, got %#v", diag["latest_apply"])
+	}
+	applyAt := latestApply.At
+	if err := r.Probe(context.Background(), config.AntigravityModelGroupClaudeGPT, nil); err != nil {
+		t.Fatal(err)
+	}
+	diagAfterProbe, _ := r.Diagnostics(context.Background())
+	latestAfterProbe := diagAfterProbe["latest_apply"].(*runtime.RunHistoryEntry)
+	if !latestAfterProbe.At.Equal(applyAt) || latestAfterProbe.Succeeded != latestApply.Succeeded || latestAfterProbe.Message != latestApply.Message {
+		t.Fatalf("probe replaced latest Apply health: before=%#v after=%#v", latestApply, latestAfterProbe)
+	}
 
 	// Verify file content was patched
 	updatedData, err := os.ReadFile(authFilePath)
@@ -717,11 +859,91 @@ func TestRuntime_ProductionRunner_Apply_Full(t *testing.T) {
 	}
 }
 
+func TestRuntime_DiagnosticsPreservesFailedApplyAfterProbe(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	mock := newMockHost()
+	mock.files = []host.AuthFile{{Name: "broken", AuthIndex: "auth-broken", Provider: "antigravity", Priority: 50}}
+	// Authentication can be probed, but the missing physical path makes the
+	// subsequent priority write fail inside the Apply engine.
+	mock.authDocs["auth-broken"] = host.AuthDocument{
+		AuthIndex: "auth-broken",
+		JSON:      json.RawMessage(`{"access_token":"token","project_id":"project"}`),
+	}
+	r := runtime.New(runtime.Options{Host: mock, Clock: &testClock{now: time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)}, Sleeper: testSleeper{}})
+	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.ManualApply(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
+		t.Fatal(err)
+	}
+	diagnostics, _ := r.Diagnostics(context.Background())
+	failedApply := diagnostics["latest_apply"].(*runtime.RunHistoryEntry)
+	if failedApply == nil || failedApply.Failed != 1 {
+		t.Fatalf("latest_apply = %#v; want one failed write", failedApply)
+	}
+	if err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
+		t.Fatal(err)
+	}
+	afterProbe, _ := r.Diagnostics(context.Background())
+	latest := afterProbe["latest_apply"].(*runtime.RunHistoryEntry)
+	if latest == nil || latest.Failed != failedApply.Failed || !latest.At.Equal(failedApply.At) || latest.Message != failedApply.Message {
+		t.Fatalf("Probe replaced failed Apply health: before=%#v after=%#v", failedApply, latest)
+	}
+}
+
+func TestRuntime_DiagnosticsWithProbeOnlyHistoryHasNoLatestApply(t *testing.T) {
+	previousDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(previousDir) })
+
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	mock := newMockHost()
+	mock.files = []host.AuthFile{{Name: "probe-only", AuthIndex: "auth-probe", Provider: "antigravity", Priority: 100}}
+	r := runtime.New(runtime.Options{Host: mock, Clock: &testClock{now: time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)}, Sleeper: testSleeper{}})
+	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
+		t.Fatal(err)
+	}
+	diagnostics, _ := r.Diagnostics(context.Background())
+	latest, ok := diagnostics["latest_apply"].(*runtime.RunHistoryEntry)
+	if !ok || latest != nil {
+		t.Fatalf("probe-only latest_apply = %#v; want typed nil", diagnostics["latest_apply"])
+	}
+}
+
+func TestRuntime_SyncHostPreservesConfiguredControlGroup(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	mock := newMockHost()
+	mock.files = []host.AuthFile{{Name: "control", AuthIndex: "auth-control", Provider: "antigravity", Priority: 100}}
+	r := runtime.New(runtime.Options{Host: mock, Clock: &testClock{now: time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)}})
+	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
+		t.Fatal(err)
+	}
+	httpCallsBefore := len(mock.httpCalls)
+	snapshot, err := r.SyncHost(context.Background(), config.AntigravityModelGroupClaudeGPT)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.ActiveModelGroup != "gemini" {
+		t.Fatalf("active_model_group = %q; want configured gemini", snapshot.ActiveModelGroup)
+	}
+	if len(mock.httpCalls) != httpCallsBefore {
+		t.Fatal("overview synchronization unexpectedly called Google")
+	}
+}
+
 func TestRuntime_ProductionRunner_ZeroChange_Apply_Omitted(t *testing.T) {
 	tempDir := t.TempDir()
 	authFilePath := filepath.Join(tempDir, "auth_zero_change.json")
-	// Initialize file with priority 999 which matches the planner's boosted target priority
-	_ = os.WriteFile(authFilePath, []byte(`{"access_token":"token_123","project_id":"proj_123","priority":999}`), 0o600)
+	// This low-urgency weekly account remains at the regular starting priority.
+	_ = os.WriteFile(authFilePath, []byte(`{"access_token":"token_123","project_id":"proj_123","priority":100}`), 0o600)
 
 	mock := newMockHost()
 	mock.files = []host.AuthFile{
@@ -730,14 +952,14 @@ func TestRuntime_ProductionRunner_ZeroChange_Apply_Omitted(t *testing.T) {
 			AuthIndex:       "auth_zero_1",
 			Provider:        string(core.ProviderAntigravity),
 			Type:            string(core.CredentialTypeAntigravity),
-			Priority:        999,
+			Priority:        100,
 			PriorityMissing: false,
 		},
 	}
 	mock.authDocs["auth_zero_1"] = host.AuthDocument{
 		AuthIndex: "auth_zero_1",
 		Path:      authFilePath,
-		JSON:      json.RawMessage(`{"access_token":"token_123","project_id":"proj_123","priority":999}`),
+		JSON:      json.RawMessage(`{"access_token":"token_123","project_id":"proj_123","priority":100}`),
 	}
 
 	r := runtime.New(runtime.Options{
@@ -1097,9 +1319,10 @@ func TestRuntime_GetSetDynamicConfig(t *testing.T) {
 		AntigravityModelGroup:    "claude_gpt",
 		MaxConcurrency:           8,
 		MinChange:                3,
+		UrgencyTolerance:         0.08,
+		RateLimitCooldownMinutes: 5,
 		QuotaSampleCapacity:      10,
 		PriorityRules: state.PriorityRulesConfig{
-			Enabled:             true,
 			BoostStartPriority:  990,
 			NormalStartPriority: 120,
 		},
@@ -1160,6 +1383,38 @@ func TestRuntime_GetSetDynamicConfig(t *testing.T) {
 	if err := r.SetDynamicConfig(context.Background(), badGroup); err == nil {
 		t.Error("expected error for invalid model group")
 	}
+
+	invalidCases := []struct {
+		name   string
+		mutate func(*state.DynamicConfig)
+	}{
+		{"max_concurrency=33", func(cfg *state.DynamicConfig) { cfg.MaxConcurrency = 33 }},
+		{"min_change=101", func(cfg *state.DynamicConfig) { cfg.MinChange = 101 }},
+		{"urgency_tolerance=0.51", func(cfg *state.DynamicConfig) { cfg.UrgencyTolerance = 0.51 }},
+		{"cooldown=1441", func(cfg *state.DynamicConfig) { cfg.RateLimitCooldownMinutes = 1441 }},
+		{"inverted priorities", func(cfg *state.DynamicConfig) {
+			cfg.PriorityRules.BoostStartPriority, cfg.PriorityRules.NormalStartPriority = 100, 101
+		}},
+	}
+	for _, testCase := range invalidCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			candidate := update
+			testCase.mutate(&candidate)
+			if err := r.SetDynamicConfig(context.Background(), candidate); err == nil {
+				t.Fatal("expected backend validation error")
+			}
+		})
+	}
+
+	zeroTolerance := update
+	zeroTolerance.UrgencyTolerance = 0
+	if err := r.SetDynamicConfig(context.Background(), zeroTolerance); err != nil {
+		t.Fatalf("zero urgency tolerance rejected: %v", err)
+	}
+	gotZero, _ := r.GetDynamicConfig(context.Background())
+	if gotZero.UrgencyTolerance != 0 {
+		t.Fatalf("zero urgency tolerance was normalized to %v", gotZero.UrgencyTolerance)
+	}
 }
 
 func TestRuntime_DynamicConfig_SurvivesReconfigure(t *testing.T) {
@@ -1175,13 +1430,15 @@ func TestRuntime_DynamicConfig_SurvivesReconfigure(t *testing.T) {
 
 	// Set dynamic config from UI
 	if err := r.SetDynamicConfig(context.Background(), state.DynamicConfig{
-		AutoApply:             true,
-		Interval:              "45m",
-		AntigravityModelGroup: "claude_gpt",
-		MaxConcurrency:        10,
-		MinChange:             5,
+		AutoApply:                true,
+		Interval:                 "45m",
+		AntigravityModelGroup:    "claude_gpt",
+		MaxConcurrency:           10,
+		MinChange:                5,
+		UrgencyTolerance:         0.05,
+		RateLimitCooldownMinutes: 5,
+		QuotaSampleCapacity:      6,
 		PriorityRules: state.PriorityRulesConfig{
-			Enabled:             true,
 			BoostStartPriority:  980,
 			NormalStartPriority: 200,
 		},
@@ -1380,5 +1637,93 @@ func TestRuntime_FilterEvent_429Cooldown(t *testing.T) {
 	}
 	if _, hasWarnings := diag["config_warnings"]; hasWarnings {
 		t.Errorf("expected config_warnings to be purged from diagnostics")
+	}
+	history := diag["run_history"].([]runtime.RunHistoryEntry)
+	if len(history) == 0 || history[0].Kind != runtime.KindCooldown || history[0].Succeeded != 1 {
+		t.Fatalf("expected successful cooldown audit record, got %#v", history)
+	}
+}
+
+func TestRuntime_FilterEvent_429FailureIsReportedAndAudited(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	mock := newMockHost()
+	mock.files = []host.AuthFile{{Name: "broken", AuthIndex: "auth-broken", Provider: "antigravity", Priority: 100}}
+	mock.authDocs["auth-broken"] = host.AuthDocument{AuthIndex: "auth-broken", Path: filepath.Join(t.TempDir(), "missing", "auth.json")}
+	r := runtime.New(runtime.Options{Host: mock, Clock: &testClock{now: time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)}})
+	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
+		t.Fatal(err)
+	}
+	var envelope runtime.Envelope
+	response := r.Handle(context.Background(), runtime.MethodFilterResponse, []byte(`{"auth_index":"auth-broken","status_code":429}`))
+	if err := json.Unmarshal(response, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.OK || envelope.Error == nil {
+		t.Fatalf("expected qualified failure envelope, got %s", response)
+	}
+	diagnostics, _ := r.Diagnostics(context.Background())
+	history := diagnostics["run_history"].([]runtime.RunHistoryEntry)
+	if len(history) == 0 || history[0].Kind != runtime.KindCooldown || history[0].Failed != 1 {
+		t.Fatalf("expected failed cooldown audit record, got %#v", history)
+	}
+}
+
+func TestRuntime_FilterEvent_429WaitsForSingleFlightBoundary(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	authPath := filepath.Join(t.TempDir(), "auth.json")
+	if err := os.WriteFile(authPath, []byte(`{"priority":100,"disabled":false}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mock := newMockHost()
+	mock.files = []host.AuthFile{{Name: "serial", AuthIndex: "auth-serial", Provider: "antigravity", Priority: 100}}
+	mock.authDocs["auth-serial"] = host.AuthDocument{AuthIndex: "auth-serial", Path: authPath}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	r := runtime.New(runtime.Options{Host: mock, Runner: func(context.Context, runtime.TaskRequest) error {
+		close(started)
+		<-release
+		if err := os.WriteFile(authPath, []byte(`{"priority":50,"disabled":false}`), 0o600); err != nil {
+			return err
+		}
+		return nil
+	}})
+	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
+		t.Fatal(err)
+	}
+	applyDone := make(chan error, 1)
+	go func() { applyDone <- r.ManualApply(context.Background(), config.AntigravityModelGroupGemini, nil) }()
+	<-started
+	filterDone := make(chan []byte, 1)
+	go func() {
+		filterDone <- r.Handle(context.Background(), runtime.MethodFilterResponse, []byte(`{"auth_index":"auth-serial","status_code":429}`))
+	}()
+	select {
+	case <-filterDone:
+		t.Fatal("429 mutation escaped the Runtime single-flight boundary")
+	case <-time.After(30 * time.Millisecond):
+	}
+	close(release)
+	if err := <-applyDone; err != nil {
+		t.Fatal(err)
+	}
+	response := <-filterDone
+	var envelope runtime.Envelope
+	_ = json.Unmarshal(response, &envelope)
+	if !envelope.OK {
+		t.Fatalf("cooldown failed after serialized apply: %s", response)
+	}
+	finalDocument, err := os.ReadFile(authPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var finalState struct {
+		Priority int  `json:"priority"`
+		Disabled bool `json:"disabled"`
+	}
+	if err := json.Unmarshal(finalDocument, &finalState); err != nil {
+		t.Fatal(err)
+	}
+	if finalState.Priority != -1 || finalState.Disabled {
+		t.Fatalf("final Host state is not deterministic cooldown state: %s", finalDocument)
 	}
 }

@@ -1,6 +1,6 @@
 # 11 — Auto Scheduling Must Force Fresh Quota Probes
 
-**Status:** ready-for-agent
+**Status:** completed
 
 **What to fix:** Every automatic scheduling round must obtain current Google quota evidence before calculating or writing target priorities; a successful cached observation from an earlier round is not sufficient.
 
@@ -14,9 +14,9 @@
 - Probe failure must follow the defined safe-degradation policy and must never promote from stale evidence.
 
 ## Acceptance Criteria
-- [ ] A Runtime test seeds fresh cached evidence, runs `AutoApply`, and proves Google HTTP is still called.
-- [ ] A 5-minute auto interval produces a fresh `ObservedAt` every successful round rather than reusing the 15-minute cache TTL.
-- [ ] Disabled credentials are included in automatic quota probing.
-- [ ] Tests prove the order `Host sync -> Google probe -> Host sync -> Plan -> Apply`.
-- [ ] Add/delete/priority/disabled mutations injected during probing are reflected safely in the final Plan and Apply set.
-- [ ] Planning and host write-back occur only after the current round's probe collection and post-probe Host synchronization complete.
+- [x] A Runtime test seeds fresh cached evidence, runs `AutoApply`, and proves Google HTTP is still called.
+- [x] A 5-minute auto interval produces a fresh `ObservedAt` every successful round rather than reusing the 15-minute cache TTL.
+- [x] Disabled credentials are included in automatic quota probing.
+- [x] Tests prove the order `Host sync -> Google probe -> Host sync -> Plan -> Apply`.
+- [x] Add/delete/priority/disabled mutations injected during probing are reflected safely in the final Plan and Apply set.
+- [x] Planning and host write-back occur only after the current round's probe collection and post-probe Host synchronization complete.

@@ -1,6 +1,6 @@
 # 18 — Unify Probe and Host Reconciliation Pipeline
 
-**Status:** ready-for-agent
+**Status:** completed
 
 **What to fix:** Give automatic scheduling and manual quota refresh one Runtime-owned pipeline that preserves the required pre-probe Host discovery and performs a second authoritative Host reconciliation before planning, rendering, or writing.
 
@@ -18,8 +18,8 @@
 - Manual quota refresh and automatic scheduling must not maintain divergent copies of this ordering logic.
 
 ## Acceptance Criteria
-- [ ] Ordered mocks prove both Host synchronizations occur around Google probing.
-- [ ] A host credential added during probe appears in the returned snapshot without unsafe promotion.
-- [ ] A host credential deleted during probe receives no write attempt.
-- [ ] A manual disabled/priority change during probe is preserved as final current state.
-- [ ] Quota Refresh executes no Host patch; Auto Apply patches only after reconciliation and planning.
+- [x] Ordered mocks prove both Host synchronizations occur around Google probing.
+- [x] A host credential added during probe appears in the returned snapshot without unsafe promotion.
+- [x] A host credential deleted during probe receives no write attempt.
+- [x] A manual disabled/priority change during probe is preserved as final current state.
+- [x] Quota Refresh executes no Host patch; Auto Apply patches only after reconciliation and planning.

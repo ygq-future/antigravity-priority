@@ -1,12 +1,10 @@
 package antigravity
 
 import (
-	"context"
 	"time"
 
 	"antigravity-priority/internal/config"
 	"antigravity-priority/internal/core"
-	"antigravity-priority/internal/host"
 )
 
 // ModelGroup represents the upstream quota model group in Antigravity.
@@ -68,26 +66,4 @@ type ProbeResult struct {
 	Status               Status
 	PlanType             core.PlanType
 	Error                string
-}
-
-// ProbeRequest contains the authentication and target context required for probing.
-type ProbeRequest struct {
-	AuthIndex   string
-	AccessToken string
-	ProjectID   string
-	ModelGroup  ModelGroup
-}
-
-type clock interface {
-	Now() time.Time
-}
-
-type realClock struct{}
-
-func (realClock) Now() time.Time {
-	return time.Now().UTC()
-}
-
-type httpDoer interface {
-	HTTPDo(ctx context.Context, req host.HTTPRequest) (host.HTTPResponse, error)
 }

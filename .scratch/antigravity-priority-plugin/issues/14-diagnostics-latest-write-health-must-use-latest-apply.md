@@ -1,6 +1,6 @@
 # 14 — Diagnostics Latest Write Health Must Use Latest Apply
 
-**Status:** ready-for-agent
+**Status:** completed
 
 **What to fix:** Ensure the diagnostics "latest write health" panel is sourced from the most recent host-writing Apply execution, not from a later Probe, Sync, or other read-only operation.
 
@@ -11,7 +11,7 @@
 - When no Apply has occurred, show an explicit no-write-history state rather than borrowing another operation's timestamp.
 
 ## Acceptance Criteria
-- [ ] Perform a successful Apply, then Probe; diagnostics continues to show the Apply counts and Apply timestamp.
-- [ ] An Apply failure remains visible after subsequent read-only operations.
-- [ ] With Probe-only history, the latest-write panel shows "no Apply yet".
-- [ ] Runtime and template tests cover mixed operation histories.
+- [x] Perform a successful Apply, then Probe; diagnostics continues to show the Apply counts and Apply timestamp.
+- [x] An Apply failure remains visible after subsequent read-only operations.
+- [x] With Probe-only history, the latest-write panel shows "no Apply yet".
+- [x] Runtime and template tests cover mixed operation histories.

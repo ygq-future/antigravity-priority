@@ -11,6 +11,7 @@ import (
 
 	"antigravity-priority/internal/apply"
 	"antigravity-priority/internal/config"
+	"antigravity-priority/internal/core"
 	"antigravity-priority/internal/host"
 	"antigravity-priority/internal/management"
 	"antigravity-priority/internal/priority"
@@ -271,9 +272,8 @@ func (r *Runtime) SyncHost(ctx context.Context, modelGroup config.AntigravityMod
 	if r.hostCallbacks == nil {
 		return apply.DualGroupSnapshot{}, errMissingHostCallbacks
 	}
-	if modelGroup == "" {
-		modelGroup = cfg.AntigravityModelGroup
-	}
+	// The dashboard selector is view-only; Dynamic Config is the control authority.
+	modelGroup = cfg.AntigravityModelGroup
 
 	client := host.NewClient(r.hostCallbacks)
 	files, err := client.ListAuthFiles(ctx)
@@ -348,10 +348,6 @@ func (r *Runtime) run(ctx context.Context, trigger Trigger, modelGroup config.An
 
 	if !cfg.Enabled && trigger != TriggerManualApply {
 		return errors.New("plugin is disabled")
-	}
-
-	if modelGroup != "" {
-		cfg.AntigravityModelGroup = modelGroup
 	}
 
 	if err := runner(taskCtx, TaskRequest{
@@ -543,9 +539,10 @@ func (r *Runtime) Diagnostics(ctx context.Context) (map[string]any, error) {
 			"window_end":         sched.WindowEnd,
 		},
 		"active_cooldowns": activeCooldowns,
-		"latest_audit":    audit,
-		"last_result":     result,
-		"run_history":     r.currentRunHistory(),
+		"latest_audit":     audit,
+		"last_result":      result,
+		"latest_apply":     r.latestApplyEntry(),
+		"run_history":      r.currentRunHistory(),
 	}, nil
 }
 
@@ -785,13 +782,25 @@ func (r *Runtime) currentRunHistory() []RunHistoryEntry {
 	return out
 }
 
+func (r *Runtime) latestApplyEntry() *RunHistoryEntry {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, entry := range r.runHistory {
+		if entry.Kind == KindApply {
+			copy := entry
+			return &copy
+		}
+	}
+	return nil
+}
+
 func registrationResult() RegisterResult {
 	return RegisterResult{
 		SchemaVersion: 1,
 		Metadata:      buildMetadata(),
 		Capabilities: map[string]bool{
-			"management_api":      true,
-			"management":          true,
+			"management_api":     true,
+			"management":         true,
 			MethodFilterResponse: true,
 			MethodFilterComplete: true,
 			MethodFilterError:    true,
@@ -818,22 +827,31 @@ func (r *Runtime) handleFilterEvent(ctx context.Context, raw []byte) []byte {
 		strings.Contains(strings.ToUpper(payload.Error), "RATE_LIMIT")
 
 	if is429 {
-		r.triggerCooldown(ctx, authIndex, payload.ModelGroup, "429 rate limit detected")
+		r.runMu.Lock()
+		err := r.triggerCooldown(ctx, authIndex, payload.ModelGroup, "429 rate limit detected")
+		r.runMu.Unlock()
+		if err != nil {
+			return failure(err)
+		}
 	}
 
 	return mustMarshal(Envelope{OK: true})
 }
 
-func (r *Runtime) triggerCooldown(ctx context.Context, authIndex, modelGroup, reason string) {
+func (r *Runtime) triggerCooldown(ctx context.Context, authIndex, modelGroup, reason string) error {
 	now := r.clock.Now().UTC()
-	cfg, _ := r.Config()
+	cfg, err := r.Config()
+	if err != nil {
+		return err
+	}
 	cachePath := cfg.StateCachePath
 	if strings.TrimSpace(cachePath) == "" {
 		cachePath = config.DefaultStateCachePath
 	}
 	store, err := state.Load(ctx, cachePath)
 	if err != nil {
-		return
+		r.recordCooldownFailure(reason, err)
+		return fmt.Errorf("record cooldown state: %w", err)
 	}
 
 	cooldownMinutes := cfg.RateLimitCooldownMinutes
@@ -849,13 +867,102 @@ func (r *Runtime) triggerCooldown(ctx context.Context, authIndex, modelGroup, re
 		CooldownUntil: cooldownUntil,
 		Reason:        reason,
 	})
-	_ = store.SaveAtomic(ctx)
-
-	// Immediately demote priority to -1 on the host
-	if r.hostCallbacks != nil {
-		client := host.NewClient(r.hostCallbacks)
-		_ = client.PatchPriority(ctx, authIndex, -1)
+	if err := store.SaveAtomic(ctx); err != nil {
+		r.recordCooldownFailure(reason, err)
+		return fmt.Errorf("persist cooldown state: %w", err)
 	}
+	if r.hostCallbacks == nil {
+		err := errMissingHostCallbacks
+		r.recordCooldownFailure(reason, err)
+		return err
+	}
+
+	client := host.NewClient(r.hostCallbacks)
+	credential := core.Credential{
+		Name:      authIndex,
+		AuthIndex: authIndex,
+		Provider:  core.ProviderAntigravity,
+		Type:      core.CredentialTypeAntigravity,
+	}
+	files, listErr := client.ListAuthFiles(ctx)
+	if listErr != nil {
+		r.recordCooldownFailure(reason, listErr)
+		return fmt.Errorf("synchronize cooldown credential: %w", listErr)
+	}
+	found := false
+	for _, candidate := range credentialsFromAuthFiles(files) {
+		if candidate.AuthIndex == authIndex || candidate.Name == authIndex {
+			credential = candidate
+			found = true
+			break
+		}
+	}
+	if !found {
+		err := errors.New("cooldown credential not found in Host inventory")
+		r.recordCooldownFailure(reason, err)
+		return err
+	}
+	item := priority.PlanItem{
+		Credential:    credential,
+		Priority:      priority.DepletedPriority,
+		Disabled:      false,
+		EvidenceFresh: true,
+		ForceWrite:    true,
+		Reason:        priority.Reason429Cooldown,
+	}
+	plan := priority.Plan{
+		DecidedAt: now,
+		Items:     []priority.PlanItem{item},
+		Changes: []priority.Change{{
+			Credential:    credential,
+			Priority:      priority.DepletedPriority,
+			Disabled:      false,
+			EvidenceFresh: true,
+			Reason:        priority.Reason429Cooldown,
+		}},
+	}
+	result, applyErr := apply.Apply(ctx, apply.Request{Host: client, Auditor: r, Plan: plan})
+	if applyErr != nil {
+		result.Failed = 1
+	}
+	summary := fmt.Sprintf("429 cooldown auth=%s succeeded=%d failed=%d", redactRuntimeIdentifier(authIndex), result.Succeeded, result.Failed)
+	r.snapshotRunEntry(result, summary, RunHistoryEntry{
+		Kind:      KindCooldown,
+		Trigger:   "filter_429",
+		Attempted: result.Attempted,
+		Succeeded: result.Succeeded,
+		Failed:    result.Failed,
+		Skipped:   result.Skipped,
+		Message:   summary,
+		Snapshot:  &result.Snapshot,
+	})
+	resultJSON, _ := json.Marshal(result)
+	historyJSON, _ := json.Marshal(r.currentRunHistory())
+	store.SetRuntimeSnapshot(summary, resultJSON, historyJSON)
+	if err := store.SaveAtomic(ctx); err != nil {
+		return fmt.Errorf("persist cooldown audit: %w", err)
+	}
+	if applyErr != nil {
+		return fmt.Errorf("apply cooldown: %w", applyErr)
+	}
+	if result.Failed > 0 || result.Succeeded+result.Skipped != 1 {
+		return errors.New("429 cooldown host mutation failed")
+	}
+	return nil
+}
+
+func (r *Runtime) recordCooldownFailure(reason string, err error) {
+	message := reason + ": " + host.RedactBytes([]byte(err.Error()))
+	r.snapshotRunEntry(apply.Result{Failed: 1}, message, RunHistoryEntry{
+		Kind: KindCooldown, Trigger: "filter_429", Attempted: 1, Failed: 1, Message: message,
+	})
+}
+
+func redactRuntimeIdentifier(value string) string {
+	if len(value) <= 4 {
+		return "***"
+	}
+	return value[:2] + "***" + value[len(value)-2:]
 }
 
 func buildMetadata() Metadata {
@@ -865,14 +972,6 @@ func buildMetadata() Metadata {
 		Author:           "ygq-future",
 		GitHubRepository: "https://github.com/ygq-future/antigravity-priority",
 		Description:      "Intelligent quota pacing and adaptive burn-rate priority scheduler exclusively for Google Antigravity in CLIProxyAPI.",
-		ConfigFields: []ConfigField{
-			{
-				Name:         "state_cache_path",
-				Type:         "string",
-				Description:  "Persistent state cache file path",
-				DefaultValue: config.DefaultStateCachePath,
-			},
-		},
 	}
 }
 

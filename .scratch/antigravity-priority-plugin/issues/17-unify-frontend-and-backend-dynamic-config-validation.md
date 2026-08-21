@@ -1,6 +1,6 @@
 # 17 — Unify Frontend and Backend Dynamic Config Validation
 
-**Status:** ready-for-agent
+**Status:** completed
 
 **What to fix:** Establish one canonical Dynamic Config contract and make backend validation, frontend controls, reset defaults, API responses, README, and README.en agree exactly.
 
@@ -23,8 +23,8 @@
 - Defaults remain sourced from `config.Default()` and agree with reset payloads and UI initial values.
 
 ## Acceptance Criteria
-- [ ] Boundary tests cover minimum, maximum, just-below, and just-above values for every numeric field.
-- [ ] Direct `POST /config` rejects `max_concurrency=33`, `min_change=101`, tolerance above 0.5, cooldown above 1440, and inverted priority starts.
-- [ ] Frontend and backend accept all canonical boundary values, including tolerance 0.
-- [ ] `README.md` and `README.en.md` contain the same non-contradictory ranges.
-- [ ] Config GET -> unchanged POST round-trip succeeds for every accepted configuration.
+- [x] Boundary tests cover minimum, maximum, just-below, and just-above values for every numeric field.
+- [x] Direct `POST /config` rejects `max_concurrency=33`, `min_change=101`, tolerance above 0.5, cooldown above 1440, and inverted priority starts.
+- [x] Frontend and backend accept all canonical boundary values, including tolerance 0.
+- [x] `README.md` and `README.en.md` contain the same non-contradictory ranges.
+- [x] Config GET -> unchanged POST round-trip succeeds for every accepted configuration.

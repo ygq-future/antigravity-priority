@@ -129,14 +129,13 @@ In the **`⚙️ Config Center`** tab of the management dashboard, the following
 | **Scheduling Interval (`interval`)** | `15m` | `5m`, `15m`, `30m`, `1h`, custom | Background execution interval. Changes take effect immediately without restarting. |
 | **Primary Model Group (`antigravity_model_group`)** | `gemini` | `gemini` / `claude_gpt` | Primary model group used as the basis for host priority write-backs. |
 | **Active Schedule Window (`schedule_window`)** | `All day` | `HH:MM` to `HH:MM` | Daily active time window (e.g. `09:00-23:00`, supports cross-midnight like `22:00-06:00`). Sleeps outside window. |
-| **Max Probe Concurrency (`max_concurrency`)** | `6` | `1 ~ 32` (up to 64 in backend) | Maximum concurrent goroutines for quota probe requests to Google API. |
+| **Max Probe Concurrency (`max_concurrency`)** | `6` | `1 ~ 32` | Maximum concurrent goroutines for quota probe requests to Google API. |
 | **Priority Min Change Threshold (`min_change`)** | `1` | `0 ~ 100` | Minimum priority delta required to trigger a write-back to host. |
 | **Urgency Bucket Tolerance (`urgency_tolerance`)** | `0.05` | `0.00 ~ 0.50` | Accounts within this tolerance share the same priority for round-robin balancing. |
 | **Adaptive Sample Capacity (`quota_sample_capacity`)** | `6` | `2 ~ 30` | Sliding window sample count retained for burn rate estimation. |
-| **429 Cooldown Duration (`rate_limit_cooldown_minutes`)** | `5` | `≥ 1` (recommended `1 ~ 1440` min) | Cooldown duration demoting account to `-1` fallback tier on 429 errors (defaults to 5 if `<= 0`). |
-| **Enable Double-Window Rules (`priority_rules.enabled`)** | `true` | On / Off | Enables multi-tier double-window priority decision algorithms. |
+| **429 Cooldown Duration (`rate_limit_cooldown_minutes`)** | `5` | `1 ~ 1440` min | Cooldown duration demoting account to `-1` fallback tier on 429 errors. |
 | **Boost Start Priority (`boost_start_priority`)** | `999` | `1 ~ 999` | Base priority for tier-1 boosted credentials. |
-| **Normal Healthy Start Priority (`normal_start_priority`)** | `100` | `1 ~ 999` | Base priority for tier-2 regular healthy credentials. |
+| **Normal Healthy Start Priority (`normal_start_priority`)** | `100` | `1 ~ 999`, not above Boost start | Base priority for tier-2 regular healthy credentials. |
 
 > **Persistence Guarantee**: All settings changed in the UI Config Center are atomically saved to the active persistence cache file (defaults to `data/antigravity-priority-cache.json`), surviving CPA container restarts and taking precedence over initial YAML values.
 

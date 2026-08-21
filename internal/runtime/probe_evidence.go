@@ -33,7 +33,6 @@ type probeJob struct {
 }
 
 func collectFreshEvidence(ctx context.Context, input collectInput) ([]priority.ProbeEvidence, error) {
-	prober := antigravity.NewProber(input.client, fixedClock{now: input.now})
 	jobs := make([]probeJob, 0, len(input.credentials))
 	cachedEvidence := make([]priority.ProbeEvidence, 0)
 
@@ -59,7 +58,7 @@ func collectFreshEvidence(ctx context.Context, input collectInput) ([]priority.P
 		return cachedEvidence, nil
 	}
 
-	probedEvidence, err := runProbeJobs(ctx, prober, input, jobs)
+	probedEvidence, err := runProbeJobs(ctx, input, jobs)
 	if err != nil {
 		return nil, err
 	}
@@ -87,7 +86,7 @@ func probePolicy(cacheTTL time.Duration) state.ProbePolicy {
 	return state.ProbePolicy{TTL: cacheTTL, ResetStaleAfter: time.Hour}
 }
 
-func runProbeJobs(ctx context.Context, prober antigravity.Prober, input collectInput, jobs []probeJob) ([]priority.ProbeEvidence, error) {
+func runProbeJobs(ctx context.Context, input collectInput, jobs []probeJob) ([]priority.ProbeEvidence, error) {
 	workers := input.maxConcurrency
 	if workers < 1 {
 		workers = 2
@@ -99,7 +98,7 @@ func runProbeJobs(ctx context.Context, prober antigravity.Prober, input collectI
 	if workers == 1 {
 		evidence := make([]priority.ProbeEvidence, 0, len(jobs))
 		for _, job := range jobs {
-			item, err := probeAndRecord(ctx, prober, input.store, job, input.now, input.modelGroup, input.sampleCapacity)
+			item, err := probeAndRecord(ctx, input.client, input.store, job, input.now, input.modelGroup, input.sampleCapacity)
 			if err != nil {
 				return nil, err
 			}
@@ -132,7 +131,7 @@ func runProbeJobs(ctx context.Context, prober antigravity.Prober, input collectI
 					return
 				}
 				job := jobs[index]
-				item, err := probeAndRecord(runCtx, prober, input.store, job, input.now, input.modelGroup, input.sampleCapacity)
+				item, err := probeAndRecord(runCtx, input.client, input.store, job, input.now, input.modelGroup, input.sampleCapacity)
 				select {
 				case resultsCh <- result{index: index, item: item, err: err}:
 				case <-runCtx.Done():
@@ -192,12 +191,12 @@ func runProbeJobs(ctx context.Context, prober antigravity.Prober, input collectI
 	return evidence, nil
 }
 
-func probeAndRecord(ctx context.Context, prober antigravity.Prober, store *state.Store, job probeJob, now time.Time, modelGroup config.AntigravityModelGroup, sampleCapacity int) (priority.ProbeEvidence, error) {
-	results := prober.ProbeAll(ctx, antigravity.ProbeRequest{
+func probeAndRecord(ctx context.Context, client *host.Client, store *state.Store, job probeJob, now time.Time, modelGroup config.AntigravityModelGroup, sampleCapacity int) (priority.ProbeEvidence, error) {
+	results := executeAntigravityQuotaRequest(ctx, client, antigravityQuotaRequest{
 		AuthIndex:   job.credential.AuthIndex,
 		AccessToken: job.authMaterial.accessToken,
 		ProjectID:   job.authMaterial.projectID,
-		ModelGroup:  modelGroup,
+		ObservedAt:  now,
 	})
 
 	// Record all model groups from the single probe response (REQ-05: dual-group persistence).
@@ -275,14 +274,6 @@ func timeOrZero(t *time.Time) time.Time {
 		return time.Time{}
 	}
 	return *t
-}
-
-type fixedClock struct {
-	now time.Time
-}
-
-func (c fixedClock) Now() time.Time {
-	return c.now
 }
 
 // alternateModelGroup returns the other model group.

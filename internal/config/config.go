@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 )
@@ -71,7 +72,15 @@ const (
 	// MinMaxConcurrency is the minimum allowed concurrency.
 	MinMaxConcurrency = 1
 	// MaxMaxConcurrency is the maximum allowed concurrency.
-	MaxMaxConcurrency = 64
+	MaxMaxConcurrency = 32
+	// MaxMinChange is the maximum allowed priority change threshold.
+	MaxMinChange = 100
+	// MaxUrgencyTolerance is the maximum allowed urgency clustering tolerance.
+	MaxUrgencyTolerance = 0.5
+	// MinRateLimitCooldownMinutes is the minimum 429 cooldown duration.
+	MinRateLimitCooldownMinutes = 1
+	// MaxRateLimitCooldownMinutes is the maximum 429 cooldown duration.
+	MaxRateLimitCooldownMinutes = 1440
 	// MinPriorityValue is the minimum allowed priority setting.
 	MinPriorityValue = 1
 	// MaxPriorityValue is the maximum allowed priority setting.
@@ -99,24 +108,53 @@ type Config struct {
 
 // PriorityRules contains the priority scoring configurations.
 type PriorityRules struct {
-	Enabled             bool
 	BoostStartPriority  int
 	NormalStartPriority int
 }
 
 // PriorityRulesConfig holds priority rule settings for DynamicConfig.
 type PriorityRulesConfig struct {
-	Enabled             bool `json:"enabled"`
-	BoostStartPriority  int  `json:"boost_start_priority"`
-	NormalStartPriority int  `json:"normal_start_priority"`
+	BoostStartPriority  int `json:"boost_start_priority"`
+	NormalStartPriority int `json:"normal_start_priority"`
+}
+
+// UnmarshalJSON migrates legacy priority_rules.enabled documents. Custom
+// values from enabled=false configurations were previously inactive, so they
+// resolve to the canonical defaults instead of becoming active unexpectedly.
+func (cfg *PriorityRulesConfig) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Enabled             *bool `json:"enabled"`
+		BoostStartPriority  *int  `json:"boost_start_priority"`
+		NormalStartPriority *int  `json:"normal_start_priority"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	defaults := defaultPriorityRules()
+	cfg.BoostStartPriority = defaults.BoostStartPriority
+	cfg.NormalStartPriority = defaults.NormalStartPriority
+	if raw.Enabled != nil && !*raw.Enabled {
+		return nil
+	}
+	if raw.BoostStartPriority != nil {
+		cfg.BoostStartPriority = *raw.BoostStartPriority
+	}
+	if raw.NormalStartPriority != nil {
+		cfg.NormalStartPriority = *raw.NormalStartPriority
+	}
+	return nil
+}
+
+func defaultPriorityRules() PriorityRules {
+	return PriorityRules{BoostStartPriority: 999, NormalStartPriority: 100}
 }
 
 // DynamicConfig contains all runtime-customizable configuration parameters
 // that can be modified via the UI Config Center without restarting the plugin (REQ-09).
 type DynamicConfig struct {
 	AutoApply                bool                `json:"auto_apply"`
-	Interval                 string              `json:"interval"`                    // e.g. "15m", "30m"
-	AntigravityModelGroup    string              `json:"antigravity_model_group"`     // "gemini" or "claude_gpt"
+	Interval                 string              `json:"interval"`                // e.g. "15m", "30m"
+	AntigravityModelGroup    string              `json:"antigravity_model_group"` // "gemini" or "claude_gpt"
 	MaxConcurrency           int                 `json:"max_concurrency"`
 	MinChange                int                 `json:"min_change"`
 	UrgencyTolerance         float64             `json:"urgency_tolerance"`           // e.g. 0.05
@@ -124,6 +162,19 @@ type DynamicConfig struct {
 	QuotaSampleCapacity      int                 `json:"quota_sample_capacity"`       // e.g. 6 (range 2..30)
 	PriorityRules            PriorityRulesConfig `json:"priority_rules"`
 	Schedule                 ScheduleConfig      `json:"schedule"`
+}
+
+// UnmarshalJSON seeds omitted fields from the canonical defaults before
+// applying persisted dynamic overrides. This keeps older documents that lack
+// priority_rules (or newer fields) round-trip valid.
+func (dyn *DynamicConfig) UnmarshalJSON(data []byte) error {
+	type dynamicConfigAlias DynamicConfig
+	seeded := dynamicConfigAlias(Default().Dynamic())
+	if err := json.Unmarshal(data, &seeded); err != nil {
+		return err
+	}
+	*dyn = DynamicConfig(seeded)
+	return nil
 }
 
 type rawConfig struct {
@@ -144,14 +195,12 @@ func Default() Config {
 		RateLimitCooldownMinutes: DefaultRateLimitCooldownMinutes,
 		QuotaSampleCapacity:      DefaultQuotaSampleCapacity,
 		StateCachePath:           DefaultStateCachePath,
-		PriorityRules: PriorityRules{
-			Enabled:             true,
-			BoostStartPriority:  999,
-			NormalStartPriority: 100,
-		},
+		PriorityRules:            defaultPriorityRules(),
 		Schedule: ScheduleConfig{
 			Paused:        false,
 			WindowEnabled: false,
+			WindowStart:   "00:00",
+			WindowEnd:     "23:59",
 		},
 	}
 }
@@ -168,7 +217,6 @@ func (cfg Config) Dynamic() DynamicConfig {
 		RateLimitCooldownMinutes: cfg.RateLimitCooldownMinutes,
 		QuotaSampleCapacity:      cfg.QuotaSampleCapacity,
 		PriorityRules: PriorityRulesConfig{
-			Enabled:             cfg.PriorityRules.Enabled,
 			BoostStartPriority:  cfg.PriorityRules.BoostStartPriority,
 			NormalStartPriority: cfg.PriorityRules.NormalStartPriority,
 		},
@@ -191,14 +239,23 @@ func (dyn DynamicConfig) Validate() error {
 	if dyn.MaxConcurrency < MinMaxConcurrency || dyn.MaxConcurrency > MaxMaxConcurrency {
 		return fmt.Errorf("max_concurrency must be between %d and %d, got %d", MinMaxConcurrency, MaxMaxConcurrency, dyn.MaxConcurrency)
 	}
-	if dyn.MinChange < 0 || dyn.MinChange > 1000 {
-		return fmt.Errorf("min_change must be between 0 and 1000, got %d", dyn.MinChange)
+	if dyn.MinChange < 0 || dyn.MinChange > MaxMinChange {
+		return fmt.Errorf("min_change must be between 0 and %d, got %d", MaxMinChange, dyn.MinChange)
+	}
+	if math.IsNaN(dyn.UrgencyTolerance) || math.IsInf(dyn.UrgencyTolerance, 0) || dyn.UrgencyTolerance < 0 || dyn.UrgencyTolerance > MaxUrgencyTolerance {
+		return fmt.Errorf("urgency_tolerance must be between 0 and %.1f, got %v", MaxUrgencyTolerance, dyn.UrgencyTolerance)
+	}
+	if dyn.RateLimitCooldownMinutes < MinRateLimitCooldownMinutes || dyn.RateLimitCooldownMinutes > MaxRateLimitCooldownMinutes {
+		return fmt.Errorf("rate_limit_cooldown_minutes must be between %d and %d, got %d", MinRateLimitCooldownMinutes, MaxRateLimitCooldownMinutes, dyn.RateLimitCooldownMinutes)
 	}
 	if dyn.PriorityRules.BoostStartPriority < MinPriorityValue || dyn.PriorityRules.BoostStartPriority > MaxPriorityValue {
 		return fmt.Errorf("boost_start_priority must be between %d and %d, got %d", MinPriorityValue, MaxPriorityValue, dyn.PriorityRules.BoostStartPriority)
 	}
 	if dyn.PriorityRules.NormalStartPriority < MinPriorityValue || dyn.PriorityRules.NormalStartPriority > MaxPriorityValue {
 		return fmt.Errorf("normal_start_priority must be between %d and %d, got %d", MinPriorityValue, MaxPriorityValue, dyn.PriorityRules.NormalStartPriority)
+	}
+	if dyn.PriorityRules.NormalStartPriority > dyn.PriorityRules.BoostStartPriority {
+		return fmt.Errorf("normal_start_priority must not exceed boost_start_priority, got %d > %d", dyn.PriorityRules.NormalStartPriority, dyn.PriorityRules.BoostStartPriority)
 	}
 	if dyn.QuotaSampleCapacity < MinQuotaSampleCapacity || dyn.QuotaSampleCapacity > MaxQuotaSampleCapacity {
 		return fmt.Errorf("quota_sample_capacity must be between %d and %d, got %d", MinQuotaSampleCapacity, MaxQuotaSampleCapacity, dyn.QuotaSampleCapacity)
@@ -211,16 +268,6 @@ func (dyn DynamicConfig) Validate() error {
 
 // ApplyTo validates and applies dynamic configuration overrides on top of a base Config.
 func (dyn DynamicConfig) ApplyTo(base Config) (Config, error) {
-	if dyn.UrgencyTolerance <= 0 {
-		dyn.UrgencyTolerance = DefaultUrgencyTolerance
-	}
-	if dyn.RateLimitCooldownMinutes <= 0 {
-		dyn.RateLimitCooldownMinutes = DefaultRateLimitCooldownMinutes
-	}
-	if dyn.QuotaSampleCapacity <= 0 {
-		dyn.QuotaSampleCapacity = DefaultQuotaSampleCapacity
-	}
-
 	if err := dyn.Validate(); err != nil {
 		return base, err
 	}
@@ -237,7 +284,6 @@ func (dyn DynamicConfig) ApplyTo(base Config) (Config, error) {
 	res.UrgencyTolerance = dyn.UrgencyTolerance
 	res.RateLimitCooldownMinutes = dyn.RateLimitCooldownMinutes
 	res.QuotaSampleCapacity = dyn.QuotaSampleCapacity
-	res.PriorityRules.Enabled = dyn.PriorityRules.Enabled
 	res.PriorityRules.BoostStartPriority = dyn.PriorityRules.BoostStartPriority
 	res.PriorityRules.NormalStartPriority = dyn.PriorityRules.NormalStartPriority
 	res.Schedule = dyn.Schedule

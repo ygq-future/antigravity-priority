@@ -13,6 +13,7 @@ import (
 
 // PlanSnapshot is the safe redacted plan snapshot for audit and diagnostics.
 type PlanSnapshot struct {
+	DecidedAt    time.Time        `json:"decided_at"`
 	TotalItems   int              `json:"total_items"`
 	TotalChanges int              `json:"total_changes"`
 	Items        []SnapshotItem   `json:"items"`
@@ -93,6 +94,7 @@ type AuditChange struct {
 
 func newPlanSnapshot(plan priority.Plan) PlanSnapshot {
 	snapshot := PlanSnapshot{
+		DecidedAt:    plan.DecidedAt,
 		TotalItems:   len(plan.Items),
 		TotalChanges: len(plan.Changes),
 		Items:        make([]SnapshotItem, 0, len(plan.Items)),
@@ -233,8 +235,8 @@ type GroupSnapshot struct {
 
 // DualGroupSnapshot wraps snapshots for both model groups, enabling instant client-side switching.
 type DualGroupSnapshot struct {
-	ActiveModelGroup string                  `json:"active_model_group"`
-	ObservedAt       time.Time               `json:"observed_at,omitempty"`
+	ActiveModelGroup string                   `json:"active_model_group"`
+	ObservedAt       time.Time                `json:"observed_at,omitempty"`
 	Groups           map[string]GroupSnapshot `json:"groups"`
 }
 

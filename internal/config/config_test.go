@@ -1,6 +1,8 @@
 package config_test
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -35,9 +37,6 @@ func TestDefault(t *testing.T) {
 	}
 	if cfg.StateCachePath != config.DefaultStateCachePath {
 		t.Errorf("expected StateCachePath=%s, got %s", config.DefaultStateCachePath, cfg.StateCachePath)
-	}
-	if !cfg.PriorityRules.Enabled {
-		t.Errorf("expected PriorityRules.Enabled=true, got %v", cfg.PriorityRules.Enabled)
 	}
 	if cfg.PriorityRules.BoostStartPriority != 999 {
 		t.Errorf("expected BoostStartPriority=999, got %v", cfg.PriorityRules.BoostStartPriority)
@@ -237,7 +236,6 @@ func TestDynamicConfig_ValidateAndApplyTo(t *testing.T) {
 			RateLimitCooldownMinutes: 10,
 			QuotaSampleCapacity:      15,
 			PriorityRules: config.PriorityRulesConfig{
-				Enabled:             true,
 				BoostStartPriority:  990,
 				NormalStartPriority: 250,
 			},
@@ -322,8 +320,8 @@ func TestDynamicConfig_ValidateAndApplyTo(t *testing.T) {
 				wantErr: "max_concurrency must be between",
 			},
 			{
-				name:    "max concurrency out of range (> 64)",
-				mutate:  func(dyn *config.DynamicConfig) { dyn.MaxConcurrency = 65 },
+				name:    "max concurrency out of range (> 32)",
+				mutate:  func(dyn *config.DynamicConfig) { dyn.MaxConcurrency = 33 },
 				wantErr: "max_concurrency must be between",
 			},
 			{
@@ -332,14 +330,57 @@ func TestDynamicConfig_ValidateAndApplyTo(t *testing.T) {
 				wantErr: "min_change must be between",
 			},
 			{
+				name:    "min change out of range (> 100)",
+				mutate:  func(dyn *config.DynamicConfig) { dyn.MinChange = 101 },
+				wantErr: "min_change must be between",
+			},
+			{
+				name:    "urgency tolerance out of range (< 0)",
+				mutate:  func(dyn *config.DynamicConfig) { dyn.UrgencyTolerance = -0.01 },
+				wantErr: "urgency_tolerance must be between",
+			},
+			{
+				name:    "urgency tolerance out of range (> 0.5)",
+				mutate:  func(dyn *config.DynamicConfig) { dyn.UrgencyTolerance = 0.51 },
+				wantErr: "urgency_tolerance must be between",
+			},
+			{
+				name:    "cooldown out of range (< 1)",
+				mutate:  func(dyn *config.DynamicConfig) { dyn.RateLimitCooldownMinutes = 0 },
+				wantErr: "rate_limit_cooldown_minutes must be between",
+			},
+			{
+				name:    "cooldown out of range (> 1440)",
+				mutate:  func(dyn *config.DynamicConfig) { dyn.RateLimitCooldownMinutes = 1441 },
+				wantErr: "rate_limit_cooldown_minutes must be between",
+			},
+			{
 				name:    "boost start priority out of range (0)",
 				mutate:  func(dyn *config.DynamicConfig) { dyn.PriorityRules.BoostStartPriority = 0 },
 				wantErr: "boost_start_priority must be between",
 			},
 			{
+				name:    "boost start priority out of range (> 999)",
+				mutate:  func(dyn *config.DynamicConfig) { dyn.PriorityRules.BoostStartPriority = 1000 },
+				wantErr: "boost_start_priority must be between",
+			},
+			{
+				name:    "normal start priority out of range (0)",
+				mutate:  func(dyn *config.DynamicConfig) { dyn.PriorityRules.NormalStartPriority = 0 },
+				wantErr: "normal_start_priority must be between",
+			},
+			{
 				name:    "normal start priority out of range (> 999)",
 				mutate:  func(dyn *config.DynamicConfig) { dyn.PriorityRules.NormalStartPriority = 1000 },
 				wantErr: "normal_start_priority must be between",
+			},
+			{
+				name: "normal start priority above boost priority",
+				mutate: func(dyn *config.DynamicConfig) {
+					dyn.PriorityRules.BoostStartPriority = 100
+					dyn.PriorityRules.NormalStartPriority = 101
+				},
+				wantErr: "normal_start_priority must not exceed",
 			},
 			{
 				name:    "quota sample capacity out of range (1)",
@@ -372,4 +413,99 @@ func TestDynamicConfig_ValidateAndApplyTo(t *testing.T) {
 			})
 		}
 	})
+
+	t.Run("canonical numeric boundaries are accepted", func(t *testing.T) {
+		validCases := []struct {
+			name   string
+			mutate func(*config.DynamicConfig)
+		}{
+			{"max concurrency minimum", func(d *config.DynamicConfig) { d.MaxConcurrency = 1 }},
+			{"max concurrency maximum", func(d *config.DynamicConfig) { d.MaxConcurrency = 32 }},
+			{"min change minimum", func(d *config.DynamicConfig) { d.MinChange = 0 }},
+			{"min change maximum", func(d *config.DynamicConfig) { d.MinChange = 100 }},
+			{"urgency tolerance minimum", func(d *config.DynamicConfig) { d.UrgencyTolerance = 0 }},
+			{"urgency tolerance maximum", func(d *config.DynamicConfig) { d.UrgencyTolerance = 0.5 }},
+			{"cooldown minimum", func(d *config.DynamicConfig) { d.RateLimitCooldownMinutes = 1 }},
+			{"cooldown maximum", func(d *config.DynamicConfig) { d.RateLimitCooldownMinutes = 1440 }},
+			{"sample capacity minimum", func(d *config.DynamicConfig) { d.QuotaSampleCapacity = 2 }},
+			{"sample capacity maximum", func(d *config.DynamicConfig) { d.QuotaSampleCapacity = 30 }},
+			{"priority minimum", func(d *config.DynamicConfig) {
+				d.PriorityRules.BoostStartPriority = 1
+				d.PriorityRules.NormalStartPriority = 1
+			}},
+			{"priority maximum", func(d *config.DynamicConfig) {
+				d.PriorityRules.BoostStartPriority = 999
+				d.PriorityRules.NormalStartPriority = 999
+			}},
+		}
+		for _, tt := range validCases {
+			t.Run(tt.name, func(t *testing.T) {
+				dyn := base.Dynamic()
+				tt.mutate(&dyn)
+				if _, err := dyn.ApplyTo(base); err != nil {
+					t.Fatalf("canonical boundary rejected: %v", err)
+				}
+			})
+		}
+	})
+}
+
+func TestDynamicConfigZeroToleranceAndLegacyPriorityRuleMigration(t *testing.T) {
+	base := config.Default()
+	dynamic := base.Dynamic()
+	dynamic.UrgencyTolerance = 0
+	merged, err := dynamic.ApplyTo(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if merged.UrgencyTolerance != 0 || merged.Dynamic().UrgencyTolerance != 0 {
+		t.Fatalf("explicit zero tolerance was normalized: %#v", merged)
+	}
+
+	var legacyFalse config.DynamicConfig
+	legacyJSON := []byte(`{"auto_apply":false,"interval":"15m","antigravity_model_group":"gemini","max_concurrency":6,"min_change":1,"urgency_tolerance":0.05,"rate_limit_cooldown_minutes":5,"quota_sample_capacity":6,"priority_rules":{"enabled":false,"boost_start_priority":777,"normal_start_priority":222},"schedule":{"paused":false}}`)
+	if err := json.Unmarshal(legacyJSON, &legacyFalse); err != nil {
+		t.Fatal(err)
+	}
+	defaults := config.Default().PriorityRules
+	if legacyFalse.PriorityRules.BoostStartPriority != defaults.BoostStartPriority || legacyFalse.PriorityRules.NormalStartPriority != defaults.NormalStartPriority {
+		t.Fatalf("legacy enabled=false migration = %#v; want canonical defaults %#v", legacyFalse.PriorityRules, defaults)
+	}
+	encoded, err := json.Marshal(legacyFalse)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(encoded, []byte(`"enabled"`)) {
+		t.Fatalf("migrated config still exposes priority_rules.enabled: %s", encoded)
+	}
+
+	var legacyTrue config.DynamicConfig
+	legacyTrueJSON := bytes.Replace(legacyJSON, []byte(`"enabled":false`), []byte(`"enabled":true`), 1)
+	if err := json.Unmarshal(legacyTrueJSON, &legacyTrue); err != nil {
+		t.Fatal(err)
+	}
+	if legacyTrue.PriorityRules.BoostStartPriority != 777 || legacyTrue.PriorityRules.NormalStartPriority != 222 {
+		t.Fatalf("legacy enabled=true values were not preserved: %#v", legacyTrue.PriorityRules)
+	}
+
+	var missingStarts config.DynamicConfig
+	missingJSON := bytes.Replace(legacyTrueJSON, []byte(`,"boost_start_priority":777,"normal_start_priority":222`), nil, 1)
+	if err := json.Unmarshal(missingJSON, &missingStarts); err != nil {
+		t.Fatal(err)
+	}
+	if missingStarts.PriorityRules.BoostStartPriority != defaults.BoostStartPriority || missingStarts.PriorityRules.NormalStartPriority != defaults.NormalStartPriority {
+		t.Fatalf("missing priority starts did not use canonical defaults: %#v", missingStarts.PriorityRules)
+	}
+
+	var missingRules config.DynamicConfig
+	missingRulesJSON := bytes.Replace(legacyTrueJSON, []byte(`,"priority_rules":{"enabled":true,"boost_start_priority":777,"normal_start_priority":222}`), nil, 1)
+	if err := json.Unmarshal(missingRulesJSON, &missingRules); err != nil {
+		t.Fatal(err)
+	}
+	if missingRules.PriorityRules.BoostStartPriority != defaults.BoostStartPriority || missingRules.PriorityRules.NormalStartPriority != defaults.NormalStartPriority {
+		t.Fatalf("missing priority_rules did not use canonical defaults: %#v", missingRules.PriorityRules)
+	}
+	if err := missingRules.Validate(); err != nil {
+		t.Fatalf("config without legacy priority_rules must remain round-trip valid: %v", err)
+	}
 }
