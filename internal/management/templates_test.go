@@ -188,12 +188,23 @@ func TestStatusHTML_ContainsRequiredUIElements(t *testing.T) {
 		{"Interval select", "cfgIntervalSelect"},
 		{"Save config button", "btnSaveConfig"},
 		{"Reset config button", "btnResetConfig"},
+		{"Diagnostics panel", "panelDiagnostics"},
+		{"Diagnostics KPI grid", "diag-kpi-grid"},
+		{"Diagnostics copy button", "btnCopyDiagnostics"},
+		{"Diagnostics scheduler section", "diagSectionScheduler"},
+		{"Diagnostics cooldown section", "diagSectionCooldown"},
+		{"Diagnostics audit section", "diagSectionAudit"},
 	}
 
 	for _, c := range checks {
 		if !strings.Contains(html, c.contains) {
 			t.Errorf("StatusHTML missing %s (search string: %q)", c.name, c.contains)
 		}
+	}
+
+	// Verify raw JSON pre block is completely removed
+	if strings.Contains(html, "id=\"rawDiagnostics\"") {
+		t.Errorf("StatusHTML should not contain rawDiagnostics pre block")
 	}
 
 	// Verify old inaccurate "宿主已手动禁用" is removed

@@ -747,6 +747,23 @@ func TestRuntime_ProductionRunner_ZeroChange_Apply_Omitted(t *testing.T) {
 	})
 
 	cachePath := filepath.Join(tempDir, "state_zero.json")
+	store, _ := state.Load(context.Background(), cachePath)
+	_ = store.MarkProbeSuccess(context.Background(), state.ProbeSuccess{
+		AuthIndex:            "auth_zero_1",
+		Provider:             core.ProviderAntigravity,
+		ModelGroup:           "gemini",
+		ObservedAt:           time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC),
+		ResetAt:              time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC),
+		Remaining:            80,
+		ShortWindowResetAt:   time.Date(2026, 8, 18, 17, 0, 0, 0, time.UTC),
+		ShortWindowRemaining: ptrInt64(90),
+		LongWindowResetAt:    time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC),
+		LongWindowRemaining:  ptrInt64(80),
+		NextProbeAt:          time.Date(2026, 8, 18, 13, 0, 0, 0, time.UTC),
+		Source:               state.SourceFreshProbe,
+	})
+	_ = store.SaveAtomic(context.Background())
+
 	req := []byte(fmt.Sprintf(`{"config_yaml":"enabled: true\nstate_cache_path: %q\n"}`, cachePath))
 	r.Handle(context.Background(), "plugin.register", req)
 
@@ -1347,5 +1364,21 @@ func TestRuntime_FilterEvent_429Cooldown(t *testing.T) {
 	expectedUntil := clock.now.Add(5 * time.Minute)
 	if !until.Equal(expectedUntil) {
 		t.Errorf("cooldown until = %v; want %v", until, expectedUntil)
+	}
+
+	// 4. Verify cooldown shows up in Diagnostics
+	diag, err := r.Diagnostics(context.Background())
+	if err != nil {
+		t.Fatalf("diagnostics failed: %v", err)
+	}
+	activeCD, ok := diag["active_cooldowns"].([]map[string]any)
+	if !ok || len(activeCD) != 1 {
+		t.Fatalf("expected 1 active cooldown in diagnostics, got %+v", diag["active_cooldowns"])
+	}
+	if activeCD[0]["auth_index"] != "auth_429" {
+		t.Errorf("expected auth_index=auth_429, got %v", activeCD[0]["auth_index"])
+	}
+	if _, hasWarnings := diag["config_warnings"]; hasWarnings {
+		t.Errorf("expected config_warnings to be purged from diagnostics")
 	}
 }

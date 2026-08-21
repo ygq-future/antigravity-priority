@@ -155,7 +155,7 @@ plugins:
     - **双模型组即时切换**：随时切换 Gemini 或 Claude/GPT 视图，非主控组智能标注 `🔮 预测优先级`。
     - **两阶段控制**：提供 `📡 刷新配额 (10s冷却)`、`⚡ 立即写回 (带Diff确认)`、`🔄 重置默认`。
     - **执行历史**：最近 10 次执行记录，支持点击 `🔍 查看明细` 弹窗查看 Apply 实际写回或 Probe 探测快照明细。
-    - **系统诊断**：调度器与 Worker 实时运行状态，配置警告条呈现，Raw JSON 一键 Copy。
+    - **系统诊断**：调度引擎生命周期、时段状态、429 熔断与冷却监控看板、最近写入健康度与脱敏审计流，支持一键复制完整诊断 JSON。
     - **⚙️ 配置中心**：在线修改所有调度与算法参数，0 秒热生效与一键恢复默认。
 
 ### 管理 API（动态接口，需 Management Key 鉴权）
@@ -173,7 +173,7 @@ plugins:
 - `POST /v0/management/plugins/antigravity-priority/schedule/config`
   - 动态切换自动调度暂停/恢复或更新生效时间区间。
 - `GET /v0/management/plugins/antigravity-priority/diagnostics`
-  - 导出全脱敏的调度器运行诊断数据、配置告警、后台 Ticker 状态与近期执行记录。
+  - 导出全脱敏的调度器运行诊断数据、429 活跃熔断记录、后台 Ticker 状态、最近写入体征与近期执行记录。
 - `POST /v0/management/plugins/antigravity-priority/sync`
   - 主动从 CPA 宿主同步最新凭证文件列表并即时重新生成双组快照。
 - `GET /v0/management/plugins/antigravity-priority/samples?auth_index=xxx`

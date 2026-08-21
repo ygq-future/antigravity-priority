@@ -149,7 +149,44 @@ const TemplateScripts = `
                 valErrSampleCapacity: "自适应样本容量超出范围，需在 2 到 30 之间",
                 valErrCooldown: "429 冷却时长超出范围，需在 1 到 1440 分钟之间",
                 valErrPriorityRange: "优先级分值超出范围，需在 1 到 999 之间",
-                valErrPriorityOrder: "常规起始优先级不能大于 Boost 起始优先级"
+                valErrPriorityOrder: "常规起始优先级不能大于 Boost 起始优先级",
+                btnCopyDiagnostics: "复制诊断 JSON",
+                diagKpiScheduler: "⏰ 调度引擎",
+                diagKpiCooldown: "🛡️ 429 熔断监控",
+                diagCooldownSubText: "自动降权 -1 机制就绪",
+                diagKpiLastApply: "📊 最近写入体征",
+                diagSectionScheduler: "调度运行详情与时间窗口",
+                diagSchedIntervalLabel: "基础执行周期",
+                diagSchedWorkerLabel: "后台 Worker 协程",
+                diagSchedLastRunLabel: "上次自动调度",
+                diagSchedNextRunLabel: "下次调度预计时间",
+                diagWindowPolicyLabel: "调度时段策略:",
+                diagSectionCooldown: "429 熔断与冷却凭证监控",
+                diagCooldownEmptyText: "当前无处于 429 冷却中的凭证，所有账号运行正常",
+                diagSectionAudit: "最近写入执行与脱敏审计",
+                diagAuditSummaryLabel: "审计摘要流水",
+                diagWindowContinuous: "全天 24 小时持续调度",
+                diagWindowActive: "处于活跃调度窗口",
+                diagWindowSleeping: "处于静默休眠窗口 (跳过调度)",
+                diagNoLastRun: "暂无执行记录",
+                diagStatusRunning: "运行中",
+                diagStatusPaused: "已暂停",
+                diagStatusSleeping: "休眠中",
+                diagStatusDisabled: "已关闭",
+                diagWorkerActive: "活跃运行",
+                diagWorkerInactive: "未启动",
+                diagHealthy: "正常",
+                diagTripped: "熔断冷却中",
+                diagCoolingDownCount: "个凭证冷却中",
+                diagAllPassed: "全部成功",
+                diagHasFailed: "存在失败",
+                diagNoChanges: "无变更",
+                diagSuccessPill: "成功",
+                diagFailedPill: "失败",
+                diagSkippedPill: "跳过",
+                diagAttemptedPill: "尝试",
+                diagRemainingSec: "恢复倒计时: ",
+                copiedSuccess: "诊断数据已成功复制到剪贴板"
             },
             "en-US": {
                 title: "Antigravity Priority",
@@ -286,7 +323,44 @@ const TemplateScripts = `
                 valErrSampleCapacity: "Sample capacity out of range (2 - 30)",
                 valErrCooldown: "429 cooldown minutes out of range (1 - 1440)",
                 valErrPriorityRange: "Priority out of range (1 - 999)",
-                valErrPriorityOrder: "Normal start priority cannot be greater than Boost start priority"
+                valErrPriorityOrder: "Normal start priority cannot be greater than Boost start priority",
+                btnCopyDiagnostics: "Copy Diagnostics JSON",
+                diagKpiScheduler: "⏰ Scheduler Engine",
+                diagKpiCooldown: "🛡️ 429 Circuit Breakers",
+                diagCooldownSubText: "Auto demotion to -1 ready",
+                diagKpiLastApply: "📊 Last Apply Health",
+                diagSectionScheduler: "Scheduling Details & Time Window",
+                diagSchedIntervalLabel: "Base Interval",
+                diagSchedWorkerLabel: "Background Worker",
+                diagSchedLastRunLabel: "Last Auto Run",
+                diagSchedNextRunLabel: "Next Run Estimated",
+                diagWindowPolicyLabel: "Window Policy:",
+                diagSectionCooldown: "429 Rate Limit Cooldowns",
+                diagCooldownEmptyText: "No credentials in 429 cooldown, all accounts operating normally",
+                diagSectionAudit: "Latest Execution & Desensitized Audit",
+                diagAuditSummaryLabel: "Audit Stream",
+                diagWindowContinuous: "24/7 continuous scheduling",
+                diagWindowActive: "In active schedule window",
+                diagWindowSleeping: "In sleeping window (skipping schedule)",
+                diagNoLastRun: "No execution records yet",
+                diagStatusRunning: "Running",
+                diagStatusPaused: "Paused",
+                diagStatusSleeping: "Sleeping",
+                diagStatusDisabled: "Disabled",
+                diagWorkerActive: "Active",
+                diagWorkerInactive: "Inactive",
+                diagHealthy: "Healthy",
+                diagTripped: "Cooling Down",
+                diagCoolingDownCount: "creds cooling down",
+                diagAllPassed: "All Succeeded",
+                diagHasFailed: "Has Failures",
+                diagNoChanges: "No Changes",
+                diagSuccessPill: "Succeeded",
+                diagFailedPill: "Failed",
+                diagSkippedPill: "Skipped",
+                diagAttemptedPill: "Attempted",
+                diagRemainingSec: "Recover in: ",
+                copiedSuccess: "Diagnostics JSON copied to clipboard"
             }
         };
 
@@ -1365,49 +1439,261 @@ const TemplateScripts = `
             });
         }
 
-        function renderDiagnostics() {
-            var raw = document.getElementById("rawDiagnostics");
-            var sched = document.getElementById("schedulerInfo");
-            if (raw && latestDiagnostics) {
-                raw.textContent = JSON.stringify(latestDiagnostics, null, 2);
+        function copyDiagnosticsJSON() {
+            if (!latestDiagnostics) {
+                showToast(currentLang === "zh-CN" ? "暂无诊断数据可复制" : "No diagnostics data to copy", "info");
+                return;
             }
-            if (sched && latestDiagnostics && latestDiagnostics.scheduler) {
-                var isAutoApplyEnabled = false;
-                if (dynamicConfig && dynamicConfig.auto_apply !== undefined) {
-                    isAutoApplyEnabled = Boolean(dynamicConfig.auto_apply);
-                } else if (latestDiagnostics.management_api && latestDiagnostics.management_api.auto_apply !== undefined) {
-                    isAutoApplyEnabled = Boolean(latestDiagnostics.management_api.auto_apply);
+            var text = JSON.stringify(latestDiagnostics, null, 2);
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).then(function() {
+                    showToast(t("copiedSuccess") || (currentLang === "zh-CN" ? "诊断数据已成功复制到剪贴板" : "Diagnostics JSON copied to clipboard"), "success");
+                }).catch(function() {
+                    fallbackCopyText(text);
+                });
+            } else {
+                fallbackCopyText(text);
+            }
+        }
+
+        function fallbackCopyText(text) {
+            var textarea = document.createElement("textarea");
+            textarea.value = text;
+            textarea.style.position = "fixed";
+            textarea.style.left = "-9999px";
+            textarea.style.top = "0";
+            document.body.appendChild(textarea);
+            textarea.focus();
+            textarea.select();
+            try {
+                var successful = document.execCommand("copy");
+                if (successful) {
+                    showToast(t("copiedSuccess") || (currentLang === "zh-CN" ? "诊断数据已成功复制到剪贴板" : "Diagnostics JSON copied to clipboard"), "success");
+                } else {
+                    showToast("Copy failed", "error");
                 }
+            } catch (_) {
+                showToast("Copy failed", "error");
+            }
+            document.body.removeChild(textarea);
+        }
 
-                var isPaused = scheduleConfig ? Boolean(scheduleConfig.paused) : Boolean(latestDiagnostics.scheduler.paused);
-                var isSleeping = false;
-                if (scheduleConfig && scheduleConfig.window_enabled && scheduleConfig.window_start && scheduleConfig.window_end) {
-                    isSleeping = !isCurrentTimeInScheduleWindow(scheduleConfig.window_start, scheduleConfig.window_end);
-                } else if (latestDiagnostics.scheduler.window_enabled && latestDiagnostics.scheduler.window_start && latestDiagnostics.scheduler.window_end) {
-                    isSleeping = !isCurrentTimeInScheduleWindow(latestDiagnostics.scheduler.window_start, latestDiagnostics.scheduler.window_end);
+        function renderDiagnostics() {
+            if (!latestDiagnostics) return;
+
+            var sched = latestDiagnostics.scheduler || {};
+            var isAutoApplyEnabled = false;
+            if (dynamicConfig && dynamicConfig.auto_apply !== undefined) {
+                isAutoApplyEnabled = Boolean(dynamicConfig.auto_apply);
+            } else if (latestDiagnostics.management_api && latestDiagnostics.management_api.auto_apply !== undefined) {
+                isAutoApplyEnabled = Boolean(latestDiagnostics.management_api.auto_apply);
+            }
+
+            var isPaused = scheduleConfig ? Boolean(scheduleConfig.paused) : Boolean(sched.paused);
+            var isSleeping = false;
+            var windowStart = scheduleConfig && scheduleConfig.window_start ? scheduleConfig.window_start : sched.window_start;
+            var windowEnd = scheduleConfig && scheduleConfig.window_end ? scheduleConfig.window_end : sched.window_end;
+            var windowEnabled = scheduleConfig && scheduleConfig.window_enabled !== undefined ? scheduleConfig.window_enabled : sched.window_enabled;
+
+            if (windowEnabled && windowStart && windowEnd) {
+                isSleeping = !isCurrentTimeInScheduleWindow(windowStart, windowEnd);
+            }
+
+            // --- 1. KPI Card 1: Scheduler Engine ---
+            var schedBadge = document.getElementById("diagSchedBadge");
+            var schedInterval = document.getElementById("diagSchedInterval");
+            var schedCountdown = document.getElementById("diagSchedCountdown");
+            if (schedBadge && schedInterval && schedCountdown) {
+                var nextRunAt = sched.next_run_at;
+                var nextStr = nextRunAt ? formatCountdown(nextRunAt) : (sched.next_wait || "-");
+
+                if (!isAutoApplyEnabled) {
+                    schedBadge.className = "badge badge-subtle";
+                    schedBadge.textContent = t("diagStatusDisabled");
+                    schedCountdown.innerHTML = "<span style=\"color:var(--text-muted); font-weight:600;\">" + t("scheduleDisabled") + "</span>";
+                } else if (isPaused) {
+                    schedBadge.className = "badge badge-warning";
+                    schedBadge.textContent = t("diagStatusPaused");
+                    schedCountdown.innerHTML = "<span style=\"color:var(--accent-yellow-text); font-weight:600;\">" + t("schedulePaused") + "</span>";
+                } else if (isSleeping) {
+                    schedBadge.className = "badge badge-predicted";
+                    schedBadge.textContent = t("diagStatusSleeping");
+                    schedCountdown.innerHTML = "<span style=\"color:var(--accent-purple-text); font-weight:600;\">" + t("scheduleSleeping") + "</span>";
+                } else {
+                    schedBadge.className = "badge badge-success";
+                    schedBadge.textContent = t("diagStatusRunning");
+                    schedCountdown.innerHTML = (currentLang === "zh-CN" ? "下次运行: " : "Next run: ") + "<span class=\"meter-countdown\" data-scheduler-countdown=\"" + (nextRunAt || "") + "\">" + nextStr + "</span>";
                 }
+                schedInterval.textContent = sched.interval || "-";
+            }
 
-                var nextRunAt = latestDiagnostics.scheduler.next_run_at;
-                var nextStr = nextRunAt ? formatCountdown(nextRunAt) : (latestDiagnostics.scheduler.next_wait || "-");
-                var intervalText = (currentLang === "zh-CN" ? "执行周期: " : "Interval: ") + (latestDiagnostics.scheduler.interval || "-");
-                var activeStatusText = !isAutoApplyEnabled ? (currentLang === "zh-CN" ? "已关闭" : "Disabled") : (isPaused ? (currentLang === "zh-CN" ? "已暂停" : "Paused") : (latestDiagnostics.scheduler.worker_active ? (currentLang === "zh-CN" ? "运行中" : "Yes") : (currentLang === "zh-CN" ? "已关闭" : "No")));
-                var activeText = (currentLang === "zh-CN" ? "运行状态: " : "Active: ") + activeStatusText;
-                var nextText = (currentLang === "zh-CN" ? "下次运行: " : "Next Run: ");
+            // --- 2. KPI Card 2: 429 Cooldowns ---
+            var cooldowns = (latestDiagnostics.active_cooldowns || []).slice();
+            if (cooldowns.length === 0 && latestSnapshot && latestSnapshot.groups) {
+                // Fallback scan across snapshot items in case active_cooldowns was not populated
+                var groupKey = (document.getElementById("modelGroupSelect") && document.getElementById("modelGroupSelect").value) || (latestSnapshot.active_model_group || "gemini");
+                var gData = latestSnapshot.groups[groupKey] || {};
+                (gData.items || []).forEach(function(it) {
+                    var r = (it.reason || "").toLowerCase();
+                    if (r.indexOf("429") >= 0 || r.indexOf("cooldown") >= 0) {
+                        cooldowns.push({
+                            auth_index: it.name || it.auth_index,
+                            model_group: groupKey,
+                            reason: it.reason || "429 rate limit cooldown",
+                            cooldown_until: (it.short_window_reset_at || it.reset_at || null)
+                        });
+                    }
+                });
+            }
+            var cdBadge = document.getElementById("diagCooldownBadge");
+            var cdCount = document.getElementById("diagCooldownCount");
+            var cdSub = document.getElementById("diagCooldownSub");
+            if (cdBadge && cdCount && cdSub) {
+                if (cooldowns.length === 0) {
+                    cdBadge.className = "badge badge-success";
+                    cdBadge.textContent = t("diagHealthy");
+                    cdCount.textContent = "0";
+                    cdCount.style.color = "var(--text-primary)";
+                    cdSub.textContent = t("diagCooldownSubText");
+                } else {
+                    cdBadge.className = "badge badge-danger";
+                    cdBadge.textContent = t("diagTripped");
+                    cdCount.textContent = cooldowns.length + " " + t("diagCoolingDownCount");
+                    cdCount.style.color = "var(--accent-red-text)";
+                    cdSub.textContent = (currentLang === "zh-CN" ? "已自动降权至 -1 保护中" : "Demoted to -1 for protection");
+                }
+            }
 
-                var nextDisplay = "<span class=\"meter-countdown\" data-scheduler-countdown=\"" + (nextRunAt || "") + "\">" + nextStr + "</span>";
-                if (!isAutoApplyEnabled) nextDisplay = "<span style=\"color:var(--text-muted); font-weight:600;\">" + t("scheduleDisabled") + "</span>";
-                else if (isPaused) nextDisplay = "<span style=\"color:var(--accent-yellow-text); font-weight:600;\">" + t("schedulePaused") + "</span>";
-                else if (isSleeping) nextDisplay = "<span style=\"color:var(--accent-purple-text); font-weight:600;\">" + t("scheduleSleeping") + "</span>";
+            // --- 3. KPI Card 3: Latest Apply Health ---
+            var lastRes = latestDiagnostics.last_result || {};
+            var history = latestDiagnostics.run_history || [];
+            var latestApply = history.find(function(h) {
+                var k = (h.kind || "").toLowerCase();
+                return k === "apply" || k === "manual_apply" || k === "auto_apply";
+            }) || (history.length > 0 ? history[0] : null);
 
-                sched.innerHTML =
-                    "<div style=\"font-weight:700; color:var(--text-primary); display:flex; align-items:center; gap:6px;\">" +
-                        "<span>⏰</span><span>" + (currentLang === "zh-CN" ? "调度器状态" : "Scheduler Status") + "</span>" +
-                    "</div>" +
-                    "<div style=\"display:flex; align-items:center; gap:8px; color:var(--text-secondary); font-size:12px; flex-wrap:wrap;\">" +
-                        "<span>" + intervalText + "</span> · " +
-                        "<span>" + activeText + "</span> · " +
-                        "<span>" + nextText + nextDisplay + "</span>" +
+            var succ = lastRes.succeeded !== undefined ? lastRes.succeeded : (lastRes.Succeeded !== undefined ? lastRes.Succeeded : (latestApply ? (latestApply.succeeded || 0) : 0));
+            var fail = lastRes.failed !== undefined ? lastRes.failed : (lastRes.Failed !== undefined ? lastRes.Failed : (latestApply ? (latestApply.failed || 0) : 0));
+            var skip = lastRes.skipped !== undefined ? lastRes.skipped : (lastRes.Skipped !== undefined ? lastRes.Skipped : (latestApply ? (latestApply.skipped || 0) : 0));
+            var attempted = lastRes.attempted !== undefined ? lastRes.attempted : (lastRes.Attempted !== undefined ? lastRes.Attempted : (latestApply ? (latestApply.attempted || 0) : 0));
+            var lastRunTime = (latestApply && latestApply.at) || null;
+
+            var applyBadge = document.getElementById("diagApplyBadge");
+            var applyStats = document.getElementById("diagApplyStats");
+            var applyTime = document.getElementById("diagApplyTime");
+            if (applyBadge && applyStats && applyTime) {
+                if (!lastRunTime && (attempted === 0 && succ === 0 && fail === 0 && skip === 0)) {
+                    applyBadge.className = "badge badge-subtle";
+                    applyBadge.textContent = t("diagNoLastRun");
+                    applyStats.textContent = "-";
+                    applyTime.textContent = t("diagNoLastRun");
+                } else if (fail > 0) {
+                    applyBadge.className = "badge badge-danger";
+                    applyBadge.textContent = t("diagHasFailed");
+                    applyStats.textContent = succ + " " + t("diagSuccessPill") + " · " + fail + " " + t("diagFailedPill");
+                    applyTime.textContent = lastRunTime ? new Date(lastRunTime).toLocaleString(currentLang === "zh-CN" ? "zh-CN" : "en-US") : "-";
+                } else if (succ > 0) {
+                    applyBadge.className = "badge badge-success";
+                    applyBadge.textContent = t("diagAllPassed");
+                    applyStats.textContent = succ + " " + t("diagSuccessPill") + " · " + skip + " " + t("diagSkippedPill");
+                    applyTime.textContent = lastRunTime ? new Date(lastRunTime).toLocaleString(currentLang === "zh-CN" ? "zh-CN" : "en-US") : "-";
+                } else {
+                    applyBadge.className = "badge badge-subtle";
+                    applyBadge.textContent = t("diagNoChanges");
+                    applyStats.textContent = skip + " " + t("diagSkippedPill");
+                    applyTime.textContent = lastRunTime ? new Date(lastRunTime).toLocaleString(currentLang === "zh-CN" ? "zh-CN" : "en-US") : "-";
+                }
+            }
+
+            // --- 4. Section 1: Scheduling Details & Window Panel ---
+            var detInterval = document.getElementById("diagSchedDetailInterval");
+            var detWorker = document.getElementById("diagSchedDetailWorker");
+            var detLastRun = document.getElementById("diagSchedDetailLastRun");
+            var detNextRun = document.getElementById("diagSchedDetailNextRun");
+            var detWinText = document.getElementById("diagSchedDetailWindowText");
+            var detWinBadge = document.getElementById("diagSchedDetailWindowBadge");
+
+            if (detInterval) detInterval.textContent = sched.interval || "-";
+            if (detWorker) {
+                var workerActive = Boolean(sched.worker_active);
+                detWorker.innerHTML = workerActive
+                    ? "<span class=\"badge badge-success\" style=\"font-size:11px;\">" + t("diagWorkerActive") + "</span>"
+                    : "<span class=\"badge badge-subtle\" style=\"font-size:11px;\">" + t("diagWorkerInactive") + "</span>";
+            }
+            if (detLastRun) {
+                detLastRun.textContent = sched.last_auto_apply_at ? new Date(sched.last_auto_apply_at).toLocaleString(currentLang === "zh-CN" ? "zh-CN" : "en-US") : t("diagNoLastRun");
+            }
+            if (detNextRun) {
+                detNextRun.textContent = sched.next_run_at ? new Date(sched.next_run_at).toLocaleString(currentLang === "zh-CN" ? "zh-CN" : "en-US") : "-";
+            }
+            if (detWinText && detWinBadge) {
+                if (!windowEnabled || !windowStart || !windowEnd) {
+                    detWinText.textContent = t("diagWindowContinuous");
+                    detWinBadge.className = "badge badge-success";
+                    detWinBadge.textContent = "24/7";
+                } else {
+                    detWinText.textContent = windowStart + " - " + windowEnd;
+                    if (isSleeping) {
+                        detWinBadge.className = "badge badge-predicted";
+                        detWinBadge.textContent = t("diagWindowSleeping");
+                    } else {
+                        detWinBadge.className = "badge badge-success";
+                        detWinBadge.textContent = t("diagWindowActive");
+                    }
+                }
+            }
+
+            // --- 5. Section 2: 429 Cooldown Content ---
+            var cdContent = document.getElementById("diagCooldownContent");
+            if (cdContent) {
+                if (cooldowns.length === 0) {
+                    cdContent.innerHTML = "<div class=\"diag-cooldown-empty\">" +
+                        "<span>✅</span>" +
+                        "<span>" + t("diagCooldownEmptyText") + "</span>" +
                     "</div>";
+                } else {
+                    var html = "<div class=\"diag-cooldown-list\">";
+                    cooldowns.forEach(function(c) {
+                        var cdUntil = c.cooldown_until;
+                        var cdCountdownStr = cdUntil ? formatCountdown(cdUntil) : "-";
+                        var groupTag = c.model_group ? "<span class=\"badge badge-subtle\" style=\"font-size:10px;\">" + escapeHTML(c.model_group) + "</span>" : "";
+                        html += "<div class=\"diag-cooldown-item\">" +
+                            "<div style=\"display:flex; flex-direction:column; gap:4px; min-width:0;\">" +
+                                "<div style=\"display:flex; align-items:center; gap:6px;\">" +
+                                    "<strong style=\"font-size:13px; color:var(--text-primary);\">" + escapeHTML(c.auth_index || "Credential") + "</strong>" +
+                                    groupTag +
+                                    "<span class=\"badge badge-danger\" style=\"font-size:10px;\">429 Cooldown</span>" +
+                                "</div>" +
+                                "<div style=\"font-size:11.5px; color:var(--text-muted); font-family:monospace;\">" + escapeHTML(c.reason || "429 rate limit") + "</div>" +
+                            "</div>" +
+                            "<div style=\"text-align:right; font-size:12px;\">" +
+                                "<div style=\"color:var(--text-muted); font-size:11px;\">" + t("diagRemainingSec") + "</div>" +
+                                "<strong class=\"meter-countdown\" data-cooldown-countdown=\"" + (cdUntil || "") + "\" style=\"font-family:monospace; color:var(--accent-yellow-text); font-size:13px;\">" + cdCountdownStr + "</strong>" +
+                            "</div>" +
+                        "</div>";
+                    });
+                    html += "</div>";
+                    cdContent.innerHTML = html;
+                }
+            }
+
+            // --- 6. Section 3: Latest Audit & Metrics ---
+            var auditText = document.getElementById("diagAuditText");
+            var auditPills = document.getElementById("diagAuditPills");
+            if (auditText) {
+                auditText.textContent = latestDiagnostics.latest_audit || (currentLang === "zh-CN" ? "暂无审计记录" : "No audit stream recorded");
+            }
+            if (auditPills) {
+                var succCount = succ;
+                var failCount = fail;
+                var skipCount = skip;
+                var attCount = attempted;
+
+                auditPills.innerHTML =
+                    "<span class=\"badge badge-success\">" + succCount + " " + t("diagSuccessPill") + "</span>" +
+                    "<span class=\"badge badge-danger\">" + failCount + " " + t("diagFailedPill") + "</span>" +
+                    "<span class=\"badge badge-subtle\">" + skipCount + " " + t("diagSkippedPill") + "</span>" +
+                    "<span class=\"badge badge-subtle\" style=\"font-weight:700;\">" + attCount + " " + t("diagAttemptedPill") + "</span>";
             }
         }
 
@@ -1416,6 +1702,13 @@ const TemplateScripts = `
                 var resetTime = el.getAttribute("data-reset-time");
                 if (resetTime) {
                     el.textContent = formatCountdown(resetTime);
+                }
+            });
+
+            document.querySelectorAll(".meter-countdown[data-cooldown-countdown]").forEach(function(el) {
+                var cdTime = el.getAttribute("data-cooldown-countdown");
+                if (cdTime) {
+                    el.textContent = formatCountdown(cdTime);
                 }
             });
 
@@ -1534,25 +1827,6 @@ const TemplateScripts = `
                     if (label) label.textContent = origText;
                 }
             }, 1000);
-        }
-
-        async function copyDiagnosticsJSON() {
-            var raw = document.getElementById("rawDiagnostics");
-            if (!raw || !raw.textContent) return;
-            try {
-                await navigator.clipboard.writeText(raw.textContent);
-                showToast(t("copied"), "success");
-            } catch (e) {
-                var textarea = document.createElement("textarea");
-                textarea.value = raw.textContent;
-                textarea.style.position = "fixed";
-                textarea.style.left = "-9999px";
-                document.body.appendChild(textarea);
-                textarea.select();
-                document.execCommand("copy");
-                document.body.removeChild(textarea);
-                showToast(t("copied"), "success");
-            }
         }
 
         async function fetchScheduleConfig() {

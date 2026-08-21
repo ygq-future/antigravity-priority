@@ -28,7 +28,6 @@ type Runtime struct {
 	rootCtx            context.Context
 	cancel             context.CancelFunc
 	cfg                config.Config
-	configWarnings     []string
 	hostCallbacks      host.HostCallbacks
 	clock              Clock
 	sleeper            Sleeper
@@ -142,13 +141,10 @@ func (r *Runtime) Handle(ctx context.Context, method string, request []byte) []b
 
 // Register initializes the plugin with configuration received from CPA and starts scheduled workers.
 func (r *Runtime) Register(ctx context.Context, req RegisterRequest) (RegisterResult, error) {
-	cfg, warnings, err := config.LoadBytes([]byte(req.ConfigYAML))
+	cfg, _, err := config.LoadBytes([]byte(req.ConfigYAML))
 	if err != nil {
 		return RegisterResult{}, fmt.Errorf("load register config: %w", err)
 	}
-	r.mu.Lock()
-	r.configWarnings = warnings
-	r.mu.Unlock()
 	cfg = r.mergePersistedDynamicConfig(cfg)
 	if err := r.replaceConfig(ctx, cfg); err != nil {
 		return RegisterResult{}, err
@@ -158,13 +154,10 @@ func (r *Runtime) Register(ctx context.Context, req RegisterRequest) (RegisterRe
 
 // Reconfigure updates runtime configuration dynamically and adjusts scheduled workers.
 func (r *Runtime) Reconfigure(ctx context.Context, req ReconfigureRequest) (RegisterResult, error) {
-	cfg, warnings, err := config.LoadBytes([]byte(req.ConfigYAML))
+	cfg, _, err := config.LoadBytes([]byte(req.ConfigYAML))
 	if err != nil {
 		return RegisterResult{}, fmt.Errorf("load reconfigure config: %w", err)
 	}
-	r.mu.Lock()
-	r.configWarnings = warnings
-	r.mu.Unlock()
 	cfg = r.mergePersistedDynamicConfig(cfg)
 	if err := r.replaceConfig(ctx, cfg); err != nil {
 		return RegisterResult{}, err
@@ -507,11 +500,31 @@ func (r *Runtime) Diagnostics(ctx context.Context) (map[string]any, error) {
 	r.mu.Lock()
 	lastAuto := r.lastAutoApplyAt
 	workerActive := r.worker != nil
-	warnings := append([]string(nil), r.configWarnings...)
 	sched := r.scheduleConfig
 	r.mu.Unlock()
 	nextWait := r.nextAutoApplyWait(cfg.Interval)
 	nextRunAt := r.clock.Now().UTC().Add(nextWait)
+
+	activeCooldowns := make([]map[string]any, 0)
+	cachePath := cfg.StateCachePath
+	if strings.TrimSpace(cachePath) == "" {
+		cachePath = config.DefaultStateCachePath
+	}
+	if store, err := state.Load(ctx, cachePath); err == nil {
+		now := r.clock.Now().UTC()
+		for _, c := range store.GetCooldowns() {
+			if now.Before(c.CooldownUntil) {
+				activeCooldowns = append(activeCooldowns, map[string]any{
+					"auth_index":     c.AuthIndex,
+					"model_group":    c.ModelGroup,
+					"triggered_at":   c.TriggeredAt.Format(time.RFC3339),
+					"cooldown_until": c.CooldownUntil.Format(time.RFC3339),
+					"reason":         c.Reason,
+				})
+			}
+		}
+	}
+
 	return map[string]any{
 		"management_api": map[string]any{
 			"status":     "ready",
@@ -529,7 +542,7 @@ func (r *Runtime) Diagnostics(ctx context.Context) (map[string]any, error) {
 			"window_start":       sched.WindowStart,
 			"window_end":         sched.WindowEnd,
 		},
-		"config_warnings": warnings,
+		"active_cooldowns": activeCooldowns,
 		"latest_audit":    audit,
 		"last_result":     result,
 		"run_history":     r.currentRunHistory(),

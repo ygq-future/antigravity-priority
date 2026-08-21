@@ -155,7 +155,7 @@ The plugin registers **resources** (static management dashboard) and **routes** 
     - **Instant Model Group Switching**: Toggle between Gemini and Claude/GPT views with smart `🔮 Predicted Priority` badges.
     - **Two-Stage Control**: `📡 Fetch Quota (10s cooldown)`, `⚡ Apply Now (with Diff confirmation)`, `🔄 Reset to Default`.
     - **Execution History**: Last 10 runs with `🔍 View Details` modal to inspect Apply write-back or Probe snapshots.
-    - **System Diagnostics**: Worker status, config warning alerts, and one-click JSON Copy.
+    - **System Diagnostics**: Scheduler engine lifecycle, active window states, 429 rate limit circuit breaking monitor, and last apply health metrics with one-click JSON Copy.
     - **⚙️ Config Center**: Online management of all scheduling and algorithm parameters with instant hot reload.
 
 ### Management API (Dynamic, Key Required)
@@ -173,7 +173,7 @@ The plugin registers **resources** (static management dashboard) and **routes** 
 - `POST /v0/management/plugins/antigravity-priority/schedule/config`
   - Updates active schedule time window or toggles pause/resume.
 - `GET /v0/management/plugins/antigravity-priority/diagnostics`
-  - Exports redacted scheduler diagnostic metrics, config warnings, background worker state, and run history.
+  - Exports redacted scheduler diagnostic metrics, active 429 cooldowns, background worker state, and run history.
 - `POST /v0/management/plugins/antigravity-priority/sync`
   - Actively re-syncs latest credential files from CPA host and regenerates dual-group snapshots immediately.
 - `GET /v0/management/plugins/antigravity-priority/samples?auth_index=xxx`

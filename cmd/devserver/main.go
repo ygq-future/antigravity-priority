@@ -609,8 +609,23 @@ func (d *devRunner) Diagnostics(ctx context.Context) (map[string]any, error) {
 			"window_start":       d.scheduleConfig.WindowStart,
 			"window_end":         d.scheduleConfig.WindowEnd,
 		},
+		"active_cooldowns": []map[string]any{
+			{
+				"auth_index":     "rate-limited-cooldown@api.com",
+				"model_group":    "gemini",
+				"triggered_at":   time.Now().UTC().Add(-2 * time.Minute).Format(time.RFC3339),
+				"cooldown_until": time.Now().UTC().Add(3*time.Minute + 25*time.Second).Format(time.RFC3339),
+				"reason":         "429 rate limit cooldown",
+			},
+		},
 		"latest_audit": d.latestAudit,
-		"run_history":  d.runHistory,
+		"last_result": apply.Result{
+			Attempted: 6,
+			Succeeded: 6,
+			Failed:    0,
+			Skipped:   1,
+		},
+		"run_history": d.runHistory,
 	}, nil
 }
 
