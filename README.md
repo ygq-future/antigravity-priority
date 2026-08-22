@@ -163,9 +163,9 @@ plugins:
   - 触发一次向 Google API 的全量配额探测并更新本地缓存与快照，**不执行写回**。
 - `POST /v0/management/plugins/antigravity-priority/run?mode=apply`
   - 触发全量探测计算，通过统一 Host Transition 将最新目标**一次性写回并校验 CPA 宿主**，返回脱敏执行结果。
-- `GET /v0/management/plugins/antigravity-priority/config`
+- `GET /v0/management/plugins/antigravity-priority/runtime-config`
   - 获取当前完整运行时配置。
-- `POST /v0/management/plugins/antigravity-priority/config`
+- `POST /v0/management/plugins/antigravity-priority/runtime-config`
   - 提交更新运行时配置并热生效。
 - `GET /v0/management/plugins/antigravity-priority/schedule/config`
   - 获取自动调度时间区间与暂停状态。

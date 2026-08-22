@@ -703,7 +703,7 @@ func main() {
 	}
 
 	fmt.Println("=========================================================")
-	fmt.Println(" Antigravity Priority - Embedded WebUI Dev Server (v1.1.0)")
+	fmt.Println(" Antigravity Priority - Embedded WebUI Dev Server (v1.2.3)")
 	fmt.Println("=========================================================")
 	fmt.Println(" Server listening on: http://localhost:8080/status")
 	fmt.Println(" Open the link above in your browser to interact with the UI!")

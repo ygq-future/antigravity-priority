@@ -77,7 +77,7 @@ const (
 	PathDiagnostics    = "/diagnostics"
 	PathSnapshotLatest = "/snapshot/latest"
 	PathScheduleConfig = "/schedule/config"
-	PathConfig         = "/config"
+	PathRuntimeConfig  = "/runtime-config"
 	PathSamples        = "/samples"
 
 	// URL Prefixes
@@ -117,9 +117,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleGetScheduleConfig(w, r)
 	case (path == PathScheduleConfig || path == PrefixManagementPlugin+PathScheduleConfig) && method == http.MethodPost:
 		h.handleSetScheduleConfig(w, r)
-	case (path == PathConfig || path == PrefixManagementPlugin+PathConfig) && method == http.MethodGet:
+	case (path == PathRuntimeConfig || path == PrefixManagementPlugin+PathRuntimeConfig) && method == http.MethodGet:
 		h.handleGetConfig(w, r)
-	case (path == PathConfig || path == PrefixManagementPlugin+PathConfig) && method == http.MethodPost:
+	case (path == PathRuntimeConfig || path == PrefixManagementPlugin+PathRuntimeConfig) && method == http.MethodPost:
 		h.handleSetConfig(w, r)
 	case (path == PathSamples || path == PrefixManagementPlugin+PathSamples) && method == http.MethodGet:
 		h.handleGetSamples(w, r)

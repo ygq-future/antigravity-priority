@@ -17,6 +17,7 @@ import (
 	"antigravity-priority/internal/config"
 	"antigravity-priority/internal/core"
 	"antigravity-priority/internal/host"
+	"antigravity-priority/internal/management"
 	"antigravity-priority/internal/runtime"
 	"antigravity-priority/internal/state"
 )
@@ -353,6 +354,19 @@ func TestRuntime_Handle_ManagementRegister(t *testing.T) {
 	}
 	if len(envelope.Result.Resources) < 1 {
 		t.Errorf("expected at least 1 resource, got %d", len(envelope.Result.Resources))
+	}
+
+	hasRuntimeConfig := false
+	for _, route := range envelope.Result.Routes {
+		if route.Path == management.PrefixLegacyPlugin+management.PathRuntimeConfig {
+			hasRuntimeConfig = true
+		}
+		if route.Path == management.PrefixLegacyPlugin+"/config" {
+			t.Errorf("runtime config must not register CPA native plugin config path: %s", route.Path)
+		}
+	}
+	if !hasRuntimeConfig {
+		t.Errorf("expected runtime config route %q", management.PrefixLegacyPlugin+management.PathRuntimeConfig)
 	}
 }
 

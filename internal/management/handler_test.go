@@ -524,7 +524,7 @@ func TestHandler_GetDynamicConfig(t *testing.T) {
 		},
 	}
 	handler := management.NewHandler(runner)
-	req := httptest.NewRequest(http.MethodGet, "/config", nil)
+	req := httptest.NewRequest(http.MethodGet, "/runtime-config", nil)
 	rec := httptest.NewRecorder()
 
 	handler.ServeHTTP(rec, req)
@@ -559,7 +559,7 @@ func TestHandler_GetDynamicConfig(t *testing.T) {
 		t.Errorf("expected RateLimitCooldownMinutes=5, got %d", cfg.RateLimitCooldownMinutes)
 	}
 	if strings.Contains(rec.Body.String(), `"priority_rules":{"enabled"`) {
-		t.Fatalf("GET /config exposed removed priority_rules.enabled: %s", rec.Body.String())
+		t.Fatalf("GET /runtime-config exposed removed priority_rules.enabled: %s", rec.Body.String())
 	}
 }
 
@@ -568,7 +568,7 @@ func TestHandler_SetDynamicConfig_Success(t *testing.T) {
 	handler := management.NewHandler(runner)
 
 	body := `{"auto_apply":true,"interval":"20m","antigravity_model_group":"gemini","max_concurrency":4,"min_change":3,"urgency_tolerance":0.08,"rate_limit_cooldown_minutes":10,"quota_sample_capacity":6,"priority_rules":{"boost_start_priority":995,"normal_start_priority":120},"schedule":{"paused":false,"window_enabled":true,"window_start":"09:00","window_end":"18:00"}}`
-	req := httptest.NewRequest(http.MethodPost, "/config", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/runtime-config", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 
 	handler.ServeHTTP(rec, req)
@@ -597,7 +597,7 @@ func TestHandler_SetDynamicConfig_Success(t *testing.T) {
 
 func TestHandler_SetDynamicConfig_InvalidJSON(t *testing.T) {
 	handler := management.NewHandler(&mockRunner{})
-	req := httptest.NewRequest(http.MethodPost, "/config", strings.NewReader("{invalid"))
+	req := httptest.NewRequest(http.MethodPost, "/runtime-config", strings.NewReader("{invalid"))
 	rec := httptest.NewRecorder()
 
 	handler.ServeHTTP(rec, req)

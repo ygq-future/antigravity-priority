@@ -9,7 +9,7 @@ const templateScriptPrelude = `
         const SYNC_PATH = BASE_PATH + "/sync";
         const RESET_PATH = BASE_PATH + "/reset";
         const SCHEDULE_CONFIG_PATH = BASE_PATH + "/schedule/config";
-        const CONFIG_PATH = BASE_PATH + "/config";
+        const CONFIG_PATH = BASE_PATH + "/runtime-config";
         const SAMPLES_PATH = BASE_PATH + "/samples";
 
 `

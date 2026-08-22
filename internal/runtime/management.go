@@ -64,8 +64,8 @@ func (r *Runtime) registerManagement() []byte {
 			{Method: http.MethodGet, Path: management.PrefixLegacyPlugin + management.PathSnapshotLatest},
 			{Method: http.MethodGet, Path: management.PrefixLegacyPlugin + management.PathScheduleConfig},
 			{Method: http.MethodPost, Path: management.PrefixLegacyPlugin + management.PathScheduleConfig},
-			{Method: http.MethodGet, Path: management.PrefixLegacyPlugin + management.PathConfig},
-			{Method: http.MethodPost, Path: management.PrefixLegacyPlugin + management.PathConfig},
+			{Method: http.MethodGet, Path: management.PrefixLegacyPlugin + management.PathRuntimeConfig},
+			{Method: http.MethodPost, Path: management.PrefixLegacyPlugin + management.PathRuntimeConfig},
 			{Method: http.MethodGet, Path: management.PrefixLegacyPlugin + management.PathSamples},
 		},
 		Resources: []managementResource{
