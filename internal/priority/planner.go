@@ -4,28 +4,14 @@ import (
 	"slices"
 	"time"
 
+	"antigravity-priority/internal/config"
 	"antigravity-priority/internal/core"
 )
 
-// EvidenceStatus indicates whether probe evidence is valid and ready for planning.
-type EvidenceStatus string
-
 const (
-	// EvidenceStatusUnknown indicates no probe determination is available.
-	EvidenceStatusUnknown EvidenceStatus = "unknown"
-	// EvidenceStatusReady indicates evidence is valid and ready for planning.
-	EvidenceStatusReady EvidenceStatus = "ready"
-	// EvidenceStatusProbeFailed indicates probing failed.
-	EvidenceStatusProbeFailed EvidenceStatus = "probe_failed"
-	// EvidenceStatusUnsupported indicates unsupported provider or configuration.
-	EvidenceStatusUnsupported EvidenceStatus = "unsupported"
-	// EvidenceStatusUnavailable indicates the credential is currently unavailable.
-	EvidenceStatusUnavailable EvidenceStatus = "unavailable"
-
 	// Decision Reasons
 	ReasonKeepCurrentState         = "keep current state"
 	ReasonDisabledOnHost           = "disabled on host"
-	ReasonFailedQuotaFetch         = "failedQuotaFetch"
 	ReasonFreshWeeklyDepleted      = "fresh weekly depleted"
 	ReasonFreshShortWindowDepleted = "fresh short window depleted"
 	ReasonFreshBoosted             = "fresh boosted"
@@ -33,10 +19,14 @@ const (
 	Reason429Cooldown              = "429 rate limit cooldown"
 )
 
-// ProbeEvidence represents the per-credential quota evidence produced during a scheduling round.
-type ProbeEvidence struct {
+// QuotaEvidence represents a validated quota observation. It intentionally
+// contains no freshness or probe-status flags: only the Evidence authority
+// decides whether an instance belongs to the Fresh or Historical set supplied
+// to the planner.
+type QuotaEvidence struct {
 	AuthIndex            string
 	Provider             core.Provider
+	ModelGroup           config.AntigravityModelGroup
 	ObservedAt           time.Time
 	ResetAt              *time.Time
 	Remaining            *int64
@@ -44,12 +34,29 @@ type ProbeEvidence struct {
 	ShortWindowRemaining *int64
 	LongWindowResetAt    *time.Time
 	LongWindowRemaining  *int64
-	Freshness            core.Freshness
-	ProbeStatus          core.ProbeStatus
-	Status               EvidenceStatus
 	PlanType             core.PlanType
-	EvidenceFresh        bool
 	CycleBurnRate        float64
+}
+
+// EvidenceSource is the narrow contract Planner accepts from the Evidence
+// authority. Raw probe results and persisted observations cannot be supplied
+// directly as fresh planning input.
+type EvidenceSource interface {
+	FreshQuotaEvidence() []QuotaEvidence
+	HistoricalQuotaEvidence() []QuotaEvidence
+}
+
+type plannerEvidence struct {
+	Fresh      []QuotaEvidence
+	Historical []QuotaEvidence
+}
+
+func (evidence plannerEvidence) FreshQuotaEvidence() []QuotaEvidence {
+	return evidence.Fresh
+}
+
+func (evidence plannerEvidence) HistoricalQuotaEvidence() []QuotaEvidence {
+	return evidence.Historical
 }
 
 // Options defines configuration options for the priority planner.
@@ -85,6 +92,7 @@ type PlanItem struct {
 	T5h                  float64
 	CycleBurnRate        float64
 	TRequired            float64
+	hasQuotaEvidence     bool
 }
 
 // Change represents a required host write-back modification.
@@ -104,21 +112,43 @@ type Plan struct {
 	Changes   []Change
 }
 
-// PlanFreshOnly produces an immutable Plan based on fresh probe evidence and current credentials.
-func PlanFreshOnly(credentials []core.Credential, evidence []ProbeEvidence, options Options) Plan {
+// PlanWithEvidence produces a plan from the Evidence authority's two
+// semantically separate sets. Historical observations can shape targets for
+// display or prediction, but their changes are never marked write-qualified.
+func PlanWithEvidence(credentials []core.Credential, source EvidenceSource, options Options) Plan {
 	if options.Now.IsZero() {
 		panic("priority: explicit decision time is required")
 	}
 	normalizedOptions := normalizeOptions(options)
-	evidenceByAuthIndex := freshEvidenceByAuthIndex(evidence)
-	items := initialItems(credentials, evidenceByAuthIndex, normalizedOptions)
-	planFreshPositive(items, normalizedOptions)
-	ensureUniquePriorities(items, normalizedOptions)
+	evidence := plannerEvidence{}
+	if source != nil {
+		evidence = plannerEvidence{
+			Fresh:      source.FreshQuotaEvidence(),
+			Historical: source.HistoricalQuotaEvidence(),
+		}
+	}
+	return planWithEvidence(credentials, evidence, normalizedOptions)
+}
+
+func planWithEvidence(credentials []core.Credential, evidence plannerEvidence, options Options) Plan {
+	items := planItems(credentials, evidence, options)
+	planPositive(items, options)
+	markHistoricalReasons(items)
+	ensureUniquePriorities(items, options)
 	SortPlanItems(items)
 	return Plan{
-		DecidedAt: normalizedOptions.Now.UTC(),
+		DecidedAt: options.Now.UTC(),
 		Items:     items,
-		Changes:   changes(items, normalizedOptions),
+		Changes:   changes(items, options),
+	}
+}
+
+func markHistoricalReasons(items []PlanItem) {
+	for index, item := range items {
+		if item.EvidenceFresh || !item.hasQuotaEvidence || item.Reason == ReasonDisabledOnHost {
+			continue
+		}
+		items[index].Reason = "historical: " + item.Reason
 	}
 }
 
@@ -142,24 +172,9 @@ func normalizeOptions(options Options) Options {
 	return options
 }
 
-func freshEvidenceByAuthIndex(evidence []ProbeEvidence) map[string]ProbeEvidence {
-	result := make(map[string]ProbeEvidence, len(evidence))
-	for _, item := range evidence {
-		if isFreshReadyEvidence(item) || item.Status == EvidenceStatusProbeFailed {
-			result[item.AuthIndex] = item
-		}
-	}
-	return result
-}
-
-func isFreshReadyEvidence(evidence ProbeEvidence) bool {
-	return evidence.EvidenceFresh &&
-		evidence.Freshness == core.FreshnessFresh &&
-		evidence.ProbeStatus == core.ProbeStatusReady &&
-		evidence.Status == EvidenceStatusReady
-}
-
-func initialItems(credentials []core.Credential, evidenceByAuthIndex map[string]ProbeEvidence, options Options) []PlanItem {
+func planItems(credentials []core.Credential, evidence plannerEvidence, options Options) []PlanItem {
+	freshByAuthIndex := quotaEvidenceByAuthIndex(evidence.Fresh)
+	historicalByAuthIndex := quotaEvidenceByAuthIndex(evidence.Historical)
 	items := make([]PlanItem, len(credentials))
 	for index, credential := range credentials {
 		item := PlanItem{
@@ -170,22 +185,15 @@ func initialItems(credentials []core.Credential, evidenceByAuthIndex map[string]
 			Reason:     ReasonKeepCurrentState,
 		}
 
-		evidence, hasFresh := evidenceByAuthIndex[credential.AuthIndex]
+		evidence, hasFresh := freshByAuthIndex[credential.AuthIndex]
+		evidenceFresh := true
+		if !hasFresh {
+			evidence, hasFresh = historicalByAuthIndex[credential.AuthIndex]
+			evidenceFresh = false
+		}
 		if hasFresh {
-			if evidence.Status == EvidenceStatusProbeFailed {
-				item.Disabled = true
-				item.EvidenceFresh = true
-				if credential.Disabled {
-					item.Priority = DepletedPriority
-					item.Reason = ReasonDisabledOnHost
-				} else {
-					item.Reason = ReasonFailedQuotaFetch
-				}
-				items[index] = item
-				continue
-			}
-
-			item.EvidenceFresh = true
+			item.EvidenceFresh = evidenceFresh
+			item.hasQuotaEvidence = true
 			item.PlanType = evidence.PlanType
 			item.ResetAt = evidence.ResetAt
 			item.Remaining = evidence.Remaining
@@ -233,10 +241,6 @@ func initialItems(credentials []core.Credential, evidenceByAuthIndex map[string]
 					item.Reason = ReasonFreshRemainingPositive
 				}
 			}
-		} else if credential.Disabled {
-			item.Disabled = true
-			item.Priority = DepletedPriority
-			item.Reason = ReasonDisabledOnHost
 		}
 
 		items[index] = item
@@ -244,14 +248,24 @@ func initialItems(credentials []core.Credential, evidenceByAuthIndex map[string]
 	return items
 }
 
-func planFreshPositive(items []PlanItem, options Options) {
+func quotaEvidenceByAuthIndex(evidence []QuotaEvidence) map[string]QuotaEvidence {
+	result := make(map[string]QuotaEvidence, len(evidence))
+	for _, item := range evidence {
+		if item.AuthIndex != "" {
+			result[item.AuthIndex] = item
+		}
+	}
+	return result
+}
+
+func planPositive(items []PlanItem, options Options) {
 	tolerance := options.UrgencyTolerance
 
 	boostedIndices := make([]int, 0)
 	regularIndices := make([]int, 0)
 
 	for index, item := range items {
-		if item.Disabled || !item.EvidenceFresh || item.Priority == DepletedPriority {
+		if item.Disabled || !item.hasQuotaEvidence || item.Priority == DepletedPriority {
 			continue
 		}
 		// Check 429 Cooldown
@@ -323,17 +337,10 @@ func planFreshPositive(items []PlanItem, options Options) {
 	}
 }
 
-func ensureUniquePriorities(items []PlanItem, options Options) {
-	for index, item := range items {
-		if item.Disabled || item.Priority < MinPriority {
-			continue
-		}
-		// Cap unprobed peers so they don't linger at 999 boost tier
-		if !item.EvidenceFresh && item.Priority > options.NormalStartPriority {
-			items[index].Priority = options.NormalStartPriority
-			items[index].ForceWrite = true
-		}
-	}
+func ensureUniquePriorities(_ []PlanItem, _ Options) {
+	// The planner does not rewrite an unprobed credential to make room for a
+	// probed peer. Such a rewrite would turn a derived uniqueness adjustment
+	// into a quota-driven Host change without Fresh Evidence.
 }
 
 func nextAvailablePriority(preferred int, used map[int]struct{}) int {
@@ -364,7 +371,7 @@ func changes(items []PlanItem, options Options) []Change {
 				Credential:    item.Credential,
 				Priority:      item.Priority,
 				Disabled:      item.Disabled,
-				EvidenceFresh: item.EvidenceFresh || item.ForceWrite,
+				EvidenceFresh: item.EvidenceFresh,
 				Reason:        item.Reason,
 				IsBoosted:     item.IsBoosted,
 			})
@@ -374,7 +381,7 @@ func changes(items []PlanItem, options Options) []Change {
 }
 
 func shouldChange(item PlanItem, options Options) bool {
-	if !item.EvidenceFresh && !item.ForceWrite {
+	if !item.EvidenceFresh {
 		return false
 	}
 	if item.Credential.Disabled && item.Disabled {

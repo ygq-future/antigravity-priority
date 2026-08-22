@@ -4,11 +4,11 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] A verified successful observation from the current scheduling round is eligible for quota planning.
-- [ ] Current failures, historical failures, historical successes, incomplete observations, and wrong-group observations are never scheduling-eligible.
-- [ ] Historical observations retain their real observation time and remain available separately for display or prediction.
-- [ ] A credential without Fresh Evidence keeps its current priority and disabled state and produces no quota-driven Change.
-- [ ] A mixed input can still produce Changes for credentials with Fresh Evidence while leaving other credentials unchanged.
-- [ ] One table-driven contract suite exercises the Evidence module interface without asserting on private helpers or caller-assembled freshness flags.
+- [x] A verified successful observation from the current scheduling round is eligible for quota planning.
+- [x] Current failures, historical failures, historical successes, incomplete observations, and wrong-group observations are never scheduling-eligible.
+- [x] Historical observations retain their real observation time and remain available separately for display or prediction.
+- [x] A credential without Fresh Evidence keeps its current priority and disabled state and produces no quota-driven Change.
+- [x] A mixed input can still produce Changes for credentials with Fresh Evidence while leaving other credentials unchanged.
+- [x] One table-driven contract suite exercises the Evidence module interface without asserting on private helpers or caller-assembled freshness flags.

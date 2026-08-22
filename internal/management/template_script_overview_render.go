@@ -113,8 +113,11 @@ const templateScriptOverviewRender = `        function renderDashboard() {
                     tagBadge = "<span class=\"badge badge-pending\">" + t("pendingApply") + "</span>";
                 }
 
+                const probeFailed = item.reason && (item.reason.indexOf("probe failed") >= 0 || item.reason.indexOf("probe invalid") >= 0);
                 let statusBadge = "<span class=\"badge badge-success\">" + t("statusActive") + "</span>";
-                if (item.target && item.target.disabled) {
+                if (probeFailed) {
+                    statusBadge = "<span class=\"badge badge-warning\">" + t("statusFailed") + "</span>";
+                } else if (item.target && item.target.disabled) {
                     statusBadge = "<span class=\"badge badge-danger\">" + t("statusWeeklyDepleted") + "</span>";
                 } else if (item.reason && item.reason.indexOf("429") >= 0) {
                     statusBadge = "<span class=\"badge badge-warning\">" + t("statusCooldown") + "</span>";

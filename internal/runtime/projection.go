@@ -8,6 +8,7 @@ import (
 	"antigravity-priority/internal/apply"
 	"antigravity-priority/internal/config"
 	"antigravity-priority/internal/core"
+	"antigravity-priority/internal/evidence"
 	"antigravity-priority/internal/priority"
 )
 
@@ -18,7 +19,7 @@ import (
 type ProjectionInput struct {
 	ControlModelGroup config.AntigravityModelGroup
 	Credentials       []core.Credential
-	EvidenceByGroup   map[config.AntigravityModelGroup][]priority.ProbeEvidence
+	EvidenceByGroup   map[config.AntigravityModelGroup]evidence.Result
 	PlanningOptions   priority.Options
 	ProjectionTime    time.Time
 }
@@ -48,16 +49,20 @@ func ProjectDualModelGroups(input ProjectionInput) (DualModelGroupProjection, er
 	options := clonePlanningOptions(input.PlanningOptions)
 	options.Now = projectionTime
 
-	controlPlan := priority.PlanFreshOnly(
+	controlEvidence := cloneEvidence(input.EvidenceByGroup[controlGroup])
+	controlPlan := priority.PlanWithEvidence(
 		cloneCredentials(input.Credentials),
-		cloneEvidence(input.EvidenceByGroup[controlGroup]),
+		controlEvidence,
 		options,
 	)
-	predictedPlan := priority.PlanFreshOnly(
+	alternateEvidence := cloneEvidence(input.EvidenceByGroup[alternateGroup])
+	predictedPlan := priority.PlanWithEvidence(
 		cloneCredentials(input.Credentials),
-		cloneEvidence(input.EvidenceByGroup[alternateGroup]),
+		alternateEvidence,
 		options,
 	)
+	annotatePlanObservations(&controlPlan, controlEvidence.Observations)
+	annotatePlanObservations(&predictedPlan, alternateEvidence.Observations)
 
 	controlSnapshot := snapshotForProjectionRole(controlPlan, false)
 	predictedSnapshot := snapshotForProjectionRole(predictedPlan, true)
@@ -80,6 +85,30 @@ func ProjectDualModelGroups(input ProjectionInput) (DualModelGroupProjection, er
 			},
 		},
 	}, nil
+}
+
+func annotatePlanObservations(plan *priority.Plan, observations []evidence.Observation) {
+	for _, observation := range observations {
+		if observation.Kind != evidence.ObservationFailed && observation.Kind != evidence.ObservationInvalid {
+			continue
+		}
+		reason := "probe failed"
+		if observation.Kind == evidence.ObservationInvalid {
+			reason = "probe invalid"
+		}
+		if failure := strings.TrimSpace(observation.Failure); failure != "" {
+			reason += ": " + failure
+		}
+		for index := range plan.Items {
+			if plan.Items[index].Credential.AuthIndex != observation.AuthIndex {
+				continue
+			}
+			if strings.HasPrefix(plan.Items[index].Reason, "historical: ") {
+				reason += "; " + plan.Items[index].Reason
+			}
+			plan.Items[index].Reason = reason
+		}
+	}
 }
 
 func canonicalModelGroup(group config.AntigravityModelGroup) (config.AntigravityModelGroup, error) {
@@ -108,6 +137,9 @@ func snapshotForProjectionRoleSnapshot(snapshot apply.PlanSnapshot, predicted bo
 	}
 	for index := range snapshot.Changes {
 		snapshot.Changes[index].Reason = roleReason(snapshot.Changes[index].Reason, predicted)
+		if predicted {
+			snapshot.Changes[index].EvidenceFresh = false
+		}
 	}
 	return snapshot
 }
@@ -148,11 +180,26 @@ func cloneCredentials(credentials []core.Credential) []core.Credential {
 	return cloned
 }
 
-func cloneEvidence(evidence []priority.ProbeEvidence) []priority.ProbeEvidence {
+func cloneEvidence(result evidence.Result) evidence.Result {
+	cloned := evidence.Result{
+		Eligible:     cloneQuotaEvidence(result.Eligible),
+		Observations: make([]evidence.Observation, len(result.Observations)),
+	}
+	for index, observation := range result.Observations {
+		cloned.Observations[index] = observation
+		if observation.Evidence != nil {
+			copy := cloneQuotaEvidence([]priority.QuotaEvidence{*observation.Evidence})[0]
+			cloned.Observations[index].Evidence = &copy
+		}
+	}
+	return cloned
+}
+
+func cloneQuotaEvidence(evidence []priority.QuotaEvidence) []priority.QuotaEvidence {
 	if evidence == nil {
 		return nil
 	}
-	cloned := make([]priority.ProbeEvidence, len(evidence))
+	cloned := make([]priority.QuotaEvidence, len(evidence))
 	for index, item := range evidence {
 		cloned[index] = item
 		cloned[index].ResetAt = cloneTimePointer(item.ResetAt)

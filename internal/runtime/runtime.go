@@ -233,11 +233,12 @@ func (r *Runtime) ResetAllPriorities(ctx context.Context) (map[string]any, error
 	if err != nil {
 		return nil, err
 	}
+	evidenceByGroup := buildProjectionEvidence(store, credentials)
 	now := r.clock.Now().UTC()
 	projection, err := ProjectDualModelGroups(ProjectionInput{
 		ControlModelGroup: cfg.AntigravityModelGroup,
 		Credentials:       credentials,
-		EvidenceByGroup:   buildProjectionEvidence(store, credentials, now, false),
+		EvidenceByGroup:   evidenceByGroup,
 		PlanningOptions:   priorityOptions(cfg, store, now),
 		ProjectionTime:    now,
 	})
@@ -318,12 +319,13 @@ func (r *Runtime) SyncHost(ctx context.Context, modelGroup config.AntigravityMod
 	if err != nil {
 		return apply.DualGroupSnapshot{}, err
 	}
+	evidenceByGroup := buildProjectionEvidence(store, credentials)
 
 	now := r.clock.Now().UTC()
 	projection, err := ProjectDualModelGroups(ProjectionInput{
 		ControlModelGroup: cfg.AntigravityModelGroup,
 		Credentials:       credentials,
-		EvidenceByGroup:   buildProjectionEvidence(store, credentials, now, false),
+		EvidenceByGroup:   evidenceByGroup,
 		PlanningOptions:   priorityOptions(cfg, store, now),
 		ProjectionTime:    now,
 	})

@@ -77,7 +77,7 @@ func TestExtractQuotaMetrics(t *testing.T) {
 	t.Run("full double-window healthy metrics", func(t *testing.T) {
 		r7dVal := int64(80)
 		r5hVal := int64(90)
-		ev := ProbeEvidence{
+		ev := QuotaEvidence{
 			AuthIndex:            "auth-1",
 			Provider:             core.ProviderAntigravity,
 			LongWindowRemaining:  &r7dVal,
@@ -85,10 +85,6 @@ func TestExtractQuotaMetrics(t *testing.T) {
 			ShortWindowRemaining: &r5hVal,
 			ShortWindowResetAt:   &shortReset,
 			CycleBurnRate:        0.15,
-			EvidenceFresh:        true,
-			Freshness:            core.FreshnessFresh,
-			ProbeStatus:          core.ProbeStatusReady,
-			Status:               EvidenceStatusReady,
 		}
 
 		metrics := ExtractQuotaMetrics(ev, now)
@@ -128,7 +124,7 @@ func TestExtractQuotaMetrics(t *testing.T) {
 	t.Run("weekly depleted overrides short window", func(t *testing.T) {
 		r7dVal := int64(0)
 		r5hVal := int64(50)
-		ev := ProbeEvidence{
+		ev := QuotaEvidence{
 			AuthIndex:            "auth-2",
 			LongWindowRemaining:  &r7dVal,
 			LongWindowResetAt:    &longReset,
@@ -152,7 +148,7 @@ func TestExtractQuotaMetrics(t *testing.T) {
 	t.Run("short window soft depleted when weekly positive", func(t *testing.T) {
 		r7dVal := int64(50)
 		r5hVal := int64(0)
-		ev := ProbeEvidence{
+		ev := QuotaEvidence{
 			AuthIndex:            "auth-3",
 			LongWindowRemaining:  &r7dVal,
 			LongWindowResetAt:    &longReset,
@@ -176,7 +172,7 @@ func TestExtractQuotaMetrics(t *testing.T) {
 	t.Run("fallback to single remaining and default cycle burn rate", func(t *testing.T) {
 		remVal := int64(60)
 		resetAt := now.Add(5 * time.Hour)
-		ev := ProbeEvidence{
+		ev := QuotaEvidence{
 			AuthIndex:  "auth-4",
 			Remaining:  &remVal,
 			ResetAt:    &resetAt,
@@ -199,7 +195,7 @@ func TestExtractQuotaMetrics(t *testing.T) {
 	t.Run("past reset times yield zero duration", func(t *testing.T) {
 		remVal := int64(10)
 		pastReset := now.Add(-1 * time.Hour)
-		ev := ProbeEvidence{
+		ev := QuotaEvidence{
 			AuthIndex: "auth-5",
 			Remaining: &remVal,
 			ResetAt:   &pastReset,
@@ -216,13 +212,13 @@ func TestExtractQuotaMetrics(t *testing.T) {
 
 	t.Run("nil and zero remaining extractions", func(t *testing.T) {
 		rZero := int64(0)
-		evNil := ProbeEvidence{}
+		evNil := QuotaEvidence{}
 		mNil := ExtractQuotaMetrics(evNil, now)
 		if mNil.R7d != 0 || mNil.R5h != 0 {
 			t.Errorf("nil remaining should extract 0")
 		}
 
-		evZeroRem := ProbeEvidence{
+		evZeroRem := QuotaEvidence{
 			Remaining: &rZero,
 		}
 		mZero := ExtractQuotaMetrics(evZeroRem, now)
@@ -230,7 +226,7 @@ func TestExtractQuotaMetrics(t *testing.T) {
 			t.Errorf("zero Remaining should be weekly depleted and 0 fraction")
 		}
 
-		evZeroShort := ProbeEvidence{
+		evZeroShort := QuotaEvidence{
 			ShortWindowRemaining: &rZero,
 		}
 		mZeroShort := ExtractQuotaMetrics(evZeroShort, now)

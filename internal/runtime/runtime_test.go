@@ -1113,11 +1113,11 @@ func TestRuntime_ProductionRunner_ProbeFailure(t *testing.T) {
 	if len(activeGroup.Items) != 1 {
 		t.Fatalf("expected 1 item in snapshot, got %d", len(activeGroup.Items))
 	}
-	if !activeGroup.Items[0].Target.Disabled {
-		t.Errorf("expected failing probe to be temporarily disabled")
+	if activeGroup.Items[0].Target.Disabled {
+		t.Errorf("failing probe must preserve the Host disabled state")
 	}
-	if activeGroup.Items[0].Reason != "failedQuotaFetch" {
-		t.Errorf("expected reason 'failedQuotaFetch', got %q", activeGroup.Items[0].Reason)
+	if activeGroup.Items[0].Target.Priority != 100 || !strings.Contains(activeGroup.Items[0].Reason, "probe failed") {
+		t.Errorf("failing probe changed the Host target or lost its diagnostic: %#v", activeGroup.Items[0])
 	}
 }
 

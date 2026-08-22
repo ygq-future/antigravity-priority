@@ -4,13 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 
 	"antigravity-priority/internal/apply"
 	"antigravity-priority/internal/config"
 	"antigravity-priority/internal/core"
+	"antigravity-priority/internal/evidence"
 	"antigravity-priority/internal/host"
 	"antigravity-priority/internal/priority"
 	"antigravity-priority/internal/state"
@@ -96,7 +96,7 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 	projection, err := ProjectDualModelGroups(ProjectionInput{
 		ControlModelGroup: controlGroup,
 		Credentials:       credentials,
-		EvidenceByGroup:   buildProjectionEvidence(store, credentials, now, true),
+		EvidenceByGroup:   evidence.ByGroup,
 		PlanningOptions:   priorityOptions(request.Config, store, now),
 		ProjectionTime:    now,
 	})
@@ -110,13 +110,13 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 	// Probe-only: evidence collected, dual snapshot updated, no apply executed (REQ-04).
 	if request.Trigger == TriggerProbe {
 		result := apply.Result{Snapshot: primarySnapshot}
-		audit := fmt.Sprintf("probe completed: %d credentials probed", len(evidence))
+		audit := fmt.Sprintf("probe completed: %d probe observations", evidence.Probed)
 		snap := primarySnapshot
 		_, projectErr := r.projectRun(ctx, store, result, audit, RunHistoryEntry{
 			Kind:      KindProbe,
 			Trigger:   string(request.Trigger),
-			Attempted: len(evidence),
-			Succeeded: len(evidence),
+			Attempted: evidence.Probed,
+			Succeeded: len(evidence.ByGroup[request.Config.AntigravityModelGroup].Eligible),
 			Message:   audit,
 			Snapshot:  &snap,
 		})
@@ -152,32 +152,35 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 	return projectErr
 }
 
-func (r *Runtime) collectEvidenceForTrigger(ctx context.Context, input collectInput, trigger Trigger) ([]priority.ProbeEvidence, error) {
+func (r *Runtime) collectEvidenceForTrigger(ctx context.Context, input collectInput, trigger Trigger) (collectedEvidence, error) {
 	if trigger != TriggerAutoApply {
 		return collectFreshEvidence(ctx, input)
 	}
-	var evidence []priority.ProbeEvidence
+	var collected collectedEvidence
 	for attempt := 1; attempt <= autoQuotaProbeAttempts; attempt++ {
 		current, err := collectFreshEvidence(ctx, input)
 		if err != nil {
-			return nil, err
+			return collectedEvidence{}, err
 		}
-		evidence = current
-		if !hasProbeFailure(current) || attempt == autoQuotaProbeAttempts {
-			return evidence, nil
+		collected = current
+		if !hasProbeFailure(current, input.modelGroup) || attempt == autoQuotaProbeAttempts {
+			return collected, nil
 		}
 		input.forceProbe = true
 		if err := r.sleeper.Sleep(ctx, autoQuotaProbeDelay); err != nil {
-			return nil, err
+			return collectedEvidence{}, err
 		}
 	}
-	return evidence, nil
+	return collected, nil
 }
 
-func hasProbeFailure(evidence []priority.ProbeEvidence) bool {
-	return slices.ContainsFunc(evidence, func(item priority.ProbeEvidence) bool {
-		return item.Status == priority.EvidenceStatusProbeFailed
-	})
+func hasProbeFailure(collected collectedEvidence, modelGroup config.AntigravityModelGroup) bool {
+	for _, observation := range collected.Observations {
+		if observation.ModelGroup == modelGroup && (observation.Kind == evidence.ObservationFailed || observation.Kind == evidence.ObservationInvalid) {
+			return true
+		}
+	}
+	return false
 }
 
 func credentialsFromAuthFiles(files []host.AuthFile) []core.Credential {
@@ -245,23 +248,19 @@ func priorityOptions(cfg config.Config, store *state.Store, now time.Time) prior
 	}
 }
 
-func buildProjectionEvidence(store *state.Store, credentials []core.Credential, observedAt time.Time, currentRoundOnly bool) map[config.AntigravityModelGroup][]priority.ProbeEvidence {
-	result := make(map[config.AntigravityModelGroup][]priority.ProbeEvidence, 2)
+func buildProjectionEvidence(store *state.Store, credentials []core.Credential) map[config.AntigravityModelGroup]evidence.Result {
+	historical := historicalObservations(store, credentials)
+	result := make(map[config.AntigravityModelGroup]evidence.Result, 2)
 	for _, group := range []config.AntigravityModelGroup{
 		config.AntigravityModelGroupGemini,
 		config.AntigravityModelGroupClaudeGPT,
 	} {
-		entries := store.BuildGroupEvidence(credentials, string(group))
-		if currentRoundOnly {
-			current := make([]priority.ProbeEvidence, 0, len(entries))
-			for _, entry := range entries {
-				if entry.ObservedAt.Equal(observedAt) {
-					current = append(current, entry)
-				}
-			}
-			entries = current
-		}
-		result[group] = entries
+		classified := evidence.Classify(evidence.Input{
+			Round:       evidence.Round{ID: "historical", ModelGroup: group},
+			Credentials: credentials,
+			Historical:  historical,
+		})
+		result[group] = classified
 	}
 	return result
 }

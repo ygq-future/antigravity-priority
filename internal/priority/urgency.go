@@ -60,7 +60,7 @@ func CalculateCompositeScore(r7d float64, t7d float64, r5h float64, t5h float64)
 }
 
 // ExtractQuotaMetrics extracts normalized fractions and computes pacing metrics from probe evidence.
-func ExtractQuotaMetrics(evidence ProbeEvidence, now time.Time) QuotaMetrics {
+func ExtractQuotaMetrics(evidence QuotaEvidence, now time.Time) QuotaMetrics {
 	r7d := extractR7d(evidence)
 	t7d := extractT7d(evidence, now)
 	r5h := extractR5h(evidence, r7d)
@@ -92,7 +92,7 @@ func ExtractQuotaMetrics(evidence ProbeEvidence, now time.Time) QuotaMetrics {
 	}
 }
 
-func extractR7d(evidence ProbeEvidence) float64 {
+func extractR7d(evidence QuotaEvidence) float64 {
 	if evidence.LongWindowRemaining != nil {
 		if *evidence.LongWindowRemaining <= 0 {
 			return 0
@@ -108,7 +108,7 @@ func extractR7d(evidence ProbeEvidence) float64 {
 	return 0
 }
 
-func extractT7d(evidence ProbeEvidence, now time.Time) float64 {
+func extractT7d(evidence QuotaEvidence, now time.Time) float64 {
 	resetAt := evidence.LongWindowResetAt
 	if resetAt == nil {
 		resetAt = evidence.ResetAt
@@ -119,7 +119,7 @@ func extractT7d(evidence ProbeEvidence, now time.Time) float64 {
 	return resetAt.Sub(now).Hours()
 }
 
-func extractR5h(evidence ProbeEvidence, fallbackR7d float64) float64 {
+func extractR5h(evidence QuotaEvidence, fallbackR7d float64) float64 {
 	if evidence.ShortWindowRemaining != nil {
 		if *evidence.ShortWindowRemaining <= 0 {
 			return 0
@@ -135,7 +135,7 @@ func extractR5h(evidence ProbeEvidence, fallbackR7d float64) float64 {
 	return fallbackR7d
 }
 
-func extractT5h(evidence ProbeEvidence, now time.Time) float64 {
+func extractT5h(evidence QuotaEvidence, now time.Time) float64 {
 	resetAt := evidence.ShortWindowResetAt
 	if resetAt == nil {
 		resetAt = evidence.ResetAt
@@ -146,7 +146,7 @@ func extractT5h(evidence ProbeEvidence, now time.Time) float64 {
 	return resetAt.Sub(now).Hours()
 }
 
-func isWeeklyDepletedEvidence(evidence ProbeEvidence, r7d float64) bool {
+func isWeeklyDepletedEvidence(evidence QuotaEvidence, r7d float64) bool {
 	if evidence.LongWindowRemaining != nil && *evidence.LongWindowRemaining <= 0 {
 		return true
 	}
@@ -156,7 +156,7 @@ func isWeeklyDepletedEvidence(evidence ProbeEvidence, r7d float64) bool {
 	return r7d <= 0 && (evidence.LongWindowRemaining != nil || evidence.Remaining != nil)
 }
 
-func isShortDepletedEvidence(evidence ProbeEvidence, r5h float64) bool {
+func isShortDepletedEvidence(evidence QuotaEvidence, r5h float64) bool {
 	if evidence.ShortWindowRemaining != nil && *evidence.ShortWindowRemaining <= 0 {
 		return true
 	}

@@ -91,16 +91,14 @@ func parseGroupFromResponse(response availableModelsResponse, observedAt time.Ti
 	}
 
 	result := ProbeResult{
-		Provider:    core.ProviderAntigravity,
-		ModelGroup:  group,
-		ObservedAt:  observedAt.UTC(),
-		ResetAt:     selected.resetAt,
-		Remaining:   int64Ptr(selected.remaining),
-		Window:      selected.window,
-		Freshness:   core.FreshnessFresh,
-		ProbeStatus: core.ProbeStatusReady,
-		Status:      StatusReady,
-		PlanType:    inferPlanType(windows),
+		Provider:   core.ProviderAntigravity,
+		ModelGroup: group,
+		ObservedAt: observedAt.UTC(),
+		ResetAt:    selected.resetAt,
+		Remaining:  int64Ptr(selected.remaining),
+		Window:     selected.window,
+		Status:     StatusReady,
+		PlanType:   inferPlanType(windows),
 	}
 
 	if fiveHour, ok := firstWindow(windows, WindowFiveHour); ok {
@@ -416,15 +414,13 @@ func toFloat64(raw any) (float64, bool) {
 
 func failedResult(observedAt time.Time, group ModelGroup, message string) ProbeResult {
 	return ProbeResult{
-		Provider:    core.ProviderAntigravity,
-		ModelGroup:  group,
-		ObservedAt:  observedAt.UTC(),
-		Window:      WindowUnknown,
-		Freshness:   core.FreshnessUnknown,
-		ProbeStatus: core.ProbeStatusUnknown,
-		Status:      StatusProbeFailed,
-		PlanType:    core.PlanTypeUnknown,
-		Error:       message,
+		Provider:   core.ProviderAntigravity,
+		ModelGroup: group,
+		ObservedAt: observedAt.UTC(),
+		Window:     WindowUnknown,
+		Status:     StatusProbeFailed,
+		PlanType:   core.PlanTypeUnknown,
+		Error:      message,
 	}
 }
 

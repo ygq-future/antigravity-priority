@@ -46,6 +46,7 @@ type Entry struct {
 	CycleBurnRate        float64       `json:"cycle_burn_rate"`
 	Samples              []QuotaSample `json:"samples,omitempty"`
 	LastError            string        `json:"last_error,omitempty"`
+	LastFailureAt        time.Time     `json:"last_failure_at,omitempty"`
 	NextProbeAt          time.Time     `json:"next_probe_at,omitempty"`
 	AuthInvalid          bool          `json:"auth_invalid,omitempty"`
 	PlanType             core.PlanType `json:"plan_type,omitempty"`
@@ -291,6 +292,7 @@ func (s *Store) MarkProbeSuccess(ctx context.Context, success ProbeSuccess) erro
 		CycleBurnRate:        newRate,
 		Samples:              newSamples,
 		LastError:            "",
+		LastFailureAt:        time.Time{},
 		NextProbeAt:          utcOrZero(success.NextProbeAt),
 		AuthInvalid:          success.AuthInvalid,
 		PlanType:             success.PlanType,
@@ -316,8 +318,8 @@ func (s *Store) MarkProbeFailure(ctx context.Context, failure ProbeFailure) erro
 	entry.Provider = failure.Provider
 	entry.ModelGroup = entryModelGroup(failure.ModelGroup)
 	entry.AuthIndex = authIndexKey(failure.AuthIndex)
-	entry.ObservedAt = failure.ObservedAt.UTC()
 	entry.LastError = sanitizeProbeError(failure.Err)
+	entry.LastFailureAt = failure.ObservedAt.UTC()
 	entry.NextProbeAt = utcOrZero(failure.NextProbeAt)
 
 	s.entries[key] = entry
@@ -544,27 +546,21 @@ func (s *Store) SetDynamicConfig(cfg DynamicConfig) {
 	s.dynamicConfig = &cfg
 }
 
-// GetCachedEvidence constructs a priority.ProbeEvidence from the persisted state entry for authIndex and modelGroup.
-func (s *Store) GetCachedEvidence(authIndex, modelGroup string) (priority.ProbeEvidence, bool) {
+// GetHistoricalEvidence constructs a historical quota observation from the
+// persisted state entry. Loading a successful cache entry never grants Fresh
+// Evidence; the Evidence authority decides that only from current probe
+// outcomes.
+func (s *Store) GetHistoricalEvidence(authIndex, modelGroup string) (priority.QuotaEvidence, bool) {
 	s.mu.RLock()
 	entry, ok := s.entries[entryKey(authIndex, modelGroup)]
 	s.mu.RUnlock()
 
 	if !ok || entry.SchemaVersion != SchemaVersion {
-		return priority.ProbeEvidence{}, false
+		return priority.QuotaEvidence{}, false
 	}
 
-	// A cached entry with LastError set is a recorded probe failure — return it
-	// as EvidenceStatusProbeFailed so planner can handle it.
-	if entry.LastError != "" {
-		return priority.ProbeEvidence{
-			Provider:    core.ProviderAntigravity,
-			AuthIndex:   entry.AuthIndex,
-			ObservedAt:  entry.ObservedAt,
-			Freshness:   core.FreshnessUnknown,
-			ProbeStatus: core.ProbeStatusUnknown,
-			Status:      priority.EvidenceStatusProbeFailed,
-		}, true
+	if entry.ObservedAt.IsZero() || entry.ResetAt.IsZero() {
+		return priority.QuotaEvidence{}, false
 	}
 
 	var resetAt *time.Time
@@ -584,35 +580,35 @@ func (s *Store) GetCachedEvidence(authIndex, modelGroup string) (priority.ProbeE
 	}
 
 	remaining := entry.Remaining
+	shortRemaining := cloneInt64Ptr(entry.ShortWindowRemaining)
+	longRemaining := cloneInt64Ptr(entry.LongWindowRemaining)
 	cycleBurnRate := entry.CycleBurnRate
 	if cycleBurnRate <= 0 {
 		cycleBurnRate = DefaultCycleBurnRate
 	}
 
-	return priority.ProbeEvidence{
+	return priority.QuotaEvidence{
 		Provider:             core.ProviderAntigravity,
 		AuthIndex:            entry.AuthIndex,
+		ModelGroup:           config.AntigravityModelGroup(entry.ModelGroup),
 		ObservedAt:           entry.ObservedAt,
 		ResetAt:              resetAt,
 		Remaining:            &remaining,
 		ShortWindowResetAt:   shortResetAt,
-		ShortWindowRemaining: entry.ShortWindowRemaining,
+		ShortWindowRemaining: shortRemaining,
 		LongWindowResetAt:    longResetAt,
-		LongWindowRemaining:  entry.LongWindowRemaining,
-		Freshness:            core.FreshnessFresh,
-		ProbeStatus:          core.ProbeStatusReady,
-		Status:               priority.EvidenceStatusReady,
+		LongWindowRemaining:  longRemaining,
 		PlanType:             entry.PlanType,
-		EvidenceFresh:        true,
 		CycleBurnRate:        cycleBurnRate,
 	}, true
 }
 
-// BuildGroupEvidence constructs a list of priority.ProbeEvidence for all given credentials under the specified model group.
-func (s *Store) BuildGroupEvidence(credentials []core.Credential, modelGroup string) []priority.ProbeEvidence {
-	evidence := make([]priority.ProbeEvidence, 0, len(credentials))
+// BuildHistoricalEvidence constructs historical observations for all given
+// credentials under the specified model group.
+func (s *Store) BuildHistoricalEvidence(credentials []core.Credential, modelGroup string) []priority.QuotaEvidence {
+	evidence := make([]priority.QuotaEvidence, 0, len(credentials))
 	for _, cred := range credentials {
-		if ev, ok := s.GetCachedEvidence(cred.AuthIndex, modelGroup); ok {
+		if ev, ok := s.GetHistoricalEvidence(cred.AuthIndex, modelGroup); ok {
 			evidence = append(evidence, ev)
 		}
 	}

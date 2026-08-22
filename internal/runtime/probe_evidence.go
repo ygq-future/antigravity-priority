@@ -3,13 +3,15 @@ package runtime
 import (
 	"context"
 	"errors"
+	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"antigravity-priority/internal/config"
 	"antigravity-priority/internal/core"
+	"antigravity-priority/internal/evidence"
 	"antigravity-priority/internal/host"
-	"antigravity-priority/internal/priority"
 	"antigravity-priority/internal/provider/antigravity"
 	"antigravity-priority/internal/state"
 )
@@ -27,43 +29,79 @@ type collectInput struct {
 	sampleCapacity int
 }
 
+type collectedEvidence struct {
+	ByGroup      map[config.AntigravityModelGroup]evidence.Result
+	Observations []evidence.Observation
+	Probed       int
+}
+
 type probeJob struct {
 	credential   core.Credential
 	authMaterial authMaterial
 }
 
-func collectFreshEvidence(ctx context.Context, input collectInput) ([]priority.ProbeEvidence, error) {
-	jobs := make([]probeJob, 0, len(input.credentials))
-	cachedEvidence := make([]priority.ProbeEvidence, 0)
+var probeRoundSequence atomic.Uint64
 
+func collectFreshEvidence(ctx context.Context, input collectInput) (collectedEvidence, error) {
+	probes := make([]evidence.ProbeObservation, 0)
+	jobs := make([]probeJob, 0, len(input.credentials))
 	for _, cred := range input.credentials {
 		needsProbe, err := freshProbeNeeded(ctx, input, cred.AuthIndex, string(input.modelGroup))
 		if err != nil {
-			return nil, err
+			return collectedEvidence{}, err
 		}
 		if needsProbe {
 			jobs = append(jobs, probeJob{
 				credential:   cred,
 				authMaterial: input.authMaterials[cred.AuthIndex],
 			})
-			continue
-		}
-
-		if ev, ok := input.store.GetCachedEvidence(cred.AuthIndex, string(input.modelGroup)); ok {
-			cachedEvidence = append(cachedEvidence, ev)
 		}
 	}
 
-	if len(jobs) == 0 {
-		return cachedEvidence, nil
+	roundID := newProbeRoundID(input.now)
+	if len(jobs) > 0 {
+		probed, err := runProbeJobs(ctx, input, jobs, roundID)
+		if err != nil {
+			return collectedEvidence{}, err
+		}
+		probes = append(probes, probed...)
 	}
 
-	probedEvidence, err := runProbeJobs(ctx, input, jobs)
-	if err != nil {
-		return nil, err
+	historical := historicalObservations(input.store, input.credentials)
+	result := collectedEvidence{
+		ByGroup:      make(map[config.AntigravityModelGroup]evidence.Result, 2),
+		Observations: make([]evidence.Observation, 0),
+		Probed:       uniqueProbeCredentials(probes),
 	}
+	for _, group := range []config.AntigravityModelGroup{
+		config.AntigravityModelGroupGemini,
+		config.AntigravityModelGroupClaudeGPT,
+	} {
+		classified := evidence.Classify(evidence.Input{
+			Round:       evidence.Round{ID: roundID, ModelGroup: group},
+			Credentials: input.credentials,
+			Probes:      probes,
+			Historical:  historical,
+		})
+		result.ByGroup[group] = classified
+		result.Observations = append(result.Observations, classified.Observations...)
+	}
+	return result, nil
+}
 
-	return append(cachedEvidence, probedEvidence...), nil
+func newProbeRoundID(now time.Time) string {
+	sequence := probeRoundSequence.Add(1)
+	return now.UTC().Format(time.RFC3339Nano) + "-" + strconv.FormatUint(sequence, 10)
+}
+
+func uniqueProbeCredentials(probes []evidence.ProbeObservation) int {
+	authIndexes := make(map[string]struct{}, len(probes))
+	for _, probe := range probes {
+		if probe.Result.AuthIndex != "" {
+			authIndexes[probe.Result.AuthIndex] = struct{}{}
+		}
+	}
+	return len(authIndexes)
 }
 
 func freshProbeNeeded(ctx context.Context, input collectInput, authIndex string, modelGroup string) (bool, error) {
@@ -86,7 +124,7 @@ func probePolicy(cacheTTL time.Duration) state.ProbePolicy {
 	return state.ProbePolicy{TTL: cacheTTL, ResetStaleAfter: time.Hour}
 }
 
-func runProbeJobs(ctx context.Context, input collectInput, jobs []probeJob) ([]priority.ProbeEvidence, error) {
+func runProbeJobs(ctx context.Context, input collectInput, jobs []probeJob, roundID string) ([]evidence.ProbeObservation, error) {
 	workers := input.maxConcurrency
 	if workers < 1 {
 		workers = 2
@@ -96,17 +134,17 @@ func runProbeJobs(ctx context.Context, input collectInput, jobs []probeJob) ([]p
 	}
 
 	if workers == 1 {
-		evidence := make([]priority.ProbeEvidence, 0, len(jobs))
+		observations := make([]evidence.ProbeObservation, 0, len(jobs)*2)
 		for _, job := range jobs {
-			item, err := probeAndRecord(ctx, input.client, input.store, job, input.now, input.modelGroup, input.sampleCapacity)
+			items, err := probeAndRecord(ctx, input.client, input.store, job, input.now, input.sampleCapacity)
 			if err != nil {
 				return nil, err
 			}
-			if item.Status != priority.EvidenceStatusUnknown {
-				evidence = append(evidence, item)
+			for _, item := range items {
+				observations = append(observations, evidence.ProbeObservation{RoundID: roundID, Result: item})
 			}
 		}
-		return evidence, nil
+		return observations, nil
 	}
 
 	runCtx, cancel := context.WithCancel(ctx)
@@ -114,14 +152,13 @@ func runProbeJobs(ctx context.Context, input collectInput, jobs []probeJob) ([]p
 
 	type result struct {
 		index int
-		item  priority.ProbeEvidence
+		items []antigravity.ProbeResult
 		err   error
 	}
 
 	jobsCh := make(chan int)
 	resultsCh := make(chan result, len(jobs))
 	var wg sync.WaitGroup
-
 	for w := 0; w < workers; w++ {
 		wg.Add(1)
 		go func() {
@@ -130,10 +167,9 @@ func runProbeJobs(ctx context.Context, input collectInput, jobs []probeJob) ([]p
 				if runCtx.Err() != nil {
 					return
 				}
-				job := jobs[index]
-				item, err := probeAndRecord(runCtx, input.client, input.store, job, input.now, input.modelGroup, input.sampleCapacity)
+				items, err := probeAndRecord(runCtx, input.client, input.store, jobs[index], input.now, input.sampleCapacity)
 				select {
-				case resultsCh <- result{index: index, item: item, err: err}:
+				case resultsCh <- result{index: index, items: items, err: err}:
 				case <-runCtx.Done():
 					return
 				}
@@ -155,43 +191,37 @@ func runProbeJobs(ctx context.Context, input collectInput, jobs []probeJob) ([]p
 			}
 		}
 	}()
-
 	go func() {
 		wg.Wait()
 		close(resultsCh)
 	}()
 
-	ordered := make([]priority.ProbeEvidence, len(jobs))
-	present := make([]bool, len(jobs))
+	ordered := make([][]antigravity.ProbeResult, len(jobs))
 	var firstErr error
-	for res := range resultsCh {
-		if res.err != nil {
+	for item := range resultsCh {
+		if item.err != nil {
 			if firstErr == nil {
-				firstErr = res.err
+				firstErr = item.err
 			}
 			cancel()
 			continue
 		}
-		if res.item.Status != priority.EvidenceStatusUnknown {
-			ordered[res.index] = res.item
-			present[res.index] = true
-		}
+		ordered[item.index] = item.items
 	}
-
 	if firstErr != nil {
 		return nil, firstErr
 	}
 
-	evidence := make([]priority.ProbeEvidence, 0, len(jobs))
-	for index, ok := range present {
-		if ok {
-			evidence = append(evidence, ordered[index])
+	observations := make([]evidence.ProbeObservation, 0, len(jobs)*2)
+	for _, items := range ordered {
+		for _, item := range items {
+			observations = append(observations, evidence.ProbeObservation{RoundID: roundID, Result: item})
 		}
 	}
-	return evidence, nil
+	return observations, nil
 }
 
-func probeAndRecord(ctx context.Context, client *host.Client, store *state.Store, job probeJob, now time.Time, modelGroup config.AntigravityModelGroup, sampleCapacity int) (priority.ProbeEvidence, error) {
+func probeAndRecord(ctx context.Context, client *host.Client, store *state.Store, job probeJob, now time.Time, sampleCapacity int) ([]antigravity.ProbeResult, error) {
 	results := executeAntigravityQuotaRequest(ctx, client, antigravityQuotaRequest{
 		AuthIndex:   job.credential.AuthIndex,
 		AccessToken: job.authMaterial.accessToken,
@@ -199,23 +229,26 @@ func probeAndRecord(ctx context.Context, client *host.Client, store *state.Store
 		ObservedAt:  now,
 	})
 
-	// Record all model groups from the single probe response (REQ-05: dual-group persistence).
-	var primaryEvidence priority.ProbeEvidence
-	var primaryErr error
-	for group, result := range results {
-		evidence, err := recordAntigravityProbeResult(ctx, store, result, now, sampleCapacity)
-		if group == modelGroup {
-			primaryEvidence = evidence
-			primaryErr = err
+	items := make([]antigravity.ProbeResult, 0, 2)
+	for _, group := range []antigravity.ModelGroup{
+		antigravity.ModelGroupGemini,
+		antigravity.ModelGroupClaudeGPT,
+	} {
+		result, ok := results[group]
+		if !ok {
+			continue
 		}
+		if err := recordAntigravityProbeResult(ctx, store, result, now, sampleCapacity); err != nil {
+			return nil, err
+		}
+		items = append(items, result)
 	}
-
-	return primaryEvidence, primaryErr
+	return items, nil
 }
 
-func recordAntigravityProbeResult(ctx context.Context, store *state.Store, result antigravity.ProbeResult, now time.Time, sampleCapacity int) (priority.ProbeEvidence, error) {
+func recordAntigravityProbeResult(ctx context.Context, store *state.Store, result antigravity.ProbeResult, now time.Time, sampleCapacity int) error {
 	if result.Status != antigravity.StatusReady || result.ResetAt == nil || result.Remaining == nil {
-		err := store.MarkProbeFailure(ctx, state.ProbeFailure{
+		return store.MarkProbeFailure(ctx, state.ProbeFailure{
 			AuthIndex:   result.AuthIndex,
 			Provider:    core.ProviderAntigravity,
 			ModelGroup:  string(result.ModelGroup),
@@ -223,16 +256,9 @@ func recordAntigravityProbeResult(ctx context.Context, store *state.Store, resul
 			Err:         errors.New(result.Error),
 			NextProbeAt: now.Add(time.Hour),
 		})
-		return priority.ProbeEvidence{
-			Provider:    core.ProviderAntigravity,
-			AuthIndex:   result.AuthIndex,
-			Freshness:   result.Freshness,
-			ProbeStatus: result.ProbeStatus,
-			Status:      priority.EvidenceStatusProbeFailed,
-		}, err
 	}
 
-	err := store.MarkProbeSuccess(ctx, state.ProbeSuccess{
+	return store.MarkProbeSuccess(ctx, state.ProbeSuccess{
 		AuthIndex:            result.AuthIndex,
 		Provider:             core.ProviderAntigravity,
 		ModelGroup:           string(result.ModelGroup),
@@ -247,26 +273,39 @@ func recordAntigravityProbeResult(ctx context.Context, store *state.Store, resul
 		NextProbeAt:          result.ObservedAt.Add(time.Hour),
 		SampleCapacity:       sampleCapacity,
 	})
+}
 
-	cycleBurnRate := store.GetCycleBurnRate(result.AuthIndex, string(result.ModelGroup))
-
-	return priority.ProbeEvidence{
-		Provider:             core.ProviderAntigravity,
-		AuthIndex:            result.AuthIndex,
-		ObservedAt:           result.ObservedAt,
-		ResetAt:              result.ResetAt,
-		Remaining:            result.Remaining,
-		ShortWindowResetAt:   result.ShortWindowResetAt,
-		ShortWindowRemaining: result.ShortWindowRemaining,
-		LongWindowResetAt:    result.LongWindowResetAt,
-		LongWindowRemaining:  result.LongWindowRemaining,
-		Freshness:            result.Freshness,
-		ProbeStatus:          result.ProbeStatus,
-		Status:               priority.EvidenceStatusReady,
-		PlanType:             result.PlanType,
-		EvidenceFresh:        true,
-		CycleBurnRate:        cycleBurnRate,
-	}, err
+func historicalObservations(store *state.Store, credentials []core.Credential) []evidence.HistoricalObservation {
+	if store == nil {
+		return nil
+	}
+	result := make([]evidence.HistoricalObservation, 0, len(credentials)*2)
+	for _, credential := range credentials {
+		for _, group := range []config.AntigravityModelGroup{
+			config.AntigravityModelGroupGemini,
+			config.AntigravityModelGroupClaudeGPT,
+		} {
+			entry, ok := store.GetEntry(credential.AuthIndex, string(group))
+			if !ok {
+				continue
+			}
+			historical := evidence.HistoricalObservation{
+				AuthIndex:  credential.AuthIndex,
+				ModelGroup: group,
+				LastError:  entry.LastError,
+				FailureAt:  entry.LastFailureAt,
+			}
+			quota, ok := store.GetHistoricalEvidence(credential.AuthIndex, string(group))
+			if ok {
+				historical.Evidence = quota
+			}
+			if !ok && historical.LastError == "" {
+				continue
+			}
+			result = append(result, historical)
+		}
+	}
+	return result
 }
 
 func timeOrZero(t *time.Time) time.Time {

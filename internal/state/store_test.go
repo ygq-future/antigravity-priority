@@ -470,14 +470,14 @@ func TestStore_Auxiliary_Coverage(t *testing.T) {
 	}
 }
 
-func TestStore_GetCachedEvidence_And_BuildGroupEvidence(t *testing.T) {
+func TestStore_GetHistoricalEvidence_And_BuildHistoricalEvidence(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()
 	store, _ := state.Load(ctx, filepath.Join(tmpDir, "evidence_cache.json"))
 	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
 
 	// 1. Non-existent entry returns false
-	if _, ok := store.GetCachedEvidence("non-existent", "gemini"); ok {
+	if _, ok := store.GetHistoricalEvidence("non-existent", "gemini"); ok {
 		t.Errorf("expected false for non-existent entry")
 	}
 
@@ -499,15 +499,34 @@ func TestStore_GetCachedEvidence_And_BuildGroupEvidence(t *testing.T) {
 		LongWindowRemaining:  &longRem,
 	})
 
-	ev, ok := store.GetCachedEvidence("acc-1", "gemini")
+	ev, ok := store.GetHistoricalEvidence("acc-1", "gemini")
 	if !ok {
 		t.Fatalf("expected true for cached ready evidence")
 	}
-	if ev.AuthIndex != "acc-1" || !ev.EvidenceFresh || ev.CycleBurnRate != state.DefaultCycleBurnRate {
+	if ev.AuthIndex != "acc-1" || !ev.ObservedAt.Equal(now) || ev.CycleBurnRate != state.DefaultCycleBurnRate {
 		t.Errorf("unexpected cached evidence: %+v", ev)
 	}
 
-	// 3. Failure entry returns EvidenceStatusProbeFailed
+	// A later failure records its own diagnostic time without overwriting the
+	// last successful observation used for read-only history.
+	failureAt := now.Add(30 * time.Minute)
+	_ = store.MarkProbeFailure(ctx, state.ProbeFailure{
+		AuthIndex:  "acc-1",
+		Provider:   core.ProviderAntigravity,
+		ModelGroup: "gemini",
+		ObservedAt: failureAt,
+		Err:        errors.New("transient upstream failure"),
+	})
+	entry, ok := store.GetEntry("acc-1", "gemini")
+	if !ok || !entry.ObservedAt.Equal(now) || !entry.LastFailureAt.Equal(failureAt) {
+		t.Fatalf("failure overwrote historical observation: %#v", entry)
+	}
+	historical, ok := store.GetHistoricalEvidence("acc-1", "gemini")
+	if !ok || !historical.ObservedAt.Equal(now) {
+		t.Fatalf("historical observation disappeared after failure: %#v", historical)
+	}
+
+	// 3. Failure-only entry has no historical quota authority
 	_ = store.MarkProbeFailure(ctx, state.ProbeFailure{
 		AuthIndex:  "acc-failed",
 		Provider:   core.ProviderAntigravity,
@@ -516,22 +535,22 @@ func TestStore_GetCachedEvidence_And_BuildGroupEvidence(t *testing.T) {
 		Err:        errors.New("upstream failed"),
 	})
 
-	evFail, ok := store.GetCachedEvidence("acc-failed", "gemini")
-	if !ok {
-		t.Fatalf("expected true for cached failure evidence")
+	if _, ok := store.GetHistoricalEvidence("acc-failed", "gemini"); ok {
+		t.Fatalf("failure-only entry must not be returned as quota evidence")
 	}
-	if evFail.Status != "probe_failed" {
-		t.Errorf("expected Status probe_failed, got %v", evFail.Status)
+	failedEntry, failedOK := store.GetEntry("acc-failed", "gemini")
+	if !failedOK || failedEntry.LastError == "" || !failedEntry.LastFailureAt.Equal(now) {
+		t.Fatalf("failure diagnostic was not preserved separately: %#v", failedEntry)
 	}
 
-	// 4. BuildGroupEvidence
+	// 4. BuildHistoricalEvidence
 	creds := []core.Credential{
 		{AuthIndex: "acc-1"},
 		{AuthIndex: "acc-failed"},
 		{AuthIndex: "acc-missing"},
 	}
-	groupEv := store.BuildGroupEvidence(creds, "gemini")
-	if len(groupEv) != 2 {
-		t.Fatalf("expected 2 evidences from 3 credentials, got %d", len(groupEv))
+	groupEv := store.BuildHistoricalEvidence(creds, "gemini")
+	if len(groupEv) != 1 {
+		t.Fatalf("expected only historical success from 3 credentials, got %d", len(groupEv))
 	}
 }

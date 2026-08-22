@@ -11,6 +11,7 @@ import (
 	"antigravity-priority/internal/apply"
 	"antigravity-priority/internal/config"
 	"antigravity-priority/internal/core"
+	"antigravity-priority/internal/evidence"
 	"antigravity-priority/internal/priority"
 	"antigravity-priority/internal/runtime"
 )
@@ -27,13 +28,13 @@ func TestProjectDualModelGroups_ControlDirectionsAndIndependentEvidence(t *testi
 		},
 	}
 
-	groupEvidence := map[config.AntigravityModelGroup][]priority.ProbeEvidence{
-		config.AntigravityModelGroupGemini: {
+	groupEvidence := map[config.AntigravityModelGroup]evidence.Result{
+		config.AntigravityModelGroupGemini: {Eligible: []priority.QuotaEvidence{
 			readyEvidence("auth-1", core.PlanTypePro, 92, now.Add(3*time.Hour)),
-		},
-		config.AntigravityModelGroupClaudeGPT: {
+		}},
+		config.AntigravityModelGroupClaudeGPT: {Eligible: []priority.QuotaEvidence{
 			readyEvidence("auth-1", core.PlanTypeFree, 61, now.Add(4*time.Hour)),
-		},
+		}},
 	}
 
 	tests := []struct {
@@ -104,8 +105,8 @@ func TestProjectDualModelGroups_MissingGroupRemainsStableAndUnknown(t *testing.T
 	projection, err := runtime.ProjectDualModelGroups(runtime.ProjectionInput{
 		ControlModelGroup: config.AntigravityModelGroupGemini,
 		Credentials:       credentials,
-		EvidenceByGroup: map[config.AntigravityModelGroup][]priority.ProbeEvidence{
-			config.AntigravityModelGroupGemini: {readyEvidence("auth-1", core.PlanTypePlus, 88, now.Add(2*time.Hour))},
+		EvidenceByGroup: map[config.AntigravityModelGroup]evidence.Result{
+			config.AntigravityModelGroupGemini: {Eligible: []priority.QuotaEvidence{readyEvidence("auth-1", core.PlanTypePlus, 88, now.Add(2*time.Hour))}},
 		},
 		PlanningOptions: priority.Options{NormalStartPriority: 100, MinChange: 1},
 		ProjectionTime:  now,
@@ -125,6 +126,30 @@ func TestProjectDualModelGroups_MissingGroupRemainsStableAndUnknown(t *testing.T
 	}
 }
 
+func TestProjectDualModelGroups_HistoricalEvidenceIsReadOnly(t *testing.T) {
+	now := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
+	credentials := []core.Credential{{AuthIndex: "auth-1", Priority: 42}}
+	projection, err := runtime.ProjectDualModelGroups(runtime.ProjectionInput{
+		ControlModelGroup: config.AntigravityModelGroupGemini,
+		Credentials:       credentials,
+		EvidenceByGroup: map[config.AntigravityModelGroup]evidence.Result{
+			config.AntigravityModelGroupGemini: historicalEvidenceResult(readyEvidence("auth-1", core.PlanTypePro, 88, now.Add(100*time.Hour))),
+		},
+		PlanningOptions: priority.Options{NormalStartPriority: 100, MinChange: 1},
+		ProjectionTime:  now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	control := projection.Snapshot.Groups[string(config.AntigravityModelGroupGemini)]
+	if len(control.Items) != 1 || control.Items[0].EvidenceFresh {
+		t.Fatalf("historical control item = %#v; want read-only evidence", control.Items)
+	}
+	if len(control.Changes) != 0 || control.Items[0].Target.Priority != 100 {
+		t.Fatalf("historical control projection = %#v; want predicted target without write change", control)
+	}
+}
+
 func TestProjectDualModelGroups_DoesNotMutateInputsOrReturnedSnapshots(t *testing.T) {
 	now := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
 	credentials := []core.Credential{{
@@ -134,12 +159,12 @@ func TestProjectDualModelGroups_DoesNotMutateInputsOrReturnedSnapshots(t *testin
 		Type:      core.CredentialTypeAntigravity,
 		Priority:  42,
 	}}
-	evidence := readyEvidence("auth-1", core.PlanTypePro, 88, now.Add(2*time.Hour))
+	fresh := readyEvidence("auth-1", core.PlanTypePro, 88, now.Add(2*time.Hour))
 	input := runtime.ProjectionInput{
 		ControlModelGroup: config.AntigravityModelGroupGemini,
 		Credentials:       credentials,
-		EvidenceByGroup: map[config.AntigravityModelGroup][]priority.ProbeEvidence{
-			config.AntigravityModelGroupGemini: {evidence},
+		EvidenceByGroup: map[config.AntigravityModelGroup]evidence.Result{
+			config.AntigravityModelGroupGemini: {Eligible: []priority.QuotaEvidence{fresh}},
 		},
 		PlanningOptions: priority.Options{NormalStartPriority: 100, MinChange: 1},
 		ProjectionTime:  now,
@@ -150,8 +175,8 @@ func TestProjectDualModelGroups_DoesNotMutateInputsOrReturnedSnapshots(t *testin
 	}
 	first.Snapshot.Groups["gemini"] = apply.GroupSnapshot{}
 	first.ControlPlan.Items[0].Credential.Priority = 999
-	if credentials[0].Priority != 42 || evidence.Remaining == nil || *evidence.Remaining != 88 {
-		t.Fatalf("projection mutated input: credentials=%#v evidence=%#v", credentials, evidence)
+	if credentials[0].Priority != 42 || fresh.Remaining == nil || *fresh.Remaining != 88 {
+		t.Fatalf("projection mutated input: credentials=%#v evidence=%#v", credentials, fresh)
 	}
 	second, err := runtime.ProjectDualModelGroups(input)
 	if err != nil {
@@ -201,19 +226,30 @@ func TestRuntime_LatestSnapshotFallbackIsStableAndComplete(t *testing.T) {
 	}
 }
 
-func readyEvidence(authIndex string, planType core.PlanType, remaining int64, resetAt time.Time) priority.ProbeEvidence {
-	return priority.ProbeEvidence{
-		AuthIndex:     authIndex,
-		Provider:      core.ProviderAntigravity,
-		ObservedAt:    resetAt.Add(-time.Hour),
-		ResetAt:       &resetAt,
-		Remaining:     &remaining,
-		Freshness:     core.FreshnessFresh,
-		ProbeStatus:   core.ProbeStatusReady,
-		Status:        priority.EvidenceStatusReady,
-		PlanType:      planType,
-		EvidenceFresh: true,
+func readyEvidence(authIndex string, planType core.PlanType, remaining int64, resetAt time.Time) priority.QuotaEvidence {
+	return priority.QuotaEvidence{
+		AuthIndex:  authIndex,
+		Provider:   core.ProviderAntigravity,
+		ObservedAt: resetAt.Add(-time.Hour),
+		ResetAt:    &resetAt,
+		Remaining:  &remaining,
+		PlanType:   planType,
 	}
+}
+
+func historicalEvidenceResult(values ...priority.QuotaEvidence) evidence.Result {
+	observations := make([]evidence.Observation, 0, len(values))
+	for _, value := range values {
+		copy := value
+		observations = append(observations, evidence.Observation{
+			AuthIndex:  copy.AuthIndex,
+			ModelGroup: copy.ModelGroup,
+			Kind:       evidence.ObservationHistorical,
+			ObservedAt: copy.ObservedAt,
+			Evidence:   &copy,
+		})
+	}
+	return evidence.Result{Observations: observations}
 }
 
 type fixedClock struct{ now time.Time }

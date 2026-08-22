@@ -74,13 +74,12 @@ func TestCompareUniquenessCandidates(t *testing.T) {
 	t.Run("fresh positive comes before unprobed peer", func(t *testing.T) {
 		fresh := PlanItem{
 			Credential:    core.Credential{AuthIndex: "auth-fresh", Priority: 50},
-			EvidenceFresh: true,
 			Remaining:     &rem100,
 			R7d:           1.0,
+			EvidenceFresh: true,
 		}
 		unprobed := PlanItem{
-			Credential:    core.Credential{AuthIndex: "auth-unprobed", Priority: 100},
-			EvidenceFresh: false,
+			Credential: core.Credential{AuthIndex: "auth-unprobed", Priority: 100},
 		}
 
 		if res := CompareUniquenessCandidates(fresh, unprobed); res != -1 {
@@ -94,17 +93,17 @@ func TestCompareUniquenessCandidates(t *testing.T) {
 	t.Run("boosted fresh comes before regular fresh", func(t *testing.T) {
 		boosted := PlanItem{
 			Credential:    core.Credential{AuthIndex: "auth-boost"},
-			EvidenceFresh: true,
 			Remaining:     &rem100,
 			IsBoosted:     true,
 			Urgency:       0.5,
+			EvidenceFresh: true,
 		}
 		regular := PlanItem{
 			Credential:    core.Credential{AuthIndex: "auth-reg"},
-			EvidenceFresh: true,
 			Remaining:     &rem100,
 			IsBoosted:     false,
 			Urgency:       1.5,
+			EvidenceFresh: true,
 		}
 
 		if res := CompareUniquenessCandidates(boosted, regular); res != -1 {
@@ -140,9 +139,8 @@ func TestCompareUniquenessCandidates(t *testing.T) {
 func TestSortPlanItems(t *testing.T) {
 	items := []PlanItem{
 		{
-			Credential:    core.Credential{AuthIndex: "unprobed-2"},
-			Priority:      50,
-			EvidenceFresh: false,
+			Credential: core.Credential{AuthIndex: "unprobed-2"},
+			Priority:   50,
 		},
 		{
 			Credential:    core.Credential{AuthIndex: "fresh-depleted"},

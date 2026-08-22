@@ -60,40 +60,6 @@ const (
 	PlanTypeTeam PlanType = "team"
 )
 
-// Freshness indicates whether the quota evidence comes from a fresh probe.
-type Freshness string
-
-const (
-	// FreshnessUnknown represents no probe evidence available yet.
-	FreshnessUnknown Freshness = "unknown"
-	// FreshnessFresh represents evidence obtained from the current scheduling round.
-	FreshnessFresh Freshness = "fresh"
-	// FreshnessStale represents historical evidence that cannot directly promote.
-	FreshnessStale Freshness = "stale"
-)
-
-// ProbeStatus indicates the prober status determination for the credential.
-type ProbeStatus string
-
-const (
-	// ProbeStatusUnknown represents probing not yet performed.
-	ProbeStatusUnknown ProbeStatus = "unknown"
-	// ProbeStatusReady represents successful probe yielding valid quota evidence.
-	ProbeStatusReady ProbeStatus = "ready"
-	// ProbeStatusUnsupported represents an unsupported provider or configuration.
-	ProbeStatusUnsupported ProbeStatus = "unsupported"
-)
-
-// CanPromote represents whether a credential is eligible for automatic priority promotion.
-type CanPromote bool
-
-const (
-	// CannotPromote indicates the credential must not be promoted.
-	CannotPromote CanPromote = false
-	// CanPromoteAfterFreshProbe indicates the credential has fresh probe evidence and can be promoted.
-	CanPromoteAfterFreshProbe CanPromote = true
-)
-
 // Credential is the domain snapshot of a host auth file.
 type Credential struct {
 	Name            string
@@ -108,22 +74,5 @@ type Credential struct {
 	Account         string
 	Email           string
 	PlanType        PlanType
-	Freshness       Freshness
-	ProbeStatus     ProbeStatus
 	RawJSON         json.RawMessage
-}
-
-// WithProbe returns a copy of the credential with updated probe metadata.
-func (c Credential) WithProbe(freshness Freshness, probeStatus ProbeStatus) Credential {
-	c.Freshness = freshness
-	c.ProbeStatus = probeStatus
-	return c
-}
-
-// PromotionFromProbe determines whether probe metadata allows automatic priority promotion.
-func PromotionFromProbe(freshness Freshness, probeStatus ProbeStatus) CanPromote {
-	if freshness == FreshnessFresh && probeStatus == ProbeStatusReady {
-		return CanPromoteAfterFreshProbe
-	}
-	return CannotPromote
 }

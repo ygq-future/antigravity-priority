@@ -2,6 +2,7 @@ package priority
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,6 +13,13 @@ func int64Ptr(v int64) *int64 {
 	return &v
 }
 
+func planFreshOnly(credentials []core.Credential, evidence []QuotaEvidence, options Options) Plan {
+	if options.Now.IsZero() {
+		panic("priority: explicit decision time is required")
+	}
+	return planWithEvidence(credentials, plannerEvidence{Fresh: evidence}, normalizeOptions(options))
+}
+
 func TestPlanFreshOnlyRequiresExplicitDecisionTime(t *testing.T) {
 	t.Run("zero decision time is rejected", func(t *testing.T) {
 		defer func() {
@@ -19,14 +27,14 @@ func TestPlanFreshOnlyRequiresExplicitDecisionTime(t *testing.T) {
 				t.Fatal("expected zero decision time to be rejected")
 			}
 		}()
-		PlanFreshOnly(nil, nil, Options{})
+		planFreshOnly(nil, nil, Options{})
 	})
 
 	t.Run("identical inputs produce identical replayable plans", func(t *testing.T) {
 		now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
 		options := Options{Now: now, BoostStartPriority: 999, NormalStartPriority: 100}
-		first := PlanFreshOnly(nil, nil, options)
-		second := PlanFreshOnly(nil, nil, options)
+		first := planFreshOnly(nil, nil, options)
+		second := planFreshOnly(nil, nil, options)
 		if !reflect.DeepEqual(first, second) {
 			t.Fatalf("plans differ: first=%#v second=%#v", first, second)
 		}
@@ -41,12 +49,12 @@ func TestPlanFreshOnlyZeroToleranceClustersOnlyExactlyEqualScores(t *testing.T) 
 	reset5h := now.Add(4 * time.Hour)
 	reset7d := now.Add(100 * time.Hour)
 	credentials := []core.Credential{{AuthIndex: "equal-a"}, {AuthIndex: "equal-b"}, {AuthIndex: "different"}}
-	evidence := []ProbeEvidence{
-		{AuthIndex: "equal-a", ShortWindowRemaining: int64Ptr(80), ShortWindowResetAt: &reset5h, LongWindowRemaining: int64Ptr(80), LongWindowResetAt: &reset7d, EvidenceFresh: true, Freshness: core.FreshnessFresh, ProbeStatus: core.ProbeStatusReady, Status: EvidenceStatusReady},
-		{AuthIndex: "equal-b", ShortWindowRemaining: int64Ptr(80), ShortWindowResetAt: &reset5h, LongWindowRemaining: int64Ptr(80), LongWindowResetAt: &reset7d, EvidenceFresh: true, Freshness: core.FreshnessFresh, ProbeStatus: core.ProbeStatusReady, Status: EvidenceStatusReady},
-		{AuthIndex: "different", ShortWindowRemaining: int64Ptr(80), ShortWindowResetAt: &reset5h, LongWindowRemaining: int64Ptr(79), LongWindowResetAt: &reset7d, EvidenceFresh: true, Freshness: core.FreshnessFresh, ProbeStatus: core.ProbeStatusReady, Status: EvidenceStatusReady},
+	evidence := []QuotaEvidence{
+		{AuthIndex: "equal-a", ShortWindowRemaining: int64Ptr(80), ShortWindowResetAt: &reset5h, LongWindowRemaining: int64Ptr(80), LongWindowResetAt: &reset7d},
+		{AuthIndex: "equal-b", ShortWindowRemaining: int64Ptr(80), ShortWindowResetAt: &reset5h, LongWindowRemaining: int64Ptr(80), LongWindowResetAt: &reset7d},
+		{AuthIndex: "different", ShortWindowRemaining: int64Ptr(80), ShortWindowResetAt: &reset5h, LongWindowRemaining: int64Ptr(79), LongWindowResetAt: &reset7d},
 	}
-	plan := PlanFreshOnly(credentials, evidence, Options{Now: now, BoostStartPriority: 999, NormalStartPriority: 100, UrgencyTolerance: 0})
+	plan := planFreshOnly(credentials, evidence, Options{Now: now, BoostStartPriority: 999, NormalStartPriority: 100, UrgencyTolerance: 0})
 	priorities := map[string]int{}
 	for _, item := range plan.Items {
 		priorities[item.Credential.AuthIndex] = item.Priority
@@ -82,7 +90,7 @@ func TestPlanFreshOnly(t *testing.T) {
 		reset7d3 := now.Add(20 * time.Hour) // Urgency = 0.80 / 20 = 0.04 (lowest)
 		reset5h := now.Add(2 * time.Hour)
 
-		evidence := []ProbeEvidence{
+		evidence := []QuotaEvidence{
 			{
 				AuthIndex:            "boost-1",
 				Provider:             core.ProviderAntigravity,
@@ -91,10 +99,6 @@ func TestPlanFreshOnly(t *testing.T) {
 				ShortWindowRemaining: int64Ptr(90),
 				ShortWindowResetAt:   &reset5h,
 				CycleBurnRate:        0.15, // T_req = (0.8/0.15)*5 = 26.67h
-				EvidenceFresh:        true,
-				Freshness:            core.FreshnessFresh,
-				ProbeStatus:          core.ProbeStatusReady,
-				Status:               EvidenceStatusReady,
 			},
 			{
 				AuthIndex:            "boost-2",
@@ -104,10 +108,6 @@ func TestPlanFreshOnly(t *testing.T) {
 				ShortWindowRemaining: int64Ptr(90),
 				ShortWindowResetAt:   &reset5h,
 				CycleBurnRate:        0.15,
-				EvidenceFresh:        true,
-				Freshness:            core.FreshnessFresh,
-				ProbeStatus:          core.ProbeStatusReady,
-				Status:               EvidenceStatusReady,
 			},
 			{
 				AuthIndex:            "boost-3",
@@ -117,16 +117,12 @@ func TestPlanFreshOnly(t *testing.T) {
 				ShortWindowRemaining: int64Ptr(90),
 				ShortWindowResetAt:   &reset5h,
 				CycleBurnRate:        0.15,
-				EvidenceFresh:        true,
-				Freshness:            core.FreshnessFresh,
-				ProbeStatus:          core.ProbeStatusReady,
-				Status:               EvidenceStatusReady,
 			},
 		}
 
 		optsTight := defaultOptions
 		optsTight.UrgencyTolerance = 0.01
-		plan := PlanFreshOnly(creds, evidence, optsTight)
+		plan := planFreshOnly(creds, evidence, optsTight)
 
 		if len(plan.Items) != 3 {
 			t.Fatalf("expected 3 items, got %d", len(plan.Items))
@@ -167,14 +163,14 @@ func TestPlanFreshOnly(t *testing.T) {
 
 		// All 4 accounts have close weekly balances: 85%, 84%, 83%, 82% (Urgency: 0.0085, 0.0084, 0.0083, 0.0082)
 		// Max delta is 0.0003, well within default tolerance of 0.05
-		evidence := []ProbeEvidence{
-			{AuthIndex: "acc-1", LongWindowRemaining: int64Ptr(85), LongWindowResetAt: &reset7d, ShortWindowRemaining: int64Ptr(90), ShortWindowResetAt: &reset5h, CycleBurnRate: 0.15, EvidenceFresh: true, Freshness: core.FreshnessFresh, ProbeStatus: core.ProbeStatusReady, Status: EvidenceStatusReady},
-			{AuthIndex: "acc-2", LongWindowRemaining: int64Ptr(84), LongWindowResetAt: &reset7d, ShortWindowRemaining: int64Ptr(90), ShortWindowResetAt: &reset5h, CycleBurnRate: 0.15, EvidenceFresh: true, Freshness: core.FreshnessFresh, ProbeStatus: core.ProbeStatusReady, Status: EvidenceStatusReady},
-			{AuthIndex: "acc-3", LongWindowRemaining: int64Ptr(83), LongWindowResetAt: &reset7d, ShortWindowRemaining: int64Ptr(90), ShortWindowResetAt: &reset5h, CycleBurnRate: 0.15, EvidenceFresh: true, Freshness: core.FreshnessFresh, ProbeStatus: core.ProbeStatusReady, Status: EvidenceStatusReady},
-			{AuthIndex: "acc-4", LongWindowRemaining: int64Ptr(82), LongWindowResetAt: &reset7d, ShortWindowRemaining: int64Ptr(90), ShortWindowResetAt: &reset5h, CycleBurnRate: 0.15, EvidenceFresh: true, Freshness: core.FreshnessFresh, ProbeStatus: core.ProbeStatusReady, Status: EvidenceStatusReady},
+		evidence := []QuotaEvidence{
+			{AuthIndex: "acc-1", LongWindowRemaining: int64Ptr(85), LongWindowResetAt: &reset7d, ShortWindowRemaining: int64Ptr(90), ShortWindowResetAt: &reset5h, CycleBurnRate: 0.15},
+			{AuthIndex: "acc-2", LongWindowRemaining: int64Ptr(84), LongWindowResetAt: &reset7d, ShortWindowRemaining: int64Ptr(90), ShortWindowResetAt: &reset5h, CycleBurnRate: 0.15},
+			{AuthIndex: "acc-3", LongWindowRemaining: int64Ptr(83), LongWindowResetAt: &reset7d, ShortWindowRemaining: int64Ptr(90), ShortWindowResetAt: &reset5h, CycleBurnRate: 0.15},
+			{AuthIndex: "acc-4", LongWindowRemaining: int64Ptr(82), LongWindowResetAt: &reset7d, ShortWindowRemaining: int64Ptr(90), ShortWindowResetAt: &reset5h, CycleBurnRate: 0.15},
 		}
 
-		plan := PlanFreshOnly(creds, evidence, defaultOptions)
+		plan := planFreshOnly(creds, evidence, defaultOptions)
 		for _, item := range plan.Items {
 			if item.Priority != 100 {
 				t.Errorf("expected account %s in same cluster to get priority 100, got %d", item.Credential.AuthIndex, item.Priority)
@@ -191,9 +187,9 @@ func TestPlanFreshOnly(t *testing.T) {
 		reset7d := now.Add(100 * time.Hour)
 		reset5h := now.Add(2 * time.Hour)
 
-		evidence := []ProbeEvidence{
-			{AuthIndex: "acc-healthy", LongWindowRemaining: int64Ptr(80), LongWindowResetAt: &reset7d, ShortWindowRemaining: int64Ptr(90), ShortWindowResetAt: &reset5h, CycleBurnRate: 0.15, EvidenceFresh: true, Freshness: core.FreshnessFresh, ProbeStatus: core.ProbeStatusReady, Status: EvidenceStatusReady},
-			{AuthIndex: "acc-cooldown", LongWindowRemaining: int64Ptr(80), LongWindowResetAt: &reset7d, ShortWindowRemaining: int64Ptr(90), ShortWindowResetAt: &reset5h, CycleBurnRate: 0.15, EvidenceFresh: true, Freshness: core.FreshnessFresh, ProbeStatus: core.ProbeStatusReady, Status: EvidenceStatusReady},
+		evidence := []QuotaEvidence{
+			{AuthIndex: "acc-healthy", LongWindowRemaining: int64Ptr(80), LongWindowResetAt: &reset7d, ShortWindowRemaining: int64Ptr(90), ShortWindowResetAt: &reset5h, CycleBurnRate: 0.15},
+			{AuthIndex: "acc-cooldown", LongWindowRemaining: int64Ptr(80), LongWindowResetAt: &reset7d, ShortWindowRemaining: int64Ptr(90), ShortWindowResetAt: &reset5h, CycleBurnRate: 0.15},
 		}
 
 		opts := defaultOptions
@@ -201,7 +197,7 @@ func TestPlanFreshOnly(t *testing.T) {
 			"acc-cooldown": now.Add(5 * time.Minute),
 		}
 
-		plan := PlanFreshOnly(creds, evidence, opts)
+		plan := planFreshOnly(creds, evidence, opts)
 		itemMap := make(map[string]PlanItem)
 		for _, item := range plan.Items {
 			itemMap[item.Credential.AuthIndex] = item
@@ -231,17 +227,13 @@ func TestPlanFreshOnly(t *testing.T) {
 		reset7d := now.Add(100 * time.Hour)
 		reset5h := now.Add(3 * time.Hour)
 
-		evidence := []ProbeEvidence{
+		evidence := []QuotaEvidence{
 			{
 				AuthIndex:            "hard-depleted",
 				LongWindowRemaining:  int64Ptr(0), // R_7d = 0
 				LongWindowResetAt:    &reset7d,
 				ShortWindowRemaining: int64Ptr(80), // R_5h > 0
 				ShortWindowResetAt:   &reset5h,
-				EvidenceFresh:        true,
-				Freshness:            core.FreshnessFresh,
-				ProbeStatus:          core.ProbeStatusReady,
-				Status:               EvidenceStatusReady,
 			},
 			{
 				AuthIndex:            "both-depleted",
@@ -249,10 +241,6 @@ func TestPlanFreshOnly(t *testing.T) {
 				LongWindowResetAt:    &reset7d,
 				ShortWindowRemaining: int64Ptr(0), // R_5h = 0
 				ShortWindowResetAt:   &reset5h,
-				EvidenceFresh:        true,
-				Freshness:            core.FreshnessFresh,
-				ProbeStatus:          core.ProbeStatusReady,
-				Status:               EvidenceStatusReady,
 			},
 			{
 				AuthIndex:            "soft-depleted",
@@ -260,14 +248,10 @@ func TestPlanFreshOnly(t *testing.T) {
 				LongWindowResetAt:    &reset7d,
 				ShortWindowRemaining: int64Ptr(0), // R_5h = 0
 				ShortWindowResetAt:   &reset5h,
-				EvidenceFresh:        true,
-				Freshness:            core.FreshnessFresh,
-				ProbeStatus:          core.ProbeStatusReady,
-				Status:               EvidenceStatusReady,
 			},
 		}
 
-		plan := PlanFreshOnly(creds, evidence, defaultOptions)
+		plan := planFreshOnly(creds, evidence, defaultOptions)
 		itemMap := make(map[string]PlanItem)
 		for _, item := range plan.Items {
 			itemMap[item.Credential.AuthIndex] = item
@@ -293,7 +277,7 @@ func TestPlanFreshOnly(t *testing.T) {
 		}
 		reset7d := now.Add(100 * time.Hour)
 		reset5h := now.Add(3 * time.Hour)
-		evidence := []ProbeEvidence{
+		evidence := []QuotaEvidence{
 			{
 				AuthIndex:            "user-disabled-healthy",
 				LongWindowRemaining:  int64Ptr(90),
@@ -301,14 +285,10 @@ func TestPlanFreshOnly(t *testing.T) {
 				ShortWindowRemaining: int64Ptr(90),
 				ShortWindowResetAt:   &reset5h,
 				CycleBurnRate:        0.15,
-				EvidenceFresh:        true,
-				Freshness:            core.FreshnessFresh,
-				ProbeStatus:          core.ProbeStatusReady,
-				Status:               EvidenceStatusReady,
 			},
 		}
 
-		plan := PlanFreshOnly(creds, evidence, defaultOptions)
+		plan := planFreshOnly(creds, evidence, defaultOptions)
 		if len(plan.Items) != 1 {
 			t.Fatalf("expected 1 item, got %d", len(plan.Items))
 		}
@@ -341,7 +321,7 @@ func TestPlanFreshOnly(t *testing.T) {
 		reset5hEarly := now.Add(1 * time.Hour)
 		reset5hLate := now.Add(4 * time.Hour)
 
-		evidence := []ProbeEvidence{
+		evidence := []QuotaEvidence{
 			{
 				// reg-a: urgency 0.005, 5h reset 4h
 				AuthIndex:            "reg-a",
@@ -350,10 +330,6 @@ func TestPlanFreshOnly(t *testing.T) {
 				ShortWindowRemaining: int64Ptr(80),
 				ShortWindowResetAt:   &reset5hLate,
 				CycleBurnRate:        0.15,
-				EvidenceFresh:        true,
-				Freshness:            core.FreshnessFresh,
-				ProbeStatus:          core.ProbeStatusReady,
-				Status:               EvidenceStatusReady,
 			},
 			{
 				// reg-b: urgency 0.005, 5h reset 1h (should beat reg-a and reg-c due to 5h reset)
@@ -363,10 +339,6 @@ func TestPlanFreshOnly(t *testing.T) {
 				ShortWindowRemaining: int64Ptr(80),
 				ShortWindowResetAt:   &reset5hEarly,
 				CycleBurnRate:        0.15,
-				EvidenceFresh:        true,
-				Freshness:            core.FreshnessFresh,
-				ProbeStatus:          core.ProbeStatusReady,
-				Status:               EvidenceStatusReady,
 			},
 			{
 				// reg-c: urgency 0.005, 5h reset 4h (same urgency & 5h reset as reg-a -> tie break authIndex: reg-a < reg-c)
@@ -376,10 +348,6 @@ func TestPlanFreshOnly(t *testing.T) {
 				ShortWindowRemaining: int64Ptr(80),
 				ShortWindowResetAt:   &reset5hLate,
 				CycleBurnRate:        0.15,
-				EvidenceFresh:        true,
-				Freshness:            core.FreshnessFresh,
-				ProbeStatus:          core.ProbeStatusReady,
-				Status:               EvidenceStatusReady,
 			},
 			{
 				// reg-d: urgency 0.010 (highest urgency -> priority 100)
@@ -389,16 +357,12 @@ func TestPlanFreshOnly(t *testing.T) {
 				ShortWindowRemaining: int64Ptr(80),
 				ShortWindowResetAt:   &reset5hLate,
 				CycleBurnRate:        0.15,
-				EvidenceFresh:        true,
-				Freshness:            core.FreshnessFresh,
-				ProbeStatus:          core.ProbeStatusReady,
-				Status:               EvidenceStatusReady,
 			},
 		}
 
 		optsTight := defaultOptions
 		optsTight.UrgencyTolerance = 0.001
-		plan := PlanFreshOnly(creds, evidence, optsTight)
+		plan := planFreshOnly(creds, evidence, optsTight)
 		itemMap := make(map[string]PlanItem)
 		for _, item := range plan.Items {
 			itemMap[item.Credential.AuthIndex] = item
@@ -434,7 +398,7 @@ func TestPlanFreshOnly(t *testing.T) {
 		reset7dReg := now.Add(80 * time.Hour)
 		reset5h := now.Add(2 * time.Hour)
 
-		evidence := []ProbeEvidence{
+		evidence := []QuotaEvidence{
 			{
 				AuthIndex:            "fresh-boost",
 				LongWindowRemaining:  int64Ptr(80),
@@ -442,10 +406,6 @@ func TestPlanFreshOnly(t *testing.T) {
 				ShortWindowRemaining: int64Ptr(80),
 				ShortWindowResetAt:   &reset5h,
 				CycleBurnRate:        0.15,
-				EvidenceFresh:        true,
-				Freshness:            core.FreshnessFresh,
-				ProbeStatus:          core.ProbeStatusReady,
-				Status:               EvidenceStatusReady,
 			},
 			{
 				AuthIndex:            "fresh-reg",
@@ -454,14 +414,10 @@ func TestPlanFreshOnly(t *testing.T) {
 				ShortWindowRemaining: int64Ptr(80),
 				ShortWindowResetAt:   &reset5h,
 				CycleBurnRate:        0.15,
-				EvidenceFresh:        true,
-				Freshness:            core.FreshnessFresh,
-				ProbeStatus:          core.ProbeStatusReady,
-				Status:               EvidenceStatusReady,
 			},
 		}
 
-		plan := PlanFreshOnly(creds, evidence, defaultOptions)
+		plan := planFreshOnly(creds, evidence, defaultOptions)
 		itemMap := make(map[string]PlanItem)
 		for _, item := range plan.Items {
 			itemMap[item.Credential.AuthIndex] = item
@@ -499,7 +455,7 @@ func TestPlanFreshOnly(t *testing.T) {
 		reset7d := now.Add(80 * time.Hour)
 		reset5h := now.Add(2 * time.Hour)
 
-		evidence := []ProbeEvidence{
+		evidence := []QuotaEvidence{
 			{
 				AuthIndex:            "cred-small-delta",
 				LongWindowRemaining:  int64Ptr(80),
@@ -507,10 +463,6 @@ func TestPlanFreshOnly(t *testing.T) {
 				ShortWindowRemaining: int64Ptr(80),
 				ShortWindowResetAt:   &reset5h,
 				CycleBurnRate:        0.15,
-				EvidenceFresh:        true,
-				Freshness:            core.FreshnessFresh,
-				ProbeStatus:          core.ProbeStatusReady,
-				Status:               EvidenceStatusReady,
 			},
 			{
 				AuthIndex:            "cred-large-delta",
@@ -519,17 +471,13 @@ func TestPlanFreshOnly(t *testing.T) {
 				ShortWindowRemaining: int64Ptr(80),
 				ShortWindowResetAt:   &reset5h,
 				CycleBurnRate:        0.15,
-				EvidenceFresh:        true,
-				Freshness:            core.FreshnessFresh,
-				ProbeStatus:          core.ProbeStatusReady,
-				Status:               EvidenceStatusReady,
 			},
 		}
 
 		opts := defaultOptions
 		opts.MinChange = 5 // requires at least 5 priority change
 
-		plan := PlanFreshOnly(creds, evidence, opts)
+		plan := planFreshOnly(creds, evidence, opts)
 
 		// cred-small-delta (priority 99 -> 100, delta=1 < 5) should NOT be in Changes
 		// cred-large-delta (priority 50 -> 99, delta=49 >= 5) should BE in Changes
@@ -546,40 +494,32 @@ func TestPlanFreshOnly(t *testing.T) {
 			{AuthIndex: "missing-prio", Priority: 100, PriorityMissing: true, Disabled: false},
 		}
 		reset7d := now.Add(80 * time.Hour)
-		evidence := []ProbeEvidence{
+		evidence := []QuotaEvidence{
 			{
 				AuthIndex:           "missing-prio",
 				LongWindowRemaining: int64Ptr(80),
 				LongWindowResetAt:   &reset7d,
-				EvidenceFresh:       true,
-				Freshness:           core.FreshnessFresh,
-				ProbeStatus:         core.ProbeStatusReady,
-				Status:              EvidenceStatusReady,
 			},
 		}
 
-		plan := PlanFreshOnly(creds, evidence, defaultOptions)
+		plan := planFreshOnly(creds, evidence, defaultOptions)
 		if len(plan.Changes) != 1 {
 			t.Errorf("expected 1 change for missing priority, got %d", len(plan.Changes))
 		}
 	})
 
-	t.Run("stale probe evidence is ignored", func(t *testing.T) {
+	t.Run("historical evidence is read-only", func(t *testing.T) {
 		creds := []core.Credential{
 			{AuthIndex: "stale-cred", Priority: 50, Disabled: false},
 		}
 
-		evidence := []ProbeEvidence{
+		evidence := []QuotaEvidence{
 			{
-				AuthIndex:     "stale-cred",
-				EvidenceFresh: false, // stale
-				Freshness:     core.FreshnessStale,
-				ProbeStatus:   core.ProbeStatusReady,
-				Status:        EvidenceStatusReady,
+				AuthIndex: "stale-cred",
 			},
 		}
 
-		plan := PlanFreshOnly(creds, evidence, defaultOptions)
+		plan := PlanWithEvidence(creds, plannerEvidence{Historical: evidence}, defaultOptions)
 
 		if len(plan.Changes) != 0 {
 			t.Errorf("expected 0 changes for stale evidence, got %d", len(plan.Changes))
@@ -589,88 +529,49 @@ func TestPlanFreshOnly(t *testing.T) {
 			t.Fatalf("expected 1 item, got %d", len(plan.Items))
 		}
 		item := plan.Items[0]
-		if item.Priority != 50 {
-			t.Errorf("stale-cred priority = %d; want 50", item.Priority)
+		if item.EvidenceFresh {
+			t.Errorf("historical evidence was marked fresh")
 		}
-		if item.Disabled {
-			t.Errorf("stale-cred should NOT be disabled")
+		if item.Disabled || item.Priority == -1 {
+			t.Errorf("historical evidence should not disable credential: %#v", item)
 		}
-		if item.Reason != "keep current state" {
-			t.Errorf("stale-cred reason = %q; want 'keep current state'", item.Reason)
+		if !strings.HasPrefix(item.Reason, "historical: ") {
+			t.Errorf("historical evidence reason = %q; want historical diagnostic", item.Reason)
 		}
 	})
 
-	t.Run("probe failure triggers temporary disable failedQuotaFetch", func(t *testing.T) {
+	t.Run("missing evidence preserves current Host state", func(t *testing.T) {
 		creds := []core.Credential{
 			{AuthIndex: "failed-cred", Priority: 60, Disabled: false},
 			{AuthIndex: "already-disabled-failed", Priority: 100, Disabled: true},
 		}
 
-		evidence := []ProbeEvidence{
-			{
-				AuthIndex:     "failed-cred",
-				EvidenceFresh: true,
-				Freshness:     core.FreshnessFresh,
-				ProbeStatus:   core.ProbeStatusUnknown,
-				Status:        EvidenceStatusProbeFailed,
-			},
-			{
-				AuthIndex:     "already-disabled-failed",
-				EvidenceFresh: true,
-				Freshness:     core.FreshnessFresh,
-				ProbeStatus:   core.ProbeStatusUnknown,
-				Status:        EvidenceStatusProbeFailed,
-			},
-		}
-
-		plan := PlanFreshOnly(creds, evidence, defaultOptions)
+		plan := planFreshOnly(creds, nil, defaultOptions)
 
 		itemMap := make(map[string]PlanItem)
 		for _, item := range plan.Items {
 			itemMap[item.Credential.AuthIndex] = item
 		}
 
-		// 1. failed-cred was active -> now disabled with failedQuotaFetch
+		// 1. failed-cred remains active and keeps its current priority
 		failedItem := itemMap["failed-cred"]
-		if !failedItem.Disabled {
-			t.Errorf("failed-cred should be Disabled=true")
-		}
-		if failedItem.Reason != "failedQuotaFetch" {
-			t.Errorf("failed-cred reason = %q; want 'failedQuotaFetch'", failedItem.Reason)
-		}
-		if failedItem.Priority != 60 {
-			t.Errorf("failed-cred priority = %d; want 60", failedItem.Priority)
+		if failedItem.Disabled || failedItem.Priority != 60 {
+			t.Errorf("failed-cred changed without evidence: %#v", failedItem)
 		}
 
-		// 2. already-disabled-failed was already disabled on host -> stays disabled with reason "disabled on host"
+		// 2. already-disabled-failed remains exactly as observed on Host
 		alreadyDisabledItem := itemMap["already-disabled-failed"]
-		if !alreadyDisabledItem.Disabled {
-			t.Errorf("already-disabled-failed should be Disabled=true")
-		}
-		if alreadyDisabledItem.Reason != "disabled on host" {
-			t.Errorf("already-disabled-failed reason = %q; want 'disabled on host'", alreadyDisabledItem.Reason)
-		}
-		if alreadyDisabledItem.Priority != DepletedPriority {
-			t.Errorf("already-disabled-failed priority = %d; want %d", alreadyDisabledItem.Priority, DepletedPriority)
+		if !alreadyDisabledItem.Disabled || alreadyDisabledItem.Priority != 100 {
+			t.Errorf("already-disabled-failed changed without evidence: %#v", alreadyDisabledItem)
 		}
 
-		// Changes should contain only the change for failed-cred (since already-disabled-failed was already disabled)
-		if len(plan.Changes) != 1 {
-			t.Fatalf("expected 1 change, got %d", len(plan.Changes))
-		}
-		if plan.Changes[0].Credential.AuthIndex != "failed-cred" {
-			t.Errorf("change authIndex = %s; want failed-cred", plan.Changes[0].Credential.AuthIndex)
-		}
-		if !plan.Changes[0].Disabled {
-			t.Errorf("change should have Disabled=true")
-		}
-		if plan.Changes[0].Reason != "failedQuotaFetch" {
-			t.Errorf("change reason = %q; want 'failedQuotaFetch'", plan.Changes[0].Reason)
+		if len(plan.Changes) != 0 {
+			t.Fatalf("expected no changes without evidence, got %#v", plan.Changes)
 		}
 	})
 
 	t.Run("handles empty credentials and options normalization gracefully", func(t *testing.T) {
-		emptyPlan := PlanFreshOnly(nil, nil, Options{Now: now})
+		emptyPlan := planFreshOnly(nil, nil, Options{Now: now})
 		if len(emptyPlan.Items) != 0 || len(emptyPlan.Changes) != 0 {
 			t.Errorf("empty plan should have 0 items and changes")
 		}
@@ -698,28 +599,24 @@ func TestPlanFreshOnly(t *testing.T) {
 		}
 	})
 
-	t.Run("unprobed peer with legacy 999 priority is capped and shifted", func(t *testing.T) {
+	t.Run("unprobed peer keeps legacy priority without write authority", func(t *testing.T) {
 		creds := []core.Credential{
 			{AuthIndex: "fresh-prio-100", Priority: 50, Disabled: false},
 			{AuthIndex: "unprobed-legacy-999", Priority: 999, Disabled: false},
 		}
 		reset7d := now.Add(80 * time.Hour)
 		reset5h := now.Add(2 * time.Hour)
-		evidence := []ProbeEvidence{
+		evidence := []QuotaEvidence{
 			{
 				AuthIndex:            "fresh-prio-100",
 				LongWindowRemaining:  int64Ptr(80),
 				LongWindowResetAt:    &reset7d,
 				ShortWindowRemaining: int64Ptr(80),
 				ShortWindowResetAt:   &reset5h,
-				EvidenceFresh:        true,
-				Freshness:            core.FreshnessFresh,
-				ProbeStatus:          core.ProbeStatusReady,
-				Status:               EvidenceStatusReady,
 			},
 		}
 
-		plan := PlanFreshOnly(creds, evidence, defaultOptions)
+		plan := planFreshOnly(creds, evidence, defaultOptions)
 		itemMap := make(map[string]PlanItem)
 		for _, item := range plan.Items {
 			itemMap[item.Credential.AuthIndex] = item
@@ -728,13 +625,13 @@ func TestPlanFreshOnly(t *testing.T) {
 		if itemMap["fresh-prio-100"].Priority != 100 {
 			t.Errorf("fresh-prio-100 priority = %d; want 100", itemMap["fresh-prio-100"].Priority)
 		}
-		// unprobed-legacy-999 had 999, should be capped to <= 100
+		// An unprobed credential must not be rewritten just to make room for a peer.
 		unprobed := itemMap["unprobed-legacy-999"]
-		if unprobed.Priority != 100 {
-			t.Errorf("unprobed-legacy-999 priority = %d; want 100", unprobed.Priority)
+		if unprobed.Priority != 999 {
+			t.Errorf("unprobed-legacy-999 priority = %d; want 999", unprobed.Priority)
 		}
-		if !unprobed.ForceWrite {
-			t.Errorf("unprobed-legacy-999 ForceWrite = false; want true")
+		if unprobed.ForceWrite || len(plan.Changes) != 1 {
+			t.Errorf("unprobed-legacy-999 gained write authority: item=%#v plan=%#v", unprobed, plan.Changes)
 		}
 	})
 
@@ -743,19 +640,15 @@ func TestPlanFreshOnly(t *testing.T) {
 			{AuthIndex: "already-depleted", Priority: -1, Disabled: true},
 		}
 		reset7d := now.Add(80 * time.Hour)
-		evidence := []ProbeEvidence{
+		evidence := []QuotaEvidence{
 			{
 				AuthIndex:           "already-depleted",
 				LongWindowRemaining: int64Ptr(0),
 				LongWindowResetAt:   &reset7d,
-				EvidenceFresh:       true,
-				Freshness:           core.FreshnessFresh,
-				ProbeStatus:         core.ProbeStatusReady,
-				Status:              EvidenceStatusReady,
 			},
 		}
 
-		plan := PlanFreshOnly(creds, evidence, defaultOptions)
+		plan := planFreshOnly(creds, evidence, defaultOptions)
 		if len(plan.Changes) != 0 {
 			t.Errorf("expected 0 changes for already depleted credential, got %d", len(plan.Changes))
 		}
@@ -769,17 +662,13 @@ func TestPlanFreshOnly(t *testing.T) {
 		}
 		reset7d := now.Add(80 * time.Hour)
 		reset5h := now.Add(2 * time.Hour)
-		evidence := []ProbeEvidence{
+		evidence := []QuotaEvidence{
 			{
 				AuthIndex:            "c1",
 				LongWindowRemaining:  int64Ptr(90),
 				LongWindowResetAt:    &reset7d,
 				ShortWindowRemaining: int64Ptr(90),
 				ShortWindowResetAt:   &reset5h,
-				EvidenceFresh:        true,
-				Freshness:            core.FreshnessFresh,
-				ProbeStatus:          core.ProbeStatusReady,
-				Status:               EvidenceStatusReady,
 			},
 			{
 				AuthIndex:            "c2",
@@ -787,10 +676,6 @@ func TestPlanFreshOnly(t *testing.T) {
 				LongWindowResetAt:    &reset7d,
 				ShortWindowRemaining: int64Ptr(80),
 				ShortWindowResetAt:   &reset5h,
-				EvidenceFresh:        true,
-				Freshness:            core.FreshnessFresh,
-				ProbeStatus:          core.ProbeStatusReady,
-				Status:               EvidenceStatusReady,
 			},
 			{
 				AuthIndex:            "c3",
@@ -798,20 +683,66 @@ func TestPlanFreshOnly(t *testing.T) {
 				LongWindowResetAt:    &reset7d,
 				ShortWindowRemaining: int64Ptr(70),
 				ShortWindowResetAt:   &reset5h,
-				EvidenceFresh:        true,
-				Freshness:            core.FreshnessFresh,
-				ProbeStatus:          core.ProbeStatusReady,
-				Status:               EvidenceStatusReady,
 			},
 		}
 
 		opts := defaultOptions
 		opts.NormalStartPriority = 2 // start at 2 -> c1 gets 2, c2 gets 1, c3 gets 1 (before uniqueness) -> uniqueness assigns unique slots
-		plan := PlanFreshOnly(creds, evidence, opts)
+		plan := planFreshOnly(creds, evidence, opts)
 		if len(plan.Items) != 3 {
 			t.Fatalf("expected 3 items, got %d", len(plan.Items))
 		}
 	})
+}
+
+func TestPlanWithEvidence_MixedRoundKeepsNonFreshCredentialsReadOnly(t *testing.T) {
+	now := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
+	reset5h := now.Add(4 * time.Hour)
+	reset7d := now.Add(100 * time.Hour)
+	credentials := []core.Credential{
+		{AuthIndex: "fresh", Priority: 50},
+		{AuthIndex: "historical", Priority: 50},
+		{AuthIndex: "failed", Priority: 70},
+	}
+	fresh := QuotaEvidence{
+		AuthIndex:            "fresh",
+		LongWindowRemaining:  int64Ptr(80),
+		LongWindowResetAt:    &reset7d,
+		ShortWindowRemaining: int64Ptr(80),
+		ShortWindowResetAt:   &reset5h,
+	}
+	historical := QuotaEvidence{
+		AuthIndex:            "historical",
+		LongWindowRemaining:  int64Ptr(80),
+		LongWindowResetAt:    &reset7d,
+		ShortWindowRemaining: int64Ptr(80),
+		ShortWindowResetAt:   &reset5h,
+	}
+
+	plan := PlanWithEvidence(credentials, plannerEvidence{
+		Fresh:      []QuotaEvidence{fresh},
+		Historical: []QuotaEvidence{historical},
+	}, Options{Now: now, NormalStartPriority: 100, MinChange: 1})
+
+	items := make(map[string]PlanItem, len(plan.Items))
+	for _, item := range plan.Items {
+		items[item.Credential.AuthIndex] = item
+	}
+	if !items["fresh"].EvidenceFresh || items["fresh"].Priority != 100 {
+		t.Fatalf("fresh item = %#v; want fresh scheduled target", items["fresh"])
+	}
+	if items["historical"].EvidenceFresh || items["historical"].Priority != 100 {
+		t.Fatalf("historical item = %#v; want read-only predicted target", items["historical"])
+	}
+	if !strings.HasPrefix(items["historical"].Reason, "historical: ") {
+		t.Fatalf("historical reason = %q; want historical diagnostic", items["historical"].Reason)
+	}
+	if items["failed"].EvidenceFresh || items["failed"].Priority != 70 || items["failed"].Disabled {
+		t.Fatalf("failed item changed without evidence: %#v", items["failed"])
+	}
+	if len(plan.Changes) != 1 || plan.Changes[0].Credential.AuthIndex != "fresh" || !plan.Changes[0].EvidenceFresh {
+		t.Fatalf("mixed plan changes = %#v; want only fresh write-qualified change", plan.Changes)
+	}
 }
 
 func TestNextAvailablePriority(t *testing.T) {
