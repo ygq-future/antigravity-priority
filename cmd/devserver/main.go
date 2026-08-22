@@ -253,9 +253,10 @@ func newDevRunner() *devRunner {
 		item.PlanType = "Antigravity Claude/GPT"
 		item.IsPredicted = true
 		item.Reason = "predicted: " + item.Reason
-		if i == 0 {
+		switch i {
+		case 0:
 			item.Target.Priority = 980
-		} else if i == 1 || i == 2 {
+		case 1, 2:
 			item.Target.Priority = 100
 		}
 		claudeItems[i] = item

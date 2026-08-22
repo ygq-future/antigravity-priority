@@ -58,7 +58,7 @@ func ExecutePlan(ctx context.Context, transition HostTransition, plan priority.P
 			continue
 		}
 		if activeIndex >= len(transitionResult.Details) {
-			failure := FailureResult(priority.PlanItem{Credential: change.Credential, Priority: change.Priority, Disabled: change.Disabled, EvidenceFresh: change.EvidenceFresh, Reason: change.Reason}, errors.New("Host Transition omitted credential result"))
+			failure := FailureResult(priority.PlanItem{Credential: change.Credential, Priority: change.Priority, Disabled: change.Disabled, EvidenceFresh: change.EvidenceFresh, Reason: change.Reason}, errors.New("host transition omitted credential result"))
 			result.Changes = append(result.Changes, failure)
 			summarizeChange(&result, failure)
 			continue

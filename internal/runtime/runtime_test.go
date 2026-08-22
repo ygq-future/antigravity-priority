@@ -149,6 +149,14 @@ type mockTickerFactory struct {
 	lastTicker *mockTicker
 }
 
+func newTestRuntime(t *testing.T, options runtime.Options) *runtime.Runtime {
+	t.Helper()
+	if options.StateCachePath == "" {
+		options.StateCachePath = filepath.Join(t.TempDir(), "startup-cache.json")
+	}
+	return runtime.New(options)
+}
+
 func (m *mockTickerFactory) NewTicker(interval time.Duration) runtime.Ticker {
 	t := &mockTicker{c: make(chan time.Time, 1)}
 	m.lastTicker = t
@@ -156,7 +164,7 @@ func (m *mockTickerFactory) NewTicker(interval time.Duration) runtime.Ticker {
 }
 
 func TestRuntime_Handle_Register(t *testing.T) {
-	r := runtime.New(runtime.Options{})
+	r := newTestRuntime(t, runtime.Options{})
 	req := []byte(`{"config_yaml":"enabled: true\nantigravity_model_group: gemini\ninterval: 15m\n"}`)
 
 	respBytes := r.Handle(context.Background(), "plugin.register", req)
@@ -193,7 +201,7 @@ func TestRuntime_Handle_Register(t *testing.T) {
 }
 
 func TestRuntime_Handle_Reconfigure(t *testing.T) {
-	r := runtime.New(runtime.Options{})
+	r := newTestRuntime(t, runtime.Options{})
 	req := []byte(`{"config_yaml":"enabled: false\nantigravity_model_group: claude_gpt\n"}`)
 
 	respBytes := r.Handle(context.Background(), "plugin.reconfigure", req)
@@ -214,7 +222,7 @@ func TestRuntime_Handle_Reconfigure(t *testing.T) {
 }
 
 func TestRuntime_Handle_Shutdown(t *testing.T) {
-	r := runtime.New(runtime.Options{})
+	r := newTestRuntime(t, runtime.Options{})
 
 	respBytes := r.Handle(context.Background(), "plugin.shutdown", nil)
 
@@ -247,7 +255,7 @@ func TestRuntime_Handle_Shutdown(t *testing.T) {
 }
 
 func TestRuntime_Handle_UnknownMethod(t *testing.T) {
-	r := runtime.New(runtime.Options{})
+	r := newTestRuntime(t, runtime.Options{})
 	respBytes := r.Handle(context.Background(), "unknown.method", nil)
 
 	var envelope struct {
@@ -266,7 +274,7 @@ func TestRuntime_Handle_UnknownMethod(t *testing.T) {
 }
 
 func TestRuntime_Handle_InvalidConfig(t *testing.T) {
-	r := runtime.New(runtime.Options{})
+	r := newTestRuntime(t, runtime.Options{})
 	// Only structurally unparseable input should produce hard errors
 	req := []byte(`{"config_yaml":"{invalid-json"}`)
 
@@ -288,7 +296,7 @@ func TestRuntime_Handle_InvalidConfig(t *testing.T) {
 }
 
 func TestRuntime_Handle_Diagnostics(t *testing.T) {
-	r := runtime.New(runtime.Options{})
+	r := newTestRuntime(t, runtime.Options{})
 	req := []byte(`{"config_yaml":"enabled: true\n"}`)
 
 	respBytes := r.Handle(context.Background(), "plugin.register", req)
@@ -317,7 +325,7 @@ func TestRuntime_Handle_Diagnostics(t *testing.T) {
 }
 
 func TestRuntime_Handle_ManagementRegister(t *testing.T) {
-	r := runtime.New(runtime.Options{})
+	r := newTestRuntime(t, runtime.Options{})
 	respBytes := r.Handle(context.Background(), "management.register", nil)
 
 	var envelope struct {
@@ -360,7 +368,7 @@ func TestRuntime_Handle_ManagementHandle(t *testing.T) {
 		},
 	}
 
-	r := runtime.New(runtime.Options{
+	r := newTestRuntime(t, runtime.Options{
 		Host:    mock,
 		Clock:   &testClock{now: time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)},
 		Sleeper: testSleeper{},
@@ -427,7 +435,7 @@ func TestRuntime_SingleFlight_Conflict(t *testing.T) {
 	blockChan := make(chan struct{})
 	enteredChan := make(chan struct{})
 
-	r := runtime.New(runtime.Options{
+	r := newTestRuntime(t, runtime.Options{
 		Runner: func(ctx context.Context, request runtime.TaskRequest) error {
 			close(enteredChan)
 			<-blockChan
@@ -458,7 +466,7 @@ func TestRuntime_AutoApply_Cooldown(t *testing.T) {
 	clock := &testClock{now: time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)}
 	calls := 0
 
-	r := runtime.New(runtime.Options{
+	r := newTestRuntime(t, runtime.Options{
 		Clock: clock,
 		Runner: func(ctx context.Context, request runtime.TaskRequest) error {
 			calls++
@@ -518,7 +526,7 @@ func TestRuntime_ProductionRunner_ConcurrentProbes(t *testing.T) {
 		},
 	}
 
-	r := runtime.New(runtime.Options{
+	r := newTestRuntime(t, runtime.Options{
 		Host:    mock,
 		Clock:   &testClock{now: time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)},
 		Sleeper: testSleeper{},
@@ -560,7 +568,7 @@ func TestRuntime_ProbeProjectsBothGroupsFromOneQuotaResponse(t *testing.T) {
 			]}}
 		}
 	}`)
-	r := runtime.New(runtime.Options{Host: mock, Clock: &testClock{now: time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)}, Sleeper: testSleeper{}})
+	r := newTestRuntime(t, runtime.Options{Host: mock, Clock: &testClock{now: time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)}, Sleeper: testSleeper{}})
 	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
 		t.Fatal(err)
 	}
@@ -606,7 +614,7 @@ func TestRuntime_ProductionRunner_FilteredAuthIndexes(t *testing.T) {
 		},
 	}
 
-	r := runtime.New(runtime.Options{
+	r := newTestRuntime(t, runtime.Options{
 		Host:    mock,
 		Clock:   &testClock{now: time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)},
 		Sleeper: testSleeper{},
@@ -660,7 +668,7 @@ func TestRuntime_ProductionRunner_CachedEvidence(t *testing.T) {
 		},
 	}
 
-	r := runtime.New(runtime.Options{
+	r := newTestRuntime(t, runtime.Options{
 		Host:    mock,
 		Clock:   &testClock{now: time.Date(2026, 8, 18, 12, 5, 0, 0, time.UTC)},
 		Sleeper: testSleeper{},
@@ -697,7 +705,7 @@ func TestRuntime_ProbeReconcilesHostChangesBeforePlanning(t *testing.T) {
 		defer m.mu.Unlock()
 		m.files = []host.AuthFile{{Name: "added", AuthIndex: "auth-added", Provider: "antigravity", Priority: 77}}
 	}
-	r := runtime.New(runtime.Options{Host: mock, Clock: &testClock{now: time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)}, Sleeper: testSleeper{}})
+	r := newTestRuntime(t, runtime.Options{Host: mock, Clock: &testClock{now: time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)}, Sleeper: testSleeper{}})
 	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
 		t.Fatal(err)
 	}
@@ -724,7 +732,7 @@ func TestRuntime_ProbeUsesPostProbePriorityAndDisabledState(t *testing.T) {
 		m.files[0].Priority = 77
 		m.files[0].Disabled = true
 	}
-	r := runtime.New(runtime.Options{Host: mock, Clock: &testClock{now: time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)}, Sleeper: testSleeper{}})
+	r := newTestRuntime(t, runtime.Options{Host: mock, Clock: &testClock{now: time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)}, Sleeper: testSleeper{}})
 	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
 		t.Fatal(err)
 	}
@@ -753,7 +761,7 @@ func TestRuntime_ProbeStillPerformsSecondHostSyncWhenInitialInventoryIsEmpty(t *
 		{},
 		{{Name: "late-addition", AuthIndex: "auth-added", Provider: "antigravity", Priority: 77}},
 	}
-	r := runtime.New(runtime.Options{Host: mock, Clock: &testClock{now: time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)}, Sleeper: testSleeper{}})
+	r := newTestRuntime(t, runtime.Options{Host: mock, Clock: &testClock{now: time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)}, Sleeper: testSleeper{}})
 	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
 		t.Fatal(err)
 	}
@@ -795,7 +803,7 @@ func TestRuntime_ProductionRunner_PhysicalAuthJSONPath(t *testing.T) {
 		Path:      jsonFilePath,
 	}
 
-	r := runtime.New(runtime.Options{
+	r := newTestRuntime(t, runtime.Options{
 		Host:    mock,
 		Clock:   &testClock{now: time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)},
 		Sleeper: testSleeper{},
@@ -827,7 +835,7 @@ func TestRuntime_ProductionRunner_Apply_Full(t *testing.T) {
 		Path:      authFilePath,
 	}
 
-	r := runtime.New(runtime.Options{
+	r := newTestRuntime(t, runtime.Options{
 		Host:    mock,
 		Clock:   &testClock{now: time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)},
 		Sleeper: testSleeper{},
@@ -889,7 +897,7 @@ func TestRuntime_DiagnosticsPreservesFailedApplyAfterProbe(t *testing.T) {
 		AuthIndex: "auth-broken",
 		JSON:      json.RawMessage(`{"access_token":"token","project_id":"project"}`),
 	}
-	r := runtime.New(runtime.Options{Host: mock, Clock: &testClock{now: time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)}, Sleeper: testSleeper{}})
+	r := newTestRuntime(t, runtime.Options{Host: mock, Clock: &testClock{now: time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)}, Sleeper: testSleeper{}})
 	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
 		t.Fatal(err)
 	}
@@ -924,7 +932,7 @@ func TestRuntime_DiagnosticsWithProbeOnlyHistoryHasNoLatestApply(t *testing.T) {
 	cachePath := filepath.Join(t.TempDir(), "cache.json")
 	mock := newMockHost()
 	mock.files = []host.AuthFile{{Name: "probe-only", AuthIndex: "auth-probe", Provider: "antigravity", Priority: 100}}
-	r := runtime.New(runtime.Options{Host: mock, Clock: &testClock{now: time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)}, Sleeper: testSleeper{}})
+	r := newTestRuntime(t, runtime.Options{Host: mock, Clock: &testClock{now: time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)}, Sleeper: testSleeper{}})
 	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
 		t.Fatal(err)
 	}
@@ -942,7 +950,7 @@ func TestRuntime_SyncHostPreservesConfiguredControlGroup(t *testing.T) {
 	cachePath := filepath.Join(t.TempDir(), "cache.json")
 	mock := newMockHost()
 	mock.files = []host.AuthFile{{Name: "control", AuthIndex: "auth-control", Provider: "antigravity", Priority: 100}}
-	r := runtime.New(runtime.Options{Host: mock, Clock: &testClock{now: time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)}})
+	r := newTestRuntime(t, runtime.Options{Host: mock, Clock: &testClock{now: time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)}})
 	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
 		t.Fatal(err)
 	}
@@ -963,7 +971,7 @@ func TestRuntime_SyncHostUsesUpdatedDynamicControlGroup(t *testing.T) {
 	cachePath := filepath.Join(t.TempDir(), "cache.json")
 	mock := newMockHost()
 	mock.files = []host.AuthFile{{Name: "control", AuthIndex: "auth-control", Provider: "antigravity", Priority: 100}}
-	r := runtime.New(runtime.Options{Host: mock, Clock: &testClock{now: time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)}})
+	r := newTestRuntime(t, runtime.Options{Host: mock, Clock: &testClock{now: time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)}})
 	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
 		t.Fatal(err)
 	}
@@ -1014,7 +1022,7 @@ func TestRuntime_ProductionRunner_ZeroChange_Apply_Omitted(t *testing.T) {
 		JSON:      json.RawMessage(`{"access_token":"token_123","project_id":"proj_123","priority":100}`),
 	}
 
-	r := runtime.New(runtime.Options{
+	r := newTestRuntime(t, runtime.Options{
 		Host:    mock,
 		Clock:   &testClock{now: time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)},
 		Sleeper: testSleeper{},
@@ -1093,7 +1101,7 @@ func TestRuntime_ProductionRunner_ProbeFailure(t *testing.T) {
 		Body:       []byte(`{"error": "unauthorized"}`),
 	}
 
-	r := runtime.New(runtime.Options{
+	r := newTestRuntime(t, runtime.Options{
 		Host:    mock,
 		Clock:   &testClock{now: time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)},
 		Sleeper: testSleeper{},
@@ -1123,7 +1131,7 @@ func TestRuntime_ProductionRunner_ProbeFailure(t *testing.T) {
 
 func TestRuntime_TickerWorker_StartAndStop(t *testing.T) {
 	mockFactory := &mockTickerFactory{}
-	r := runtime.New(runtime.Options{
+	r := newTestRuntime(t, runtime.Options{
 		TickerFactory: mockFactory,
 		Clock:         &testClock{now: time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)},
 		Sleeper:       testSleeper{},
@@ -1149,7 +1157,7 @@ func TestRuntime_TickerWorker_StartAndStop(t *testing.T) {
 }
 
 func TestRuntime_Diagnostics_And_Status(t *testing.T) {
-	r := runtime.New(runtime.Options{})
+	r := newTestRuntime(t, runtime.Options{})
 
 	status, err := r.Status(context.Background())
 	if err != nil {
@@ -1178,7 +1186,7 @@ func TestRuntime_AutoApply_Paused(t *testing.T) {
 	calls := 0
 	cachePath := filepath.Join(t.TempDir(), "cache.json")
 
-	r := runtime.New(runtime.Options{
+	r := newTestRuntime(t, runtime.Options{
 		Clock: clock,
 		Runner: func(ctx context.Context, request runtime.TaskRequest) error {
 			calls++
@@ -1225,7 +1233,7 @@ func TestRuntime_AutoApply_OutsideScheduleWindow(t *testing.T) {
 	calls := 0
 	cachePath := filepath.Join(t.TempDir(), "cache.json")
 
-	r := runtime.New(runtime.Options{
+	r := newTestRuntime(t, runtime.Options{
 		Clock: clock,
 		Runner: func(ctx context.Context, request runtime.TaskRequest) error {
 			calls++
@@ -1269,7 +1277,7 @@ func TestRuntime_AutoApply_OutsideScheduleWindow(t *testing.T) {
 
 func TestRuntime_GetSetScheduleConfig(t *testing.T) {
 	cachePath := filepath.Join(t.TempDir(), "cache.json")
-	r := runtime.New(runtime.Options{})
+	r := newTestRuntime(t, runtime.Options{})
 
 	_, err := r.Register(context.Background(), runtime.RegisterRequest{
 		ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n",
@@ -1340,7 +1348,7 @@ func TestRuntime_GetSetScheduleConfig(t *testing.T) {
 
 func TestRuntime_GetSetDynamicConfig(t *testing.T) {
 	cachePath := filepath.Join(t.TempDir(), "cache.json")
-	r := runtime.New(runtime.Options{})
+	r := newTestRuntime(t, runtime.Options{})
 
 	_, err := r.Register(context.Background(), runtime.RegisterRequest{
 		ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n",
@@ -1471,7 +1479,7 @@ func TestRuntime_GetSetDynamicConfig(t *testing.T) {
 
 func TestRuntime_DynamicConfig_SurvivesReconfigure(t *testing.T) {
 	cachePath := filepath.Join(t.TempDir(), "cache.json")
-	r := runtime.New(runtime.Options{})
+	r := newTestRuntime(t, runtime.Options{})
 
 	_, err := r.Register(context.Background(), runtime.RegisterRequest{
 		ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n",
@@ -1530,7 +1538,7 @@ func TestRuntime_DynamicConfig_SurvivesReconfigure(t *testing.T) {
 
 func TestRuntime_AutoApply_PluginDisabled(t *testing.T) {
 	calls := 0
-	r := runtime.New(runtime.Options{
+	r := newTestRuntime(t, runtime.Options{
 		Clock: &testClock{now: time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)},
 		Runner: func(ctx context.Context, request runtime.TaskRequest) error {
 			calls++
@@ -1576,7 +1584,7 @@ func TestRuntime_ProductionRunner_RespectsManuallyDisabledAccounts(t *testing.T)
 		Path:      authFilePath,
 	}
 
-	r := runtime.New(runtime.Options{
+	r := newTestRuntime(t, runtime.Options{
 		Host:    mock,
 		Clock:   &testClock{now: time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)},
 		Sleeper: testSleeper{},
@@ -1620,7 +1628,7 @@ func TestRuntime_FilterEvent_429Cooldown(t *testing.T) {
 	}
 
 	clock := &testClock{now: time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)}
-	r := runtime.New(runtime.Options{
+	r := newTestRuntime(t, runtime.Options{
 		Host:    mock,
 		Clock:   clock,
 		Sleeper: testSleeper{},
@@ -1696,7 +1704,7 @@ func TestRuntime_FilterEvent_429FailureIsReportedAndAudited(t *testing.T) {
 	mock := newMockHost()
 	mock.files = []host.AuthFile{{Name: "broken", AuthIndex: "auth-broken", Provider: "antigravity", Priority: 100}}
 	mock.authDocs["auth-broken"] = host.AuthDocument{AuthIndex: "auth-broken", Path: filepath.Join(t.TempDir(), "missing", "auth.json")}
-	r := runtime.New(runtime.Options{Host: mock, Clock: &testClock{now: time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)}})
+	r := newTestRuntime(t, runtime.Options{Host: mock, Clock: &testClock{now: time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)}})
 	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
 		t.Fatal(err)
 	}
@@ -1726,7 +1734,7 @@ func TestRuntime_FilterEvent_429WaitsForSingleFlightBoundary(t *testing.T) {
 	mock.authDocs["auth-serial"] = host.AuthDocument{AuthIndex: "auth-serial", Path: authPath}
 	started := make(chan struct{})
 	release := make(chan struct{})
-	r := runtime.New(runtime.Options{Host: mock, Runner: func(context.Context, runtime.TaskRequest) error {
+	r := newTestRuntime(t, runtime.Options{Host: mock, Runner: func(context.Context, runtime.TaskRequest) error {
 		close(started)
 		<-release
 		if err := os.WriteFile(authPath, []byte(`{"priority":50,"disabled":false}`), 0o600); err != nil {
@@ -1793,7 +1801,7 @@ func TestRuntime_ResetAllPriorities_UsesAtomicTransitionRound(t *testing.T) {
 	}
 	mock.authDocs["reset-first"] = host.AuthDocument{AuthIndex: "reset-first", Name: "first", Path: firstPath}
 	mock.authDocs["reset-second"] = host.AuthDocument{AuthIndex: "reset-second", Name: "second", Path: secondPath}
-	r := runtime.New(runtime.Options{Host: mock, Clock: &testClock{now: time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)}})
+	r := newTestRuntime(t, runtime.Options{Host: mock, Clock: &testClock{now: time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)}})
 	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
 		t.Fatal(err)
 	}
@@ -1844,7 +1852,7 @@ func TestRuntime_ResetProjectionUsesPostResetHostInventory(t *testing.T) {
 	}
 	mock.authDocs["post-reset-first"] = host.AuthDocument{AuthIndex: "post-reset-first", Name: "first", Path: firstPath}
 	mock.authDocs["post-reset-second"] = host.AuthDocument{AuthIndex: "post-reset-second", Name: "second", Path: secondPath}
-	r := runtime.New(runtime.Options{Host: mock, Clock: &testClock{now: time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)}})
+	r := newTestRuntime(t, runtime.Options{Host: mock, Clock: &testClock{now: time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)}})
 	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
 		t.Fatal(err)
 	}
@@ -1874,7 +1882,7 @@ func TestRuntime_ResetAllPriorities_ContinuesAfterCredentialFailure(t *testing.T
 	}
 	mock.authDocs["reset-broken"] = host.AuthDocument{AuthIndex: "reset-broken", Name: "broken", Path: filepath.Join(tempDir, "missing.json")}
 	mock.authDocs["reset-good"] = host.AuthDocument{AuthIndex: "reset-good", Name: "good", Path: goodPath}
-	r := runtime.New(runtime.Options{Host: mock, Clock: &testClock{now: time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)}})
+	r := newTestRuntime(t, runtime.Options{Host: mock, Clock: &testClock{now: time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)}})
 	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
 		t.Fatal(err)
 	}

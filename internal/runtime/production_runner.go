@@ -126,12 +126,7 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 	if len(plan.Changes) == 0 {
 		result := apply.Result{Snapshot: primarySnapshot}
 		summary := fmt.Sprintf("all %d credentials in sync, no changes required", len(primarySnapshot.Items))
-		_, projectErr := r.projectRun(ctx, store, result, summary, RunHistoryEntry{
-			Kind:     KindApply,
-			Trigger:  string(request.Trigger),
-			Message:  summary,
-			Snapshot: &primarySnapshot,
-		})
+		_, projectErr := r.projectSnapshot(ctx, store, result, summary)
 		return projectErr
 	}
 

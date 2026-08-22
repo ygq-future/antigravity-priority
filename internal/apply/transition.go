@@ -509,10 +509,6 @@ func applyTarget(current credentialDocumentState, fields map[string]json.RawMess
 	return result, changed
 }
 
-func (t credentialDocumentState) matchesTarget(final credentialDocumentState) bool {
-	return t.matches(final)
-}
-
 func reasonForReadError(ctx context.Context, err error) string {
 	if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return ReasonContextCanceled

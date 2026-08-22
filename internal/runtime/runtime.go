@@ -37,6 +37,7 @@ type Runtime struct {
 	latestAudit        string
 	latestDualSnapshot *apply.DualGroupSnapshot
 	scheduleConfig     state.ScheduleConfig
+	stateCacheOverride string
 	runHistory         []RunHistoryEntry
 	lastAutoApplyAt    time.Time
 	worker             *tickerWorker
@@ -66,6 +67,10 @@ func New(options Options) *Runtime {
 		hostCallbacks: options.Host,
 		clock:         clock,
 		sleeper:       sleeper,
+	}
+	if strings.TrimSpace(options.StateCachePath) != "" {
+		rt.cfg.StateCachePath = options.StateCachePath
+		rt.stateCacheOverride = options.StateCachePath
 	}
 	if options.Runner != nil {
 		rt.runner = options.Runner
@@ -146,6 +151,7 @@ func (r *Runtime) Register(ctx context.Context, req RegisterRequest) (RegisterRe
 	if err != nil {
 		return RegisterResult{}, fmt.Errorf("load register config: %w", err)
 	}
+	cfg = r.applyStateCacheOverride(cfg)
 	cfg = r.mergePersistedDynamicConfig(cfg)
 	if err := r.replaceConfig(ctx, cfg); err != nil {
 		return RegisterResult{}, err
@@ -159,11 +165,22 @@ func (r *Runtime) Reconfigure(ctx context.Context, req ReconfigureRequest) (Regi
 	if err != nil {
 		return RegisterResult{}, fmt.Errorf("load reconfigure config: %w", err)
 	}
+	cfg = r.applyStateCacheOverride(cfg)
 	cfg = r.mergePersistedDynamicConfig(cfg)
 	if err := r.replaceConfig(ctx, cfg); err != nil {
 		return RegisterResult{}, err
 	}
 	return registrationResult(), nil
+}
+
+func (r *Runtime) applyStateCacheOverride(cfg config.Config) config.Config {
+	r.mu.Lock()
+	override := r.stateCacheOverride
+	r.mu.Unlock()
+	if strings.TrimSpace(override) != "" && cfg.StateCachePath == config.DefaultStateCachePath {
+		cfg.StateCachePath = override
+	}
+	return cfg
 }
 
 // ManualApply triggers an immediate priority calculation and host write-back.
@@ -676,6 +693,13 @@ func (r *Runtime) snapshotRunEntry(result apply.Result, audit string, entry RunH
 	r.runHistory = history
 }
 
+func (r *Runtime) snapshotLatestResult(result apply.Result, audit string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.latestResult = result
+	r.latestAudit = audit
+}
+
 func (r *Runtime) setDualSnapshot(snap apply.DualGroupSnapshot) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -1008,7 +1032,7 @@ func redactRuntimeIdentifier(value string) string {
 func buildMetadata() Metadata {
 	return Metadata{
 		Name:             "Antigravity Priority",
-		Version:          "1.2.0",
+		Version:          "1.2.1",
 		Author:           "ygq-future",
 		GitHubRepository: "https://github.com/ygq-future/antigravity-priority",
 		Description:      "Intelligent quota pacing and adaptive burn-rate priority scheduler exclusively for Google Antigravity in CLIProxyAPI.",

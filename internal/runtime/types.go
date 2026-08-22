@@ -143,4 +143,8 @@ type Options struct {
 	Sleeper       Sleeper
 	TickerFactory TickerFactory
 	Runner        TaskRunner
+	// StateCachePath overrides the startup cache path. It is primarily used
+	// to isolate runtime instances in tests; production callers may leave it
+	// empty to use the configured default path.
+	StateCachePath string
 }

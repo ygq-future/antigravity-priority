@@ -1,3 +1,5 @@
+version: "2"
+
 run:
   timeout: 5m
   tests: true
@@ -10,21 +12,20 @@ linters:
     - revive
     - misspell
 
-linters-settings:
-  govet:
-    disable:
-      - fieldalignment
-      - shadow
-  revive:
-    rules:
-      - name: exported
-        disabled: true
-      - name: unexported-return
-        disabled: false
-      - name: time-naming
-        disabled: false
-
-issues:
-  exclude-dirs:
-    - dist
-    - package
+  settings:
+    govet:
+      disable:
+        - fieldalignment
+        - shadow
+    revive:
+      rules:
+        - name: exported
+          disabled: true
+        - name: unexported-return
+          disabled: false
+        - name: time-naming
+          disabled: false
+  exclusions:
+    paths:
+      - dist
+      - package

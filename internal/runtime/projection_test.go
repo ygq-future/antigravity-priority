@@ -197,7 +197,10 @@ func TestRuntime_LatestSnapshotFallbackIsStableAndComplete(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chdir(previousDir) })
-	r := runtime.New(runtime.Options{Clock: fixedClock{now: now}})
+	r := runtime.New(runtime.Options{
+		Clock:          fixedClock{now: now},
+		StateCachePath: filepath.Join(t.TempDir(), "startup-cache.json"),
+	})
 	cachePath := filepath.Join(t.TempDir(), "projection-fallback.json")
 	if _, err := r.Register(context.Background(), runtime.RegisterRequest{
 		ConfigYAML: fmt.Sprintf("state_cache_path: %q\n", cachePath),

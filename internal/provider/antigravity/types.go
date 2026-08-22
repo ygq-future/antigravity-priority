@@ -20,12 +20,6 @@ const (
 // RetrieveUserQuotaSummaryURL is the primary Antigravity quota endpoint.
 const RetrieveUserQuotaSummaryURL = "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary"
 
-var retrieveUserQuotaSummaryURLs = []string{
-	RetrieveUserQuotaSummaryURL,
-	"https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:retrieveUserQuotaSummary",
-	"https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
-}
-
 // WindowType indicates the quota window type classified from upstream responses.
 type WindowType string
 

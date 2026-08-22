@@ -148,15 +148,6 @@ func emailFromJSON(raw json.RawMessage) string {
 	return strings.TrimSpace(document.Email)
 }
 
-func topLevelFieldMissing(raw json.RawMessage, field string) bool {
-	var object map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &object); err != nil {
-		return false
-	}
-	_, ok := object[field]
-	return !ok
-}
-
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {
