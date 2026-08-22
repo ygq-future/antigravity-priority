@@ -4,11 +4,15 @@
 
 **Blocked by:** Fresh Evidence Authority 01 — Establish the Fresh Evidence authority.
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] Both control directions produce the configured Control Model Group as Target and the other Model Group as Predicted.
-- [ ] The returned control Plan belongs to the configured Control Model Group; the Predicted Plan is exposed only through its Snapshot.
-- [ ] Both groups use the same Host inventory, planning configuration, cooldowns, and projection time while retaining their own evidence and calculated values.
-- [ ] Missing or failed data remains unknown in its own group, and every result contains both canonical group keys.
-- [ ] Source observation times remain unchanged while the Snapshot uses one explicit projection-generation time.
-- [ ] A table-driven contract suite verifies role assignment, group independence, stable empty state, immutability, and both control directions through the projection interface.
+- [x] Both control directions produce the configured Control Model Group as Target and the other Model Group as Predicted.
+- [x] The returned control Plan belongs to the configured Control Model Group; the Predicted Plan is exposed only through its Snapshot.
+- [x] Both groups use the same Host inventory, planning configuration, cooldowns, and projection time while retaining their own evidence and calculated values.
+- [x] Missing or failed data remains unknown in its own group, and every result contains both canonical group keys.
+- [x] Source observation times remain unchanged while the Snapshot uses one explicit projection-generation time.
+- [x] A table-driven contract suite verifies role assignment, group independence, stable empty state, immutability, and both control directions through the projection interface.
+
+## Completion
+
+The pure `runtime.ProjectDualModelGroups` seam now owns control/alternate selection, role marking, complete response assembly, explicit projection time, and startup fallback handling. Runtime projection tests cover both control directions, independent group evidence, missing-group stability, and immutability.

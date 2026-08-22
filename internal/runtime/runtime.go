@@ -186,6 +186,9 @@ func (r *Runtime) ResetAllPriorities(ctx context.Context) (map[string]any, error
 	if r.hostCallbacks == nil {
 		return nil, errMissingHostCallbacks
 	}
+	r.mu.Lock()
+	cfg := r.cfg
+	r.mu.Unlock()
 	client := host.NewClient(r.hostCallbacks)
 	files, err := client.ListAuthFiles(ctx)
 	if err != nil {
@@ -209,9 +212,20 @@ func (r *Runtime) ResetAllPriorities(ctx context.Context) (map[string]any, error
 		credentials[i].Priority = 0
 		credentials[i].PriorityMissing = true
 	}
+	// Re-read the Host inventory after the transition so the projection uses
+	// the authoritative post-reset credential set.
+	files, err = client.ListAuthFiles(ctx)
+	if err != nil {
+		return nil, err
+	}
+	credentials = credentialsFromAuthFiles(files)
+	for i := range credentials {
+		credentials[i].Priority = 0
+		credentials[i].PriorityMissing = true
+	}
 	credentials, _, _ = enrichCredentialsFromAuthDocuments(ctx, client, credentials)
 
-	cachePath := r.cfg.StateCachePath
+	cachePath := cfg.StateCachePath
 	if strings.TrimSpace(cachePath) == "" {
 		cachePath = config.DefaultStateCachePath
 	}
@@ -220,18 +234,18 @@ func (r *Runtime) ResetAllPriorities(ctx context.Context) (map[string]any, error
 		return nil, err
 	}
 	now := r.clock.Now().UTC()
-
-	var primarySnapshot apply.PlanSnapshot
-	evidence := store.BuildGroupEvidence(credentials, string(r.cfg.AntigravityModelGroup))
-	altGroup := alternateModelGroup(r.cfg.AntigravityModelGroup)
-	altEvidence := store.BuildGroupEvidence(credentials, string(altGroup))
-	plan := priority.PlanFreshOnly(credentials, evidence, priorityOptions(r.cfg, store, now))
-	altPlan := priority.PlanFreshOnly(credentials, altEvidence, priorityOptions(r.cfg, store, now))
-	primarySnapshot = apply.Snapshot(plan)
-	predictedSnapshot := apply.SnapshotPredicted(altPlan)
-	dualSnap := apply.NewDualGroupSnapshot(
-		string(r.cfg.AntigravityModelGroup), now, primarySnapshot, predictedSnapshot)
-	r.setDualSnapshot(dualSnap)
+	projection, err := ProjectDualModelGroups(ProjectionInput{
+		ControlModelGroup: cfg.AntigravityModelGroup,
+		Credentials:       credentials,
+		EvidenceByGroup:   buildProjectionEvidence(store, credentials, now, false),
+		PlanningOptions:   priorityOptions(cfg, store, now),
+		ProjectionTime:    now,
+	})
+	if err != nil {
+		return nil, err
+	}
+	primarySnapshot := projection.ControlSnapshot
+	r.setDualSnapshot(projection.Snapshot)
 
 	summary := resultSummary("reset", result)
 	result.Snapshot = primarySnapshot
@@ -282,7 +296,7 @@ func (r *Runtime) SyncHost(ctx context.Context, modelGroup config.AntigravityMod
 		return apply.DualGroupSnapshot{}, errMissingHostCallbacks
 	}
 	// The dashboard selector is view-only; Dynamic Config is the control authority.
-	modelGroup = cfg.AntigravityModelGroup
+	_ = modelGroup
 
 	client := host.NewClient(r.hostCallbacks)
 	files, err := client.ListAuthFiles(ctx)
@@ -306,19 +320,18 @@ func (r *Runtime) SyncHost(ctx context.Context, modelGroup config.AntigravityMod
 	}
 
 	now := r.clock.Now().UTC()
-	evidence := store.BuildGroupEvidence(credentials, string(modelGroup))
-	altGroup := alternateModelGroup(modelGroup)
-	altEvidence := store.BuildGroupEvidence(credentials, string(altGroup))
-
-	plan := priority.PlanFreshOnly(credentials, evidence, priorityOptions(cfg, store, now))
-	altPlan := priority.PlanFreshOnly(credentials, altEvidence, priorityOptions(cfg, store, now))
-
-	primarySnapshot := apply.Snapshot(plan)
-	predictedSnapshot := apply.SnapshotPredicted(altPlan)
-	dualSnap := apply.NewDualGroupSnapshot(string(modelGroup), now, primarySnapshot, predictedSnapshot)
-
-	r.setDualSnapshot(dualSnap)
-	return dualSnap, nil
+	projection, err := ProjectDualModelGroups(ProjectionInput{
+		ControlModelGroup: cfg.AntigravityModelGroup,
+		Credentials:       credentials,
+		EvidenceByGroup:   buildProjectionEvidence(store, credentials, now, false),
+		PlanningOptions:   priorityOptions(cfg, store, now),
+		ProjectionTime:    now,
+	})
+	if err != nil {
+		return apply.DualGroupSnapshot{}, err
+	}
+	r.setDualSnapshot(projection.Snapshot)
+	return cloneDualGroupSnapshot(projection.Snapshot), nil
 }
 
 // GetSamples returns the historical quota samples for a specific credential and model group.
@@ -482,17 +495,21 @@ func (r *Runtime) LatestSnapshot(ctx context.Context) (apply.DualGroupSnapshot, 
 	snap := r.latestDualSnapshot
 	r.mu.Unlock()
 	if snap != nil {
-		return *snap, nil
+		return cloneDualGroupSnapshot(*snap), nil
 	}
-	// Fallback: wrap the legacy single-group result
-	result, _ := r.currentRunSnapshot()
+	// Startup fallback: generate the stable empty shape through the same
+	// projection seam until a shared projection is available.
 	cfg, _ := r.Config()
-	return apply.NewDualGroupSnapshot(
-		string(cfg.AntigravityModelGroup),
-		r.clock.Now().UTC(),
-		result.Snapshot,
-		apply.PlanSnapshot{Items: []apply.SnapshotItem{}, Changes: []apply.SnapshotChange{}},
-	), nil
+	now := r.clock.Now().UTC()
+	projection, err := ProjectDualModelGroups(ProjectionInput{
+		ControlModelGroup: cfg.AntigravityModelGroup,
+		ProjectionTime:    now,
+	})
+	if err != nil {
+		return apply.DualGroupSnapshot{}, err
+	}
+	r.setDualSnapshot(projection.Snapshot)
+	return cloneDualGroupSnapshot(projection.Snapshot), nil
 }
 
 // Diagnostics returns a comprehensive diagnostics map.
@@ -660,7 +677,8 @@ func (r *Runtime) snapshotRunEntry(result apply.Result, audit string, entry RunH
 func (r *Runtime) setDualSnapshot(snap apply.DualGroupSnapshot) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.latestDualSnapshot = &snap
+	cloned := cloneDualGroupSnapshot(snap)
+	r.latestDualSnapshot = &cloned
 }
 
 // GetScheduleConfig returns the current dynamic schedule configuration.

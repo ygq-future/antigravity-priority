@@ -538,6 +538,55 @@ func TestRuntime_ProductionRunner_ConcurrentProbes(t *testing.T) {
 	}
 }
 
+func TestRuntime_ProbeProjectsBothGroupsFromOneQuotaResponse(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	mock := newMockHost()
+	mock.files = []host.AuthFile{{
+		Name:      "dual-group-account",
+		AuthIndex: "dual-group-auth",
+		Provider:  string(core.ProviderAntigravity),
+		Type:      string(core.CredentialTypeAntigravity),
+		Priority:  100,
+	}}
+	mock.httpResponse.Body = []byte(`{
+		"models": {
+			"gemini-2.0-flash": {"modelProvider":"google","quotaInfo":{"windows":[
+				{"name":"5h","remainingFraction":0.85,"resetTime":"2026-08-22T15:00:00Z"},
+				{"name":"weekly","remainingFraction":0.70,"resetTime":"2026-08-29T00:00:00Z"}
+			]}},
+			"claude-3-5-sonnet": {"modelProvider":"anthropic","quotaInfo":{"windows":[
+				{"name":"5hr","remainingFraction":0.40,"resetTime":"2026-08-22T16:00:00Z"},
+				{"name":"7d","remainingFraction":0.60,"resetTime":"2026-08-29T00:00:00Z"}
+			]}}
+		}
+	}`)
+	r := runtime.New(runtime.Options{Host: mock, Clock: &testClock{now: time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)}, Sleeper: testSleeper{}})
+	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := r.LatestSnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	gemini := snapshot.Groups[string(config.AntigravityModelGroupGemini)]
+	claudeGPT := snapshot.Groups[string(config.AntigravityModelGroupClaudeGPT)]
+	if len(mock.httpCalls) != 1 {
+		t.Fatalf("quota HTTP calls = %d, want one response for both groups", len(mock.httpCalls))
+	}
+	if len(gemini.Items) != 1 || !gemini.Items[0].EvidenceFresh || gemini.Items[0].R7d != 0.7 {
+		t.Fatalf("gemini projection = %#v, want fresh quota data", gemini)
+	}
+	if len(claudeGPT.Items) != 1 || !claudeGPT.Items[0].EvidenceFresh || claudeGPT.Items[0].R7d != 0.6 || !claudeGPT.Items[0].IsPredicted {
+		t.Fatalf("claude/gpt projection = %#v, want fresh predicted quota data", claudeGPT)
+	}
+	if mock.saveCalls != 0 {
+		t.Fatalf("Probe wrote Host documents: %d saves", mock.saveCalls)
+	}
+}
+
 func TestRuntime_ProductionRunner_FilteredAuthIndexes(t *testing.T) {
 	mock := newMockHost()
 	mock.files = []host.AuthFile{
@@ -907,6 +956,38 @@ func TestRuntime_SyncHostPreservesConfiguredControlGroup(t *testing.T) {
 	}
 	if len(mock.httpCalls) != httpCallsBefore {
 		t.Fatal("overview synchronization unexpectedly called Google")
+	}
+}
+
+func TestRuntime_SyncHostUsesUpdatedDynamicControlGroup(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	mock := newMockHost()
+	mock.files = []host.AuthFile{{Name: "control", AuthIndex: "auth-control", Provider: "antigravity", Priority: 100}}
+	r := runtime.New(runtime.Options{Host: mock, Clock: &testClock{now: time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)}})
+	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
+		t.Fatal(err)
+	}
+	dynamic, err := r.GetDynamicConfig(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dynamic.AntigravityModelGroup = string(config.AntigravityModelGroupClaudeGPT)
+	if err := r.SetDynamicConfig(context.Background(), dynamic); err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot, err := r.SyncHost(context.Background(), config.AntigravityModelGroupGemini)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.ActiveModelGroup != string(config.AntigravityModelGroupClaudeGPT) {
+		t.Fatalf("active_model_group = %q, want updated Dynamic Config control", snapshot.ActiveModelGroup)
+	}
+	if len(snapshot.Groups[string(config.AntigravityModelGroupGemini)].Items) != 1 || len(snapshot.Groups[string(config.AntigravityModelGroupClaudeGPT)].Items) != 1 {
+		t.Fatalf("updated control projection = %#v, want both canonical groups", snapshot.Groups)
+	}
+	if mock.saveCalls != 0 {
+		t.Fatalf("SyncHost or config change wrote Host documents: %d saves", mock.saveCalls)
 	}
 }
 
@@ -1738,6 +1819,44 @@ func TestRuntime_ResetAllPriorities_UsesAtomicTransitionRound(t *testing.T) {
 		if name == "second" && state["disabled"] != true {
 			t.Fatalf("reset re-enabled disabled credential: %s", data)
 		}
+	}
+}
+
+func TestRuntime_ResetProjectionUsesPostResetHostInventory(t *testing.T) {
+	tempDir := t.TempDir()
+	cachePath := filepath.Join(tempDir, "cache.json")
+	firstPath := filepath.Join(tempDir, "first.json")
+	secondPath := filepath.Join(tempDir, "second.json")
+	if err := os.WriteFile(firstPath, []byte(`{"priority":90}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(secondPath, []byte(`{"priority":80}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mock := newMockHost()
+	initial := []host.AuthFile{
+		{Name: "first", AuthIndex: "post-reset-first", Provider: "antigravity", Priority: 90},
+		{Name: "second", AuthIndex: "post-reset-second", Provider: "antigravity", Priority: 80},
+	}
+	mock.listResponses = [][]host.AuthFile{
+		initial,
+		{initial[0]},
+	}
+	mock.authDocs["post-reset-first"] = host.AuthDocument{AuthIndex: "post-reset-first", Name: "first", Path: firstPath}
+	mock.authDocs["post-reset-second"] = host.AuthDocument{AuthIndex: "post-reset-second", Name: "second", Path: secondPath}
+	r := runtime.New(runtime.Options{Host: mock, Clock: &testClock{now: time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)}})
+	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.ResetAllPriorities(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := r.LatestSnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(snapshot.Groups[snapshot.ActiveModelGroup].Items); got != 1 {
+		t.Fatalf("post-reset projection has %d items, want current Host inventory of 1", got)
 	}
 }
 

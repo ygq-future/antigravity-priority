@@ -1,6 +1,6 @@
 # Spec: Dual Model Group Projection
 
-Status: `ready-for-agent`
+Status: `completed`
 
 ## Problem Statement
 

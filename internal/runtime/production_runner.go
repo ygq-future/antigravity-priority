@@ -92,19 +92,20 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 	if err != nil {
 		return err
 	}
-	evidence = currentRoundEvidence(store, credentials, request.Config.AntigravityModelGroup, now)
-
-	plan := priority.PlanFreshOnly(credentials, evidence, priorityOptions(request.Config, store, now))
-
-	// Build dual-group snapshot (REQ-05): compute predicted plan for the alternate model group.
-	primarySnapshot := apply.Snapshot(plan)
-	altGroup := alternateModelGroup(request.Config.AntigravityModelGroup)
-	altEvidence := currentRoundEvidence(store, credentials, altGroup, now)
-	altPlan := priority.PlanFreshOnly(credentials, altEvidence, priorityOptions(request.Config, store, now))
-	predictedSnapshot := apply.SnapshotPredicted(altPlan)
-	dualSnap := apply.NewDualGroupSnapshot(
-		string(request.Config.AntigravityModelGroup), now, primarySnapshot, predictedSnapshot)
-	r.setDualSnapshot(dualSnap)
+	controlGroup := request.Config.AntigravityModelGroup
+	projection, err := ProjectDualModelGroups(ProjectionInput{
+		ControlModelGroup: controlGroup,
+		Credentials:       credentials,
+		EvidenceByGroup:   buildProjectionEvidence(store, credentials, now, true),
+		PlanningOptions:   priorityOptions(request.Config, store, now),
+		ProjectionTime:    now,
+	})
+	if err != nil {
+		return err
+	}
+	plan := projection.ControlPlan
+	primarySnapshot := projection.ControlSnapshot
+	r.setDualSnapshot(projection.Snapshot)
 
 	// Probe-only: evidence collected, dual snapshot updated, no apply executed (REQ-04).
 	if request.Trigger == TriggerProbe {
@@ -149,17 +150,6 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 		Snapshot: &primarySnapshot,
 	})
 	return projectErr
-}
-
-func currentRoundEvidence(store *state.Store, credentials []core.Credential, group config.AntigravityModelGroup, observedAt time.Time) []priority.ProbeEvidence {
-	all := store.BuildGroupEvidence(credentials, string(group))
-	current := make([]priority.ProbeEvidence, 0, len(all))
-	for _, item := range all {
-		if item.ObservedAt.Equal(observedAt) {
-			current = append(current, item)
-		}
-	}
-	return current
 }
 
 func (r *Runtime) collectEvidenceForTrigger(ctx context.Context, input collectInput, trigger Trigger) ([]priority.ProbeEvidence, error) {
@@ -253,4 +243,25 @@ func priorityOptions(cfg config.Config, store *state.Store, now time.Time) prior
 		UrgencyTolerance:    cfg.UrgencyTolerance,
 		CooldownAuthIndexes: cooldowns,
 	}
+}
+
+func buildProjectionEvidence(store *state.Store, credentials []core.Credential, observedAt time.Time, currentRoundOnly bool) map[config.AntigravityModelGroup][]priority.ProbeEvidence {
+	result := make(map[config.AntigravityModelGroup][]priority.ProbeEvidence, 2)
+	for _, group := range []config.AntigravityModelGroup{
+		config.AntigravityModelGroupGemini,
+		config.AntigravityModelGroupClaudeGPT,
+	} {
+		entries := store.BuildGroupEvidence(credentials, string(group))
+		if currentRoundOnly {
+			current := make([]priority.ProbeEvidence, 0, len(entries))
+			for _, entry := range entries {
+				if entry.ObservedAt.Equal(observedAt) {
+					current = append(current, entry)
+				}
+			}
+			entries = current
+		}
+		result[group] = entries
+	}
+	return result
 }

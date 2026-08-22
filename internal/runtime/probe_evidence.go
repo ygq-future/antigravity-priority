@@ -275,11 +275,3 @@ func timeOrZero(t *time.Time) time.Time {
 	}
 	return *t
 }
-
-// alternateModelGroup returns the other model group.
-func alternateModelGroup(group config.AntigravityModelGroup) config.AntigravityModelGroup {
-	if group == config.AntigravityModelGroupClaudeGPT {
-		return config.AntigravityModelGroupGemini
-	}
-	return config.AntigravityModelGroupClaudeGPT
-}

@@ -290,7 +290,7 @@ func TestHandler_Snapshot_Latest(t *testing.T) {
 				},
 			}
 			predicted := apply.PlanSnapshot{Items: []apply.SnapshotItem{}, Changes: []apply.SnapshotChange{}}
-			return apply.NewDualGroupSnapshot("gemini", time.Now().UTC(), primary, predicted), nil
+			return testDualGroupSnapshot(time.Now().UTC(), primary, predicted), nil
 		},
 	}
 
@@ -622,7 +622,7 @@ func TestHandler_Sync_Success(t *testing.T) {
 				},
 			}
 			predicted := apply.PlanSnapshot{}
-			return apply.NewDualGroupSnapshot("gemini", time.Now().UTC(), primary, predicted), nil
+			return testDualGroupSnapshot(time.Now().UTC(), primary, predicted), nil
 		},
 	}
 
@@ -642,6 +642,17 @@ func TestHandler_Sync_Success(t *testing.T) {
 	}
 	if snap.ActiveModelGroup != "gemini" {
 		t.Errorf("expected active_model_group 'gemini', got %q", snap.ActiveModelGroup)
+	}
+}
+
+func testDualGroupSnapshot(observedAt time.Time, primary, predicted apply.PlanSnapshot) apply.DualGroupSnapshot {
+	return apply.DualGroupSnapshot{
+		ActiveModelGroup: "gemini",
+		ObservedAt:       observedAt,
+		Groups: map[string]apply.GroupSnapshot{
+			"gemini":     {Items: primary.Items, Changes: primary.Changes},
+			"claude_gpt": {Items: predicted.Items, Changes: predicted.Changes},
+		},
 	}
 }
 

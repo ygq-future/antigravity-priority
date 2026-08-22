@@ -520,7 +520,15 @@ func (d *devRunner) dualSnapshot(activeGroup string) apply.DualGroupSnapshot {
 		primary = devSnapshotRole(d.claudeSnapshot, false)
 		predicted = devSnapshotRole(d.geminiSnapshot, true)
 	}
-	return apply.NewDualGroupSnapshot(activeGroup, time.Now().UTC(), primary, predicted)
+	groups := map[string]apply.GroupSnapshot{}
+	if activeGroup == "claude_gpt" {
+		groups["claude_gpt"] = apply.GroupSnapshot{Items: primary.Items, Changes: primary.Changes}
+		groups["gemini"] = apply.GroupSnapshot{Items: predicted.Items, Changes: predicted.Changes}
+	} else {
+		groups["gemini"] = apply.GroupSnapshot{Items: primary.Items, Changes: primary.Changes}
+		groups["claude_gpt"] = apply.GroupSnapshot{Items: predicted.Items, Changes: predicted.Changes}
+	}
+	return apply.DualGroupSnapshot{ActiveModelGroup: activeGroup, ObservedAt: time.Now().UTC(), Groups: groups}
 }
 
 func devSnapshotRole(snapshot apply.PlanSnapshot, predicted bool) apply.PlanSnapshot {

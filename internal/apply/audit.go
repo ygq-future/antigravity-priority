@@ -5,7 +5,6 @@ import (
 	"strconv"
 	"time"
 
-	"antigravity-priority/internal/config"
 	"antigravity-priority/internal/core"
 	"antigravity-priority/internal/host"
 	"antigravity-priority/internal/priority"
@@ -218,37 +217,4 @@ type DualGroupSnapshot struct {
 	ActiveModelGroup string                   `json:"active_model_group"`
 	ObservedAt       time.Time                `json:"observed_at,omitempty"`
 	Groups           map[string]GroupSnapshot `json:"groups"`
-}
-
-// SnapshotPredicted creates a PlanSnapshot with all items marked as predicted.
-func SnapshotPredicted(plan priority.Plan) PlanSnapshot {
-	snap := newPlanSnapshot(plan)
-	for i := range snap.Items {
-		snap.Items[i].IsPredicted = true
-		if snap.Items[i].Reason != "" && snap.Items[i].Reason != priority.ReasonKeepCurrentState {
-			snap.Items[i].Reason = "predicted: " + snap.Items[i].Reason
-		}
-	}
-	for i := range snap.Changes {
-		if snap.Changes[i].Reason != "" && snap.Changes[i].Reason != priority.ReasonKeepCurrentState {
-			snap.Changes[i].Reason = "predicted: " + snap.Changes[i].Reason
-		}
-	}
-	return snap
-}
-
-// NewDualGroupSnapshot builds a DualGroupSnapshot from primary and predicted plan snapshots.
-func NewDualGroupSnapshot(activeGroup string, observedAt time.Time, primary PlanSnapshot, predicted PlanSnapshot) DualGroupSnapshot {
-	altGroup := string(config.AntigravityModelGroupClaudeGPT)
-	if activeGroup == string(config.AntigravityModelGroupClaudeGPT) {
-		altGroup = string(config.AntigravityModelGroupGemini)
-	}
-	return DualGroupSnapshot{
-		ActiveModelGroup: activeGroup,
-		ObservedAt:       observedAt,
-		Groups: map[string]GroupSnapshot{
-			activeGroup: {Items: primary.Items, Changes: primary.Changes},
-			altGroup:    {Items: predicted.Items, Changes: predicted.Changes},
-		},
-	}
 }
