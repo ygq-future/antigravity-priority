@@ -1,6 +1,6 @@
 # Spec: Management Page Feature Assets
 
-Status: `ready-for-agent`
+Status: `completed`
 
 ## Problem Statement
 

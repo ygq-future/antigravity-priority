@@ -1,7 +1,7 @@
 package management
 
-// TemplateDiagnostics contains the HTML structure for the System Diagnostics tab.
-const TemplateDiagnostics = `
+// diagnosticsMarkup contains the HTML owned by the Diagnostics feature asset.
+const diagnosticsMarkup = `
         <section id="panelDiagnostics" hidden>
             <div class="diag-scroll-container scroll-container">
                 <!-- Diagnostics Top Header -->
@@ -111,3 +111,11 @@ const TemplateDiagnostics = `
             </div>
         </section>
 `
+
+var diagnosticsPageAsset = managementPageAsset{
+	name:            "Diagnostics",
+	markup:          diagnosticsMarkup,
+	styles:          templateStyleDiagnostics,
+	scripts:         templateScriptDiagnostics,
+	translationKeys: diagnosticsTranslationKeys,
+}

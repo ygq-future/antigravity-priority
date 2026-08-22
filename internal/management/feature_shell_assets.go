@@ -1,14 +1,8 @@
 package management
 
-// StatusHTML is the self-contained, zero-external-CDN dashboard for Antigravity Priority.
-// It complies with strict CSP and CPA host dual-theme standards.
-const StatusHTML = `<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Antigravity Priority</title>
-    <style>` + templateCSS + `</style>
+// managementPageShellMarkup contains the document-level controls shared by
+// every feature panel.
+const managementPageShellMarkup = `
 </head>
 <body>
     <div class="container">
@@ -39,16 +33,17 @@ const StatusHTML = `<!DOCTYPE html>
             <button type="button" class="tab" data-tab="diagnostics" onclick="switchTab('diagnostics')" data-i18n="tabDiagnostics">系统诊断</button>
             <button type="button" class="tab" data-tab="config" onclick="switchTab('config')" data-i18n="tabConfig">⚙️ 配置中心</button>
             <button type="button" class="tab" data-tab="help" onclick="switchTab('help')" data-i18n="tabHelp">使用帮助</button>
-        </nav>` +
-	TemplateOverview +
-	TemplateHistory +
-	TemplateDiagnostics +
-	TemplateConfig +
-	TemplateHelp +
-	TemplateModals +
-	templateScripts +
-	`
-    </div>
-</body>
-</html>
-`
+        </nav>`
+
+const managementPageShellStyles = templateStyleTokens +
+	templateStyleShell +
+	templateStyleControls
+
+const managementPageShellStylesTail = templateStyleOverlays + templateStyleResponsive
+
+const managementPageShellScripts = templateScriptPrelude +
+	templateScriptI18N +
+	templateScriptShellCore +
+	templateScriptControls +
+	templateScriptModals +
+	templateScriptLiveUI

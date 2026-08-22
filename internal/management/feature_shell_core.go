@@ -8,15 +8,11 @@ const templateScriptShellCore = `        const LANG_STORAGE_KEY = "antigravity_p
                 currentLang = savedLang;
             }
         } catch (_) {}
-        let latestSnapshot = null;
-        let latestDiagnostics = null;
         let activeTab = "overview";
         let countdownInterval = null;
         let probeCooldownTimer = null;
         let scheduleConfig = null;
         let dynamicConfig = null;
-        let originalConfigState = null;
-        let userSelectedModelGroup = false;
 
         function getManagementKey() {
             try {
@@ -198,54 +194,6 @@ const templateScriptShellCore = `        const LANG_STORAGE_KEY = "antigravity_p
 
         function t(key) {
             return (I18N[currentLang] && I18N[currentLang][key]) || I18N["zh-CN"][key] || key;
-        }
-
-        function formatReason(reason, isBoosted, isDisabled) {
-            if (!reason) {
-                if (isDisabled) return currentLang === "zh-CN" ? "周额度耗尽" : "Weekly Depleted";
-                if (isBoosted) return currentLang === "zh-CN" ? "🚀 优先提权" : "🚀 Boosted";
-                return currentLang === "zh-CN" ? "正常活跃" : "Active";
-            }
-            var lower = reason.toLowerCase();
-            if (lower.indexOf("boost") >= 0) {
-                return currentLang === "zh-CN" ? "🚀 优先提权" : "🚀 Boosted";
-            }
-            if (lower.indexOf("remaining positive") >= 0) {
-                return currentLang === "zh-CN" ? "余量充足" : "Positive Balance";
-            }
-            if (lower.indexOf("weekly depleted") >= 0) {
-                return currentLang === "zh-CN" ? "周额度耗尽" : "Weekly Depleted";
-            }
-            if (lower.indexOf("short") >= 0 && lower.indexOf("depleted") >= 0) {
-                return currentLang === "zh-CN" ? "5h短窗口耗尽" : "5h Depleted";
-            }
-            if (lower.indexOf("429") >= 0 || lower.indexOf("cooldown") >= 0) {
-                return currentLang === "zh-CN" ? "⏳ 429 冷却中" : "⏳ 429 Cooldown";
-            }
-            if (lower.indexOf("predicted") >= 0) {
-                return currentLang === "zh-CN" ? "🔮 预测优先级" : "🔮 Predicted";
-            }
-            if (lower.indexOf("in sync") >= 0 || lower.indexOf("optimal") >= 0) {
-                return currentLang === "zh-CN" ? "状态最优" : "In Sync";
-            }
-            if (lower.indexOf("disabled on host") >= 0) {
-                return currentLang === "zh-CN" ? "已禁用" : "Disabled";
-            }
-            return reason;
-        }
-
-        function formatHistoryKind(kind) {
-            var k = (kind || "").toLowerCase();
-            if (k === "apply" || k === "auto_apply" || k === "manual_apply") {
-                return currentLang === "zh-CN" ? "立即写回" : "APPLY";
-            }
-            if (k === "probe") {
-                return currentLang === "zh-CN" ? "配额探测" : "PROBE";
-            }
-            if (k === "reset") {
-                return currentLang === "zh-CN" ? "重置优先级" : "RESET";
-            }
-            return (kind || "RUN").toUpperCase();
         }
 
         function isCurrentTimeInScheduleWindow(startStr, endStr) {

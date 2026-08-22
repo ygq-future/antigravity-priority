@@ -1,7 +1,7 @@
 package management
 
-// TemplateOverview contains the HTML structure for the Overview & Meters tab.
-const TemplateOverview = `
+// overviewMarkup contains the HTML owned by the Overview feature asset.
+const overviewMarkup = `
         <section id="panelOverview">
             <div class="summary-grid">
                 <div class="kpi-card">
@@ -77,3 +77,11 @@ const TemplateOverview = `
             </div>
         </section>
 `
+
+var overviewPageAsset = managementPageAsset{
+	name:            "Overview",
+	markup:          overviewMarkup + overviewSamplesMarkup,
+	styles:          templateStyleOverviewCards,
+	scripts:         templateScriptOverviewActionsCore + templateScriptOverviewReset + templateScriptOverviewRender + templateScriptProbeSchedule + templateScriptOverviewSamples,
+	translationKeys: overviewTranslationKeys,
+}

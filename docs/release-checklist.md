@@ -21,7 +21,7 @@
 | :--- | :--- | :--- | :--- |
 | **① 插件注册表** | `registry.json` | `plugins[0].version` | 必须为纯三段式版本号，如 `"1.1.0"`（无 `v` 前缀） |
 | **② 运行时元数据** | `internal/runtime/runtime.go` | `buildMetadata().Version` | 必须与 `registry.json` 完全一致，如 `"1.1.0"` |
-| **③ 嵌入式 Web 仪表盘** | `internal/management/templates.go` | `<span class="version-badge">v1.1.0</span>` | 必须带有 `v` 前缀，如 `v1.1.0` |
+| **③ 嵌入式 Web 仪表盘** | `internal/management/feature_shell_assets.go` | `<span class="version-badge">v1.1.0</span>` | 必须带有 `v` 前缀，如 `v1.1.0` |
 | **④ 专属 Release Note** | `.github/release-notes/vX.Y.Z.md` | 文件名与一级标题 `# antigravity-priority vX.Y.Z` | 文件名必须为 `vX.Y.Z.md`，内容双语齐备 |
 
 ---
@@ -90,7 +90,7 @@ go test -race ./...
          ▼
 [1. 关联代码与文档更新]
    ├─ 更新业务代码与单元测试 (TDD)
-   ├─ 检查版本号一致性 (registry.json, runtime.go, templates.go)
+   ├─ 检查版本号一致性 (registry.json, runtime.go, feature_shell_assets.go)
    ├─ 编写 .github/release-notes/vX.Y.Z.md (双语、无 REQ 标签、核心功能)
    └─ 同步更新 README.md 与 README.en.md (高度凝练、无技术细节堆砌)
          │

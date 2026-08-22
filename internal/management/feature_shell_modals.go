@@ -1,7 +1,7 @@
 package management
 
-// TemplateModals contains the HTML structure for all modals in the dashboard.
-const TemplateModals = `
+// shellModalMarkup contains modal foundations shared by multiple features.
+const shellModalMarkup = `
     <!-- Management Key Modal -->
     <div id="keyModal" class="modal-backdrop" hidden>
         <div class="modal" role="dialog" aria-modal="true" aria-labelledby="keyModalTitle" style="max-width: 460px;">
@@ -48,21 +48,4 @@ const TemplateModals = `
         </div>
     </div>
 
-    <!-- Quota Samples History Modal (FEAT-03) -->
-    <div id="samplesModal" class="modal-backdrop" hidden>
-        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="samplesModalTitle" style="max-width: 620px;">
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-                <div style="display:flex; align-items:center; gap:8px;">
-                    <span style="font-size:18px;">📊</span>
-                    <h2 id="samplesModalTitle" style="margin:0; font-size:16px;">自适应时序采样明细</h2>
-                </div>
-                <button type="button" class="btn-secondary" onclick="closeSamplesModal()" style="min-height:28px; padding:3px 8px;">✕</button>
-            </div>
-            <div id="samplesModalSubtitle" style="font-size:12px; color:var(--text-muted); font-family:monospace;"></div>
-            <div id="samplesModalBody" class="modal-body" style="max-height:360px; overflow-y:auto; padding:4px 0;"></div>
-            <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:6px;">
-                <button type="button" class="btn-secondary" onclick="closeSamplesModal()" data-i18n="btnClose">关闭</button>
-            </div>
-        </div>
-    </div>
 `

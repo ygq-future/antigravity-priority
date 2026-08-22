@@ -1,7 +1,7 @@
 package management
 
-// TemplateHistory contains the HTML structure for the Run History tab.
-const TemplateHistory = `
+// historyMarkup contains the HTML owned by the History feature asset.
+const historyMarkup = `
         <section id="panelHistory" hidden>
             <div class="card" style="display:flex; flex-direction:column; height:100%; box-sizing:border-box; overflow:hidden;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-shrink:0;">
@@ -14,3 +14,11 @@ const TemplateHistory = `
             </div>
         </section>
 `
+
+var historyPageAsset = managementPageAsset{
+	name:            "History",
+	markup:          historyMarkup,
+	styles:          templateStyleHistory,
+	scripts:         templateScriptHistory + templateScriptHistoryDetails,
+	translationKeys: historyTranslationKeys,
+}

@@ -1,6 +1,27 @@
 package management
 
-const templateScriptOverviewActionsCore = `        async function fetchSnapshot() {
+const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
+        let userSelectedModelGroup = false;
+
+        function formatReason(reason, isBoosted, isDisabled) {
+            if (!reason) {
+                if (isDisabled) return currentLang === "zh-CN" ? "周额度耗尽" : "Weekly Depleted";
+                if (isBoosted) return currentLang === "zh-CN" ? "🚀 优先提权" : "🚀 Boosted";
+                return currentLang === "zh-CN" ? "正常活跃" : "Active";
+            }
+            var lower = reason.toLowerCase();
+            if (lower.indexOf("boost") >= 0) return currentLang === "zh-CN" ? "🚀 优先提权" : "🚀 Boosted";
+            if (lower.indexOf("remaining positive") >= 0) return currentLang === "zh-CN" ? "余量充足" : "Positive Balance";
+            if (lower.indexOf("weekly depleted") >= 0) return currentLang === "zh-CN" ? "周额度耗尽" : "Weekly Depleted";
+            if (lower.indexOf("short") >= 0 && lower.indexOf("depleted") >= 0) return currentLang === "zh-CN" ? "5h短窗口耗尽" : "5h Depleted";
+            if (lower.indexOf("429") >= 0 || lower.indexOf("cooldown") >= 0) return currentLang === "zh-CN" ? "⏳ 429 冷却中" : "⏳ 429 Cooldown";
+            if (lower.indexOf("predicted") >= 0) return currentLang === "zh-CN" ? "🔮 预测优先级" : "🔮 Predicted";
+            if (lower.indexOf("in sync") >= 0 || lower.indexOf("optimal") >= 0) return currentLang === "zh-CN" ? "状态最优" : "In Sync";
+            if (lower.indexOf("disabled on host") >= 0) return currentLang === "zh-CN" ? "已禁用" : "Disabled";
+            return reason;
+        }
+
+        async function fetchSnapshot() {
             try {
                 const data = await apiFetch(SNAPSHOT_PATH);
                 latestSnapshot = data;

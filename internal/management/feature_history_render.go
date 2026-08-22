@@ -1,6 +1,14 @@
 package management
 
-const templateScriptHistory = `        function renderHistory() {
+const templateScriptHistory = `        function formatHistoryKind(kind) {
+            var k = (kind || "").toLowerCase();
+            if (k === "apply" || k === "auto_apply" || k === "manual_apply") return currentLang === "zh-CN" ? "立即写回" : "APPLY";
+            if (k === "probe") return currentLang === "zh-CN" ? "配额探测" : "PROBE";
+            if (k === "reset") return currentLang === "zh-CN" ? "重置优先级" : "RESET";
+            return (kind || "RUN").toUpperCase();
+        }
+
+        function renderHistory() {
             const list = document.getElementById("historyList");
             if (!list) return;
 

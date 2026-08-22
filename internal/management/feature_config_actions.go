@@ -1,6 +1,8 @@
 package management
 
-const templateScriptConfig = `        async function fetchDynamicConfig() {
+const templateScriptConfig = `        let originalConfigState = null;
+
+        async function fetchDynamicConfig() {
             try {
                 dynamicConfig = await apiFetch(CONFIG_PATH);
                 if (!userSelectedModelGroup && dynamicConfig && dynamicConfig.antigravity_model_group) {

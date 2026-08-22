@@ -1,6 +1,8 @@
 package management
 
-const templateScriptDiagnostics = `        function copyDiagnosticsJSON() {
+const templateScriptDiagnostics = `        let latestDiagnostics = null;
+
+        function copyDiagnosticsJSON() {
             if (!latestDiagnostics) {
                 showToast(currentLang === "zh-CN" ? "暂无诊断数据可复制" : "No diagnostics data to copy", "info");
                 return;

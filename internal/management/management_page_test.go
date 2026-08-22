@@ -1,0 +1,188 @@
+package management
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+)
+
+func TestManagementPageAssetContract(t *testing.T) {
+	expectedNames := []string{"Overview", "History", "Diagnostics", "Config", "Help"}
+	if len(managementPageFeatures) != len(expectedNames) {
+		t.Fatalf("expected %d feature assets, got %d", len(expectedNames), len(managementPageFeatures))
+	}
+
+	for index, feature := range managementPageFeatures {
+		if feature.name != expectedNames[index] {
+			t.Errorf("feature %d is %q, want %q", index, feature.name, expectedNames[index])
+		}
+		if strings.TrimSpace(feature.markup) == "" {
+			t.Errorf("%s feature has no markup asset", feature.name)
+		}
+		if strings.TrimSpace(feature.styles) == "" {
+			t.Errorf("%s feature has no style asset", feature.name)
+		}
+		if len(feature.translationKeys) == 0 {
+			t.Errorf("%s feature has no translation ownership declaration", feature.name)
+		}
+	}
+
+	if got := strings.Count(StatusHTML, "<section id=\"panel"); got != len(expectedNames) {
+		t.Fatalf("assembled page contains %d feature panels, want %d", got, len(expectedNames))
+	}
+	if StatusHTML != assembleManagementPage() {
+		t.Fatal("StatusHTML is not the deterministic output of the page assembly seam")
+	}
+}
+
+func TestStatusHTML_FeatureTranslationsExistInBothLanguages(t *testing.T) {
+	zhKeys := languageKeys(t, "zh-CN")
+	enKeys := languageKeys(t, "en-US")
+
+	for _, feature := range managementPageFeatures {
+		for _, key := range feature.translationKeys {
+			if _, ok := zhKeys[key]; !ok {
+				t.Errorf("%s feature translation key %q is missing from zh-CN", feature.name, key)
+			}
+			if _, ok := enKeys[key]; !ok {
+				t.Errorf("%s feature translation key %q is missing from en-US", feature.name, key)
+			}
+		}
+	}
+
+	dataKeys := regexp.MustCompile(`data-i18n="([A-Za-z][A-Za-z0-9_]*)"`).FindAllStringSubmatch(StatusHTML, -1)
+	for _, match := range dataKeys {
+		key := match[1]
+		if _, ok := zhKeys[key]; !ok {
+			t.Errorf("assembled markup references missing zh-CN key %q", key)
+		}
+		if _, ok := enKeys[key]; !ok {
+			t.Errorf("assembled markup references missing en-US key %q", key)
+		}
+	}
+
+	callKeys := regexp.MustCompile(`\bt\("([A-Za-z][A-Za-z0-9_]*)"\)`).FindAllStringSubmatch(extractPageScript(t), -1)
+	for _, match := range callKeys {
+		key := match[1]
+		if _, ok := zhKeys[key]; !ok {
+			t.Errorf("assembled script references missing zh-CN key %q", key)
+		}
+		if _, ok := enKeys[key]; !ok {
+			t.Errorf("assembled script references missing en-US key %q", key)
+		}
+	}
+}
+
+func TestStatusHTML_InlineHandlersResolve(t *testing.T) {
+	script := extractPageScript(t)
+	functionNames := map[string]struct{}{}
+	functionRE := regexp.MustCompile(`\bfunction\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(`)
+	for _, match := range functionRE.FindAllStringSubmatch(script, -1) {
+		functionNames[match[1]] = struct{}{}
+	}
+
+	callRE := regexp.MustCompile(`\b([A-Za-z_$][A-Za-z0-9_$]*)\s*\(`)
+	handlerRE := regexp.MustCompile(`(?i)\bon[a-z]+\s*=\s*"([^"]+)"`)
+	for _, match := range handlerRE.FindAllStringSubmatch(StatusHTML, -1) {
+		for _, call := range callRE.FindAllStringSubmatch(match[1], -1) {
+			if _, ok := functionNames[call[1]]; !ok {
+				t.Errorf("inline handler %q calls unavailable function %q", match[1], call[1])
+			}
+		}
+	}
+}
+
+func TestStatusHTML_StaticDOMReferencesResolve(t *testing.T) {
+	idNames := map[string]struct{}{}
+	idRE := regexp.MustCompile(`\bid="([A-Za-z][A-Za-z0-9_-]*)"`)
+	for _, match := range idRE.FindAllStringSubmatch(StatusHTML, -1) {
+		idNames[match[1]] = struct{}{}
+	}
+
+	script := extractPageScript(t)
+	getElementRE := regexp.MustCompile(`document\.getElementById\(\s*["']([A-Za-z][A-Za-z0-9_-]*)["']\s*\)`)
+	selectorRE := regexp.MustCompile(`document\.querySelector(?:All)?\(\s*["']#([A-Za-z][A-Za-z0-9_-]*)["']\s*\)`)
+	for _, expression := range []*regexp.Regexp{getElementRE, selectorRE} {
+		for _, match := range expression.FindAllStringSubmatch(script, -1) {
+			if _, ok := idNames[match[1]]; !ok {
+				t.Errorf("script references missing assembled DOM id %q", match[1])
+			}
+		}
+	}
+}
+
+func TestStatusHTML_OperationalWorkflowContract(t *testing.T) {
+	workflowSnippets := []string{
+		"function triggerProbe()",
+		"RUN_PATH + \"?mode=probe",
+		"function triggerApplyWithConfirm()",
+		"showModal(\"apply-confirm\"",
+		"function executeDirectApply()",
+		"RUN_PATH + \"?mode=apply",
+		"function triggerReset()",
+		"RESET_PATH",
+		"function fetchDynamicConfig()",
+		"function saveDynamicConfig()",
+		"CONFIG_PATH",
+		"function resetDynamicConfigToDefaults()",
+		"confirmResetConfigTitle",
+	}
+	for _, snippet := range workflowSnippets {
+		if !strings.Contains(StatusHTML, snippet) {
+			t.Errorf("assembled page is missing workflow contract %q", snippet)
+		}
+	}
+
+	applyConfirm := strings.Index(StatusHTML, `showModal("apply-confirm"`)
+	directApply := strings.Index(StatusHTML, `RUN_PATH + "?mode=apply`)
+	if applyConfirm == -1 || directApply == -1 || applyConfirm >= directApply {
+		t.Fatal("assembled apply workflow does not expose confirmation before direct apply")
+	}
+}
+
+func TestStatusHTML_JavaScriptSyntax(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not available; JavaScript syntax is checked in the Node-enabled verification environment")
+	}
+
+	scriptPath := filepath.Join(t.TempDir(), "management-page.js")
+	if err := os.WriteFile(scriptPath, []byte(extractPageScript(t)), 0o600); err != nil {
+		t.Fatalf("write JavaScript fixture: %v", err)
+	}
+	cmd := exec.Command(node, "--check", scriptPath)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("assembled management-page script failed node --check: %v\n%s", err, output)
+	}
+}
+
+func extractPageScript(t *testing.T) string {
+	t.Helper()
+	start := strings.Index(StatusHTML, "<script>")
+	end := strings.Index(StatusHTML, "</script>")
+	if start == -1 || end == -1 || end <= start+len("<script>") {
+		t.Fatal("assembled page does not contain one complete inline script")
+	}
+	return StatusHTML[start+len("<script>") : end]
+}
+
+func languageKeys(t *testing.T, language string) map[string]struct{} {
+	t.Helper()
+	script := extractPageScript(t)
+	languageBlockRE := regexp.MustCompile(`(?ms)^\s*"` + regexp.QuoteMeta(language) + `": \{\s*(.*?)^\s*\}`)
+	matches := languageBlockRE.FindAllStringSubmatch(script, -1)
+	if len(matches) == 0 {
+		t.Fatalf("assembled script does not contain %s translations", language)
+	}
+	keys := map[string]struct{}{}
+	keyRE := regexp.MustCompile(`(?m)^\s*([A-Za-z][A-Za-z0-9_]*)\s*:`)
+	for _, languageMatch := range matches {
+		for _, keyMatch := range keyRE.FindAllStringSubmatch(languageMatch[1], -1) {
+			keys[keyMatch[1]] = struct{}{}
+		}
+	}
+	return keys
+}

@@ -4,14 +4,19 @@
 
 **Blocked by:** 01 / Establish the management page assembly seam.
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] Overview owns its user-interface assets as one feature slice behind the shared assembly seam.
-- [ ] Control Model Group and Predicted Model Group presentation remains unchanged, including view switching and read-only Predicted behaviour.
-- [ ] Probe, refresh, Apply, and Reset continue to call the existing Management routes with the existing request semantics.
-- [ ] Apply reaches its Management action only after the existing two-stage Diff confirmation succeeds.
-- [ ] Cancelled or dismissed confirmation leaves Host state unchanged and sends no Apply action.
-- [ ] Overview refresh preserves the user's selected display group while configuration remains the Control Model Group authority.
-- [ ] Overview remains usable under both supported languages, CPA theme synchronization, explicit theme preference, and responsive layouts.
-- [ ] Behaviour tests assert observable Overview outcomes through the assembled page rather than private helper names or source substrings.
-- [ ] Superseded Overview-specific technical-layer fragments and equivalent implementation-coupled tests are contracted after coverage moves to the feature seam.
+- [x] Overview owns its user-interface assets as one feature slice behind the shared assembly seam.
+- [x] Control Model Group and Predicted Model Group presentation remains unchanged, including view switching and read-only Predicted behaviour.
+- [x] Probe, refresh, Apply, and Reset continue to call the existing Management routes with the existing request semantics.
+- [x] Apply reaches its Management action only after the existing two-stage Diff confirmation succeeds.
+- [x] Cancelled or dismissed confirmation leaves Host state unchanged and sends no Apply action.
+- [x] Overview refresh preserves the user's selected display group while configuration remains the Control Model Group authority.
+- [x] Overview remains usable under both supported languages, CPA theme synchronization, explicit theme preference, and responsive layouts.
+- [x] Behaviour tests assert observable Overview outcomes through the assembled page rather than private helper names or source substrings.
+- [x] Superseded Overview-specific technical-layer fragments and equivalent implementation-coupled tests are contracted after coverage moves to the feature seam.
+
+## Comments
+
+- Completed Overview asset ownership and retained the Model Group, Probe, Apply/Diff, Reset, refresh, and display-state workflows.
+- Browser smoke verified the Overview interaction paths in the integrated `/status` page.

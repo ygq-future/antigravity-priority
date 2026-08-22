@@ -1,7 +1,7 @@
 package management
 
-// TemplateConfig contains the HTML structure for the Configuration Center tab.
-const TemplateConfig = `
+// configMarkup contains the HTML owned by the Config feature asset.
+const configMarkup = `
         <section id="panelConfig" hidden>
             <div class="config-scroll scroll-container">
                 <!-- Card 1: Scheduling & Active Time Window -->
@@ -228,3 +228,11 @@ const TemplateConfig = `
             </div>
         </section>
 `
+
+var configPageAsset = managementPageAsset{
+	name:            "Config",
+	markup:          configMarkup,
+	styles:          templateStyleConfig,
+	scripts:         templateScriptConfig,
+	translationKeys: configTranslationKeys,
+}

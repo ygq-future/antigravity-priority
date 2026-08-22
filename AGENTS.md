@@ -43,7 +43,7 @@
 在每次进行版本迭代、功能改动完成、准备向用户提请提交或发布 Release 之前，**AI 智能体必须主动查阅并严格遵循 [`docs/release-checklist.md`](./docs/release-checklist.md)**。
 
 必须严格对照该文档完成以下关联项自检：
-1. **版本号 4 处一致性核对**：`registry.json`、`internal/runtime/runtime.go`、`internal/management/templates.go` 以及 `.github/release-notes/vX.Y.Z.md` 中的版本号必须 100% 同步一致；
+1. **版本号 4 处一致性核对**：`registry.json`、`internal/runtime/runtime.go`、`internal/management/feature_shell_assets.go` 以及 `.github/release-notes/vX.Y.Z.md` 中的版本号必须 100% 同步一致；
 2. **公开文档与双语规范**：`README.md` 与 `README.en.md` 保持中英双语对齐，聚焦核心价值，**严禁在面向用户的文档和 Release Notes 中出现 `(REQ-xx)` 内部研发标签**；
 3. **架构与元数据契约**：确保 CPA 宿主 `config.yaml` 极简无扰、`buildMetadata()` 不暴露多余抽屉字段、`config.Default()` 作为基石兜底与 UI 配置中心保持一致；
 4. **全套质量验证**：执行 `go build ./...`、`go vet ./...`、`go test -v ./...`、`go test -race ./...` 确保零告警与零数据竞争。
@@ -62,7 +62,7 @@
   - 统一协调 Ticker 定时器与单飞互斥锁（`runMu`）。
 - **Adapters (`main.go`, `internal/management`)**：
   - CGO ABI 导出与 HTTP Management API 仅作为薄适配器层透传调用 Runtime 用例，**严禁自行计算或改写优先级逻辑**；
-  - Web UI（`templates.go`）纯前端原生实现，无外部 CDN，样式完全遵从 CPA 主题。
+  - Web UI（`feature_shell_assets.go`）纯前端原生实现，无外部 CDN，样式完全遵从 CPA 主题。
 
 ---
 
