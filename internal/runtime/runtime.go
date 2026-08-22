@@ -193,12 +193,16 @@ func (r *Runtime) ResetAllPriorities(ctx context.Context) (map[string]any, error
 	}
 
 	credentials := credentialsFromAuthFiles(files)
-	resetCount := 0
-	for _, cred := range credentials {
-		if err := client.ResetPriority(ctx, cred.AuthIndex); err == nil {
-			resetCount++
-		}
+	intents := make([]apply.TransitionIntent, 0, len(credentials))
+	for _, credential := range credentials {
+		intents = append(intents, apply.ResetIntent(credential, "priority reset"))
 	}
+	transitionResult, err := apply.NewHostTransition(client).Execute(ctx, apply.TransitionRound{Intents: intents})
+	if err != nil {
+		return nil, err
+	}
+	result := apply.ResultFromTransition(transitionResult)
+	resetCount := transitionResult.Totals.Committed + transitionResult.Totals.NoChange
 
 	// Update credentials to reflect reset state (PriorityMissing = true, Priority = 0)
 	for i := range credentials {
@@ -211,50 +215,55 @@ func (r *Runtime) ResetAllPriorities(ctx context.Context) (map[string]any, error
 	if strings.TrimSpace(cachePath) == "" {
 		cachePath = config.DefaultStateCachePath
 	}
-	store, _ := state.Load(ctx, cachePath)
+	store, err := state.Load(ctx, cachePath)
+	if err != nil {
+		return nil, err
+	}
 	now := r.clock.Now().UTC()
 
 	var primarySnapshot apply.PlanSnapshot
-	if store != nil {
-		evidence := store.BuildGroupEvidence(credentials, string(r.cfg.AntigravityModelGroup))
-		altGroup := alternateModelGroup(r.cfg.AntigravityModelGroup)
-		altEvidence := store.BuildGroupEvidence(credentials, string(altGroup))
-		plan := priority.PlanFreshOnly(credentials, evidence, priorityOptions(r.cfg, store, now))
-		altPlan := priority.PlanFreshOnly(credentials, altEvidence, priorityOptions(r.cfg, store, now))
-		primarySnapshot = apply.Snapshot(plan)
-		predictedSnapshot := apply.SnapshotPredicted(altPlan)
-		dualSnap := apply.NewDualGroupSnapshot(
-			string(r.cfg.AntigravityModelGroup), now, primarySnapshot, predictedSnapshot)
-		r.setDualSnapshot(dualSnap)
-	}
+	evidence := store.BuildGroupEvidence(credentials, string(r.cfg.AntigravityModelGroup))
+	altGroup := alternateModelGroup(r.cfg.AntigravityModelGroup)
+	altEvidence := store.BuildGroupEvidence(credentials, string(altGroup))
+	plan := priority.PlanFreshOnly(credentials, evidence, priorityOptions(r.cfg, store, now))
+	altPlan := priority.PlanFreshOnly(credentials, altEvidence, priorityOptions(r.cfg, store, now))
+	primarySnapshot = apply.Snapshot(plan)
+	predictedSnapshot := apply.SnapshotPredicted(altPlan)
+	dualSnap := apply.NewDualGroupSnapshot(
+		string(r.cfg.AntigravityModelGroup), now, primarySnapshot, predictedSnapshot)
+	r.setDualSnapshot(dualSnap)
 
-	summary := fmt.Sprintf("reset %d Antigravity credentials priority to default unset state", resetCount)
-	res := apply.Result{
-		Attempted: resetCount,
-		Succeeded: resetCount,
-		Snapshot:  primarySnapshot,
-	}
+	summary := resultSummary("reset", result)
+	result.Snapshot = primarySnapshot
 	snap := primarySnapshot
-	r.snapshotRunEntry(res, summary, RunHistoryEntry{
-		Kind:      KindReset,
-		Trigger:   string(TriggerManualApply),
-		Attempted: resetCount,
-		Succeeded: resetCount,
-		Message:   summary,
-		Snapshot:  &snap,
+	_, projectErr := r.projectRun(ctx, store, result, summary, RunHistoryEntry{
+		Kind:     KindReset,
+		Trigger:  string(TriggerManualApply),
+		Message:  summary,
+		Snapshot: &snap,
 	})
-
-	if store != nil {
-		resJSON, _ := json.Marshal(res)
-		histJSON, _ := json.Marshal(r.currentRunHistory())
-		store.SetRuntimeSnapshot(summary, resJSON, histJSON)
-		_ = store.SaveAtomic(ctx)
+	if projectErr != nil {
+		return map[string]any{
+			"ok":          false,
+			"message":     summary,
+			"reset_count": resetCount,
+			"attempted":   result.Attempted,
+			"succeeded":   result.Succeeded,
+			"failed":      result.Failed,
+			"conflicts":   result.Conflicts,
+			"uncertain":   result.Uncertain,
+		}, projectErr
 	}
 
 	return map[string]any{
 		"ok":          true,
 		"message":     summary,
 		"reset_count": resetCount,
+		"attempted":   result.Attempted,
+		"succeeded":   result.Succeeded,
+		"failed":      result.Failed,
+		"conflicts":   result.Conflicts,
+		"uncertain":   result.Uncertain,
 	}, nil
 }
 
@@ -511,7 +520,7 @@ func (r *Runtime) Diagnostics(ctx context.Context) (map[string]any, error) {
 		for _, c := range store.GetCooldowns() {
 			if now.Before(c.CooldownUntil) {
 				activeCooldowns = append(activeCooldowns, map[string]any{
-					"auth_index":     c.AuthIndex,
+					"auth_index":     redactRuntimeIdentifier(c.AuthIndex),
 					"model_group":    c.ModelGroup,
 					"triggered_at":   c.TriggeredAt.Format(time.RFC3339),
 					"cooldown_until": c.CooldownUntil.Format(time.RFC3339),
@@ -850,7 +859,7 @@ func (r *Runtime) triggerCooldown(ctx context.Context, authIndex, modelGroup, re
 	}
 	store, err := state.Load(ctx, cachePath)
 	if err != nil {
-		r.recordCooldownFailure(reason, err)
+		r.recordCooldownFailure(ctx, nil, authIndex, reason, err)
 		return fmt.Errorf("record cooldown state: %w", err)
 	}
 
@@ -868,12 +877,12 @@ func (r *Runtime) triggerCooldown(ctx context.Context, authIndex, modelGroup, re
 		Reason:        reason,
 	})
 	if err := store.SaveAtomic(ctx); err != nil {
-		r.recordCooldownFailure(reason, err)
+		r.recordCooldownFailure(ctx, store, authIndex, reason, err)
 		return fmt.Errorf("persist cooldown state: %w", err)
 	}
 	if r.hostCallbacks == nil {
 		err := errMissingHostCallbacks
-		r.recordCooldownFailure(reason, err)
+		r.recordCooldownFailure(ctx, store, authIndex, reason, err)
 		return err
 	}
 
@@ -886,7 +895,7 @@ func (r *Runtime) triggerCooldown(ctx context.Context, authIndex, modelGroup, re
 	}
 	files, listErr := client.ListAuthFiles(ctx)
 	if listErr != nil {
-		r.recordCooldownFailure(reason, listErr)
+		r.recordCooldownFailure(ctx, store, authIndex, reason, listErr)
 		return fmt.Errorf("synchronize cooldown credential: %w", listErr)
 	}
 	found := false
@@ -899,63 +908,74 @@ func (r *Runtime) triggerCooldown(ctx context.Context, authIndex, modelGroup, re
 	}
 	if !found {
 		err := errors.New("cooldown credential not found in Host inventory")
-		r.recordCooldownFailure(reason, err)
+		r.recordCooldownFailure(ctx, store, authIndex, reason, err)
 		return err
 	}
-	item := priority.PlanItem{
-		Credential:    credential,
-		Priority:      priority.DepletedPriority,
-		Disabled:      false,
-		EvidenceFresh: true,
-		ForceWrite:    true,
-		Reason:        priority.Reason429Cooldown,
+	if enriched, _, enrichErr := enrichCredentialsFromAuthDocuments(ctx, client, []core.Credential{credential}); enrichErr != nil {
+		r.recordCooldownFailure(ctx, store, authIndex, reason, enrichErr)
+		return fmt.Errorf("synchronize cooldown Host state: %w", enrichErr)
+	} else if len(enriched) == 1 {
+		credential = enriched[0]
 	}
-	plan := priority.Plan{
+	transition := apply.NewHostTransition(client)
+	result, applyErr := apply.ExecuteRound(ctx, transition, apply.TransitionRound{
+		Intents: []apply.TransitionIntent{apply.CooldownIntent(credential, reason)},
+	})
+	result.Snapshot = apply.Snapshot(priority.Plan{
 		DecidedAt: now,
-		Items:     []priority.PlanItem{item},
-		Changes: []priority.Change{{
-			Credential:    credential,
-			Priority:      priority.DepletedPriority,
-			Disabled:      false,
-			EvidenceFresh: true,
-			Reason:        priority.Reason429Cooldown,
+		Items: []priority.PlanItem{{
+			Credential: credential,
+			Priority:   priority.DepletedPriority,
+			Disabled:   false,
+			Reason:     priority.Reason429Cooldown,
 		}},
-	}
-	result, applyErr := apply.Apply(ctx, apply.Request{Host: client, Auditor: r, Plan: plan})
+	})
 	if applyErr != nil {
-		result.Failed = 1
+		r.recordCooldownFailure(ctx, store, authIndex, reason, applyErr)
+		return applyErr
 	}
-	summary := fmt.Sprintf("429 cooldown auth=%s succeeded=%d failed=%d", redactRuntimeIdentifier(authIndex), result.Succeeded, result.Failed)
-	r.snapshotRunEntry(result, summary, RunHistoryEntry{
+	summary := resultSummary("429 cooldown", result)
+	_, projectErr := r.projectRun(ctx, store, result, summary, RunHistoryEntry{
+		Kind:     KindCooldown,
+		Trigger:  "filter_429",
+		Message:  summary,
+		Snapshot: &result.Snapshot,
+	})
+	if projectErr != nil {
+		return projectErr
+	}
+	if result.Transitions.Totals.Failed > 0 || result.Transitions.Totals.Conflicts > 0 || result.Transitions.Totals.Uncertain > 0 {
+		return errors.New("429 cooldown host mutation failed")
+	}
+	return nil
+}
+
+func (r *Runtime) recordCooldownFailure(ctx context.Context, store *state.Store, authIndex, reason string, err error) {
+	message := reason + ": " + host.RedactBytes([]byte(err.Error()))
+	result := apply.ResultFromTransition(apply.TransitionRoundResult{Details: []apply.TransitionResult{{
+		AuthIndex: redactRuntimeIdentifier(authIndex),
+		Outcome:   apply.OutcomeFailed,
+		Reason:    apply.ReasonCommitFailed,
+		Cause:     reason,
+		Error:     host.RedactBytes([]byte(err.Error())),
+	}}})
+	entry := RunHistoryEntry{
 		Kind:      KindCooldown,
 		Trigger:   "filter_429",
 		Attempted: result.Attempted,
 		Succeeded: result.Succeeded,
 		Failed:    result.Failed,
 		Skipped:   result.Skipped,
-		Message:   summary,
-		Snapshot:  &result.Snapshot,
-	})
-	resultJSON, _ := json.Marshal(result)
-	historyJSON, _ := json.Marshal(r.currentRunHistory())
-	store.SetRuntimeSnapshot(summary, resultJSON, historyJSON)
-	if err := store.SaveAtomic(ctx); err != nil {
-		return fmt.Errorf("persist cooldown audit: %w", err)
+		NoChange:  result.NoChange,
+		Conflicts: result.Conflicts,
+		Uncertain: result.Uncertain,
+		Message:   message,
 	}
-	if applyErr != nil {
-		return fmt.Errorf("apply cooldown: %w", applyErr)
+	if store == nil {
+		r.snapshotRunEntry(result, message, entry)
+		return
 	}
-	if result.Failed > 0 || result.Succeeded+result.Skipped != 1 {
-		return errors.New("429 cooldown host mutation failed")
-	}
-	return nil
-}
-
-func (r *Runtime) recordCooldownFailure(reason string, err error) {
-	message := reason + ": " + host.RedactBytes([]byte(err.Error()))
-	r.snapshotRunEntry(apply.Result{Failed: 1}, message, RunHistoryEntry{
-		Kind: KindCooldown, Trigger: "filter_429", Attempted: 1, Failed: 1, Message: message,
-	})
+	_, _ = r.projectRun(ctx, store, result, message, entry)
 }
 
 func redactRuntimeIdentifier(value string) string {

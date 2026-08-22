@@ -100,35 +100,32 @@ func TestSnapshot_And_AuditEvent_Redaction(t *testing.T) {
 		t.Errorf("snapshot expected to contain REDACTED: %s", snapshotStr)
 	}
 
-	// 2. AuditEvent test
-	// Create request with mock auditor to record event
-	hostMock := newMockHost()
-	auditorMock := &mockAuditor{}
-
-	_, err = apply.Apply(context.Background(), apply.Request{
-		Host:    hostMock,
-		Auditor: auditorMock,
-		Plan:    plan,
+	// 2. Transition result projection test
+	_, transitionStore := newDocumentFixture(t, map[string]string{
+		"idx-auth-123":  `{"priority":20,"disabled":false}`,
+		"idx-stale-456": `{"priority":10,"disabled":false}`,
+	})
+	result, err := apply.Apply(context.Background(), apply.Request{
+		Transition:        apply.NewHostTransition(transitionStore),
+		Plan:              plan,
+		ReportSkippedPlan: true,
 	})
 	if err != nil {
 		t.Fatalf("apply error: %v", err)
 	}
 
-	if len(auditorMock.events) != 1 {
-		t.Fatalf("expected 1 audit event, got %d", len(auditorMock.events))
+	event := result.Event
+	if event.Action != "host.transition" {
+		t.Errorf("expected action 'host.transition', got %s", event.Action)
 	}
-	event := auditorMock.events[0]
-	if event.Action != "apply.plan" {
-		t.Errorf("expected action 'apply.plan', got %s", event.Action)
-	}
-	if event.TotalChanges != 2 {
-		t.Errorf("expected TotalChanges=2, got %d", event.TotalChanges)
+	if event.TotalChanges != 1 {
+		t.Errorf("expected TotalChanges=1 for executable transitions, got %d", event.TotalChanges)
 	}
 	if event.FreshChanges != 1 {
 		t.Errorf("expected FreshChanges=1, got %d", event.FreshChanges)
 	}
-	if event.SkippedChanges != 1 {
-		t.Errorf("expected SkippedChanges=1, got %d", event.SkippedChanges)
+	if event.SkippedChanges != 0 {
+		t.Errorf("expected SkippedChanges=0 for executable transitions, got %d", event.SkippedChanges)
 	}
 
 	eventJSON, err := json.Marshal(event)
@@ -190,25 +187,24 @@ func TestResultName_FallbackHierarchy(t *testing.T) {
 	}
 
 	res, err := apply.Apply(context.Background(), apply.Request{
-		Host:    newMockHost(),
-		Auditor: &mockAuditor{},
-		Plan:    plan,
+		Transition: apply.NewHostTransition(&documentFixture{paths: map[string]string{}}),
+		Plan:       plan,
 	})
 	if err != nil {
 		t.Fatalf("apply error: %v", err)
 	}
 
-	if res.Changes[0].Name != "my-account" {
-		t.Errorf("expected Name 'my-account', got %s", res.Changes[0].Name)
+	if res.Changes[0].Name != "my***nt" {
+		t.Errorf("expected redacted account identity, got %s", res.Changes[0].Name)
 	}
-	if res.Changes[1].Name != "my-email2@example.com" {
-		t.Errorf("expected Name 'my-email2@example.com', got %s", res.Changes[1].Name)
+	if res.Changes[1].Name != "my***om" {
+		t.Errorf("expected redacted email identity, got %s", res.Changes[1].Name)
 	}
-	if res.Changes[2].Name != "my-name3" {
-		t.Errorf("expected Name 'my-name3', got %s", res.Changes[2].Name)
+	if res.Changes[2].Name != "my***e3" {
+		t.Errorf("expected redacted name identity, got %s", res.Changes[2].Name)
 	}
-	if res.Changes[3].Name != "my-idx4" {
-		t.Errorf("expected Name 'my-idx4', got %s", res.Changes[3].Name)
+	if res.Changes[3].Name != "my***x4" {
+		t.Errorf("expected redacted auth identity, got %s", res.Changes[3].Name)
 	}
 	if res.Changes[4].Name != "" {
 		t.Errorf("expected Name '', got %s", res.Changes[4].Name)

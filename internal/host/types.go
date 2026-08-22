@@ -210,7 +210,6 @@ type API interface {
 	GetAuth(ctx context.Context, authIndex string) (AuthDocument, error)
 	GetRuntime(ctx context.Context, authIndex string) (RuntimeAuth, error)
 	SaveAuth(ctx context.Context, name string, doc json.RawMessage) error
-	PatchPriority(ctx context.Context, authIndex string, priority int) error
-	PatchDisabled(ctx context.Context, name string, disabled bool) error
+	ReplaceAuth(ctx context.Context, document AuthDocument, doc json.RawMessage) error
 	HTTPDo(ctx context.Context, req HTTPRequest) (HTTPResponse, error)
 }

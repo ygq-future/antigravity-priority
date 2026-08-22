@@ -92,8 +92,12 @@ type RunHistoryEntry struct {
 	Succeeded int                 `json:"succeeded"`
 	Failed    int                 `json:"failed"`
 	Skipped   int                 `json:"skipped"`
+	NoChange  int                 `json:"no_change"`
+	Conflicts int                 `json:"conflicts"`
+	Uncertain int                 `json:"uncertain"`
 	Message   string              `json:"message"`
 	Snapshot  *apply.PlanSnapshot `json:"snapshot,omitempty"`
+	Record    apply.RecordResult  `json:"record"`
 }
 
 // RegisterRequest is the JSON request payload for plugin.register.

@@ -3,7 +3,6 @@ package apply
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"antigravity-priority/internal/priority"
 )
@@ -14,58 +13,73 @@ type ChangeStatus string
 const (
 	// ChangeStatusSkipped indicates the change lacked fresh evidence or difference, skipping write-back.
 	ChangeStatusSkipped ChangeStatus = "skipped"
-	// ChangeStatusSuccess indicates the fresh change was successfully written to the host.
-	ChangeStatusSuccess ChangeStatus = "success"
-	// ChangeStatusFailed indicates writing the change to the host failed.
-	ChangeStatusFailed ChangeStatus = "failed"
+	// ChangeStatusNoChange indicates the requested target was already satisfied.
+	ChangeStatusNoChange ChangeStatus = ChangeStatus(OutcomeNoChange)
+	// ChangeStatusCommitted indicates the resulting Host state was verified.
+	ChangeStatusCommitted ChangeStatus = ChangeStatus(OutcomeCommitted)
+	// ChangeStatusSuccess is retained as a source-compatible alias for committed.
+	ChangeStatusSuccess ChangeStatus = ChangeStatusCommitted
+	// ChangeStatusFailed indicates the Host transition did not commit.
+	ChangeStatusFailed ChangeStatus = ChangeStatus(OutcomeFailed)
+	// ChangeStatusConflict indicates newer decision-relevant Host state won.
+	ChangeStatusConflict ChangeStatus = ChangeStatus(OutcomeConflict)
+	// ChangeStatusUncertain indicates the post-commit Host state could not be proven.
+	ChangeStatusUncertain ChangeStatus = ChangeStatus(OutcomeUncertain)
 )
 
-// ErrMissingAuditor indicates caller did not provide an auditor implementation.
-var ErrMissingAuditor = errors.New("apply: auditor is required")
-
-// ErrMissingHost indicates host write interface was not provided when needed.
-var ErrMissingHost = errors.New("apply: host is required")
-
-// Host is the minimal host modification interface required by the apply engine.
-type Host interface {
-	PatchPriority(ctx context.Context, authIndex string, priority int) error
-	PatchDisabled(ctx context.Context, name string, disabled bool) error
-}
-
-// Auditor persists pre-write plan snapshots and audit events.
-type Auditor interface {
-	SaveSnapshot(ctx context.Context, snapshot PlanSnapshot) error
-	RecordEvent(ctx context.Context, event AuditEvent) error
-}
+// ErrMissingTransition indicates that a Host-changing execution did not
+// provide the single Host Transition seam.
+var ErrMissingTransition = errors.New("apply: host transition is required")
 
 // Request holds the input required to execute an apply round.
 type Request struct {
-	Host              Host
-	Auditor           Auditor
+	Transition        HostTransition
 	Plan              priority.Plan
 	ReportSkippedPlan bool
 }
 
 // Result summarizes the execution result of an apply round.
 type Result struct {
-	Snapshot  PlanSnapshot   `json:"snapshot"`
-	Event     AuditEvent     `json:"event"`
-	Changes   []ChangeResult `json:"changes"`
-	Attempted int            `json:"attempted"`
-	Succeeded int            `json:"succeeded"`
-	Failed    int            `json:"failed"`
-	Skipped   int            `json:"skipped"`
+	Snapshot    PlanSnapshot          `json:"snapshot"`
+	Event       AuditEvent            `json:"event"`
+	Changes     []ChangeResult        `json:"changes"`
+	Transitions TransitionRoundResult `json:"transitions"`
+	Record      RecordResult          `json:"record"`
+	Attempted   int                   `json:"attempted"`
+	Succeeded   int                   `json:"succeeded"`
+	Failed      int                   `json:"failed"`
+	Skipped     int                   `json:"skipped"`
+	NoChange    int                   `json:"no_change"`
+	Conflicts   int                   `json:"conflicts"`
+	Uncertain   int                   `json:"uncertain"`
+}
+
+// RecordStatus describes persistence of execution history separately from the
+// Host outcome that produced it.
+type RecordStatus string
+
+const (
+	RecordNotAttempted RecordStatus = "not_attempted"
+	RecordPersisted    RecordStatus = "persisted"
+	RecordFailed       RecordStatus = "failed"
+)
+
+// RecordResult keeps record-persistence health independent from Host truth.
+type RecordResult struct {
+	Status RecordStatus `json:"status"`
+	Error  string       `json:"error,omitempty"`
 }
 
 // ChangeResult contains the redacted execution result for a single change.
 type ChangeResult struct {
 	Name              string       `json:"name"`
 	AuthIndex         string       `json:"auth_index"`
-	RetryAuthIndex    string       `json:"retry_auth_index,omitempty"`
+	RetryAuthIndex    string       `json:"-"`
 	Provider          string       `json:"provider"`
 	Account           string       `json:"account,omitempty"`
 	Email             string       `json:"email,omitempty"`
 	Status            ChangeStatus `json:"status"`
+	HostOutcome       Outcome      `json:"host_outcome"`
 	Success           bool         `json:"success"`
 	EvidenceFresh     bool         `json:"evidence_fresh"`
 	Reason            string       `json:"reason"`
@@ -89,44 +103,14 @@ func FailureResult(credential priority.PlanItem, err error) ChangeResult {
 		Reason:        credential.Reason,
 	})
 	result.Status = ChangeStatusFailed
+	result.HostOutcome = OutcomeFailed
 	result.Error = redactedError(err)
 	return result
 }
 
-// Apply persists redacted plan snapshot and audit event, then applies fresh-only changes to the host.
+// Apply executes Planner changes through the single Host Transition seam.
 func Apply(ctx context.Context, request Request) (Result, error) {
-	result := Result{
-		Snapshot: newPlanSnapshot(request.Plan),
-		Event:    newAuditEvent(request.Plan),
-		Changes:  make([]ChangeResult, 0, len(request.Plan.Changes)+len(request.Plan.Items)),
-	}
-	if request.Auditor == nil {
-		return result, ErrMissingAuditor
-	}
-	if err := request.Auditor.SaveSnapshot(ctx, result.Snapshot); err != nil {
-		return result, fmt.Errorf("save apply snapshot: %w", err)
-	}
-	if err := request.Auditor.RecordEvent(ctx, result.Event); err != nil {
-		return result, fmt.Errorf("record apply audit event: %w", err)
-	}
-	changedAuthIndexes := make(map[string]struct{}, len(request.Plan.Changes))
-	for _, change := range request.Plan.Changes {
-		changedAuthIndexes[change.Credential.AuthIndex] = struct{}{}
-		changeResult := applyChange(ctx, request.Host, change)
-		result.Changes = append(result.Changes, changeResult)
-		summarizeChange(&result, changeResult)
-	}
-	if request.ReportSkippedPlan {
-		for _, item := range request.Plan.Items {
-			if _, changed := changedAuthIndexes[item.Credential.AuthIndex]; changed {
-				continue
-			}
-			changeResult := skippedPlanItemResult(item)
-			result.Changes = append(result.Changes, changeResult)
-			summarizeChange(&result, changeResult)
-		}
-	}
-	return result, nil
+	return ExecutePlan(ctx, request.Transition, request.Plan, request.ReportSkippedPlan)
 }
 
 func skippedPlanItemResult(item priority.PlanItem) ChangeResult {
@@ -141,56 +125,14 @@ func skippedPlanItemResult(item priority.PlanItem) ChangeResult {
 	return result
 }
 
-func applyChange(ctx context.Context, writer Host, change priority.Change) ChangeResult {
-	result := newChangeResult(change)
-	if !change.EvidenceFresh {
-		result.Status = ChangeStatusSkipped
-		return result
-	}
-	priorityChanged := change.Priority != change.Credential.Priority || change.Credential.PriorityMissing
-	disabledChanged := change.Disabled != change.Credential.Disabled
-	if !priorityChanged && !disabledChanged {
-		result.Status = ChangeStatusSkipped
-		return result
-	}
-	if writer == nil {
-		result.Status = ChangeStatusFailed
-		result.Error = redactedError(ErrMissingHost)
-		return result
-	}
-	result.PriorityAttempted = priorityChanged
-	if priorityChanged {
-		if err := writer.PatchPriority(ctx, change.Credential.AuthIndex, change.Priority); err != nil {
-			result.Status = ChangeStatusFailed
-			result.Error = redactedError(fmt.Errorf("patch priority: %w", err))
-			return result
-		}
-	}
-	if disabledChanged {
-		result.DisabledAttempted = true
-		disabledPatchName := change.Credential.Name
-		if disabledPatchName == "" {
-			disabledPatchName = change.Credential.AuthIndex
-		}
-		if err := writer.PatchDisabled(ctx, disabledPatchName, change.Disabled); err != nil {
-			result.Status = ChangeStatusFailed
-			result.Error = redactedError(fmt.Errorf("patch disabled: %w", err))
-			return result
-		}
-	}
-	result.Status = ChangeStatusSuccess
-	result.Success = true
-	return result
-}
-
 func newChangeResult(change priority.Change) ChangeResult {
 	return ChangeResult{
-		Name:            resultName(change.Credential),
-		AuthIndex:       redactString(change.Credential.AuthIndex),
+		Name:            redactIdentifier(resultName(change.Credential)),
+		AuthIndex:       redactIdentifier(change.Credential.AuthIndex),
 		RetryAuthIndex:  change.Credential.AuthIndex,
 		Provider:        string(change.Credential.Provider),
-		Account:         redactString(change.Credential.Account),
-		Email:           redactString(change.Credential.Email),
+		Account:         redactIdentifier(change.Credential.Account),
+		Email:           redactIdentifier(change.Credential.Email),
 		EvidenceFresh:   change.EvidenceFresh,
 		Reason:          redactString(change.Reason),
 		PriorityFrom:    change.Credential.Priority,
@@ -203,12 +145,22 @@ func newChangeResult(change priority.Change) ChangeResult {
 
 func summarizeChange(result *Result, change ChangeResult) {
 	switch change.Status {
-	case ChangeStatusSuccess:
+	case ChangeStatusCommitted:
 		result.Attempted++
 		result.Succeeded++
+	case ChangeStatusNoChange:
+		result.Attempted++
+		result.Skipped++
+		result.NoChange++
 	case ChangeStatusFailed:
 		result.Attempted++
 		result.Failed++
+	case ChangeStatusConflict:
+		result.Attempted++
+		result.Conflicts++
+	case ChangeStatusUncertain:
+		result.Attempted++
+		result.Uncertain++
 	case ChangeStatusSkipped:
 		result.Skipped++
 	}

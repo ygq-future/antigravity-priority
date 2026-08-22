@@ -22,24 +22,21 @@ import (
 )
 
 type mockHost struct {
-	mu                sync.Mutex
-	files             []host.AuthFile
-	listResponses     [][]host.AuthFile
-	authDocs          map[string]host.AuthDocument
-	patchedPriorities map[string]int
-	patchedDisabled   map[string]bool
-	httpResponse      host.HTTPResponse
-	httpErr           error
-	httpCalls         []host.HTTPRequest
-	operations        []string
-	afterHTTP         func(*mockHost)
+	mu            sync.Mutex
+	files         []host.AuthFile
+	listResponses [][]host.AuthFile
+	authDocs      map[string]host.AuthDocument
+	saveCalls     int
+	httpResponse  host.HTTPResponse
+	httpErr       error
+	httpCalls     []host.HTTPRequest
+	operations    []string
+	afterHTTP     func(*mockHost)
 }
 
 func newMockHost() *mockHost {
 	return &mockHost{
-		authDocs:          make(map[string]host.AuthDocument),
-		patchedPriorities: make(map[string]int),
-		patchedDisabled:   make(map[string]bool),
+		authDocs: make(map[string]host.AuthDocument),
 		httpResponse: host.HTTPResponse{
 			StatusCode: http.StatusOK,
 			Body: []byte(`{
@@ -97,6 +94,9 @@ func (m *mockHost) GetRuntime(ctx context.Context, authIndex string) (host.Runti
 }
 
 func (m *mockHost) SaveAuth(ctx context.Context, name string, doc json.RawMessage) error {
+	m.mu.Lock()
+	m.saveCalls++
+	m.mu.Unlock()
 	return nil
 }
 
@@ -116,32 +116,6 @@ func (m *mockHost) HTTPDo(ctx context.Context, req host.HTTPRequest) (host.HTTPR
 		return host.HTTPResponse{}, m.httpErr
 	}
 	return m.httpResponse, nil
-}
-
-func (m *mockHost) PatchPriority(ctx context.Context, authIndex string, priority int) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.patchedPriorities[authIndex] = priority
-	m.operations = append(m.operations, "host-patch")
-	for i := range m.files {
-		if m.files[i].AuthIndex == authIndex {
-			m.files[i].Priority = priority
-			m.files[i].PriorityMissing = false
-		}
-	}
-	return nil
-}
-
-func (m *mockHost) PatchDisabled(ctx context.Context, name string, disabled bool) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.patchedDisabled[name] = disabled
-	for i := range m.files {
-		if m.files[i].Name == name || m.files[i].AuthIndex == name {
-			m.files[i].Disabled = disabled
-		}
-	}
-	return nil
 }
 
 type testClock struct {
@@ -686,11 +660,8 @@ func TestRuntime_ProbeReconcilesHostChangesBeforePlanning(t *testing.T) {
 		t.Fatal(err)
 	}
 	items := snapshot.Groups["gemini"].Items
-	if len(items) != 1 || items[0].AuthIndex != "auth-added" || items[0].Target.Priority != 77 {
+	if len(items) != 1 || items[0].AuthIndex != "au***ed" || items[0].Target.Priority != 77 {
 		t.Fatalf("post-probe snapshot items = %#v; want newly added credential unchanged", items)
-	}
-	if _, patched := mock.patchedPriorities["auth-deleted"]; patched {
-		t.Fatal("deleted credential received a write")
 	}
 }
 
@@ -721,8 +692,8 @@ func TestRuntime_ProbeUsesPostProbePriorityAndDisabledState(t *testing.T) {
 	if len(items) != 1 || items[0].Current.Priority != 77 || !items[0].Current.Disabled {
 		t.Fatalf("post-probe current state = %#v; want priority=77 disabled=true", items)
 	}
-	if strings.Contains(strings.Join(mock.operations, ","), "host-patch") {
-		t.Fatalf("Probe must not patch Host: %v", mock.operations)
+	if mock.saveCalls != 0 {
+		t.Fatalf("Probe must not replace Host documents: %d saves", mock.saveCalls)
 	}
 }
 
@@ -747,7 +718,7 @@ func TestRuntime_ProbeStillPerformsSecondHostSyncWhenInitialInventoryIsEmpty(t *
 		t.Fatal(err)
 	}
 	items := snapshot.Groups["gemini"].Items
-	if len(items) != 1 || items[0].AuthIndex != "auth-added" || items[0].Target.Priority != 77 {
+	if len(items) != 1 || items[0].AuthIndex != "au***ed" || items[0].Target.Priority != 77 {
 		t.Fatalf("post-probe snapshot items = %#v; want late addition unchanged", items)
 	}
 	if got := strings.Join(mock.operations, ","); got != "host-sync,host-sync" {
@@ -862,9 +833,9 @@ func TestRuntime_ProductionRunner_Apply_Full(t *testing.T) {
 func TestRuntime_DiagnosticsPreservesFailedApplyAfterProbe(t *testing.T) {
 	cachePath := filepath.Join(t.TempDir(), "cache.json")
 	mock := newMockHost()
-	mock.files = []host.AuthFile{{Name: "broken", AuthIndex: "auth-broken", Provider: "antigravity", Priority: 50}}
-	// Authentication can be probed, but the missing physical path makes the
-	// subsequent priority write fail inside the Apply engine.
+	mock.files = []host.AuthFile{{Name: "broken", AuthIndex: "auth-broken", Provider: "antigravity", Priority: 50, PriorityMissing: true}}
+	// Authentication can be probed, but the callback cannot prove a complete
+	// replacement after reporting success, so the Host outcome is uncertain.
 	mock.authDocs["auth-broken"] = host.AuthDocument{
 		AuthIndex: "auth-broken",
 		JSON:      json.RawMessage(`{"access_token":"token","project_id":"project"}`),
@@ -878,16 +849,16 @@ func TestRuntime_DiagnosticsPreservesFailedApplyAfterProbe(t *testing.T) {
 	}
 	diagnostics, _ := r.Diagnostics(context.Background())
 	failedApply := diagnostics["latest_apply"].(*runtime.RunHistoryEntry)
-	if failedApply == nil || failedApply.Failed != 1 {
-		t.Fatalf("latest_apply = %#v; want one failed write", failedApply)
+	if failedApply == nil || failedApply.Failed != 0 || !strings.Contains(failedApply.Message, "uncertain=1") {
+		t.Fatalf("latest_apply = %#v; want one uncertain write", failedApply)
 	}
 	if err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
 		t.Fatal(err)
 	}
 	afterProbe, _ := r.Diagnostics(context.Background())
 	latest := afterProbe["latest_apply"].(*runtime.RunHistoryEntry)
-	if latest == nil || latest.Failed != failedApply.Failed || !latest.At.Equal(failedApply.At) || latest.Message != failedApply.Message {
-		t.Fatalf("Probe replaced failed Apply health: before=%#v after=%#v", failedApply, latest)
+	if latest == nil || latest.Failed != failedApply.Failed || !strings.Contains(latest.Message, "uncertain=1") || !latest.At.Equal(failedApply.At) || latest.Message != failedApply.Message {
+		t.Fatalf("Probe replaced uncertain Apply health: before=%#v after=%#v", failedApply, latest)
 	}
 }
 
@@ -1009,9 +980,9 @@ func TestRuntime_ProductionRunner_ZeroChange_Apply_Omitted(t *testing.T) {
 		t.Errorf("expected latest_audit to contain 'in sync', got %q", latestAudit)
 	}
 
-	// Verify no host patches were executed
-	if len(mock.patchedPriorities) != 0 {
-		t.Errorf("expected 0 host patches for zero-change apply, got %+v", mock.patchedPriorities)
+	// Verify no complete Host document replacements were executed
+	if mock.saveCalls != 0 {
+		t.Errorf("expected 0 Host document replacements for zero-change apply, got %d", mock.saveCalls)
 	}
 
 	// Verify runHistory does NOT contain useless 0-change apply entries
@@ -1535,11 +1506,6 @@ func TestRuntime_ProductionRunner_RespectsManuallyDisabledAccounts(t *testing.T)
 		t.Fatalf("manual apply failed: %v", err)
 	}
 
-	// Verify PatchDisabled was NOT called with disabled=false
-	if val, patched := mock.patchedDisabled["manually-disabled-account"]; patched && !val {
-		t.Errorf("expected manually disabled account to NOT be re-enabled, but got PatchDisabled(false)")
-	}
-
 	// Verify file remains disabled
 	updatedData, err := os.ReadFile(authFilePath)
 	if err != nil {
@@ -1632,8 +1598,8 @@ func TestRuntime_FilterEvent_429Cooldown(t *testing.T) {
 	if !ok || len(activeCD) != 1 {
 		t.Fatalf("expected 1 active cooldown in diagnostics, got %+v", diag["active_cooldowns"])
 	}
-	if activeCD[0]["auth_index"] != "auth_429" {
-		t.Errorf("expected auth_index=auth_429, got %v", activeCD[0]["auth_index"])
+	if activeCD[0]["auth_index"] != "au***29" {
+		t.Errorf("expected redacted auth_index, got %v", activeCD[0]["auth_index"])
 	}
 	if _, hasWarnings := diag["config_warnings"]; hasWarnings {
 		t.Errorf("expected config_warnings to be purged from diagnostics")
@@ -1725,5 +1691,83 @@ func TestRuntime_FilterEvent_429WaitsForSingleFlightBoundary(t *testing.T) {
 	}
 	if finalState.Priority != -1 || finalState.Disabled {
 		t.Fatalf("final Host state is not deterministic cooldown state: %s", finalDocument)
+	}
+}
+
+func TestRuntime_ResetAllPriorities_UsesAtomicTransitionRound(t *testing.T) {
+	tempDir := t.TempDir()
+	cachePath := filepath.Join(tempDir, "cache.json")
+	firstPath := filepath.Join(tempDir, "first.json")
+	secondPath := filepath.Join(tempDir, "second.json")
+	if err := os.WriteFile(firstPath, []byte(`{"priority":90,"disabled":false,"metadata":{"keep":1}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(secondPath, []byte(`{"priority":80,"disabled":true,"metadata":{"keep":2}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mock := newMockHost()
+	mock.files = []host.AuthFile{
+		{Name: "first", AuthIndex: "reset-first", Provider: "antigravity", Priority: 90},
+		{Name: "second", AuthIndex: "reset-second", Provider: "antigravity", Priority: 80, Disabled: true},
+	}
+	mock.authDocs["reset-first"] = host.AuthDocument{AuthIndex: "reset-first", Name: "first", Path: firstPath}
+	mock.authDocs["reset-second"] = host.AuthDocument{AuthIndex: "reset-second", Name: "second", Path: secondPath}
+	r := runtime.New(runtime.Options{Host: mock, Clock: &testClock{now: time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)}})
+	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
+		t.Fatal(err)
+	}
+	response, err := r.ResetAllPriorities(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response["attempted"] != 2 || response["reset_count"] != 2 || response["failed"] != 0 {
+		t.Fatalf("unexpected reset response: %#v", response)
+	}
+	for name, path := range map[string]string{"first": firstPath, "second": secondPath} {
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		var state map[string]any
+		if err := json.Unmarshal(data, &state); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := state["priority"]; ok {
+			t.Fatalf("%s priority was not unset: %s", name, data)
+		}
+		if name == "second" && state["disabled"] != true {
+			t.Fatalf("reset re-enabled disabled credential: %s", data)
+		}
+	}
+}
+
+func TestRuntime_ResetAllPriorities_ContinuesAfterCredentialFailure(t *testing.T) {
+	tempDir := t.TempDir()
+	cachePath := filepath.Join(tempDir, "cache.json")
+	goodPath := filepath.Join(tempDir, "good.json")
+	if err := os.WriteFile(goodPath, []byte(`{"priority":80,"disabled":false}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mock := newMockHost()
+	mock.files = []host.AuthFile{
+		{Name: "broken", AuthIndex: "reset-broken", Provider: "antigravity", Priority: 90},
+		{Name: "good", AuthIndex: "reset-good", Provider: "antigravity", Priority: 80},
+	}
+	mock.authDocs["reset-broken"] = host.AuthDocument{AuthIndex: "reset-broken", Name: "broken", Path: filepath.Join(tempDir, "missing.json")}
+	mock.authDocs["reset-good"] = host.AuthDocument{AuthIndex: "reset-good", Name: "good", Path: goodPath}
+	r := runtime.New(runtime.Options{Host: mock, Clock: &testClock{now: time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)}})
+	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
+		t.Fatal(err)
+	}
+	response, err := r.ResetAllPriorities(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response["attempted"] != 2 || response["reset_count"] != 1 || response["failed"] != 1 {
+		t.Fatalf("reset did not report partial failure: %#v", response)
+	}
+	data, _ := os.ReadFile(goodPath)
+	if strings.Contains(string(data), "priority") {
+		t.Fatalf("later reset credential was not processed: %s", data)
 	}
 }

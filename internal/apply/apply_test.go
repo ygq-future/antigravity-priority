@@ -2,10 +2,12 @@ package apply_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"antigravity-priority/internal/apply"
 	"antigravity-priority/internal/core"
@@ -13,489 +15,233 @@ import (
 	"antigravity-priority/internal/priority"
 )
 
-type mockHost struct {
-	patchPriorityFunc func(ctx context.Context, authIndex string, p int) error
-	patchDisabledFunc func(ctx context.Context, name string, disabled bool) error
-
-	patchedPriorities map[string]int
-	patchedDisabled   map[string]bool
+type documentFixture struct {
+	paths       map[string]string
+	replaceErr  map[string]error
+	replaceHook func(authIndex string, path string)
 }
 
-func newMockHost() *mockHost {
-	return &mockHost{
-		patchedPriorities: make(map[string]int),
-		patchedDisabled:   make(map[string]bool),
+func newDocumentFixture(t *testing.T, documents map[string]string) (*documentFixture, host.API) {
+	t.Helper()
+	fixture := &documentFixture{paths: make(map[string]string), replaceErr: make(map[string]error)}
+	for authIndex, contents := range documents {
+		path := filepath.Join(t.TempDir(), authIndex+".json")
+		if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		fixture.paths[authIndex] = path
 	}
+	return fixture, fixture
 }
 
-func (m *mockHost) PatchPriority(ctx context.Context, authIndex string, p int) error {
-	m.patchedPriorities[authIndex] = p
-	if m.patchPriorityFunc != nil {
-		return m.patchPriorityFunc(ctx, authIndex, p)
+func (f *documentFixture) GetAuth(ctx context.Context, authIndex string) (host.AuthDocument, error) {
+	if err := ctx.Err(); err != nil {
+		return host.AuthDocument{}, err
 	}
-	return nil
-}
-
-func (m *mockHost) PatchDisabled(ctx context.Context, name string, disabled bool) error {
-	m.patchedDisabled[name] = disabled
-	if m.patchDisabledFunc != nil {
-		return m.patchDisabledFunc(ctx, name, disabled)
+	path, ok := f.paths[authIndex]
+	if !ok {
+		return host.AuthDocument{}, errors.New("document not found")
 	}
-	return nil
-}
-
-type mockAuditor struct {
-	saveSnapshotFunc func(ctx context.Context, snapshot apply.PlanSnapshot) error
-	recordEventFunc  func(ctx context.Context, event apply.AuditEvent) error
-
-	snapshots []apply.PlanSnapshot
-	events    []apply.AuditEvent
-}
-
-func (m *mockAuditor) SaveSnapshot(ctx context.Context, snapshot apply.PlanSnapshot) error {
-	m.snapshots = append(m.snapshots, snapshot)
-	if m.saveSnapshotFunc != nil {
-		return m.saveSnapshotFunc(ctx, snapshot)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return host.AuthDocument{}, err
 	}
-	return nil
+	return host.AuthDocument{AuthIndex: authIndex, Name: "credential-" + authIndex, Path: path, JSON: raw}, nil
 }
 
-func (m *mockAuditor) RecordEvent(ctx context.Context, event apply.AuditEvent) error {
-	m.events = append(m.events, event)
-	if m.recordEventFunc != nil {
-		return m.recordEventFunc(ctx, event)
-	}
-	return nil
+func (f *documentFixture) ListAuthFiles(context.Context) ([]host.AuthFile, error) { return nil, nil }
+func (f *documentFixture) GetRuntime(context.Context, string) (host.RuntimeAuth, error) {
+	return host.RuntimeAuth{}, nil
+}
+func (f *documentFixture) SaveAuth(context.Context, string, json.RawMessage) error { return nil }
+func (f *documentFixture) HTTPDo(context.Context, host.HTTPRequest) (host.HTTPResponse, error) {
+	return host.HTTPResponse{}, nil
 }
 
-func TestApply_MissingAuditor(t *testing.T) {
-	ctx := context.Background()
-	_, err := apply.Apply(ctx, apply.Request{
-		Host:    newMockHost(),
-		Auditor: nil,
-		Plan:    priority.Plan{},
+type missingIdentityStore struct{ host.API }
+
+func (s missingIdentityStore) GetAuth(ctx context.Context, authIndex string) (host.AuthDocument, error) {
+	document, err := s.API.GetAuth(ctx, authIndex)
+	document.AuthIndex = ""
+	return document, err
+}
+
+func TestHostTransition_AtomicTargetPreservesUnrelatedFields(t *testing.T) {
+	fixture, client := newDocumentFixture(t, map[string]string{
+		"idx-1": `{"access_token":"secret","priority":10,"disabled":false,"metadata":{"keep":true}}`,
 	})
-	if !errors.Is(err, apply.ErrMissingAuditor) {
-		t.Fatalf("expected ErrMissingAuditor, got %v", err)
-	}
-}
-
-func TestApply_AuditorErrors(t *testing.T) {
-	ctx := context.Background()
-
-	// SaveSnapshot error
-	auditorErr := errors.New("auditor save failed")
-	auditor := &mockAuditor{
-		saveSnapshotFunc: func(ctx context.Context, snapshot apply.PlanSnapshot) error {
-			return auditorErr
+	result, err := apply.NewHostTransition(client).Execute(context.Background(), apply.TransitionRound{Intents: []apply.TransitionIntent{{
+		AuthIndex: "idx-1",
+		Expected:  apply.CredentialState{AuthIndex: "idx-1", Priority: 10, PriorityPresent: true, Disabled: false, DisabledKnown: true},
+		Target: apply.CredentialTarget{
+			Priority: apply.PriorityTarget{Operation: apply.FieldSet, Value: 90},
+			Disabled: apply.DisabledTarget{Operation: apply.FieldSet, Value: true},
 		},
+		Cause: "ordinary apply",
+	}}})
+	if err != nil {
+		t.Fatal(err)
 	}
-	_, err := apply.Apply(ctx, apply.Request{
-		Host:    newMockHost(),
-		Auditor: auditor,
-		Plan:    priority.Plan{},
-	})
-	if err == nil || !strings.Contains(err.Error(), "save apply snapshot") {
-		t.Fatalf("expected save apply snapshot error, got %v", err)
+	if result.Totals.Committed != 1 || len(result.Details) != 1 || result.Details[0].Outcome != apply.OutcomeCommitted {
+		t.Fatalf("unexpected transition result: %#v", result)
 	}
-
-	// RecordEvent error
-	auditor = &mockAuditor{
-		recordEventFunc: func(ctx context.Context, event apply.AuditEvent) error {
-			return errors.New("record event failed")
-		},
+	data, err := os.ReadFile(fixture.paths["idx-1"])
+	if err != nil {
+		t.Fatal(err)
 	}
-	_, err = apply.Apply(ctx, apply.Request{
-		Host:    newMockHost(),
-		Auditor: auditor,
-		Plan:    priority.Plan{},
-	})
-	if err == nil || !strings.Contains(err.Error(), "record apply audit event") {
-		t.Fatalf("expected record apply audit event error, got %v", err)
+	var document map[string]any
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatal(err)
+	}
+	if document["priority"] != float64(90) || document["disabled"] != true || document["metadata"].(map[string]any)["keep"] != true {
+		t.Fatalf("atomic transition did not preserve document: %s", data)
 	}
 }
 
-func TestApply_FreshEvidenceGating(t *testing.T) {
-	ctx := context.Background()
-	hostMock := newMockHost()
-	auditorMock := &mockAuditor{}
+func TestHostTransition_NoChangeAndIndependentLaterCredential(t *testing.T) {
+	fixture, client := newDocumentFixture(t, map[string]string{
+		"same":  `{"priority":10,"disabled":false}`,
+		"later": `{"priority":20,"disabled":false}`,
+	})
+	fixture.replaceErr["later"] = errors.New("disk unavailable token=secret")
+	result, err := apply.NewHostTransition(client).Execute(context.Background(), apply.TransitionRound{Intents: []apply.TransitionIntent{
+		{AuthIndex: "same", Expected: apply.CredentialState{AuthIndex: "same", Priority: 10, PriorityPresent: true, Disabled: false, DisabledKnown: true}, Target: apply.CredentialTarget{Priority: apply.PriorityTarget{Operation: apply.FieldSet, Value: 10}}},
+		{AuthIndex: "later", Expected: apply.CredentialState{AuthIndex: "later", Priority: 20, PriorityPresent: true, Disabled: false, DisabledKnown: true}, Target: apply.CredentialTarget{Priority: apply.PriorityTarget{Operation: apply.FieldSet, Value: 30}}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Totals.NoChange != 1 || result.Totals.Failed != 1 || result.Totals.Attempted != 2 {
+		t.Fatalf("totals were not derived from independent details: %#v", result.Totals)
+	}
+	if strings.Contains(result.Details[1].Error, "secret") || !strings.Contains(result.Details[1].Error, host.RedactedValue) {
+		t.Fatalf("transition error was not redacted: %#v", result.Details[1])
+	}
+}
 
+func (f *documentFixture) ReplaceAuth(ctx context.Context, document host.AuthDocument, doc json.RawMessage) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := f.replaceErr[document.AuthIndex]; err != nil {
+		return err
+	}
+	if f.replaceHook != nil {
+		f.replaceHook(document.AuthIndex, document.Path)
+	}
+	return os.WriteFile(document.Path, doc, 0o600)
+}
+
+func TestHostTransition_ConflictDoesNotOverwriteNewerHostState(t *testing.T) {
+	fixture, client := newDocumentFixture(t, map[string]string{
+		"idx-1": `{"priority":25,"disabled":false,"metadata":{"new":true}}`,
+	})
+	result, err := apply.NewHostTransition(client).Execute(context.Background(), apply.TransitionRound{Intents: []apply.TransitionIntent{{
+		AuthIndex: "idx-1",
+		Expected:  apply.CredentialState{AuthIndex: "idx-1", Priority: 10, PriorityPresent: true, Disabled: false, DisabledKnown: true},
+		Target:    apply.CredentialTarget{Priority: apply.PriorityTarget{Operation: apply.FieldSet, Value: 90}},
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Details[0].Outcome != apply.OutcomeConflict || result.Details[0].Reason != "priority_conflict" {
+		t.Fatalf("expected priority conflict, got %#v", result.Details[0])
+	}
+	data, _ := os.ReadFile(fixture.paths["idx-1"])
+	if strings.Contains(string(data), "90") {
+		t.Fatalf("conflicting transition overwrote Host state: %s", data)
+	}
+}
+
+func TestHostTransition_MissingIdentityCannotCommit(t *testing.T) {
+	_, client := newDocumentFixture(t, map[string]string{
+		"idx-1": `{"priority":10,"disabled":false}`,
+	})
+	result, err := apply.NewHostTransition(missingIdentityStore{API: client}).Execute(context.Background(), apply.TransitionRound{Intents: []apply.TransitionIntent{{
+		AuthIndex: "idx-1",
+		Expected:  apply.CredentialState{AuthIndex: "idx-1", Priority: 10, PriorityPresent: true, Disabled: false, DisabledKnown: true},
+		Target:    apply.CredentialTarget{Priority: apply.PriorityTarget{Operation: apply.FieldSet, Value: 20}},
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Details[0].Outcome != apply.OutcomeConflict || result.Details[0].Reason != apply.ReasonIdentityConflict {
+		t.Fatalf("missing Host identity was not rejected: %#v", result.Details[0])
+	}
+}
+
+func TestHostTransition_SetUnsetAndCancellationSemantics(t *testing.T) {
+	fixture, client := newDocumentFixture(t, map[string]string{
+		"reset":  `{"priority":90,"disabled":true,"metadata":{"keep":1}}`,
+		"cancel": `{"priority":10,"disabled":false}`,
+	})
+	result, err := apply.NewHostTransition(client).Execute(context.Background(), apply.TransitionRound{Intents: []apply.TransitionIntent{{
+		AuthIndex: "reset",
+		Expected:  apply.CredentialState{AuthIndex: "reset", Priority: 90, PriorityPresent: true, Disabled: true, DisabledKnown: true},
+		Target: apply.CredentialTarget{
+			Priority: apply.PriorityTarget{Operation: apply.FieldUnset},
+			Disabled: apply.DisabledTarget{Operation: apply.FieldUnchanged},
+		},
+	}}})
+	if err != nil || result.Details[0].Outcome != apply.OutcomeCommitted {
+		t.Fatalf("reset transition failed: %#v, %v", result, err)
+	}
+	var reset map[string]any
+	data, _ := os.ReadFile(fixture.paths["reset"])
+	_ = json.Unmarshal(data, &reset)
+	if _, ok := reset["priority"]; ok || reset["disabled"] != true || reset["metadata"].(map[string]any)["keep"] != float64(1) {
+		t.Fatalf("reset changed unrelated or disabled state: %s", data)
+	}
+
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	result, err = apply.NewHostTransition(client).Execute(canceled, apply.TransitionRound{Intents: []apply.TransitionIntent{{
+		AuthIndex: "cancel",
+		Expected:  apply.CredentialState{AuthIndex: "cancel", Priority: 10, PriorityPresent: true, Disabled: false, DisabledKnown: false},
+		Target:    apply.CredentialTarget{Priority: apply.PriorityTarget{Operation: apply.FieldSet, Value: 20}},
+	}}})
+	if err != nil || result.Details[0].Outcome != apply.OutcomeFailed || result.Details[0].Reason != "context_canceled" {
+		t.Fatalf("pre-commit cancellation was not failed: %#v, %v", result, err)
+	}
+
+	fixture.replaceHook = func(_ string, _ string) { cancel() }
+	result, err = apply.NewHostTransition(client).Execute(context.Background(), apply.TransitionRound{Intents: []apply.TransitionIntent{{
+		AuthIndex: "cancel",
+		Expected:  apply.CredentialState{AuthIndex: "cancel", Priority: 10, PriorityPresent: true, Disabled: false, DisabledKnown: false},
+		Target:    apply.CredentialTarget{Priority: apply.PriorityTarget{Operation: apply.FieldSet, Value: 20}},
+	}}})
+	if err != nil || result.Details[0].Outcome != apply.OutcomeCommitted {
+		t.Fatalf("post-commit cancellation negated committed state: %#v, %v", result, err)
+	}
+}
+
+func TestExecutePlan_UsesTransitionAndDerivedCounters(t *testing.T) {
+	fixture, client := newDocumentFixture(t, map[string]string{"idx-1": `{"priority":10,"disabled":false}`})
 	plan := priority.Plan{
-		Changes: []priority.Change{
-			{
-				Credential: core.Credential{
-					Name:      "stale-cred",
-					AuthIndex: "idx-stale",
-					Priority:  10,
-					Disabled:  false,
-				},
-				Priority:      50,
-				Disabled:      false,
-				EvidenceFresh: false, // NOT fresh and NOT forced
-				Reason:        "stale calculation",
-			},
-			{
-				Credential: core.Credential{
-					Name:      "fresh-cred",
-					AuthIndex: "idx-fresh",
-					Priority:  10,
-					Disabled:  false,
-				},
-				Priority:      50,
-				Disabled:      false,
-				EvidenceFresh: true, // Fresh
-				Reason:        "fresh positive",
-			},
-		},
-	}
-
-	res, err := apply.Apply(ctx, apply.Request{
-		Host:    hostMock,
-		Auditor: auditorMock,
-		Plan:    plan,
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if res.Attempted != 1 {
-		t.Errorf("expected Attempted=1, got %d", res.Attempted)
-	}
-	if res.Succeeded != 1 {
-		t.Errorf("expected Succeeded=1, got %d", res.Succeeded)
-	}
-	if res.Skipped != 1 {
-		t.Errorf("expected Skipped=1, got %d", res.Skipped)
-	}
-
-	if _, exists := hostMock.patchedPriorities["idx-stale"]; exists {
-		t.Errorf("stale credential should not be patched in host")
-	}
-	if p, exists := hostMock.patchedPriorities["idx-fresh"]; !exists || p != 50 {
-		t.Errorf("fresh credential expected priority 50, got %d (exists=%v)", p, exists)
-	}
-
-	if res.Changes[0].Status != apply.ChangeStatusSkipped {
-		t.Errorf("expected first change status skipped, got %v", res.Changes[0].Status)
-	}
-	if res.Changes[1].Status != apply.ChangeStatusSuccess {
-		t.Errorf("expected second change status success, got %v", res.Changes[1].Status)
-	}
-}
-
-func TestApply_MinChangeAndNoDifferenceSkipping(t *testing.T) {
-	ctx := context.Background()
-	now := time.Now().UTC()
-	resetAt := now.Add(200 * time.Hour) // Far future so not boosted
-
-	// Plan with min_change threshold test
-	creds := []core.Credential{
-		{
-			Name:      "cred-1",
-			AuthIndex: "idx-1",
-			Priority:  100,
-			Disabled:  false,
-			Status:    core.CredentialStatusActive,
-		},
-	}
-
-	rem := int64(100)
-	evidence := []priority.ProbeEvidence{
-		{
-			AuthIndex:     "idx-1",
-			Remaining:     &rem,
-			ResetAt:       &resetAt,
-			ObservedAt:    now,
-			Freshness:     core.FreshnessFresh,
-			ProbeStatus:   core.ProbeStatusReady,
-			Status:        priority.EvidenceStatusReady,
-			EvidenceFresh: true,
-		},
-	}
-
-	// With NormalStartPriority = 98 (diff = 2) and MinChange = 5, changes should be empty
-	plan := priority.PlanFreshOnly(creds, evidence, priority.Options{
-		Now:                 now,
-		NormalStartPriority: 98,
-		MinChange:           5,
-	})
-
-	if len(plan.Changes) != 0 {
-		t.Fatalf("expected 0 changes due to diff < min_change, got %d", len(plan.Changes))
-	}
-
-	hostMock := newMockHost()
-	auditorMock := &mockAuditor{}
-
-	res, err := apply.Apply(ctx, apply.Request{
-		Host:              hostMock,
-		Auditor:           auditorMock,
-		Plan:              plan,
-		ReportSkippedPlan: true,
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if res.Attempted != 0 {
-		t.Errorf("expected 0 attempted, got %d", res.Attempted)
-	}
-	if res.Skipped != 1 {
-		t.Errorf("expected 1 skipped, got %d", res.Skipped)
-	}
-	if len(res.Changes) != 1 || res.Changes[0].Status != apply.ChangeStatusSkipped {
-		t.Errorf("expected 1 skipped change result, got %+v", res.Changes)
-	}
-
-	// Change with identical priority and disabled should also be skipped in applyChange
-	identPlan := priority.Plan{
 		Items: []priority.PlanItem{
-			{
-				Credential: core.Credential{
-					Name:      "cred-1",
-					AuthIndex: "idx-1",
-					Priority:  100,
-				},
-				Priority:      90,
-				EvidenceFresh: true,
-			},
-			{
-				Credential: core.Credential{
-					Name:      "cred-2",
-					AuthIndex: "idx-2",
-					Priority:  50,
-				},
-				Priority:      50,
-				EvidenceFresh: false,
-			},
+			{Credential: core.Credential{AuthIndex: "idx-1", Name: "credential-idx-1", Priority: 10, Disabled: false}, Priority: 20, Disabled: false, EvidenceFresh: true, Reason: "fresh"},
+			{Credential: core.Credential{AuthIndex: "idx-2", Name: "skipped", Priority: 30}, Priority: 30, Disabled: false, EvidenceFresh: false, Reason: priority.ReasonKeepCurrentState},
 		},
-		Changes: []priority.Change{
-			{
-				Credential: core.Credential{
-					Name:      "cred-1",
-					AuthIndex: "idx-1",
-					Priority:  100,
-				},
-				Priority:      90,
-				EvidenceFresh: true,
-				Reason:        "priority change",
-			},
-			{
-				Credential:    creds[0],
-				Priority:      100,   // same
-				Disabled:      false, // same
-				EvidenceFresh: true,
-				Reason:        "no diff",
-			},
-		},
+		Changes: []priority.Change{{Credential: core.Credential{AuthIndex: "idx-1", Name: "credential-idx-1", Priority: 10, Disabled: false}, Priority: 20, Disabled: false, EvidenceFresh: true, Reason: "fresh"}},
 	}
-	res2, err := apply.Apply(ctx, apply.Request{
-		Host:              hostMock,
-		Auditor:           auditorMock,
-		Plan:              identPlan,
-		ReportSkippedPlan: true,
-	})
+	result, err := apply.Apply(context.Background(), apply.Request{Transition: apply.NewHostTransition(client), Plan: plan, ReportSkippedPlan: true})
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatal(err)
 	}
-	if res2.Skipped < 1 || res2.Attempted < 1 {
-		t.Errorf("expected mixed skipped and attempted, got res: %+v", res2)
+	if result.Succeeded != 1 || result.Skipped != 1 || result.Transitions.Totals.Committed != 1 {
+		t.Fatalf("unexpected plan projection: %#v", result)
 	}
+	if result.Record.Status != apply.RecordNotAttempted || strings.Contains(string(mustJSON(t, result)), "token") {
+		t.Fatalf("unexpected result projection: %#v", result)
+	}
+	_ = fixture
 }
 
-func TestApply_PriorityAndDisabledPatches(t *testing.T) {
-	ctx := context.Background()
-	hostMock := newMockHost()
-	auditorMock := &mockAuditor{}
-
-	plan := priority.Plan{
-		Changes: []priority.Change{
-			{
-				Credential: core.Credential{
-					Name:      "cred-pri",
-					AuthIndex: "idx-pri",
-					Priority:  10,
-					Disabled:  false,
-				},
-				Priority:      80,
-				Disabled:      false,
-				EvidenceFresh: true,
-				Reason:        "priority only change",
-			},
-			{
-				Credential: core.Credential{
-					Name:      "cred-dis",
-					AuthIndex: "idx-dis",
-					Priority:  50,
-					Disabled:  false,
-				},
-				Priority:      50,
-				Disabled:      true,
-				EvidenceFresh: true,
-				Reason:        "disabled only change",
-			},
-			{
-				Credential: core.Credential{
-					Name:      "",
-					AuthIndex: "idx-both",
-					Priority:  20,
-					Disabled:  false,
-				},
-				Priority:      90,
-				Disabled:      true,
-				EvidenceFresh: true,
-				Reason:        "both priority and disabled change without name",
-			},
-		},
-	}
-
-	res, err := apply.Apply(ctx, apply.Request{
-		Host:    hostMock,
-		Auditor: auditorMock,
-		Plan:    plan,
-	})
+func mustJSON(t *testing.T, value any) []byte {
+	t.Helper()
+	data, err := json.Marshal(value)
 	if err != nil {
-		t.Fatalf("unexpected apply error: %v", err)
+		t.Fatal(err)
 	}
-
-	if res.Attempted != 3 || res.Succeeded != 3 || res.Failed != 0 {
-		t.Fatalf("expected 3 succeeded changes, got %+v", res)
-	}
-
-	// Verify host calls
-	if hostMock.patchedPriorities["idx-pri"] != 80 {
-		t.Errorf("expected idx-pri priority 80, got %d", hostMock.patchedPriorities["idx-pri"])
-	}
-	if _, disabledPatched := hostMock.patchedDisabled["cred-pri"]; disabledPatched {
-		t.Errorf("cred-pri should not have disabled patched")
-	}
-
-	if hostMock.patchedDisabled["cred-dis"] != true {
-		t.Errorf("expected cred-dis disabled true, got %v", hostMock.patchedDisabled["cred-dis"])
-	}
-
-	if hostMock.patchedPriorities["idx-both"] != 90 {
-		t.Errorf("expected idx-both priority 90, got %d", hostMock.patchedPriorities["idx-both"])
-	}
-	if hostMock.patchedDisabled["idx-both"] != true {
-		t.Errorf("expected idx-both (fallback name) disabled true, got %v", hostMock.patchedDisabled["idx-both"])
-	}
-}
-
-func TestApply_HostErrors(t *testing.T) {
-	ctx := context.Background()
-
-	// Missing host when changes need to be applied
-	plan := priority.Plan{
-		Changes: []priority.Change{
-			{
-				Credential: core.Credential{
-					Name:      "cred-1",
-					AuthIndex: "idx-1",
-					Priority:  10,
-				},
-				Priority:      50,
-				EvidenceFresh: true,
-			},
-		},
-	}
-
-	res, err := apply.Apply(ctx, apply.Request{
-		Host:    nil,
-		Auditor: &mockAuditor{},
-		Plan:    plan,
-	})
-	if err != nil {
-		t.Fatalf("unexpected apply error: %v", err)
-	}
-	if res.Failed != 1 || res.Changes[0].Status != apply.ChangeStatusFailed {
-		t.Fatalf("expected change failed when host is nil, got res: %+v", res)
-	}
-	if !strings.Contains(res.Changes[0].Error, "host is required") {
-		t.Errorf("expected error message to mention host is required, got %s", res.Changes[0].Error)
-	}
-
-	// PatchPriority error
-	hostMock := newMockHost()
-	hostMock.patchPriorityFunc = func(ctx context.Context, authIndex string, p int) error {
-		return errors.New("database locked with secret-token=xyz")
-	}
-	res, err = apply.Apply(ctx, apply.Request{
-		Host:    hostMock,
-		Auditor: &mockAuditor{},
-		Plan:    plan,
-	})
-	if err != nil {
-		t.Fatalf("unexpected apply error: %v", err)
-	}
-	if res.Failed != 1 || res.Changes[0].Status != apply.ChangeStatusFailed {
-		t.Fatalf("expected change failed on PatchPriority error, got res: %+v", res)
-	}
-	if strings.Contains(res.Changes[0].Error, "xyz") {
-		t.Errorf("error should redact sensitive token, got %s", res.Changes[0].Error)
-	}
-	if !strings.Contains(res.Changes[0].Error, host.RedactedValue) {
-		t.Errorf("error should contain REDACTED, got %s", res.Changes[0].Error)
-	}
-
-	// PatchDisabled error
-	disPlan := priority.Plan{
-		Changes: []priority.Change{
-			{
-				Credential: core.Credential{
-					Name:      "cred-2",
-					AuthIndex: "idx-2",
-					Disabled:  false,
-				},
-				Disabled:      true,
-				EvidenceFresh: true,
-			},
-		},
-	}
-	hostMock = newMockHost()
-	hostMock.patchDisabledFunc = func(ctx context.Context, name string, disabled bool) error {
-		return errors.New("host patch disabled failed with Bearer secret-auth-header")
-	}
-	res, err = apply.Apply(ctx, apply.Request{
-		Host:    hostMock,
-		Auditor: &mockAuditor{},
-		Plan:    disPlan,
-	})
-	if err != nil {
-		t.Fatalf("unexpected apply error: %v", err)
-	}
-	if res.Failed != 1 || res.Changes[0].Status != apply.ChangeStatusFailed {
-		t.Fatalf("expected change failed on PatchDisabled error, got res: %+v", res)
-	}
-	if strings.Contains(res.Changes[0].Error, "secret-auth-header") {
-		t.Errorf("error should redact sensitive token, got %s", res.Changes[0].Error)
-	}
-}
-
-func TestFailureResult(t *testing.T) {
-	item := priority.PlanItem{
-		Credential: core.Credential{
-			Name:      "cred-test",
-			AuthIndex: "idx-test",
-			Priority:  10,
-		},
-		Priority: 50,
-		Reason:   "test failure",
-	}
-
-	err := errors.New("token=abc-123 failed")
-	res := apply.FailureResult(item, err)
-
-	if res.Status != apply.ChangeStatusFailed {
-		t.Errorf("expected Status Failed, got %v", res.Status)
-	}
-	if res.Success {
-		t.Errorf("expected Success false, got true")
-	}
-	if strings.Contains(res.Error, "abc-123") {
-		t.Errorf("error was not redacted: %s", res.Error)
-	}
-	if !strings.Contains(res.Error, host.RedactedValue) {
-		t.Errorf("error should contain REDACTED: %s", res.Error)
-	}
+	return data
 }

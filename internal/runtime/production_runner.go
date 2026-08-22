@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -112,7 +111,7 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 		result := apply.Result{Snapshot: primarySnapshot}
 		audit := fmt.Sprintf("probe completed: %d credentials probed", len(evidence))
 		snap := primarySnapshot
-		r.snapshotRunEntry(result, audit, RunHistoryEntry{
+		_, projectErr := r.projectRun(ctx, store, result, audit, RunHistoryEntry{
 			Kind:      KindProbe,
 			Trigger:   string(request.Trigger),
 			Attempted: len(evidence),
@@ -120,60 +119,36 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 			Message:   audit,
 			Snapshot:  &snap,
 		})
-		resJSON, _ := json.Marshal(result)
-		histJSON, _ := json.Marshal(r.currentRunHistory())
-		store.SetRuntimeSnapshot(audit, resJSON, histJSON)
-		_ = store.SaveAtomic(ctx)
-		return nil
+		return projectErr
 	}
 
 	if len(plan.Changes) == 0 {
 		result := apply.Result{Snapshot: primarySnapshot}
 		summary := fmt.Sprintf("all %d credentials in sync, no changes required", len(primarySnapshot.Items))
-		r.mu.Lock()
-		r.latestResult = result
-		r.latestAudit = summary
-		r.mu.Unlock()
-		resJSON, _ := json.Marshal(result)
-		histJSON, _ := json.Marshal(r.currentRunHistory())
-		store.SetRuntimeSnapshot(summary, resJSON, histJSON)
-		if err := store.SaveAtomic(ctx); err != nil {
-			return err
-		}
-		return nil
+		_, projectErr := r.projectRun(ctx, store, result, summary, RunHistoryEntry{
+			Kind:     KindApply,
+			Trigger:  string(request.Trigger),
+			Message:  summary,
+			Snapshot: &primarySnapshot,
+		})
+		return projectErr
 	}
 
-	result, err := apply.Apply(ctx, apply.Request{
-		Host:              client,
-		Auditor:           r,
-		Plan:              plan,
-		ReportSkippedPlan: true,
-	})
+	transition := apply.NewHostTransition(client)
+	result, err := apply.ExecutePlan(ctx, transition, plan, true)
 	if err != nil {
 		return err
 	}
 
-	summary := fmt.Sprintf("apply credentials=%d succeeded=%d failed=%d skipped=%d",
-		result.Attempted+result.Skipped, result.Succeeded, result.Failed, result.Skipped)
+	summary := resultSummary("apply", result)
 
-	r.snapshotRunEntry(result, summary, RunHistoryEntry{
-		Kind:      KindApply,
-		Trigger:   string(request.Trigger),
-		Attempted: result.Attempted,
-		Succeeded: result.Succeeded,
-		Failed:    result.Failed,
-		Skipped:   result.Skipped,
-		Message:   summary,
-		Snapshot:  &primarySnapshot,
+	_, projectErr := r.projectRun(ctx, store, result, summary, RunHistoryEntry{
+		Kind:     KindApply,
+		Trigger:  string(request.Trigger),
+		Message:  summary,
+		Snapshot: &primarySnapshot,
 	})
-
-	resJSON, _ := json.Marshal(result)
-	histJSON, _ := json.Marshal(r.currentRunHistory())
-	store.SetRuntimeSnapshot(summary, resJSON, histJSON)
-	if err := store.SaveAtomic(ctx); err != nil {
-		return err
-	}
-	return nil
+	return projectErr
 }
 
 func currentRoundEvidence(store *state.Store, credentials []core.Credential, group config.AntigravityModelGroup, observedAt time.Time) []priority.ProbeEvidence {
@@ -279,15 +254,3 @@ func priorityOptions(cfg config.Config, store *state.Store, now time.Time) prior
 		CooldownAuthIndexes: cooldowns,
 	}
 }
-
-// SaveSnapshot implements apply.Auditor.
-func (r *Runtime) SaveSnapshot(ctx context.Context, snapshot apply.PlanSnapshot) error {
-	return ctx.Err()
-}
-
-// RecordEvent implements apply.Auditor.
-func (r *Runtime) RecordEvent(ctx context.Context, event apply.AuditEvent) error {
-	return ctx.Err()
-}
-
-var _ apply.Auditor = (*Runtime)(nil)

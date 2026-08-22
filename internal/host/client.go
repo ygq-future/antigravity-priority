@@ -4,21 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 )
 
 // Client adapts CPA host callbacks to the host.API interface.
 type Client struct {
 	callbacks HostCallbacks
-	patcher   *DocumentPatcher
 }
 
 // NewClient creates a new host callbacks adapter.
 func NewClient(callbacks HostCallbacks) *Client {
-	return &Client{
-		callbacks: callbacks,
-		patcher:   NewDocumentPatcher(),
-	}
+	return &Client{callbacks: callbacks}
 }
 
 // HTTPStatusError represents a non-2xx HTTP status from host management.
@@ -50,6 +47,13 @@ func (c *Client) GetAuth(ctx context.Context, authIndex string) (AuthDocument, e
 	if err != nil {
 		return AuthDocument{}, fmt.Errorf("host.auth.get: %w", err)
 	}
+	if len(document.JSON) == 0 && strings.TrimSpace(document.Path) != "" {
+		raw, readErr := os.ReadFile(document.Path)
+		if readErr != nil {
+			return AuthDocument{}, fmt.Errorf("host.auth.get document: %w", readErr)
+		}
+		document.JSON = append(json.RawMessage(nil), raw...)
+	}
 	return document, nil
 }
 
@@ -74,65 +78,28 @@ func (c *Client) SaveAuth(ctx context.Context, name string, doc json.RawMessage)
 	return nil
 }
 
-// PatchPriority updates the priority field in the physical credential document.
-func (c *Client) PatchPriority(ctx context.Context, authIndex string, priority int) error {
-	trimmed, err := stableName(authIndex)
-	if err != nil {
-		return err
+// ReplaceAuth replaces one complete credential document. When the host
+// exposes a physical path we use the same atomic file replacement primitive as
+// CPA's credential store; otherwise the host callback receives the complete
+// document in one save operation.
+func (c *Client) ReplaceAuth(ctx context.Context, document AuthDocument, doc json.RawMessage) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("replace auth context: %w", err)
 	}
-	document, err := c.GetAuth(ctx, trimmed)
-	if err != nil {
-		return err
-	}
-	if err := c.patcher.PatchPriority(ctx, document.Path, priority); err != nil {
-		return fmt.Errorf("patch priority: %w", err)
-	}
-	return nil
-}
-
-// ResetPriority removes the priority field from the physical credential document, returning it to default unset state.
-func (c *Client) ResetPriority(ctx context.Context, authIndex string) error {
-	trimmed, err := stableName(authIndex)
-	if err != nil {
-		return err
-	}
-	document, err := c.GetAuth(ctx, trimmed)
-	if err != nil {
-		return err
-	}
-	if err := c.patcher.ResetPriority(ctx, document.Path); err != nil {
-		return fmt.Errorf("reset priority: %w", err)
-	}
-	return nil
-}
-
-// PatchDisabled updates the disabled field in the physical credential document.
-func (c *Client) PatchDisabled(ctx context.Context, name string, disabled bool) error {
-	trimmed, err := stableName(name)
-	if err != nil {
-		return err
-	}
-	document, err := c.authDocumentByName(ctx, trimmed)
-	if err != nil {
-		return err
-	}
-	if err := c.patcher.PatchDisabled(ctx, document.Path, disabled); err != nil {
-		return fmt.Errorf("patch disabled: %w", err)
-	}
-	return nil
-}
-
-func (c *Client) authDocumentByName(ctx context.Context, name string) (AuthDocument, error) {
-	files, err := c.ListAuthFiles(ctx)
-	if err != nil {
-		return AuthDocument{}, err
-	}
-	for _, file := range files {
-		if file.Name == name || file.AuthIndex == name {
-			return c.GetAuth(ctx, file.AuthIndex)
+	if path := strings.TrimSpace(document.Path); path != "" {
+		if err := writeFileAtomic(ctx, path, doc); err != nil {
+			return fmt.Errorf("replace auth document: %w", err)
 		}
+		return nil
 	}
-	return AuthDocument{}, fmt.Errorf("%w: auth document not found", ErrInvalidRequest)
+	name := document.Name
+	if strings.TrimSpace(name) == "" {
+		name = document.AuthIndex
+	}
+	if err := c.SaveAuth(ctx, name, doc); err != nil {
+		return fmt.Errorf("replace auth through host: %w", err)
+	}
+	return nil
 }
 
 // HTTPDo sends an external HTTP request via host.http.do and rejects non-2xx responses.

@@ -29,7 +29,12 @@ func enrichCredentialsFromAuthDocuments(ctx context.Context, client *host.Client
 		}
 		if len(rawJSON) > 0 {
 			enriched[index].RawJSON = rawJSON
-			enriched[index].PriorityMissing = enriched[index].PriorityMissing || topLevelFieldMissing(rawJSON, host.FieldPriority)
+			if priority, present, priorityErr := priorityFromJSON(rawJSON); priorityErr == nil {
+				if present {
+					enriched[index].Priority = priority
+					enriched[index].PriorityMissing = false
+				}
+			}
 			enriched[index].Account = firstNonEmpty(enriched[index].Account, accountFromJSON(rawJSON))
 			enriched[index].Email = firstNonEmpty(enriched[index].Email, emailFromJSON(rawJSON))
 			if dis, ok := disabledFromJSON(rawJSON); ok {
@@ -75,6 +80,21 @@ func physicalAuthJSON(ctx context.Context, document host.AuthDocument) (json.Raw
 		return append(json.RawMessage(nil), data...), nil
 	}
 	return append(json.RawMessage(nil), document.JSON...), nil
+}
+
+func priorityFromJSON(raw json.RawMessage) (value int, present bool, err error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return 0, false, err
+	}
+	encoded, ok := fields[host.FieldPriority]
+	if !ok || string(encoded) == "null" {
+		return 0, false, nil
+	}
+	if err := json.Unmarshal(encoded, &value); err != nil {
+		return 0, false, err
+	}
+	return value, true, nil
 }
 
 func accessTokenFromJSON(raw json.RawMessage) string {

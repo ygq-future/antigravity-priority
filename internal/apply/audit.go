@@ -75,7 +75,7 @@ type Target struct {
 	Disabled        bool `json:"disabled"`
 }
 
-// AuditEvent is the redacted audit event recorded before writing to the host.
+// AuditEvent is the redacted audit event for a Host transition round.
 type AuditEvent struct {
 	Action         string        `json:"action"`
 	TotalChanges   int           `json:"total_changes"`
@@ -86,10 +86,12 @@ type AuditEvent struct {
 
 // AuditChange is a single change summary within an AuditEvent.
 type AuditChange struct {
-	Name          string `json:"name"`
-	AuthIndex     string `json:"auth_index"`
-	EvidenceFresh bool   `json:"evidence_fresh"`
-	Reason        string `json:"reason"`
+	Name          string  `json:"name"`
+	AuthIndex     string  `json:"auth_index"`
+	EvidenceFresh bool    `json:"evidence_fresh"`
+	Reason        string  `json:"reason"`
+	Outcome       Outcome `json:"outcome,omitempty"`
+	Cause         string  `json:"cause,omitempty"`
 }
 
 func newPlanSnapshot(plan priority.Plan) PlanSnapshot {
@@ -109,35 +111,13 @@ func newPlanSnapshot(plan priority.Plan) PlanSnapshot {
 	return snapshot
 }
 
-func newAuditEvent(plan priority.Plan) AuditEvent {
-	event := AuditEvent{
-		Action:       "apply.plan",
-		TotalChanges: len(plan.Changes),
-		Changes:      make([]AuditChange, 0, len(plan.Changes)),
-	}
-	for _, change := range plan.Changes {
-		if change.EvidenceFresh {
-			event.FreshChanges++
-		} else {
-			event.SkippedChanges++
-		}
-		event.Changes = append(event.Changes, AuditChange{
-			Name:          redactString(change.Credential.Name),
-			AuthIndex:     redactString(change.Credential.AuthIndex),
-			EvidenceFresh: change.EvidenceFresh,
-			Reason:        redactString(change.Reason),
-		})
-	}
-	return event
-}
-
 func snapshotItem(item priority.PlanItem) SnapshotItem {
 	credential := item.Credential
 	return SnapshotItem{
-		Name:                 redactString(credential.Name),
-		AuthIndex:            redactString(credential.AuthIndex),
-		Account:              redactString(credential.Account),
-		Email:                redactString(credential.Email),
+		Name:                 redactIdentifier(credential.Name),
+		AuthIndex:            redactIdentifier(credential.AuthIndex),
+		Account:              redactIdentifier(credential.Account),
+		Email:                redactIdentifier(credential.Email),
 		Provider:             redactString(string(credential.Provider)),
 		Type:                 redactString(string(credential.Type)),
 		Status:               redactString(string(credential.Status)),
@@ -165,10 +145,10 @@ func snapshotItem(item priority.PlanItem) SnapshotItem {
 func snapshotChange(change priority.Change) SnapshotChange {
 	credential := change.Credential
 	return SnapshotChange{
-		Name:          redactString(credential.Name),
-		AuthIndex:     redactString(credential.AuthIndex),
-		Account:       redactString(credential.Account),
-		Email:         redactString(credential.Email),
+		Name:          redactIdentifier(credential.Name),
+		AuthIndex:     redactIdentifier(credential.AuthIndex),
+		Account:       redactIdentifier(credential.Account),
+		Email:         redactIdentifier(credential.Email),
 		Current:       currentTarget(credential.Priority, credential.PriorityMissing, credential.Disabled),
 		Target:        target(change.Priority, change.Disabled),
 		EvidenceFresh: change.EvidenceFresh,
