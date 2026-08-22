@@ -243,7 +243,7 @@ Host 状态变更是 Apply Layer 的核心所有权。调用者和测试需要�
 
 ## 2. 收拢 Fresh Evidence 权威归属
 
-- **状态**：`待讨论 (Proposed)`
+- **状态**：`讨论完成 (Accepted)`
 - **推荐强度**：`Strong`
 - **依赖类别**：`in-process`
 - **建议优先级**：`P1`
@@ -348,6 +348,7 @@ Fresh Evidence 决定 Plan 是否能够产生 Host 写回，是调度系统的�
 ### 预期结果
 
 - Apply、Sync、Reset 和双 Model Group 预测共享一致的 evidence 语义；
+- 本轮探测失败只产生诊断记录，不改变对应 credential 的 Host 状态；
 - 旧 `ProbeFailed` 不会被误认为当前轮次失败；
 - 新增 Planner 调用者不需要复制 `currentRoundEvidence`；
 - Planner 不再依赖调用者正确拼装五个 freshness 字段；
@@ -358,17 +359,37 @@ Fresh Evidence 决定 Plan 是否能够产生 Host 写回，是调度系统的�
 
 - 不得把缓存预测与 Fresh Evidence 混为同一写入资格；
 - 需要保留 alternate Model Group 的只读预测能力；
-- 必须明确失败证据的 current-round 判定，不得让历史失败触发新的 Host 禁用；
+- 当前或历史探测失败都不得触发 quota-driven Host 写回；
 - 不应新增只有一个 adapter 的 port；
 - 不得破坏 Planner 纯函数属性。
 
 ### ADR 关系
 
-本提案不与现有 ADR 冲突，并强化：
+本提案不与现有 ADR 冲突。设计审问形成的失败语义已记录为 [`ADR-0006`](../adr/0006-failed-quota-probes-preserve-host-state.md)，并强化：
 
 - `CONTEXT.md` 中 Fresh Evidence 的定义；
-- ADR-0003 对 Soft Depletion、Hard Depletion 和写回条件的约束；
+- ADR-0003 对真实 Soft Depletion 与 Hard Depletion 的处置，但不把探测失败误判为耗尽；
 - 第一轮状态引擎深化提案，但不重复其缓存与采样职责。
+
+### 设计审问已确认决策（2026-08-22）
+
+以下结论已经通过 `/grill-with-docs` 与用户确认，后续设计和实施不得静默改变：
+
+1. **Fresh Evidence 只来自本轮成功探测**：数据必须属于当前调度轮次、探测成功且经过验证；
+2. **探测失败代表未知**：Manual Apply 探测失败，或 Auto Apply 重试后仍失败时，该凭证保持 Host 原状态，只记录并展示失败；
+3. **credential 之间独立规划**：一个 credential 探测失败不阻止其他取得 Fresh Evidence 的 credential 继续调度；
+4. **历史缓存只读**：上次成功数据可以明确标记为历史数据，用于展示或预测，但不能授权 Host 写回；从未成功时显示未知；
+5. **运行事件与人工命令独立授权**：429 Reactive Cooldown 和 Reset Priority 分别由真实 429 事件与明确人工操作授权，不伪装成 Fresh Evidence；
+6. **后续轮次自然补偿**：本轮不因探测失败修改 Host，也不增加新的恢复流程，由后续定时轮重新探测和决策。
+
+#### 明确拒绝的推测性复杂度
+
+以下设计不属于本轮核心需求，除非未来出现可验证的新业务场景：
+
+- 将探测失败扩展成永久、临时或可配置的错误分类体系；
+- 新增 Fresh Evidence TTL、失败策略或重试策略配置；
+- 建立通用 evidence port、adapter 或跨提供商证据平台；
+- 为探测失败引入独立恢复队列、事件溯源或重放机制。
 
 ---
 

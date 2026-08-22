@@ -1,0 +1,3 @@
+# 0006: Failed Quota Probes Preserve Host State
+
+Quota-driven Host Transitions require Fresh Evidence: a verified successful probe from the current scheduling round. A failed probe means the quota state is unknown, so the credential keeps its current Host state while the failure is reported and other successfully probed credentials continue; cached observations remain read-only, while 429 cooldown and manual reset retain their separate operational authority. This avoids disabling healthy credentials during transient failures and relies on later scheduled rounds for natural recovery instead of adding a separate recovery system.

@@ -41,7 +41,7 @@ The numerical delta threshold $\Delta \text{Urgency}$ (default 0.05) below which
 _Avoid_: Margin of error, floating threshold, priority gap
 
 **Fresh Evidence**:
-Verified quota observation data obtained from a successful probe in the current scheduling round.
+Verified quota observation data obtained from a successful probe in the current scheduling round. A failed probe is unknown rather than quota depletion and cannot authorize a quota-driven Host Transition.
 _Avoid_: Cached state, stale data, fallback record
 
 ### Quota Depletion & Cooldown States
