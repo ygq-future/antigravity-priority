@@ -46,6 +46,10 @@ _Avoid_: Cached state, stale data, fallback record
 
 ### Quota Depletion & Cooldown States
 
+**Host Transition**:
+A deliberate change to one credential's persisted priority and/or disabled state in CPA Host, including scheduled Apply, 429 Reactive Cooldown, and priority reset. All target fields belong to one transition outcome, whose success is determined by the resulting credential state rather than request completion alone.
+_Avoid_: Host write, patch operation, mutation
+
 **429 Reactive Cooldown (Circuit Breaker)**:
 Temporarily demoting an account's priority to `-1` upon encountering an upstream Google 429 Rate Limit error for a configurable duration (default 5 minutes), isolating the credential into the bottom fallback tier while preserving its enabled state.
 _Avoid_: Ban, account punishment, hard disable
