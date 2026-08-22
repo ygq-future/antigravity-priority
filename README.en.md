@@ -51,7 +51,7 @@ Load plugin
        - Tier 2 (Regular) : Healthy accounts  -> Priorities 100, 99... (Weekly Urgency descending, 5h reset tie-break)
        - Tier 3 (Depleted): Weekly hard-disable > 5h soft-fallback (-1)
   -> Execute according to run mode
-       - apply: write priority and enabled state via host.auth.save (min_change filter)
+       - apply: replace each credential document once through the unified Host Transition and verify the resulting state (min_change filter)
        - probe / sync: update in-memory state, redacted diagnostics, and snapshot only
   -> Display double-window meters, urgency scores, boost badges, and audit summary on management page
 ```
@@ -162,7 +162,7 @@ The plugin registers **resources** (static management dashboard) and **routes** 
 - `POST /v0/management/plugins/antigravity-priority/run?mode=probe`
   - Triggers a fresh network quota probe against Google API and updates local cache and snapshot, **no priority write-back**.
 - `POST /v0/management/plugins/antigravity-priority/run?mode=apply`
-  - Runs fresh probe/planning and **commits updated priorities and disabled states to CPA host**.
+  - Runs fresh probe/planning, **commits each credential's target through the unified Host Transition, verifies CPA host state, and returns redacted outcomes**.
 - `GET /v0/management/plugins/antigravity-priority/config`
   - Retrieves current full runtime configuration.
 - `POST /v0/management/plugins/antigravity-priority/config`

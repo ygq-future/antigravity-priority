@@ -51,7 +51,7 @@ CLIProxyAPI (CPA) 专精型 **Google Antigravity 凭证智能配额调度与自�
        - Tier 2 (Regular) : 常规健康 -> 分配 100, 99... (按周紧迫度降序，短窗重置时间平局决胜)
        - Tier 3 (Depleted): 周耗尽 hard-disable > 短窗耗尽 soft-fallback (-1)
   -> 根据运行模式执行
-       - apply：通过 host.auth.save 写回优先级与启用状态 (min_change 过滤微小变动)
+       - apply：通过统一 Host Transition 对单个凭证执行一次完整文档替换并回读验证 (min_change 过滤微小变动)
        - probe / sync：仅更新内存状态、脱敏诊断与快照
   -> 在管理页面展示脱敏后的双窗口仪表、紧迫度评分、提权状态与审计摘要
 ```
@@ -162,7 +162,7 @@ plugins:
 - `POST /v0/management/plugins/antigravity-priority/run?mode=probe`
   - 触发一次向 Google API 的全量配额探测并更新本地缓存与快照，**不执行写回**。
 - `POST /v0/management/plugins/antigravity-priority/run?mode=apply`
-  - 触发全量探测计算并将最新得到的优先级与启用状态**写回 CPA 宿主**。
+  - 触发全量探测计算，通过统一 Host Transition 将最新目标**一次性写回并校验 CPA 宿主**，返回脱敏执行结果。
 - `GET /v0/management/plugins/antigravity-priority/config`
   - 获取当前完整运行时配置。
 - `POST /v0/management/plugins/antigravity-priority/config`

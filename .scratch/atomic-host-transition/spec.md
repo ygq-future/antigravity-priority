@@ -1,6 +1,6 @@
 # Spec: Atomic Host Transition and Truthful Outcomes
 
-Status: `ready-for-agent`
+Status: `completed`
 
 ## Problem Statement
 

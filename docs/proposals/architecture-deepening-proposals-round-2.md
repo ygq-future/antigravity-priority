@@ -40,7 +40,8 @@
 
 ## 1. 统一 Host transition 与执行记录
 
-- **状态**：`待讨论 (Proposed)`
+- **状态**：`已完成 (Completed)`
+- **落地提交**：`1fe981c feat(apply): unify atomic host transition execution`
 - **推荐强度**：`Strong`
 - **依赖类别**：`local-substitutable`
 - **建议优先级**：`P1 / Top recommendation`

@@ -4,13 +4,17 @@
 
 **Blocked by:** 01 — Atomic Host Transition Module.
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] Immutable Planner changes are converted into Host Transition intents without moving quota-based calculations out of Planner.
-- [ ] Fresh Evidence, ForceWrite, minimum-change, disabled-state, and cooldown gates retain their existing behaviour.
-- [ ] Manual Apply and Auto Apply continue to execute under Runtime's single-flight policy.
-- [ ] Priority and disabled changes for one credential no longer use separate physical write calls.
-- [ ] A failed, conflicting, or uncertain credential does not prevent later credentials from being processed.
-- [ ] The current-round Host reconciliation before planning and write-back remains intact.
-- [ ] Probe and read-only synchronization remain non-writing operations.
-- [ ] High-seam Runtime tests prove both Manual Apply and Auto Apply route through the new transition lifecycle without inspecting its implementation.
+- [x] Immutable Planner changes are converted into Host Transition intents without moving quota-based calculations out of Planner.
+- [x] Fresh Evidence, ForceWrite, minimum-change, disabled-state, and cooldown gates retain their existing behaviour.
+- [x] Manual Apply and Auto Apply continue to execute under Runtime's single-flight policy.
+- [x] Priority and disabled changes for one credential use one complete-document replacement.
+- [x] A failed, conflicting, or uncertain credential does not prevent later credentials from being processed.
+- [x] The current-round Host reconciliation before planning and write-back remains intact.
+- [x] Probe and read-only synchronization remain non-writing operations.
+- [x] High-seam Runtime tests prove both Manual Apply and Auto Apply route through the transition lifecycle without inspecting its implementation.
+
+## Comments
+
+- Completed in commit `1fe981c`; Manual Apply and Auto Apply now project Planner changes through the common Host Transition lifecycle while preserving Runtime ownership and scheduling gates.
