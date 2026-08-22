@@ -10,15 +10,16 @@ const templateScriptModals = `        // Show Modal: Apply Confirm vs History De
 
             const isApplyConfirm = (mode === "apply-confirm");
             const changes = isApplyConfirm && Array.isArray(result.changes) ? result.changes : extractChanges(result);
+            const isProjectedPreview = isApplyConfirm && result.preview_mode === "projected";
 
             if (isApplyConfirm) {
                 title.textContent = t("confirmApplyTitle");
                 btnApply.hidden = false;
                 btnApply.textContent = t("btnConfirmApply");
                 btnApply.onclick = executeDirectApply;
-                summary.textContent = changes.length > 0
-                    ? (currentLang === "zh-CN" ? "待写回凭证数量: " : "Credentials to update: ") + changes.length
-                    : t("manualApplyRecheck");
+                summary.textContent = isProjectedPreview
+                    ? t("projectedApplyPreview") + ": " + changes.length + " · " + t("manualApplyRecheck")
+                    : t("pendingApplyPreview") + ": " + changes.length;
             } else {
                 title.textContent = currentLang === "zh-CN" ? "执行明细快照" : "Execution Details Snapshot";
                 btnApply.hidden = true;

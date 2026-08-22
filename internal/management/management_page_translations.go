@@ -8,7 +8,7 @@ var overviewTranslationKeys = []string{
 	"kpiTotal", "kpiBoosted", "kpiBoostedDesc", "kpiDepleted", "kpiDepletedDesc", "kpiLastAudit",
 	"labelModelGroup", "optGemini", "optClaudeGPT", "btnRefresh", "btnApply", "btnReset", "btnProbe", "btnSamples",
 	"samplesModalTitle", "colObservedAt", "colShortRem", "colLongRem", "noSamples", "actualPriority", "targetPriority",
-	"predictedPriority", "pendingApply", "targetChanged", "manualApplyRecheck", "unsetPriority", "syncSuccess", "confirmReset", "resetSuccess", "loading", "noCreds",
+	"predictedPriority", "pendingApply", "targetChanged", "projectedApplyPreview", "pendingApplyPreview", "manualApplyRecheck", "unsetPriority", "syncSuccess", "confirmReset", "resetSuccess", "loading", "noCreds",
 	"noChanges", "noChangesToApply", "statusActive", "statusBoosted", "statusWeeklyDepleted", "statusShortDepleted",
 	"statusFailed", "shortWindow", "longWindow", "resetIn", "priority", "urgencyLabel", "burnLabel", "running",
 	"scheduleActive", "schedulePaused", "scheduleSleeping", "scheduleDisabled", "predictedBadge", "predictedNote",

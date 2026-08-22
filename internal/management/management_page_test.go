@@ -1,6 +1,7 @@
 package management
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -156,6 +157,117 @@ func TestStatusHTML_JavaScriptSyntax(t *testing.T) {
 	cmd := exec.Command(node, "--check", scriptPath)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("assembled management-page script failed node --check: %v\n%s", err, output)
+	}
+}
+
+func TestApplyPreviewWorkflow(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not available; apply preview behavior is checked in the Node-enabled verification environment")
+	}
+
+	testCases := []struct {
+		name       string
+		changes    string
+		items      string
+		wantModal  bool
+		wantMode   string
+		wantCount  int
+		wantToasts int
+	}{
+		{
+			name:      "projected target change is previewed",
+			changes:   `[]`,
+			items:     `[{auth_index:"credential-1",name:"Credential 1",current:{priority:99,priority_missing:false,disabled:false},target:{priority:98,priority_missing:false,disabled:false}}]`,
+			wantModal: true,
+			wantMode:  "projected",
+			wantCount: 1,
+		},
+		{
+			name:       "synchronized state reports optimal",
+			changes:    `[]`,
+			items:      `[{auth_index:"credential-1",name:"Credential 1",current:{priority:99,priority_missing:false,disabled:false},target:{priority:99,priority_missing:false,disabled:false}}]`,
+			wantToasts: 1,
+		},
+		{
+			name:      "write qualified changes retain pending preview",
+			changes:   `[{auth_index:"credential-1",name:"Credential 1",current:{priority:99,priority_missing:false,disabled:false},target:{priority:98,priority_missing:false,disabled:false}}]`,
+			items:     `[{auth_index:"credential-1",name:"Credential 1",current:{priority:99,priority_missing:false,disabled:false},target:{priority:98,priority_missing:false,disabled:false}}]`,
+			wantModal: true,
+			wantMode:  "pending",
+			wantCount: 1,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			harness := templateScriptOverviewActionsCore + templateScriptModals + `
+const toastCalls = [];
+function element(initial) {
+    return Object.assign({hidden:false,textContent:"",innerHTML:"",children:[],appendChild:function(child){this.children.push(child);}}, initial || {});
+}
+const elements = {
+    modelGroupSelect: element({value:"gemini"}),
+    diffModal: element({hidden:true}),
+    modalTitle: element(),
+    modalSummary: element(),
+    modalDiffList: element(),
+    btnModalApply: element()
+};
+const document = {
+    getElementById: function(id) {
+        return elements[id] || null;
+    },
+    createElement: function() { return element(); }
+};
+function showToast(message, kind) { toastCalls.push({message, kind}); }
+function t(key) { return key; }
+function escapeHTML(value) { return String(value); }
+let currentLang = "zh-CN";
+dynamicConfig = { antigravity_model_group: "gemini" };
+latestSnapshot = { active_model_group: "gemini", groups: { gemini: { changes: ` + tc.changes + `, items: ` + tc.items + ` } } };
+
+(async function() {
+    await triggerApplyWithConfirm();
+    const expected = ` + applyPreviewExpectationJSON(tc.wantModal, tc.wantMode, tc.wantCount, tc.wantToasts) + `;
+    if (elements.diffModal.hidden === expected.modal) {
+        throw new Error("unexpected modal visibility: " + elements.diffModal.hidden);
+    }
+    if (toastCalls.length !== expected.toasts) {
+        throw new Error("unexpected toast count: " + toastCalls.length);
+    }
+    if (expected.modal) {
+        const expectedSummaryKey = expected.mode === "projected" ? "projectedApplyPreview" : "pendingApplyPreview";
+        if (elements.modalSummary.textContent.indexOf(expectedSummaryKey) !== 0) {
+            throw new Error("unexpected preview summary: " + elements.modalSummary.textContent);
+        }
+        if (elements.modalDiffList.children.length !== expected.count) {
+            throw new Error("unexpected rendered preview count: " + elements.modalDiffList.children.length);
+        }
+    }
+})().catch(function(err) {
+    console.error(err.stack || err.message);
+    process.exit(1);
+});
+`
+			runNodeFixture(t, node, "apply-preview.js", harness)
+		})
+	}
+}
+
+func applyPreviewExpectationJSON(wantModal bool, wantMode string, wantCount, wantToasts int) string {
+	return fmt.Sprintf(`{modal:%t,mode:%q,count:%d,toasts:%d}`, wantModal, wantMode, wantCount, wantToasts)
+}
+
+func runNodeFixture(t *testing.T, node, filename, script string) {
+	t.Helper()
+	scriptPath := filepath.Join(t.TempDir(), filename)
+	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
+		t.Fatalf("write JavaScript fixture: %v", err)
+	}
+	cmd := exec.Command(node, scriptPath)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("JavaScript fixture failed: %v\n%s", err, output)
 	}
 }
 

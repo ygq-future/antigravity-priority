@@ -105,6 +105,32 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
             return [];
         }
 
+        function hasProjectedStateChange(item) {
+            if (!item || !item.current || !item.target) return false;
+
+            const currentDisabled = Boolean(item.current.disabled);
+            const targetDisabled = Boolean(item.target.disabled);
+            if (currentDisabled !== targetDisabled) return true;
+            if (currentDisabled && targetDisabled) return false;
+
+            const currentMissing = Boolean(item.current.priority_missing) || item.current.priority === undefined || item.current.priority === null;
+            const targetMissing = Boolean(item.target.priority_missing) || item.target.priority === undefined || item.target.priority === null;
+            if (currentMissing !== targetMissing) return true;
+            if (currentMissing && targetMissing) return false;
+
+            return String(item.current.priority) !== String(item.target.priority);
+        }
+
+        function buildApplyPreview(groupData) {
+            const pendingChanges = Array.isArray(groupData.changes) ? groupData.changes : [];
+            if (pendingChanges.length > 0) {
+                return { mode: "pending", changes: pendingChanges };
+            }
+
+            const projectedChanges = (Array.isArray(groupData.items) ? groupData.items : []).filter(hasProjectedStateChange);
+            return { mode: "projected", changes: projectedChanges };
+        }
+
         async function triggerApplyWithConfirm() {
             const groupSelect = document.getElementById("modelGroupSelect");
             const selectedGroup = groupSelect ? groupSelect.value : "gemini";
@@ -119,12 +145,17 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
                 showToast(currentLang === "zh-CN" ? "未发现有效凭证，无需执行写回" : "No credentials found to apply", "info");
                 return;
             }
-            const changes = groupData.changes || [];
+            const preview = buildApplyPreview(groupData);
+            if (preview.changes.length === 0) {
+                showToast(t("noChangesToApply"), "info");
+                return;
+            }
 
             // Show changes preview modal with direct confirm button
             showModal("apply-confirm", {
                 snapshot: groupData,
-                changes: changes,
+                changes: preview.changes,
+                preview_mode: preview.mode,
                 items: items
             }, false);
         }
