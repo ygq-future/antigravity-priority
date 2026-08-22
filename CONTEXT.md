@@ -18,6 +18,14 @@ _Avoid_: Monthly quota, account balance, total tokens
 The upstream independent quota计量 unit in Antigravity, either `gemini` (Gemini models) or `claude_gpt` (Claude and GPT models).
 _Avoid_: Provider, engine, model name
 
+**Control Model Group**:
+The configured Model Group whose Fresh Evidence may drive quota-based priority decisions and Host Transitions. Exactly one Model Group is the control authority at a time.
+_Avoid_: Active view, selected group, dashboard group
+
+**Predicted Model Group**:
+The non-control Model Group shown as a read-only projection of the priorities it would receive if configured as the Control Model Group. It cannot authorize a Host Transition.
+_Avoid_: Alternate authority, secondary control group, writable preview
+
 ### Scheduling & Pacing
 
 **Cycle Burn Rate ($C_{\text{cycle}}$)**:

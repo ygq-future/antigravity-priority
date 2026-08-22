@@ -395,7 +395,7 @@ Fresh Evidence 决定 Plan 是否能够产生 Host 写回，是调度系统的�
 
 ## 3. 深化双 Model Group 规划投影
 
-- **状态**：`待讨论 (Proposed)`
+- **状态**：`讨论完成 (Accepted)`
 - **推荐强度**：`Strong`
 - **依赖类别**：`in-process`
 - **建议优先级**：`P2`
@@ -518,6 +518,31 @@ Reset 完成 Host 状态变更后，为了更新管理页快照，再次执行�
 - ADR-0001 的 Antigravity 单提供商专精化；
 - `CONTEXT.md` 中 `gemini` 与 `claude_gpt` Model Group 的领域定义；
 - AGENTS.md 中 Runtime 对调度用例的唯一所有权。
+
+本轮没有形成新的、难以逆转的业务取舍，因此不新增 ADR。实现规格只收拢已经生效的双组契约。
+
+### 设计审问已确认决策（2026-08-22）
+
+以下规则已有需求、测试或前轮决策支撑，本轮通过 `/grill-with-docs` 确认保持不变：
+
+1. **配置是唯一主控权威**：Dynamic Config 中的 `antigravity_model_group` 决定 Control Model Group；接口参数和页面选择器不能改变写回权；
+2. **页面切换只改变视图**：查看另一个 Model Group 不触发网络请求、不更改配置，也不交换 Target 与 Predicted 角色；
+3. **一次探测刷新两组**：单次 Antigravity quota 响应同时解析并保存 `gemini` 与 `claude_gpt`，页面当前查看哪组不改变采集范围；
+4. **Predicted 永远只读**：Control Model Group 产生 Target，Predicted Model Group 只展示“若成为主控组”的结果，不得进入 Host 写回；
+5. **两组数据彼此独立**：某组失败或没有数据时显示未知，不得借用、复制或重新标记另一组的数据；
+6. **所有用例输出一致形状**：Production、Probe、SyncHost、Reset 和启动 fallback 都返回角色明确的完整双组 Snapshot；
+7. **保存配置不立即写 Host**：切换 Control Model Group 后，新的写回权在下一次 Manual Apply 或 Auto Apply 获得 Fresh Evidence 时生效；
+8. **Fresh Evidence authority 保持独立**：投影只消费已经分类的当前或历史 evidence，不再解释 freshness 字段。
+
+#### 明确拒绝的推测性复杂度
+
+以下内容不属于本轮核心需求：
+
+- 支持第三个或任意数量 Model Group 的通用框架；
+- 新增投影策略、切换策略或自动接管配置；
+- 把网络探测、State Store 持久化或 Host 写回吸收到投影 module；
+- 新增数据库、缓存层、后台刷新任务或管理 API；
+- 重新设计历史记录、Management 页面或公开 Snapshot schema。
 
 ---
 
