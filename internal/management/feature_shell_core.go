@@ -10,6 +10,8 @@ const templateScriptShellCore = `        const LANG_STORAGE_KEY = "antigravity_p
         } catch (_) {}
         let activeTab = "overview";
         let countdownInterval = null;
+        let dashboardRefreshInterval = null;
+        let silentDashboardRefreshInFlight = false;
         let probeCooldownTimer = null;
         let scheduleConfig = null;
         let dynamicConfig = null;

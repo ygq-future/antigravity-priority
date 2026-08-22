@@ -745,6 +745,66 @@ func TestPlanWithEvidence_MixedRoundKeepsNonFreshCredentialsReadOnly(t *testing.
 	}
 }
 
+func TestPlanFreshOnly_DepletedPriorityUsesExplicitRuntimeState(t *testing.T) {
+	now := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
+	reset5h := now.Add(4 * time.Hour)
+	reset7d := now.Add(100 * time.Hour)
+	healthy := QuotaEvidence{
+		AuthIndex:            "recovered",
+		ShortWindowRemaining: int64Ptr(100),
+		ShortWindowResetAt:   &reset5h,
+		LongWindowRemaining:  int64Ptr(15),
+		LongWindowResetAt:    &reset7d,
+		CycleBurnRate:        0.15,
+	}
+	options := Options{
+		Now:                 now,
+		BoostStartPriority:  999,
+		NormalStartPriority: 100,
+		MinChange:           1,
+	}
+
+	t.Run("healthy credential recovers from current minus one", func(t *testing.T) {
+		plan := planFreshOnly([]core.Credential{{AuthIndex: "recovered", Priority: -1}}, []QuotaEvidence{healthy}, options)
+		if len(plan.Items) != 1 || plan.Items[0].Priority != 100 || plan.Items[0].Disabled {
+			t.Fatalf("recovered item = %#v; want priority=100 disabled=false", plan.Items)
+		}
+		if len(plan.Changes) != 1 || plan.Changes[0].Priority != 100 {
+			t.Fatalf("recovery changes = %#v; want one positive write", plan.Changes)
+		}
+	})
+
+	t.Run("active 429 cooldown keeps current minus one", func(t *testing.T) {
+		cooldownOptions := options
+		cooldownOptions.CooldownAuthIndexes = map[string]time.Time{"recovered": now.Add(5 * time.Minute)}
+		plan := planFreshOnly([]core.Credential{{AuthIndex: "recovered", Priority: -1}}, []QuotaEvidence{healthy}, cooldownOptions)
+		if len(plan.Items) != 1 || plan.Items[0].Priority != -1 || plan.Items[0].Disabled || plan.Items[0].Reason != Reason429Cooldown {
+			t.Fatalf("cooldown item = %#v; want active soft cooldown", plan.Items)
+		}
+		if len(plan.Changes) != 0 {
+			t.Fatalf("cooldown changes = %#v; want no redundant write", plan.Changes)
+		}
+	})
+
+	t.Run("expired 429 cooldown recovers current minus one", func(t *testing.T) {
+		cooldownOptions := options
+		cooldownOptions.CooldownAuthIndexes = map[string]time.Time{"recovered": now.Add(-time.Second)}
+		plan := planFreshOnly([]core.Credential{{AuthIndex: "recovered", Priority: -1}}, []QuotaEvidence{healthy}, cooldownOptions)
+		if len(plan.Items) != 1 || plan.Items[0].Priority != 100 || len(plan.Changes) != 1 {
+			t.Fatalf("expired cooldown plan = %#v; want recovered positive priority", plan)
+		}
+	})
+
+	t.Run("short-window depletion remains soft depleted", func(t *testing.T) {
+		depleted := healthy
+		depleted.ShortWindowRemaining = int64Ptr(0)
+		plan := planFreshOnly([]core.Credential{{AuthIndex: "recovered", Priority: -1}}, []QuotaEvidence{depleted}, options)
+		if len(plan.Items) != 1 || plan.Items[0].Priority != -1 || plan.Items[0].Disabled || plan.Items[0].Reason != ReasonFreshShortWindowDepleted {
+			t.Fatalf("short-depleted item = %#v; want soft depletion", plan.Items)
+		}
+	})
+}
+
 func TestNextAvailablePriority(t *testing.T) {
 	used := make(map[int]struct{})
 	// Preferred > MaxPriority

@@ -46,6 +46,7 @@ const templateScriptOverviewRender = `        function renderDashboard() {
             const isPredictedView = selectedGroup !== activeGroup;
             const groupData = (latestSnapshot && latestSnapshot.groups && latestSnapshot.groups[selectedGroup]) || {};
             const items = groupData.items || [];
+            const pendingAuthIndexes = new Set((groupData.changes || []).map(change => change.auth_index));
             let boostedCount = 0;
             let depletedCount = 0;
             let activeCount = 0;
@@ -109,8 +110,10 @@ const templateScriptOverviewRender = `        function renderDashboard() {
                 let tagBadge = "";
                 if (isPredictedView) {
                     tagBadge = "<span class=\"badge badge-predicted\">" + t("predictedBadge") + "</span>";
-                } else if (String(actualP) !== String(targetP)) {
+                } else if (pendingAuthIndexes.has(item.auth_index)) {
                     tagBadge = "<span class=\"badge badge-pending\">" + t("pendingApply") + "</span>";
+                } else if (String(actualP) !== String(targetP)) {
+                    tagBadge = "<span class=\"badge badge-warning\">" + t("targetChanged") + "</span>";
                 }
 
                 const probeFailed = item.reason && (item.reason.indexOf("probe failed") >= 0 || item.reason.indexOf("probe invalid") >= 0);

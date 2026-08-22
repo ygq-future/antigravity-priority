@@ -185,7 +185,7 @@ const templateScriptControls = `        // Custom Select: Main Model Group
             if (tabId === "history") fetchDiagnostics();
             if (tabId === "diagnostics") fetchDiagnostics();
             if (tabId === "config") fetchDynamicConfig();
-			if (tabId === "overview") refreshDashboard(true);
+			if (tabId === "overview") refreshDashboard({ withSync: true, silent: true });
         }
 
         function getAuthHeader() {

@@ -21,7 +21,8 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
             return reason;
         }
 
-        async function fetchSnapshot() {
+        async function fetchSnapshot(options) {
+            const settings = options || {};
             try {
                 const data = await apiFetch(SNAPSHOT_PATH);
                 latestSnapshot = data;
@@ -41,11 +42,12 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
                 }
                 renderDashboard();
             } catch (err) {
-                showToast(err.message, "error");
+                if (!settings.silent) showToast(err.message, "error");
             }
         }
 
-        async function fetchDiagnostics() {
+        async function fetchDiagnostics(options) {
+            const settings = options || {};
             try {
                 const data = await apiFetch(DIAGNOSTICS_PATH);
                 latestDiagnostics = data;
@@ -54,33 +56,35 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
                 renderDiagnostics();
                 renderScheduleStatus();
             } catch (err) {
-                showToast(err.message, "error");
+                if (!settings.silent) showToast(err.message, "error");
             }
         }
 
-        async function syncHost() {
+        async function syncHost(options) {
+            const settings = options || {};
             try {
 				const data = await apiFetch(SYNC_PATH, { method: "POST" });
                 latestSnapshot = data;
                 renderDashboard();
-                showToast(t("syncSuccess"), "success");
+                if (settings.notifySync) showToast(t("syncSuccess"), "success");
             } catch (err) {
-                await fetchSnapshot();
+                await fetchSnapshot(settings);
             }
         }
 
-        async function refreshDashboard(withSync) {
+        async function refreshDashboard(options) {
+            const settings = options || {};
             const btn = document.getElementById("btnRefresh");
-            if (btn) btn.disabled = true;
+            if (btn && settings.notifySync) btn.disabled = true;
             try {
-                if (withSync) {
-                    await syncHost();
+                if (settings.withSync) {
+                    await syncHost(settings);
                 } else {
-                    await fetchSnapshot();
+                    await fetchSnapshot(settings);
                 }
-                await fetchDiagnostics();
+                await fetchDiagnostics(settings);
             } finally {
-                if (btn) btn.disabled = false;
+                if (btn && settings.notifySync) btn.disabled = false;
             }
         }
 
@@ -116,10 +120,6 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
                 return;
             }
             const changes = groupData.changes || [];
-            if (changes.length === 0) {
-                showToast(t("noChangesToApply"), "info");
-                return;
-            }
 
             // Show changes preview modal with direct confirm button
             showModal("apply-confirm", {
@@ -146,7 +146,7 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
                 } else {
                     showToast(t("noChangesToApply"), "info");
                 }
-                await refreshDashboard();
+                await refreshDashboard({ silent: true });
             } catch (err) {
                 showToast(err.message, "error");
             } finally {

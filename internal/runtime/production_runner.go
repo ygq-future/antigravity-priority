@@ -82,33 +82,16 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 	// Reconcile against the authoritative Host inventory after the potentially
 	// slow Google requests. Credentials may have been added, removed, disabled,
 	// or reprioritized while probing was in flight.
-	files, err = client.ListAuthFiles(ctx)
-	if err != nil {
-		return err
-	}
-	credentials = credentialsFromAuthFiles(files)
-	credentials = filterCredentialsByAuthIndex(credentials, request.AuthIndexes)
-	credentials, _, err = enrichCredentialsFromAuthDocuments(ctx, client, credentials)
-	if err != nil {
-		return err
-	}
-	controlGroup := request.Config.AntigravityModelGroup
-	projection, err := ProjectDualModelGroups(ProjectionInput{
-		ControlModelGroup: controlGroup,
-		Credentials:       credentials,
-		EvidenceByGroup:   evidence.ByGroup,
-		PlanningOptions:   priorityOptions(request.Config, store, now),
-		ProjectionTime:    now,
-	})
+	projection, err := projectCurrentHost(ctx, client, request, evidence.ByGroup, store, now)
 	if err != nil {
 		return err
 	}
 	plan := projection.ControlPlan
 	primarySnapshot := projection.ControlSnapshot
-	r.setDualSnapshot(projection.Snapshot)
 
 	// Probe-only: evidence collected, dual snapshot updated, no apply executed (REQ-04).
 	if request.Trigger == TriggerProbe {
+		r.setDualSnapshot(projection.Snapshot)
 		result := apply.Result{Snapshot: primarySnapshot}
 		audit := fmt.Sprintf("probe completed: %d probe observations", evidence.Probed)
 		snap := primarySnapshot
@@ -124,6 +107,7 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 	}
 
 	if len(plan.Changes) == 0 {
+		r.setDualSnapshot(projection.Snapshot)
 		result := apply.Result{Snapshot: primarySnapshot}
 		summary := fmt.Sprintf("all %d credentials in sync, no changes required", len(primarySnapshot.Items))
 		_, projectErr := r.projectSnapshot(ctx, store, result, summary)
@@ -135,6 +119,11 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 	if err != nil {
 		return err
 	}
+	postApplyProjection, err := projectCurrentHost(ctx, client, request, evidence.ByGroup, store, now)
+	if err != nil {
+		return fmt.Errorf("reconcile Host after apply: %w", err)
+	}
+	r.setDualSnapshot(postApplyProjection.Snapshot)
 
 	summary := resultSummary("apply", result)
 
@@ -145,6 +134,33 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 		Snapshot: &primarySnapshot,
 	})
 	return projectErr
+}
+
+func projectCurrentHost(
+	ctx context.Context,
+	client *host.Client,
+	request TaskRequest,
+	evidenceByGroup map[config.AntigravityModelGroup]evidence.Result,
+	store *state.Store,
+	now time.Time,
+) (DualModelGroupProjection, error) {
+	files, err := client.ListAuthFiles(ctx)
+	if err != nil {
+		return DualModelGroupProjection{}, err
+	}
+	credentials := credentialsFromAuthFiles(files)
+	credentials = filterCredentialsByAuthIndex(credentials, request.AuthIndexes)
+	credentials, _, err = enrichCredentialsFromAuthDocuments(ctx, client, credentials)
+	if err != nil {
+		return DualModelGroupProjection{}, err
+	}
+	return ProjectDualModelGroups(ProjectionInput{
+		ControlModelGroup: request.Config.AntigravityModelGroup,
+		Credentials:       credentials,
+		EvidenceByGroup:   evidenceByGroup,
+		PlanningOptions:   priorityOptions(request.Config, store, now),
+		ProjectionTime:    now,
+	})
 }
 
 func (r *Runtime) collectEvidenceForTrigger(ctx context.Context, input collectInput, trigger Trigger) (collectedEvidence, error) {

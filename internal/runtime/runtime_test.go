@@ -863,6 +863,20 @@ func TestRuntime_ProductionRunner_Apply_Full(t *testing.T) {
 	if err != nil {
 		t.Fatalf("manual apply failed: %v", err)
 	}
+	latest, err := r.LatestSnapshot(context.Background())
+	if err != nil {
+		t.Fatalf("latest snapshot failed: %v", err)
+	}
+	active := latest.Groups[latest.ActiveModelGroup]
+	if len(active.Items) != 1 {
+		t.Fatalf("latest active snapshot items = %d; want 1", len(active.Items))
+	}
+	if active.Items[0].Current.Priority != active.Items[0].Target.Priority {
+		t.Fatalf("latest snapshot remained pending after committed apply: current=%d target=%d", active.Items[0].Current.Priority, active.Items[0].Target.Priority)
+	}
+	if len(active.Changes) != 0 {
+		t.Fatalf("latest snapshot changes = %#v; want no pending write after commit", active.Changes)
+	}
 
 	diag, err := r.Diagnostics(context.Background())
 	if err != nil {

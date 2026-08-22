@@ -218,8 +218,36 @@ func TestStatusHTML_ContainsRequiredUIElements(t *testing.T) {
 	if strings.Contains(html, "cfgRulesEnabled") || strings.Contains(html, "enabled: rulesEnabled") {
 		t.Error("StatusHTML must not expose the removed priority_rules.enabled switch")
 	}
-	if !strings.Contains(html, `if (tabId === "overview") refreshDashboard(true)`) {
-		t.Error("returning to Overview must use the same synchronized refresh path")
+	if !strings.Contains(html, `if (tabId === "overview") refreshDashboard({ withSync: true, silent: true })`) {
+		t.Error("returning to Overview must synchronize silently")
+	}
+	if !strings.Contains(html, `onclick="refreshDashboard({ withSync: true, notifySync: true })"`) {
+		t.Error("only the manual refresh button should request a sync-success notification")
+	}
+	if count := strings.Count(html, `notifySync: true`); count != 1 {
+		t.Errorf("sync-success notification must have exactly one user-initiated source, got %d", count)
+	}
+	if !strings.Contains(html, `await refreshDashboard({ withSync: true, silent: true });`) {
+		t.Error("initial dashboard synchronization must be silent")
+	}
+	if !strings.Contains(html, `dashboardRefreshInterval = setInterval(refreshOverviewSilently, 15000);`) {
+		t.Error("Overview must poll the latest in-memory snapshot without Host synchronization")
+	}
+	if !strings.Contains(html, `await refreshDashboard({ silent: true });`) {
+		t.Error("automatic Overview refresh must suppress notifications")
+	}
+	if !strings.Contains(html, `const pendingAuthIndexes = new Set((groupData.changes || []).map(change => change.auth_index));`) {
+		t.Error("pending badges must be sourced from write-qualified changes")
+	}
+	if strings.Contains(html, `else if (String(actualP) !== String(targetP)) {
+                    tagBadge = "<span class=\"badge badge-pending\">"`) {
+		t.Error("Current/Target projection drift alone must not be labeled pending")
+	}
+	if strings.Contains(html, `if (changes.length === 0) {
+                showToast(t("noChangesToApply"), "info");
+                return;
+            }`) {
+		t.Error("manual apply must remain available when the cached projection has no write-qualified changes")
 	}
 	if !strings.Contains(html, "latestDiagnostics.latest_apply") || !strings.Contains(html, "No Apply write recorded yet") {
 		t.Error("diagnostics write-health UI must use latest_apply and expose the no-Apply state")

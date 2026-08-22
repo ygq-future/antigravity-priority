@@ -39,6 +39,16 @@ const templateScriptLiveUI = `        function updateAllCountdowns() {
             }
         }
 
+        async function refreshOverviewSilently() {
+            if (activeTab !== "overview" || document.hidden || silentDashboardRefreshInFlight) return;
+            silentDashboardRefreshInFlight = true;
+            try {
+                await refreshDashboard({ silent: true });
+            } finally {
+                silentDashboardRefreshInFlight = false;
+            }
+        }
+
         function showToast(msg, type) {
             var root = document.getElementById("toastRoot");
             if (!root) return;

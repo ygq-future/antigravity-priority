@@ -9,14 +9,16 @@ const templateScriptModals = `        // Show Modal: Apply Confirm vs History De
             const btnApply = document.getElementById("btnModalApply");
 
             const isApplyConfirm = (mode === "apply-confirm");
-            const changes = extractChanges(result);
+            const changes = isApplyConfirm && Array.isArray(result.changes) ? result.changes : extractChanges(result);
 
             if (isApplyConfirm) {
                 title.textContent = t("confirmApplyTitle");
                 btnApply.hidden = false;
                 btnApply.textContent = t("btnConfirmApply");
                 btnApply.onclick = executeDirectApply;
-                summary.textContent = (currentLang === "zh-CN" ? "待写回凭证数量: " : "Credentials to update: ") + changes.length;
+                summary.textContent = changes.length > 0
+                    ? (currentLang === "zh-CN" ? "待写回凭证数量: " : "Credentials to update: ") + changes.length
+                    : t("manualApplyRecheck");
             } else {
                 title.textContent = currentLang === "zh-CN" ? "执行明细快照" : "Execution Details Snapshot";
                 btnApply.hidden = true;
@@ -27,7 +29,7 @@ const templateScriptModals = `        // Show Modal: Apply Confirm vs History De
 
             list.innerHTML = "";
             if (changes.length === 0) {
-                list.innerHTML = "<div class=\"empty-state\">" + t("noChanges") + "</div>";
+                list.innerHTML = "<div class=\"empty-state\">" + (isApplyConfirm ? t("manualApplyRecheck") : t("noChanges")) + "</div>";
             } else {
                 changes.forEach(c => {
                     const row = document.createElement("div");

@@ -93,7 +93,17 @@ type PlanItem struct {
 	CycleBurnRate        float64
 	TRequired            float64
 	hasQuotaEvidence     bool
+	quotaState           quotaState
 }
+
+type quotaState uint8
+
+const (
+	quotaStateUnknown quotaState = iota
+	quotaStateHealthy
+	quotaStateShortDepleted
+	quotaStateWeeklyDepleted
+)
 
 // Change represents a required host write-back modification.
 type Change struct {
@@ -227,11 +237,13 @@ func planItems(credentials []core.Credential, evidence plannerEvidence, options 
 				item.Priority = DepletedPriority
 				item.Disabled = true
 				item.Reason = ReasonFreshWeeklyDepleted
+				item.quotaState = quotaStateWeeklyDepleted
 			case metrics.IsShortDepleted:
 				// Tier 3: Short-window soft depletion
 				item.Priority = DepletedPriority
 				item.Disabled = false
 				item.Reason = ReasonFreshShortWindowDepleted
+				item.quotaState = quotaStateShortDepleted
 			default:
 				// Healthy candidate
 				item.Disabled = false
@@ -240,6 +252,7 @@ func planItems(credentials []core.Credential, evidence plannerEvidence, options 
 				} else {
 					item.Reason = ReasonFreshRemainingPositive
 				}
+				item.quotaState = quotaStateHealthy
 			}
 		}
 
@@ -265,7 +278,7 @@ func planPositive(items []PlanItem, options Options) {
 	regularIndices := make([]int, 0)
 
 	for index, item := range items {
-		if item.Disabled || !item.hasQuotaEvidence || item.Priority == DepletedPriority {
+		if item.Disabled || !item.hasQuotaEvidence || item.quotaState != quotaStateHealthy {
 			continue
 		}
 		// Check 429 Cooldown
