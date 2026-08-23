@@ -75,6 +75,7 @@ func TestPlanFreshOnly(t *testing.T) {
 		NormalStartPriority: 100,
 		MinChange:           1,
 		UrgencyTolerance:    0.05,
+		IgnoreDisabledHost:  true,
 	}
 
 	t.Run("acceptance: boosted tier clustering with tolerance", func(t *testing.T) {
@@ -271,7 +272,7 @@ func TestPlanFreshOnly(t *testing.T) {
 		}
 	})
 
-	t.Run("manually disabled credential on host is never re-enabled even with healthy quota", func(t *testing.T) {
+	t.Run("ignored disabled credential keeps its host state without a target", func(t *testing.T) {
 		creds := []core.Credential{
 			{AuthIndex: "user-disabled-healthy", Priority: 100, Disabled: true},
 		}
@@ -292,17 +293,49 @@ func TestPlanFreshOnly(t *testing.T) {
 		if len(plan.Items) != 1 {
 			t.Fatalf("expected 1 item, got %d", len(plan.Items))
 		}
-		if !plan.Items[0].Disabled {
-			t.Errorf("expected manually disabled account to stay disabled (Disabled=true), got Disabled=false")
+		if !plan.Items[0].Disabled || plan.Items[0].Priority != 100 {
+			t.Errorf("expected ignored account to keep host state, got %+v", plan.Items[0])
 		}
-		if plan.Items[0].Priority != DepletedPriority {
-			t.Errorf("expected priority %d, got %d", DepletedPriority, plan.Items[0].Priority)
+		if plan.Items[0].EvidenceFresh {
+			t.Errorf("ignored account must not expose fresh planning evidence: %+v", plan.Items[0])
 		}
-		// Must not generate any change enabling the account
-		for _, chg := range plan.Changes {
-			if chg.Credential.AuthIndex == "user-disabled-healthy" && !chg.Disabled {
-				t.Errorf("plan generated change enabling user-disabled credential: %+v", chg)
-			}
+		if len(plan.Changes) != 0 {
+			t.Errorf("ignored account must not produce a host write: %+v", plan.Changes)
+		}
+	})
+
+	t.Run("disabled credential is planned and write-qualified when disabled hosts are not ignored", func(t *testing.T) {
+		creds := []core.Credential{
+			{AuthIndex: "user-disabled-healthy", Priority: 50, Disabled: true},
+		}
+		reset7d := now.Add(100 * time.Hour)
+		reset5h := now.Add(3 * time.Hour)
+		evidence := []QuotaEvidence{
+			{
+				AuthIndex:            "user-disabled-healthy",
+				LongWindowRemaining:  int64Ptr(90),
+				LongWindowResetAt:    &reset7d,
+				ShortWindowRemaining: int64Ptr(90),
+				ShortWindowResetAt:   &reset5h,
+				CycleBurnRate:        0.15,
+			},
+		}
+
+		opts := defaultOptions
+		opts.IgnoreDisabledHost = false
+		plan := planFreshOnly(creds, evidence, opts)
+		if len(plan.Items) != 1 {
+			t.Fatalf("expected 1 item, got %d", len(plan.Items))
+		}
+		item := plan.Items[0]
+		if !item.EvidenceFresh || item.Disabled {
+			t.Errorf("expected fresh evidence to calculate a re-enabled target, got %+v", item)
+		}
+		if item.Priority != defaultOptions.NormalStartPriority {
+			t.Errorf("expected healthy target priority %d, got %d", defaultOptions.NormalStartPriority, item.Priority)
+		}
+		if len(plan.Changes) != 1 || plan.Changes[0].Disabled || plan.Changes[0].Priority != item.Priority {
+			t.Errorf("expected write-qualified priority and disabled changes, got %+v", plan.Changes)
 		}
 	})
 

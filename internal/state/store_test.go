@@ -109,6 +109,48 @@ func TestStoreLoadNormalizesLegacySampleLearningState(t *testing.T) {
 	}
 }
 
+func TestStoreLoadCollapsesAdjacentDuplicateQuotaSamples(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "duplicate-samples-cache.json")
+	raw := `{
+  "schema_version": 1,
+  "entries": {
+    "auth-duplicate|model_group=claude_gpt": {
+      "schema_version": 1,
+      "auth_index": "auth-duplicate",
+      "model_group": "claude_gpt",
+      "cycle_burn_rate": 0.15,
+      "samples": [
+        {"sequence":1,"observed_at":"2026-08-23T02:00:00Z","short_window_reset_at":"2026-08-23T07:00:00Z","short_window_rem":100,"long_window_rem":45},
+        {"sequence":2,"observed_at":"2026-08-23T02:15:00Z","short_window_reset_at":"2026-08-23T07:15:00Z","short_window_rem":100,"long_window_rem":45},
+        {"sequence":3,"observed_at":"2026-08-23T02:30:00Z","short_window_reset_at":"2026-08-23T07:30:00Z","short_window_rem":98,"long_window_rem":44}
+      ],
+      "learning_baseline_sequence": 2
+    }
+  }
+}`
+	if err := os.WriteFile(cachePath, []byte(raw), 0o600); err != nil {
+		t.Fatalf("write duplicate cache: %v", err)
+	}
+
+	store, err := state.Load(context.Background(), cachePath)
+	if err != nil {
+		t.Fatalf("load duplicate cache: %v", err)
+	}
+	entry, ok := store.GetEntry("auth-duplicate", "claude_gpt")
+	if !ok {
+		t.Fatal("duplicate entry missing after load")
+	}
+	if len(entry.Samples) != 2 || entry.Samples[0].Sequence != 1 || entry.Samples[1].Sequence != 3 {
+		t.Fatalf("adjacent duplicate quotas were not collapsed: %+v", entry.Samples)
+	}
+	if entry.Samples[0].ObservedAt.Format(time.RFC3339) != "2026-08-23T02:15:00Z" || entry.Samples[0].ShortWindowResetAt.Format(time.RFC3339) != "2026-08-23T07:15:00Z" {
+		t.Fatalf("latest duplicate metadata was not retained: %+v", entry.Samples[0])
+	}
+	if entry.LearningBaselineSequence != entry.Samples[0].Sequence {
+		t.Fatalf("baseline did not follow collapsed duplicate: %d", entry.LearningBaselineSequence)
+	}
+}
+
 func TestStore_ContextCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

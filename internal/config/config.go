@@ -101,6 +101,7 @@ type Config struct {
 	UrgencyTolerance         float64
 	RateLimitCooldownMinutes int
 	QuotaSampleCapacity      int
+	IgnoreDisabledHost       bool
 	StateCachePath           string
 	PriorityRules            PriorityRules
 	Schedule                 ScheduleConfig
@@ -160,6 +161,7 @@ type DynamicConfig struct {
 	UrgencyTolerance         float64             `json:"urgency_tolerance"`           // e.g. 0.05
 	RateLimitCooldownMinutes int                 `json:"rate_limit_cooldown_minutes"` // e.g. 5
 	QuotaSampleCapacity      int                 `json:"quota_sample_capacity"`       // e.g. 6 (range 2..30)
+	IgnoreDisabledHost       bool                `json:"ignore_disabled_host"`        // skip disabled host credentials during planning
 	PriorityRules            PriorityRulesConfig `json:"priority_rules"`
 	Schedule                 ScheduleConfig      `json:"schedule"`
 }
@@ -194,6 +196,7 @@ func Default() Config {
 		UrgencyTolerance:         DefaultUrgencyTolerance,
 		RateLimitCooldownMinutes: DefaultRateLimitCooldownMinutes,
 		QuotaSampleCapacity:      DefaultQuotaSampleCapacity,
+		IgnoreDisabledHost:       true,
 		StateCachePath:           DefaultStateCachePath,
 		PriorityRules:            defaultPriorityRules(),
 		Schedule: ScheduleConfig{
@@ -216,6 +219,7 @@ func (cfg Config) Dynamic() DynamicConfig {
 		UrgencyTolerance:         cfg.UrgencyTolerance,
 		RateLimitCooldownMinutes: cfg.RateLimitCooldownMinutes,
 		QuotaSampleCapacity:      cfg.QuotaSampleCapacity,
+		IgnoreDisabledHost:       cfg.IgnoreDisabledHost,
 		PriorityRules: PriorityRulesConfig{
 			BoostStartPriority:  cfg.PriorityRules.BoostStartPriority,
 			NormalStartPriority: cfg.PriorityRules.NormalStartPriority,
@@ -284,6 +288,7 @@ func (dyn DynamicConfig) ApplyTo(base Config) (Config, error) {
 	res.UrgencyTolerance = dyn.UrgencyTolerance
 	res.RateLimitCooldownMinutes = dyn.RateLimitCooldownMinutes
 	res.QuotaSampleCapacity = dyn.QuotaSampleCapacity
+	res.IgnoreDisabledHost = dyn.IgnoreDisabledHost
 	res.PriorityRules.BoostStartPriority = dyn.PriorityRules.BoostStartPriority
 	res.PriorityRules.NormalStartPriority = dyn.PriorityRules.NormalStartPriority
 	res.Schedule = dyn.Schedule

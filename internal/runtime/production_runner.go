@@ -255,6 +255,7 @@ func priorityOptions(cfg config.Config, store *state.Store, now time.Time) prior
 		NormalStartPriority: cfg.PriorityRules.NormalStartPriority,
 		MinChange:           cfg.MinChange,
 		UrgencyTolerance:    cfg.UrgencyTolerance,
+		IgnoreDisabledHost:  cfg.IgnoreDisabledHost,
 		CooldownAuthIndexes: cooldowns,
 	}
 }

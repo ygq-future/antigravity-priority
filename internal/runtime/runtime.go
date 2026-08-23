@@ -423,7 +423,10 @@ func (r *Runtime) runAuto(ctx context.Context) error {
 	}
 	defer cleanup()
 
-	now := r.clock.Now().UTC()
+	// Schedule window values are user-facing local wall-clock times. Keep the
+	// clock's location here so the backend evaluates the same local time shown
+	// by the management UI; persisted timestamps remain UTC elsewhere.
+	now := r.clock.Now()
 
 	if !state.IsInScheduleWindow(now, sched) {
 		return nil
@@ -1032,7 +1035,7 @@ func redactRuntimeIdentifier(value string) string {
 func buildMetadata() Metadata {
 	return Metadata{
 		Name:             "Antigravity Priority",
-		Version:          "1.2.6",
+		Version:          "1.2.7",
 		Author:           "ygq-future",
 		GitHubRepository: "https://github.com/ygq-future/antigravity-priority",
 		Description:      "Intelligent quota pacing and adaptive burn-rate priority scheduler exclusively for Google Antigravity in CLIProxyAPI.",
@@ -1042,7 +1045,7 @@ func buildMetadata() Metadata {
 type realRuntimeClock struct{}
 
 func (realRuntimeClock) Now() time.Time {
-	return time.Now().UTC()
+	return time.Now()
 }
 
 type realSleeper struct{}

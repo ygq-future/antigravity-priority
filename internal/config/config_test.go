@@ -35,6 +35,9 @@ func TestDefault(t *testing.T) {
 	if cfg.QuotaSampleCapacity != 6 {
 		t.Errorf("expected QuotaSampleCapacity=6, got %v", cfg.QuotaSampleCapacity)
 	}
+	if !cfg.IgnoreDisabledHost {
+		t.Errorf("expected IgnoreDisabledHost=true, got %v", cfg.IgnoreDisabledHost)
+	}
 	if cfg.StateCachePath != config.DefaultStateCachePath {
 		t.Errorf("expected StateCachePath=%s, got %s", config.DefaultStateCachePath, cfg.StateCachePath)
 	}
@@ -235,6 +238,7 @@ func TestDynamicConfig_ValidateAndApplyTo(t *testing.T) {
 			UrgencyTolerance:         0.10,
 			RateLimitCooldownMinutes: 10,
 			QuotaSampleCapacity:      15,
+			IgnoreDisabledHost:       false,
 			PriorityRules: config.PriorityRulesConfig{
 				BoostStartPriority:  990,
 				NormalStartPriority: 250,
@@ -275,6 +279,9 @@ func TestDynamicConfig_ValidateAndApplyTo(t *testing.T) {
 		}
 		if merged.QuotaSampleCapacity != 15 {
 			t.Errorf("expected QuotaSampleCapacity=15, got %d", merged.QuotaSampleCapacity)
+		}
+		if merged.IgnoreDisabledHost {
+			t.Errorf("expected IgnoreDisabledHost=false, got %v", merged.IgnoreDisabledHost)
 		}
 		if merged.PriorityRules.BoostStartPriority != 990 {
 			t.Errorf("expected BoostStartPriority=990, got %d", merged.PriorityRules.BoostStartPriority)
@@ -466,6 +473,9 @@ func TestDynamicConfigZeroToleranceAndLegacyPriorityRuleMigration(t *testing.T) 
 	legacyJSON := []byte(`{"auto_apply":false,"interval":"15m","antigravity_model_group":"gemini","max_concurrency":6,"min_change":1,"urgency_tolerance":0.05,"rate_limit_cooldown_minutes":5,"quota_sample_capacity":6,"priority_rules":{"enabled":false,"boost_start_priority":777,"normal_start_priority":222},"schedule":{"paused":false}}`)
 	if err := json.Unmarshal(legacyJSON, &legacyFalse); err != nil {
 		t.Fatal(err)
+	}
+	if !legacyFalse.IgnoreDisabledHost {
+		t.Fatalf("omitted ignore_disabled_host did not use the new default: %#v", legacyFalse)
 	}
 	defaults := config.Default().PriorityRules
 	if legacyFalse.PriorityRules.BoostStartPriority != defaults.BoostStartPriority || legacyFalse.PriorityRules.NormalStartPriority != defaults.NormalStartPriority {

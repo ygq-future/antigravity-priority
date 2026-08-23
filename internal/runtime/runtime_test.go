@@ -1322,6 +1322,37 @@ func TestRuntime_AutoApply_OutsideScheduleWindow(t *testing.T) {
 	}
 }
 
+func TestRuntime_AutoApply_UsesClockLocationForScheduleWindow(t *testing.T) {
+	local := time.FixedZone("CST", 8*60*60)
+	clock := &testClock{now: time.Date(2026, 8, 19, 10, 0, 0, 0, local)}
+	calls := 0
+	r := newTestRuntime(t, runtime.Options{
+		Clock: clock,
+		Runner: func(ctx context.Context, request runtime.TaskRequest) error {
+			calls++
+			return nil
+		},
+	})
+
+	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(filepath.Join(t.TempDir(), "cache.json")) + "\n"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.SetScheduleConfig(context.Background(), state.ScheduleConfig{
+		WindowEnabled: true,
+		WindowStart:   "09:00",
+		WindowEnd:     "00:00",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := r.AutoApply(context.Background()); err != nil {
+		t.Fatalf("auto apply failed: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("expected local 10:00 to be inside 09:00-00:00, got %d calls", calls)
+	}
+}
+
 func TestRuntime_GetSetScheduleConfig(t *testing.T) {
 	cachePath := filepath.Join(t.TempDir(), "cache.json")
 	r := newTestRuntime(t, runtime.Options{})

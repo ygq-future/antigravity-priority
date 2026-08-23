@@ -70,12 +70,14 @@ func UpdateSamplesAndCycleBurnRate(
 	lastSample := samples[len(samples)-1]
 
 	// 2. Zero-consumption deduplication:
-	// If quota and the short-window identity are unchanged, refresh only the latest observation time.
+	// If both quota values are unchanged, refresh the latest observation metadata
+	// without appending a duplicate sample. Rolling windows may move their reset
+	// timestamp between probes even when no quota has been consumed.
 	if currSample.ShortWindowRem == lastSample.ShortWindowRem &&
-		currSample.LongWindowRem == lastSample.LongWindowRem &&
-		currSample.ShortWindowResetAt.Equal(lastSample.ShortWindowResetAt) {
+		currSample.LongWindowRem == lastSample.LongWindowRem {
 		updatedSamples := append([]QuotaSample(nil), samples...)
 		updatedSamples[len(updatedSamples)-1].ObservedAt = currSample.ObservedAt
+		updatedSamples[len(updatedSamples)-1].ShortWindowResetAt = currSample.ShortWindowResetAt
 		return prevRate, updatedSamples, learningBaselineSequence
 	}
 
@@ -118,15 +120,30 @@ func normalizeSampleHistory(samples []QuotaSample, baseline uint64) ([]QuotaSamp
 	if len(samples) == 0 {
 		return nil, 0
 	}
-	normalized := append([]QuotaSample(nil), samples...)
+	normalized := make([]QuotaSample, 0, len(samples))
 	var previous uint64
-	for i := range normalized {
-		if normalized[i].Sequence == 0 || normalized[i].Sequence <= previous {
-			normalized[i].Sequence = previous + 1
+	for _, sample := range samples {
+		if sample.Sequence == 0 || sample.Sequence <= previous {
+			sample.Sequence = previous + 1
 		}
-		previous = normalized[i].Sequence
+		previous = sample.Sequence
+
+		if len(normalized) > 0 {
+			last := &normalized[len(normalized)-1]
+			if sample.ShortWindowRem == last.ShortWindowRem && sample.LongWindowRem == last.LongWindowRem {
+				last.ObservedAt = sample.ObservedAt
+				last.ShortWindowResetAt = sample.ShortWindowResetAt
+				if baseline == sample.Sequence {
+					baseline = last.Sequence
+				}
+				continue
+			}
+		}
+		normalized = append(normalized, sample)
 	}
 	if baseline == 0 {
+		baseline = normalized[0].Sequence
+	} else if _, found := sampleBySequence(normalized, baseline); !found {
 		baseline = normalized[0].Sequence
 	}
 	return normalized, baseline

@@ -649,7 +649,7 @@ func (d *devRunner) advanceProbeScenario(observedAt time.Time) {
 			shortRemaining = decrementQuota(shortRemaining, 2)
 			longRemaining = decrementQuota(longRemaining, 1)
 		case 4:
-			// A changed reset timestamp is a distinct window observation even when quota is unchanged.
+			// A changed reset timestamp with unchanged quota exercises metadata-only deduplication.
 			shortReset = shortReset.Add(5 * time.Hour)
 		default:
 			shortRemaining = decrementQuota(shortRemaining, 1)

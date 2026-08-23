@@ -80,7 +80,7 @@ func TestDevServerHTTPExposesFullIdentityAndStatefulSamples(t *testing.T) {
 		t.Fatal(err)
 	}
 	samples := samplesPayload.Groups["gemini"].Samples
-	if len(samples) != 4 || samples[0].Sequence != 1 || samples[3].Sequence != 4 {
+	if len(samples) != 3 || samples[0].Sequence != 1 || samples[2].Sequence != 3 {
 		t.Fatalf("HTTP samples do not reflect probe lifecycle: %+v", samples)
 	}
 }
@@ -144,18 +144,18 @@ func TestDevRunnerProbeScenarioExercisesSampleLifecycle(t *testing.T) {
 	now = now.Add(time.Minute)
 	_, _ = runner.Run(ctx, management.RunRequest{Mode: "probe"})
 	reset, _ := runner.GetSamples(ctx, authIndex, "gemini")
-	if len(reset) != 3 || reset[2].Sequence != 3 || reset[2].ShortWindowResetAt.Equal(reset[1].ShortWindowResetAt) {
-		t.Fatalf("window reset did not append distinct history: %+v", reset)
+	if len(reset) != 2 || reset[1].Sequence != 2 || reset[1].ShortWindowResetAt.Equal(reset[0].ShortWindowResetAt) || !reset[1].ObservedAt.Equal(now) {
+		t.Fatalf("same quota window reset did not refresh the latest sample metadata: %+v", reset)
 	}
 	entry := runner.sampleStates[devSampleKey(authIndex, "gemini")]
-	if entry.baseline != reset[2].Sequence {
-		t.Fatalf("window reset baseline = %d, want %d", entry.baseline, reset[2].Sequence)
+	if entry.baseline != reset[0].Sequence {
+		t.Fatalf("metadata-only window reset changed baseline = %d, want %d", entry.baseline, reset[0].Sequence)
 	}
 
 	now = now.Add(time.Minute)
 	_, _ = runner.Run(ctx, management.RunRequest{Mode: "probe"})
 	rotated, _ := runner.GetSamples(ctx, authIndex, "gemini")
-	if len(rotated) != 3 || rotated[0].Sequence != 2 || rotated[2].Sequence != 4 {
-		t.Fatalf("FIFO rotation did not retain the newest three samples: %+v", rotated)
+	if len(rotated) != 3 || rotated[0].Sequence != 1 || rotated[2].Sequence != 3 {
+		t.Fatalf("quota change after metadata refresh did not append the next sample: %+v", rotated)
 	}
 }

@@ -123,6 +123,22 @@ const configMarkup = `
                                 </div>
                             </div>
                         </div>
+
+                        <div class="form-row">
+                            <div class="form-label-box">
+                                <span class="form-title" data-i18n="cfgIgnoreDisabledHost">忽略 disabled 主机</span>
+                                <span class="form-hint" data-i18n="cfgIgnoreDisabledHostHint">开启后跳过 disabled 主机，不计算目标值，也不写回</span>
+                            </div>
+                            <div class="form-input-group">
+                                <label class="toggle-label">
+                                    <span class="toggle-switch">
+                                        <input type="checkbox" id="cfgIgnoreDisabledHost">
+                                        <span class="toggle-slider"></span>
+                                    </span>
+                                    <span id="cfgIgnoreDisabledHostStatusText">已开启</span>
+                                </label>
+                            </div>
+                        </div>
                     </div>
                 </div>
 

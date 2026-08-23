@@ -88,18 +88,21 @@ func TestEstimatorWindowResetRebasesWithoutDeletingHistory(t *testing.T) {
 	}
 }
 
-func TestEstimatorChangedResetTimeIsADistinctObservation(t *testing.T) {
+func TestEstimatorSameQuotaWithChangedResetOnlyRefreshesLatestSample(t *testing.T) {
 	now := time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC)
 	reset1 := now.Add(2 * time.Hour)
 	reset2 := now.Add(7 * time.Hour)
 	s := observe(learningState{rate: 0.18}, now, reset1, int64Ptr(100), int64Ptr(80), 6)
 	s = observe(s, now.Add(2*time.Hour), reset2, int64Ptr(100), int64Ptr(80), 6)
 
-	if len(s.samples) != 2 || s.samples[0].Sequence == s.samples[1].Sequence {
-		t.Fatalf("changed reset time was deduplicated: %+v", s.samples)
+	if len(s.samples) != 1 || s.samples[0].Sequence != 1 {
+		t.Fatalf("same quota with changed reset time appended a duplicate sample: %+v", s.samples)
 	}
-	if s.baseline != s.samples[1].Sequence {
-		t.Fatalf("changed reset time did not rebase learning: %+v", s)
+	if !s.samples[0].ObservedAt.Equal(now.Add(2*time.Hour)) || !s.samples[0].ShortWindowResetAt.Equal(reset2) {
+		t.Fatalf("latest sample metadata was not refreshed: %+v", s.samples[0])
+	}
+	if s.baseline != s.samples[0].Sequence || s.rate != 0.18 {
+		t.Fatalf("metadata-only refresh changed estimator state: %+v", s)
 	}
 }
 

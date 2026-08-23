@@ -264,6 +264,55 @@ latestSnapshot = { active_model_group: "gemini", groups: { gemini: { changes: ` 
 	}
 }
 
+func TestSamplesModalUsesSelectedModelGroupOnly(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not available; samples modal behavior is checked in the Node-enabled verification environment")
+	}
+
+	harness := templateScriptOverviewSamples + `
+function element(initial) {
+    return Object.assign({hidden:true,textContent:"",innerHTML:""}, initial || {});
+}
+const elements = {
+    samplesModal: element(),
+    samplesModalTitle: element(),
+    samplesModalSubtitle: element(),
+    samplesModalBody: element(),
+    modelGroupSelect: element({value:"claude_gpt"})
+};
+const document = {
+    getElementById: function(id) { return elements[id] || null; }
+};
+const SAMPLES_PATH = "/samples";
+const currentLang = "zh-CN";
+function t(key) { return key; }
+function escapeHTML(value) { return String(value); }
+async function apiFetch() {
+    return {
+        groups: {
+            gemini: {name:"Gemini 模型", samples:[{observed_at:"2026-08-23T02:00:00Z",short_window_rem:100,long_window_rem:100}]},
+            claude_gpt: {name:"Claude & GPT 模型", samples:[
+                {observed_at:"2026-08-23T02:00:00Z",short_window_rem:0,long_window_rem:45},
+                {observed_at:"2026-08-23T02:15:00Z",short_window_rem:100,long_window_rem:45}
+            ]}
+        }
+    };
+}
+(async function() {
+    await openSamplesModal("auth-test", "Test Account");
+    const html = elements.samplesModalBody.innerHTML;
+    if (html.indexOf("Gemini") >= 0) throw new Error("selected Claude/GPT view rendered Gemini data");
+    if ((html.match(/class="sample-group"/g) || []).length !== 2) throw new Error("selected group sample count mismatch");
+    if (html.indexOf("0%") < 0) throw new Error("zero quota was not rendered as 0%");
+})().catch(function(err) {
+    console.error(err.stack || err.message);
+    process.exit(1);
+});
+`
+	runNodeFixture(t, node, "samples-modal.js", harness)
+}
+
 func applyPreviewExpectationJSON(wantModal bool, wantMode string, wantCount, wantToasts int) string {
 	return fmt.Sprintf(`{modal:%t,mode:%q,count:%d,toasts:%d}`, wantModal, wantMode, wantCount, wantToasts)
 }

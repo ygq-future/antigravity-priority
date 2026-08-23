@@ -66,6 +66,7 @@ type Options struct {
 	NormalStartPriority int
 	MinChange           int
 	UrgencyTolerance    float64
+	IgnoreDisabledHost  bool
 	CooldownAuthIndexes map[string]time.Time
 }
 
@@ -194,6 +195,14 @@ func planItems(credentials []core.Credential, evidence plannerEvidence, options 
 			PlanType:   credential.PlanType,
 			Reason:     ReasonKeepCurrentState,
 		}
+		if credential.Disabled && options.IgnoreDisabledHost {
+			// Disabled credentials are intentionally outside the planning domain
+			// when configured to be ignored. Keep their host state untouched and
+			// do not expose a target derived from quota evidence.
+			item.Reason = ReasonDisabledOnHost
+			items[index] = item
+			continue
+		}
 
 		evidence, hasFresh := freshByAuthIndex[credential.AuthIndex]
 		evidenceFresh := true
@@ -222,14 +231,6 @@ func planItems(credentials []core.Credential, evidence plannerEvidence, options 
 			item.TRequired = metrics.TRequired
 			item.Urgency = metrics.Urgency
 			item.IsBoosted = metrics.IsBoosted
-
-			if credential.Disabled {
-				item.Disabled = true
-				item.Priority = DepletedPriority
-				item.Reason = ReasonDisabledOnHost
-				items[index] = item
-				continue
-			}
 
 			switch {
 			case metrics.IsWeeklyDepleted:
@@ -395,9 +396,6 @@ func changes(items []PlanItem, options Options) []Change {
 
 func shouldChange(item PlanItem, options Options) bool {
 	if !item.EvidenceFresh {
-		return false
-	}
-	if item.Credential.Disabled && item.Disabled {
 		return false
 	}
 	if item.Credential.PriorityMissing {
