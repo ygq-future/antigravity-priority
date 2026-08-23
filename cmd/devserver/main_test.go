@@ -300,7 +300,7 @@ func TestDevRuntimeUsesProductionPathForProbeApplyAndManagement(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	now = now.Add(time.Minute)
+	clock.now = clock.now.Add(time.Minute)
 	if err := dev.runtime.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
 		t.Fatal(err)
 	}
