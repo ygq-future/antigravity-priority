@@ -32,25 +32,26 @@ const (
 
 // Entry represents the persisted and learned state for a single credential and model group.
 type Entry struct {
-	SchemaVersion        int           `json:"schema_version"`
-	Provider             core.Provider `json:"provider"`
-	ModelGroup           string        `json:"model_group,omitempty"`
-	AuthIndex            string        `json:"auth_index"`
-	ObservedAt           time.Time     `json:"observed_at"`
-	ResetAt              time.Time     `json:"reset_at,omitempty"`
-	Remaining            int64         `json:"remaining"`
-	ShortWindowResetAt   time.Time     `json:"short_window_reset_at,omitempty"`
-	ShortWindowRemaining *int64        `json:"short_window_remaining,omitempty"`
-	LongWindowResetAt    time.Time     `json:"long_window_reset_at,omitempty"`
-	LongWindowRemaining  *int64        `json:"long_window_remaining,omitempty"`
-	CycleBurnRate        float64       `json:"cycle_burn_rate"`
-	Samples              []QuotaSample `json:"samples,omitempty"`
-	LastError            string        `json:"last_error,omitempty"`
-	LastFailureAt        time.Time     `json:"last_failure_at,omitempty"`
-	NextProbeAt          time.Time     `json:"next_probe_at,omitempty"`
-	AuthInvalid          bool          `json:"auth_invalid,omitempty"`
-	PlanType             core.PlanType `json:"plan_type,omitempty"`
-	Source               Source        `json:"source,omitempty"`
+	SchemaVersion            int           `json:"schema_version"`
+	Provider                 core.Provider `json:"provider"`
+	ModelGroup               string        `json:"model_group,omitempty"`
+	AuthIndex                string        `json:"auth_index"`
+	ObservedAt               time.Time     `json:"observed_at"`
+	ResetAt                  time.Time     `json:"reset_at,omitempty"`
+	Remaining                int64         `json:"remaining"`
+	ShortWindowResetAt       time.Time     `json:"short_window_reset_at,omitempty"`
+	ShortWindowRemaining     *int64        `json:"short_window_remaining,omitempty"`
+	LongWindowResetAt        time.Time     `json:"long_window_reset_at,omitempty"`
+	LongWindowRemaining      *int64        `json:"long_window_remaining,omitempty"`
+	CycleBurnRate            float64       `json:"cycle_burn_rate"`
+	Samples                  []QuotaSample `json:"samples,omitempty"`
+	LearningBaselineSequence uint64        `json:"learning_baseline_sequence,omitempty"`
+	LastError                string        `json:"last_error,omitempty"`
+	LastFailureAt            time.Time     `json:"last_failure_at,omitempty"`
+	NextProbeAt              time.Time     `json:"next_probe_at,omitempty"`
+	AuthInvalid              bool          `json:"auth_invalid,omitempty"`
+	PlanType                 core.PlanType `json:"plan_type,omitempty"`
+	Source                   Source        `json:"source,omitempty"`
 }
 
 // ProbePolicy defines cache staleness and expiration thresholds.
@@ -167,6 +168,10 @@ func Load(ctx context.Context, path string) (*Store, error) {
 	}
 	if doc.Entries != nil {
 		store.entries = doc.Entries
+		for key, entry := range store.entries {
+			entry.Samples, entry.LearningBaselineSequence = normalizeSampleHistory(entry.Samples, entry.LearningBaselineSequence)
+			store.entries[key] = entry
+		}
 	}
 	store.latestAudit = doc.LatestAudit
 	if len(doc.LatestResult) > 0 {
@@ -267,9 +272,10 @@ func (s *Store) MarkProbeSuccess(ctx context.Context, success ProbeSuccess) erro
 			capacity = DefaultQuotaSampleCapacity
 		}
 	}
-	newRate, newSamples := UpdateSamplesAndCycleBurnRate(
+	newRate, newSamples, newBaseline := UpdateSamplesAndCycleBurnRate(
 		prev.CycleBurnRate,
 		prev.Samples,
+		prev.LearningBaselineSequence,
 		success.ObservedAt,
 		success.ShortWindowResetAt,
 		success.ShortWindowRemaining,
@@ -278,25 +284,26 @@ func (s *Store) MarkProbeSuccess(ctx context.Context, success ProbeSuccess) erro
 	)
 
 	entry := Entry{
-		SchemaVersion:        SchemaVersion,
-		Provider:             success.Provider,
-		ModelGroup:           entryModelGroup(success.ModelGroup),
-		AuthIndex:            authIndexKey(success.AuthIndex),
-		ObservedAt:           success.ObservedAt.UTC(),
-		ResetAt:              utcOrZero(success.ResetAt),
-		Remaining:            success.Remaining,
-		ShortWindowResetAt:   utcOrZero(success.ShortWindowResetAt),
-		ShortWindowRemaining: cloneInt64Ptr(success.ShortWindowRemaining),
-		LongWindowResetAt:    utcOrZero(success.LongWindowResetAt),
-		LongWindowRemaining:  cloneInt64Ptr(success.LongWindowRemaining),
-		CycleBurnRate:        newRate,
-		Samples:              newSamples,
-		LastError:            "",
-		LastFailureAt:        time.Time{},
-		NextProbeAt:          utcOrZero(success.NextProbeAt),
-		AuthInvalid:          success.AuthInvalid,
-		PlanType:             success.PlanType,
-		Source:               success.Source,
+		SchemaVersion:            SchemaVersion,
+		Provider:                 success.Provider,
+		ModelGroup:               entryModelGroup(success.ModelGroup),
+		AuthIndex:                authIndexKey(success.AuthIndex),
+		ObservedAt:               success.ObservedAt.UTC(),
+		ResetAt:                  utcOrZero(success.ResetAt),
+		Remaining:                success.Remaining,
+		ShortWindowResetAt:       utcOrZero(success.ShortWindowResetAt),
+		ShortWindowRemaining:     cloneInt64Ptr(success.ShortWindowRemaining),
+		LongWindowResetAt:        utcOrZero(success.LongWindowResetAt),
+		LongWindowRemaining:      cloneInt64Ptr(success.LongWindowRemaining),
+		CycleBurnRate:            newRate,
+		Samples:                  newSamples,
+		LearningBaselineSequence: newBaseline,
+		LastError:                "",
+		LastFailureAt:            time.Time{},
+		NextProbeAt:              utcOrZero(success.NextProbeAt),
+		AuthInvalid:              success.AuthInvalid,
+		PlanType:                 success.PlanType,
+		Source:                   success.Source,
 	}
 
 	s.entries[key] = entry

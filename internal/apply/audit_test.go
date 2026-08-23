@@ -92,6 +92,12 @@ func TestSnapshot_And_AuditEvent_Redaction(t *testing.T) {
 		t.Fatalf("failed to marshal snapshot: %v", err)
 	}
 	snapshotStr := string(snapshotJSON)
+	if snapshot.Items[0].Identity.Email != "user-bearer-xyz@example.com" || snapshot.Items[0].Identity.AuthIndex != "idx-auth-123" {
+		t.Fatalf("trusted in-memory identity was not preserved: %+v", snapshot.Items[0].Identity)
+	}
+	if strings.Contains(snapshotStr, `"Identity"`) || strings.Contains(snapshotStr, "idx-auth-123") || strings.Contains(snapshotStr, "user-bearer-xyz@example.com") {
+		t.Errorf("audit JSON contains trusted in-memory identity: %s", snapshotStr)
+	}
 
 	if strings.Contains(snapshotStr, "secret-acc") || strings.Contains(snapshotStr, "supersecret") {
 		t.Errorf("snapshot contains unredacted secrets: %s", snapshotStr)

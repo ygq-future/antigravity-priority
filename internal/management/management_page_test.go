@@ -39,6 +39,15 @@ func TestManagementPageAssetContract(t *testing.T) {
 	}
 }
 
+func TestOverviewUsesCPAEmailAsCredentialTitle(t *testing.T) {
+	if !strings.Contains(StatusHTML, `const credDisplayName = item.email;`) {
+		t.Fatal("overview credential title must use the CPA Host email")
+	}
+	if strings.Contains(StatusHTML, `item.name || item.account || item.auth_index`) {
+		t.Fatal("overview credential title still uses a non-email fallback chain")
+	}
+}
+
 func TestStatusHTML_FeatureTranslationsExistInBothLanguages(t *testing.T) {
 	zhKeys := languageKeys(t, "zh-CN")
 	enKeys := languageKeys(t, "en-US")

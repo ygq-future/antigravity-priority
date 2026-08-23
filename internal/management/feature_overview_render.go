@@ -130,7 +130,7 @@ const templateScriptOverviewRender = `        function renderDashboard() {
 
                 const formattedReason = formatReason(item.reason, isBoosted, item.target && item.target.disabled);
                 const authIdx = item.auth_index || "";
-                const credDisplayName = item.name || item.account || item.auth_index || "Credential";
+                const credDisplayName = item.email;
 
                 card.innerHTML =
                     "<div class=\"cred-info\">" +

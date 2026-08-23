@@ -32,7 +32,7 @@ CLIProxyAPI (CPA) 专精型 **Google Antigravity 凭证智能配额调度与自�
 - **自适应动态学习率（Adaptive $C_{\text{cycle}}$）**：基于连续探测增量自动推算每个账号真实的周期消耗能力并平滑收敛，无需用户手动猜测和配置复杂的数学系数。
 - **自愈式软降级与硬禁用**：5 小时短窗耗尽仅软降级优先级至 `-1`（重置后自动静默自愈），7 天周额度耗尽写入宿主硬禁用 `disabled = true`。
 - **UI 动态配置中心（免重启热生效）**：CPA 宿主 YAML 仅需保留 `enabled: true`，所有业务与调度参数统一在 Web UI **`⚙️ 配置中心`** 可视化调节并即时热生效。
-- **嵌入式双主题仪表盘**：零外部 CDN，严格 CSP 安全，完全自适应 CPA 宿主主题，提供配额监控、双组即时预测切换、变动 Diff 确认写回控制与全链路数据安全脱敏。
+- **嵌入式双主题仪表盘**：零外部 CDN，严格 CSP 安全，完全自适应 CPA 宿主主题，提供配额监控、双组即时预测切换、完整凭证标识与变动 Diff 确认写回控制；令牌、密钥、审计和诊断数据保持安全脱敏。
 
 ---
 
@@ -52,8 +52,8 @@ CLIProxyAPI (CPA) 专精型 **Google Antigravity 凭证智能配额调度与自�
        - Tier 3 (Depleted): 周耗尽 hard-disable > 短窗耗尽 soft-fallback (-1)
   -> 根据运行模式执行
        - apply：通过统一 Host Transition 对单个凭证执行一次完整文档替换并回读验证 (min_change 过滤微小变动)
-       - probe / sync：仅更新内存状态、脱敏诊断与快照
-  -> 在管理页面展示脱敏后的双窗口仪表、紧迫度评分、提权状态与审计摘要
+       - probe / sync：仅更新内存状态、诊断与管理快照
+  -> 在认证管理页面展示完整 CPA email/authIndex、双窗口仪表、紧迫度评分、提权状态与脱敏审计摘要
 ```
 
 ---
@@ -132,7 +132,7 @@ plugins:
 | **最大探测并发数 (`max_concurrency`)** | `6` | `1 ~ 32` | 向 Google 配额接口发起并发探测的最大协程数。 |
 | **优先级变动写入阈值 (`min_change`)** | `1` | `0 ~ 100` | 优先级新旧变动绝对值达到该阈值才写入宿主，以减少磁盘 IO。 |
 | **紧迫度分档容差 (`urgency_tolerance`)** | `0.05` | `0.00 ~ 0.50` | 紧迫度差距在此容差内的账号分配相同优先级整数进行平级轮询。 |
-| **自适应时序样本容量 (`quota_sample_capacity`)** | `6` | `2 ~ 30` | 滑动窗口保留的历史探测样本数，用于平滑估计燃尽率。 |
+| **自适应时序样本容量 (`quota_sample_capacity`)** | `6` | `2 ~ 30` | FIFO 保留的历史探测样本数，同时用于消耗趋势查看与燃尽率学习。 |
 | **429 熔断冷却时长 (`rate_limit_cooldown_minutes`)** | `5` | `1 ~ 1440` 分钟 | 遭遇 429 限流时临时降级至 `-1` 兜底队列的冷却期，到期自动自愈。 |
 | **动态提权起始优先级 (`boost_start_priority`)** | `999` | `1 ~ 999` | 触发提权状态的第一梯队基准起始优先级。 |
 | **常规健康起始优先级 (`normal_start_priority`)** | `100` | `1 ~ 999`，且不高于 Boost 起始值 | 常规可用健康梯队的基准起始优先级。 |
@@ -178,7 +178,7 @@ plugins:
 - `GET /v0/management/plugins/antigravity-priority/samples?auth_index=xxx`
   - 获取指定凭证在各模型组下的历史滑动窗口时序采样数据。
 - `GET /v0/management/plugins/antigravity-priority/snapshot/latest`
-  - 获取最近一次双模型组脱敏决策规划快照（`DualGroupSnapshot`）。
+  - 获取最近一次双模型组决策规划快照（`DualGroupSnapshot`）；认证管理页使用完整 CPA email/authIndex，敏感令牌与审计字段保持脱敏。
 
 ---
 

@@ -3,6 +3,7 @@ package management
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -219,15 +220,9 @@ func (h *Handler) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	snapBytes, err := json.Marshal(snap)
+	snapMap, err := managementSnapshotMap(snap)
 	if err != nil {
-		h.writeJSONError(w, http.StatusInternalServerError, "marshal snapshot failed: "+err.Error())
-		return
-	}
-
-	var snapMap map[string]any
-	if err := json.Unmarshal(snapBytes, &snapMap); err != nil {
-		h.writeJSONError(w, http.StatusInternalServerError, "unmarshal snapshot failed: "+err.Error())
+		h.writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -341,15 +336,9 @@ func (h *Handler) handleSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	snapBytes, err := json.Marshal(snap)
+	snapMap, err := managementSnapshotMap(snap)
 	if err != nil {
-		h.writeJSONError(w, http.StatusInternalServerError, "marshal snapshot failed: "+err.Error())
-		return
-	}
-
-	var snapMap map[string]any
-	if err := json.Unmarshal(snapBytes, &snapMap); err != nil {
-		h.writeJSONError(w, http.StatusInternalServerError, "unmarshal snapshot failed: "+err.Error())
+		h.writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -357,6 +346,52 @@ func (h *Handler) handleSync(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(redactedSnap)
+}
+
+func managementSnapshotMap(snapshot apply.DualGroupSnapshot) (map[string]any, error) {
+	encoded, err := json.Marshal(snapshot)
+	if err != nil {
+		return nil, fmt.Errorf("marshal snapshot failed: %w", err)
+	}
+	var result map[string]any
+	if err := json.Unmarshal(encoded, &result); err != nil {
+		return nil, fmt.Errorf("unmarshal snapshot failed: %w", err)
+	}
+	groups, _ := result["groups"].(map[string]any)
+	for groupName, groupSnapshot := range snapshot.Groups {
+		group, _ := groups[groupName].(map[string]any)
+		overlaySnapshotIdentities(group["items"], itemIdentities(groupSnapshot.Items))
+		overlaySnapshotIdentities(group["changes"], changeIdentities(groupSnapshot.Changes))
+	}
+	return result, nil
+}
+
+func itemIdentities(items []apply.SnapshotItem) []apply.SnapshotIdentity {
+	identities := make([]apply.SnapshotIdentity, len(items))
+	for index, item := range items {
+		identities[index] = item.Identity
+	}
+	return identities
+}
+
+func changeIdentities(changes []apply.SnapshotChange) []apply.SnapshotIdentity {
+	identities := make([]apply.SnapshotIdentity, len(changes))
+	for index, change := range changes {
+		identities[index] = change.Identity
+	}
+	return identities
+}
+
+func overlaySnapshotIdentities(rawItems any, identities []apply.SnapshotIdentity) {
+	items, _ := rawItems.([]any)
+	for index, identity := range identities {
+		if index >= len(items) {
+			return
+		}
+		item, _ := items[index].(map[string]any)
+		item["email"] = identity.Email
+		item["auth_index"] = identity.AuthIndex
+	}
 }
 
 func (h *Handler) handleGetSamples(w http.ResponseWriter, r *http.Request) {

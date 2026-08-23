@@ -25,6 +25,7 @@ const (
 
 // QuotaSample represents a single point-in-time quota observation.
 type QuotaSample struct {
+	Sequence           uint64    `json:"sequence"`
 	ObservedAt         time.Time `json:"observed_at"`
 	ShortWindowResetAt time.Time `json:"short_window_reset_at,omitempty"`
 	ShortWindowRem     int64     `json:"short_window_rem"`
@@ -36,22 +37,25 @@ type QuotaSample struct {
 func UpdateSamplesAndCycleBurnRate(
 	prevRate float64,
 	samples []QuotaSample,
+	learningBaselineSequence uint64,
 	currObservedAt time.Time,
 	currShortReset time.Time,
 	currShortRem, currLongRem *int64,
 	capacity int,
-) (float64, []QuotaSample) {
+) (float64, []QuotaSample, uint64) {
 	if prevRate <= 0 {
 		prevRate = DefaultCycleBurnRate
 	}
 	if capacity < MinQuotaSampleCapacity || capacity > MaxQuotaSampleCapacity {
 		capacity = DefaultQuotaSampleCapacity
 	}
+	samples, learningBaselineSequence = normalizeSampleHistory(samples, learningBaselineSequence)
 	if currShortRem == nil || currLongRem == nil || currShortReset.IsZero() {
-		return prevRate, samples
+		return prevRate, samples, learningBaselineSequence
 	}
 
 	currSample := QuotaSample{
+		Sequence:           nextSampleSequence(samples),
 		ObservedAt:         currObservedAt.UTC(),
 		ShortWindowResetAt: currShortReset.UTC(),
 		ShortWindowRem:     *currShortRem,
@@ -60,40 +64,45 @@ func UpdateSamplesAndCycleBurnRate(
 
 	// 1. Initial sample on cold start
 	if len(samples) == 0 {
-		return prevRate, []QuotaSample{currSample}
+		return prevRate, []QuotaSample{currSample}, currSample.Sequence
 	}
 
 	lastSample := samples[len(samples)-1]
 
-	// 2. Window reset boundary or replenishment detection:
-	// If short window reset time changed or 5h quota increased, 5h cycle has reset -> start fresh window.
-	if !currSample.ShortWindowResetAt.Equal(lastSample.ShortWindowResetAt) || currSample.ShortWindowRem > lastSample.ShortWindowRem {
-		return prevRate, []QuotaSample{currSample}
-	}
-
-	// 3. Zero-consumption deduplication:
-	// If neither 5h nor 7d quota changed, update the timestamp of the latest sample without appending duplicates.
-	if currSample.ShortWindowRem == lastSample.ShortWindowRem && currSample.LongWindowRem == lastSample.LongWindowRem {
+	// 2. Zero-consumption deduplication:
+	// If quota and the short-window identity are unchanged, refresh only the latest observation time.
+	if currSample.ShortWindowRem == lastSample.ShortWindowRem &&
+		currSample.LongWindowRem == lastSample.LongWindowRem &&
+		currSample.ShortWindowResetAt.Equal(lastSample.ShortWindowResetAt) {
 		updatedSamples := append([]QuotaSample(nil), samples...)
 		updatedSamples[len(updatedSamples)-1].ObservedAt = currSample.ObservedAt
-		return prevRate, updatedSamples
+		return prevRate, updatedSamples, learningBaselineSequence
 	}
 
-	// 4. Append new sample and maintain sliding window capacity (FIFO)
+	// 3. Append new sample and maintain sliding window capacity (FIFO).
 	updatedSamples := append([]QuotaSample(nil), samples...)
 	updatedSamples = append(updatedSamples, currSample)
 	if len(updatedSamples) > capacity {
 		updatedSamples = updatedSamples[len(updatedSamples)-capacity:]
 	}
 
-	// 5. Multi-sample span delta calculation against baseline sample (earliest in current window)
-	baseSample := updatedSamples[0]
+	// 4. A reset boundary or replenishment starts a new learning span without deleting history.
+	if !currSample.ShortWindowResetAt.Equal(lastSample.ShortWindowResetAt) || currSample.ShortWindowRem > lastSample.ShortWindowRem {
+		return prevRate, updatedSamples, currSample.Sequence
+	}
+
+	// 5. Resolve the learning cursor, using the oldest retained observation after FIFO rotation.
+	baseSample, found := sampleBySequence(updatedSamples, learningBaselineSequence)
+	if !found {
+		baseSample = updatedSamples[0]
+		learningBaselineSequence = baseSample.Sequence
+	}
 	delta5h := float64(baseSample.ShortWindowRem-currSample.ShortWindowRem) / 100.0
 	delta7d := float64(baseSample.LongWindowRem-currSample.LongWindowRem) / 100.0
 
 	// Must consume at least 5% of 5h quota and positive weekly quota
 	if delta5h < MinDeltaThreshold || delta7d <= 0 {
-		return prevRate, updatedSamples
+		return prevRate, updatedSamples, learningBaselineSequence
 	}
 
 	// 6. Compute observed rate, clamp, and apply EMA smoothing
@@ -101,8 +110,42 @@ func UpdateSamplesAndCycleBurnRate(
 	clamped := clamp(obs, MinCycleBurnRate, MaxCycleBurnRate)
 	newRate := EMASmoothingAlpha*clamped + (1.0-EMASmoothingAlpha)*prevRate
 
-	// 7. Advance baseline: reset samples to start from currSample so the learned delta is not double-counted
-	return newRate, []QuotaSample{currSample}
+	// 7. Advance only the learning cursor so history remains available for trend inspection.
+	return newRate, updatedSamples, currSample.Sequence
+}
+
+func normalizeSampleHistory(samples []QuotaSample, baseline uint64) ([]QuotaSample, uint64) {
+	if len(samples) == 0 {
+		return nil, 0
+	}
+	normalized := append([]QuotaSample(nil), samples...)
+	var previous uint64
+	for i := range normalized {
+		if normalized[i].Sequence == 0 || normalized[i].Sequence <= previous {
+			normalized[i].Sequence = previous + 1
+		}
+		previous = normalized[i].Sequence
+	}
+	if baseline == 0 {
+		baseline = normalized[0].Sequence
+	}
+	return normalized, baseline
+}
+
+func nextSampleSequence(samples []QuotaSample) uint64 {
+	if len(samples) == 0 {
+		return 1
+	}
+	return samples[len(samples)-1].Sequence + 1
+}
+
+func sampleBySequence(samples []QuotaSample, sequence uint64) (QuotaSample, bool) {
+	for _, sample := range samples {
+		if sample.Sequence == sequence {
+			return sample, true
+		}
+	}
+	return QuotaSample{}, false
 }
 
 func clamp(val, minVal, maxVal float64) float64 {

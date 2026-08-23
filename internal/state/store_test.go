@@ -72,6 +72,43 @@ func TestStore_Load_Corrupt(t *testing.T) {
 	}
 }
 
+func TestStoreLoadNormalizesLegacySampleLearningState(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "legacy-cache.json")
+	raw := `{
+  "schema_version": 1,
+  "entries": {
+    "auth-legacy|model_group=gemini": {
+      "schema_version": 1,
+      "auth_index": "auth-legacy",
+      "model_group": "gemini",
+      "cycle_burn_rate": 0.15,
+      "samples": [
+        {"observed_at":"2026-08-22T01:00:00Z","short_window_reset_at":"2026-08-22T05:00:00Z","short_window_rem":100,"long_window_rem":100},
+        {"observed_at":"2026-08-22T02:00:00Z","short_window_reset_at":"2026-08-22T05:00:00Z","short_window_rem":98,"long_window_rem":99}
+      ]
+    }
+  }
+}`
+	if err := os.WriteFile(cachePath, []byte(raw), 0o600); err != nil {
+		t.Fatalf("write legacy cache: %v", err)
+	}
+
+	store, err := state.Load(context.Background(), cachePath)
+	if err != nil {
+		t.Fatalf("load legacy cache: %v", err)
+	}
+	entry, ok := store.GetEntry("auth-legacy", "gemini")
+	if !ok {
+		t.Fatal("legacy entry missing after load")
+	}
+	if len(entry.Samples) != 2 || entry.Samples[0].Sequence != 1 || entry.Samples[1].Sequence != 2 {
+		t.Fatalf("legacy sample sequences not normalized: %+v", entry.Samples)
+	}
+	if entry.LearningBaselineSequence != 1 {
+		t.Fatalf("legacy baseline = %d, want oldest sequence 1", entry.LearningBaselineSequence)
+	}
+}
+
 func TestStore_ContextCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

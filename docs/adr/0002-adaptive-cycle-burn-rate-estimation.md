@@ -6,15 +6,17 @@ Antigravity's throughput is physically bounded by its 5-hour short window. Calcu
 ## Decision
 Implement an adaptive online estimator for $C_{\text{cycle}}$ initialized with a safe baseline default of 0.15 (15%).
 
-To prevent incremental small consumption steps (e.g. $\Delta R_{\text{5h}} < 5\%$ per individual probe interval) from being dropped, maintain a sliding window queue of point-in-time quota samples (`Samples []QuotaSample`, configurable capacity $N \in [2, 30]$, default 6) per credential and model group:
-1. **Window Reset Eviction**: When a 5h rolling window reset occurs (reset time changes or 5h quota replenishes), clear the sample queue and establish a fresh baseline.
-2. **Zero-Consumption Deduplication**: Consecutive probes with unchanged quota refresh the latest sample's timestamp without growing the queue or evicting older baseline observations.
-3. **Multi-Sample Span Delta**: When cumulative 5h consumption across the sliding window reaches $\Delta R_{\text{5h}} = (S_0.R_{\text{5h}} - S_{\text{curr}}.R_{\text{5h}}) \ge 5\%$ and $\Delta R_{\text{7d}} > 0$, compute $C_{\text{obs}} = \Delta R_{\text{7d}} / \Delta R_{\text{5h}}$, clamp to the physical interval $[0.08, 0.30]$, and update smoothed $C_{\text{cycle}}$ via Exponential Moving Average ($\alpha = 0.3$). Advance the baseline to $S_{\text{curr}}$ to prevent double-counting.
+To prevent incremental small consumption steps (e.g. $\Delta R_{\text{5h}} < 5\%$ per individual probe interval) from being dropped, maintain one bounded FIFO history of point-in-time quota samples (`Samples []QuotaSample`, configurable capacity $N \in [2, 30]$, default 6) per credential and model group. Each distinct observation receives a monotonically increasing sequence number, while the entry stores `LearningBaselineSequence` as the estimator cursor:
+1. **Bounded Historical Record**: Samples remain available for management history and adaptive learning. Reaching capacity is the only reason an old sample is removed.
+2. **Zero-Consumption Deduplication**: Consecutive probes with unchanged 5h quota, 7d quota, and short-window reset refresh the latest sample's timestamp without growing the history.
+3. **Window Boundary Rebase**: When a 5h rolling window reset occurs (reset time changes or 5h quota replenishes), preserve history and move the learning baseline to the current sample so estimation never spans different short windows.
+4. **Multi-Sample Span Delta**: Resolve the baseline by sequence, falling back to the oldest retained sample if FIFO rotation has removed it. When cumulative consumption reaches $\Delta R_{\text{5h}} = (S_{\text{base}}.R_{\text{5h}} - S_{\text{curr}}.R_{\text{5h}}) \ge 5\%$ and $\Delta R_{\text{7d}} > 0$, compute $C_{\text{obs}} = \Delta R_{\text{7d}} / \Delta R_{\text{5h}}$, clamp to the physical interval $[0.08, 0.30]$, and update smoothed $C_{\text{cycle}}$ via Exponential Moving Average ($\alpha = 0.3$). Advance only the baseline cursor to $S_{\text{curr}}$ to prevent double-counting.
 
 Persist this learned state and sample queue in `data/antigravity-priority-cache.json`.
 
 ## Consequences
 - Eliminates manual user configuration burden entirely.
 - Eliminates estimation stalls caused by slow or light consumption spanning across probe intervals.
+- Preserves the bounded observation history for quota-trend inspection independently of estimator progress.
 - Dynamic Boost Horizon automatically tunes itself to each credential's real-world subscription capacity and usage patterns.
 - Cold-start credentials use the robust 0.15 default until enough usage history is collected.

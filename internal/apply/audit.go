@@ -10,7 +10,8 @@ import (
 	"antigravity-priority/internal/priority"
 )
 
-// PlanSnapshot is the safe redacted plan snapshot for audit and diagnostics.
+// PlanSnapshot is the plan projection shared by audit, diagnostics, and trusted adapters.
+// Its JSON representation is redacted; raw identity is carried only in json-excluded fields.
 type PlanSnapshot struct {
 	DecidedAt    time.Time        `json:"decided_at"`
 	TotalItems   int              `json:"total_items"`
@@ -19,52 +20,61 @@ type PlanSnapshot struct {
 	Changes      []SnapshotChange `json:"changes"`
 }
 
-// Snapshot returns the redacted snapshot of a plan for snapshot and diagnostics reuse.
+// Snapshot returns an audit-safe JSON projection with trusted in-memory identity for adapters.
 func Snapshot(plan priority.Plan) PlanSnapshot {
 	return newPlanSnapshot(plan)
 }
 
-// SnapshotItem is the redacted audit view of a single planned item.
+// SnapshotItem is the audit view of a single planned item.
 type SnapshotItem struct {
-	Name                 string     `json:"name"`
-	AuthIndex            string     `json:"auth_index"`
-	Account              string     `json:"account,omitempty"`
-	Email                string     `json:"email,omitempty"`
-	Provider             string     `json:"provider"`
-	Type                 string     `json:"type"`
-	Status               string     `json:"status"`
-	PlanType             string     `json:"plan_type,omitempty"`
-	Current              Target     `json:"current"`
-	Target               Target     `json:"target"`
-	EvidenceFresh        bool       `json:"evidence_fresh"`
-	Reason               string     `json:"reason"`
-	IsBoosted            bool       `json:"is_boosted"`
-	IsPredicted          bool       `json:"is_predicted"`
-	Urgency              float64    `json:"urgency"`
-	R7d                  float64    `json:"r7d"`
-	T7d                  float64    `json:"t7d"`
-	R5h                  float64    `json:"r5h"`
-	T5h                  float64    `json:"t5h"`
-	CycleBurnRate        float64    `json:"cycle_burn_rate"`
-	TRequired            float64    `json:"t_required"`
-	ResetAt              *time.Time `json:"reset_at,omitempty"`
-	ShortWindowResetAt   *time.Time `json:"short_window_reset_at,omitempty"`
-	ShortWindowRemaining *int64     `json:"short_window_remaining,omitempty"`
-	LongWindowResetAt    *time.Time `json:"long_window_reset_at,omitempty"`
-	LongWindowRemaining  *int64     `json:"long_window_remaining,omitempty"`
+	Identity             SnapshotIdentity `json:"-"`
+	Name                 string           `json:"name"`
+	AuthIndex            string           `json:"auth_index"`
+	Account              string           `json:"account,omitempty"`
+	Email                string           `json:"email,omitempty"`
+	Provider             string           `json:"provider"`
+	Type                 string           `json:"type"`
+	Status               string           `json:"status"`
+	PlanType             string           `json:"plan_type,omitempty"`
+	Current              Target           `json:"current"`
+	Target               Target           `json:"target"`
+	EvidenceFresh        bool             `json:"evidence_fresh"`
+	Reason               string           `json:"reason"`
+	IsBoosted            bool             `json:"is_boosted"`
+	IsPredicted          bool             `json:"is_predicted"`
+	Urgency              float64          `json:"urgency"`
+	R7d                  float64          `json:"r7d"`
+	T7d                  float64          `json:"t7d"`
+	R5h                  float64          `json:"r5h"`
+	T5h                  float64          `json:"t5h"`
+	CycleBurnRate        float64          `json:"cycle_burn_rate"`
+	TRequired            float64          `json:"t_required"`
+	ResetAt              *time.Time       `json:"reset_at,omitempty"`
+	ShortWindowResetAt   *time.Time       `json:"short_window_reset_at,omitempty"`
+	ShortWindowRemaining *int64           `json:"short_window_remaining,omitempty"`
+	LongWindowResetAt    *time.Time       `json:"long_window_reset_at,omitempty"`
+	LongWindowRemaining  *int64           `json:"long_window_remaining,omitempty"`
 }
 
-// SnapshotChange is the redacted audit view of a single candidate change.
+// SnapshotChange is the audit view of a single candidate change.
 type SnapshotChange struct {
-	Name          string `json:"name"`
-	AuthIndex     string `json:"auth_index"`
-	Account       string `json:"account,omitempty"`
-	Email         string `json:"email,omitempty"`
-	Current       Target `json:"current"`
-	Target        Target `json:"target"`
-	EvidenceFresh bool   `json:"evidence_fresh"`
-	Reason        string `json:"reason"`
-	IsBoosted     bool   `json:"is_boosted"`
+	Identity      SnapshotIdentity `json:"-"`
+	Name          string           `json:"name"`
+	AuthIndex     string           `json:"auth_index"`
+	Account       string           `json:"account,omitempty"`
+	Email         string           `json:"email,omitempty"`
+	Current       Target           `json:"current"`
+	Target        Target           `json:"target"`
+	EvidenceFresh bool             `json:"evidence_fresh"`
+	Reason        string           `json:"reason"`
+	IsBoosted     bool             `json:"is_boosted"`
+}
+
+// SnapshotIdentity carries raw CPA Host identity only across the trusted in-memory adapter boundary.
+// It is excluded from audit and persisted snapshot JSON.
+type SnapshotIdentity struct {
+	Email     string
+	AuthIndex string
 }
 
 // Target represents the priority and disabled target state.
@@ -113,6 +123,7 @@ func newPlanSnapshot(plan priority.Plan) PlanSnapshot {
 func snapshotItem(item priority.PlanItem) SnapshotItem {
 	credential := item.Credential
 	return SnapshotItem{
+		Identity:             SnapshotIdentity{Email: credential.Email, AuthIndex: credential.AuthIndex},
 		Name:                 redactIdentifier(credential.Name),
 		AuthIndex:            redactIdentifier(credential.AuthIndex),
 		Account:              redactIdentifier(credential.Account),
@@ -144,6 +155,7 @@ func snapshotItem(item priority.PlanItem) SnapshotItem {
 func snapshotChange(change priority.Change) SnapshotChange {
 	credential := change.Credential
 	return SnapshotChange{
+		Identity:      SnapshotIdentity{Email: credential.Email, AuthIndex: credential.AuthIndex},
 		Name:          redactIdentifier(credential.Name),
 		AuthIndex:     redactIdentifier(credential.AuthIndex),
 		Account:       redactIdentifier(credential.Account),

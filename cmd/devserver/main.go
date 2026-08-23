@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -17,12 +18,21 @@ import (
 
 type devRunner struct {
 	mu             sync.Mutex
+	nowFn          func() time.Time
 	geminiSnapshot apply.PlanSnapshot
 	claudeSnapshot apply.PlanSnapshot
+	sampleStates   map[string]devSampleState
+	probeRound     int
 	runHistory     []map[string]any
 	scheduleConfig state.ScheduleConfig
 	dynamicConfig  state.DynamicConfig
 	latestAudit    string
+}
+
+type devSampleState struct {
+	rate     float64
+	samples  []state.QuotaSample
+	baseline uint64
 }
 
 func buildDevChanges(items []apply.SnapshotItem) []apply.SnapshotChange {
@@ -30,8 +40,11 @@ func buildDevChanges(items []apply.SnapshotItem) []apply.SnapshotChange {
 	for _, item := range items {
 		if item.Current.Priority != item.Target.Priority || item.Current.Disabled != item.Target.Disabled || item.Current.PriorityMissing {
 			res = append(res, apply.SnapshotChange{
+				Identity:      item.Identity,
 				Name:          item.Name,
 				AuthIndex:     item.AuthIndex,
+				Account:       item.Account,
+				Email:         item.Email,
 				Current:       item.Current,
 				Target:        item.Target,
 				EvidenceFresh: item.EvidenceFresh,
@@ -44,7 +57,11 @@ func buildDevChanges(items []apply.SnapshotItem) []apply.SnapshotChange {
 }
 
 func newDevRunner() *devRunner {
-	now := time.Now().UTC()
+	return newDevRunnerWithClock(time.Now)
+}
+
+func newDevRunnerWithClock(nowFn func() time.Time) *devRunner {
+	now := nowFn().UTC()
 
 	// Rolling quota reset timestamps
 	shortHealthy := now.Add(2*time.Hour + 35*time.Minute + 12*time.Second)
@@ -237,6 +254,14 @@ func newDevRunner() *devRunner {
 			LongWindowRemaining:  &rem80,
 		},
 	}
+	for index := range geminiItems {
+		email := geminiItems[index].Name
+		geminiItems[index].Email = email
+		geminiItems[index].Identity = apply.SnapshotIdentity{
+			Email:     email,
+			AuthIndex: geminiItems[index].AuthIndex,
+		}
+	}
 
 	geminiChanges := buildDevChanges(geminiItems)
 
@@ -305,7 +330,8 @@ func newDevRunner() *devRunner {
 		},
 	}
 
-	return &devRunner{
+	runner := &devRunner{
+		nowFn:          nowFn,
 		geminiSnapshot: geminiSnapshot,
 		claudeSnapshot: claudeSnapshot,
 		runHistory:     history,
@@ -337,16 +363,19 @@ func newDevRunner() *devRunner {
 			},
 		},
 	}
+	runner.initializeSampleStates(now)
+	return runner
 }
 
 func (d *devRunner) Run(ctx context.Context, request management.RunRequest) (apply.Result, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	now := time.Now().UTC()
+	now := d.nowUTC()
 
 	// Probe mode (REQ-04)
 	if request.Mode == "probe" {
+		d.advanceProbeScenario(now)
 		d.latestAudit = fmt.Sprintf("probe completed: %d credentials refreshed at %s", len(d.geminiSnapshot.Items), now.Format("15:04:05"))
 		d.runHistory = append([]map[string]any{
 			{
@@ -510,7 +539,7 @@ func (d *devRunner) SyncHost(ctx context.Context, modelGroup config.AntigravityM
 	if activeGroup == "" {
 		activeGroup = "gemini"
 	}
-	d.latestAudit = fmt.Sprintf("synchronized %d credentials from mock host at %s", len(d.geminiSnapshot.Items), time.Now().UTC().Format("15:04:05"))
+	d.latestAudit = fmt.Sprintf("synchronized %d credentials from mock host at %s", len(d.geminiSnapshot.Items), d.nowUTC().Format("15:04:05"))
 	return d.dualSnapshot(activeGroup), nil
 }
 
@@ -529,7 +558,7 @@ func (d *devRunner) dualSnapshot(activeGroup string) apply.DualGroupSnapshot {
 		groups["gemini"] = apply.GroupSnapshot{Items: primary.Items, Changes: primary.Changes}
 		groups["claude_gpt"] = apply.GroupSnapshot{Items: predicted.Items, Changes: predicted.Changes}
 	}
-	return apply.DualGroupSnapshot{ActiveModelGroup: activeGroup, ObservedAt: time.Now().UTC(), Groups: groups}
+	return apply.DualGroupSnapshot{ActiveModelGroup: activeGroup, ObservedAt: d.nowUTC(), Groups: groups}
 }
 
 func devSnapshotRole(snapshot apply.PlanSnapshot, predicted bool) apply.PlanSnapshot {
@@ -554,56 +583,132 @@ func devReasonRole(reason string, predicted bool) string {
 	return reason
 }
 
+func (d *devRunner) nowUTC() time.Time {
+	if d.nowFn == nil {
+		return time.Now().UTC()
+	}
+	return d.nowFn().UTC()
+}
+
+func devSampleKey(authIndex, modelGroup string) string {
+	return strings.TrimSpace(authIndex) + "|model_group=" + strings.TrimSpace(modelGroup)
+}
+
+func (d *devRunner) initializeSampleStates(now time.Time) {
+	d.sampleStates = make(map[string]devSampleState)
+	d.seedSnapshotSamples("gemini", d.geminiSnapshot, now.Add(-15*time.Minute))
+	d.seedSnapshotSamples("claude_gpt", d.claudeSnapshot, now.Add(-15*time.Minute))
+}
+
+func (d *devRunner) seedSnapshotSamples(modelGroup string, snapshot apply.PlanSnapshot, observedAt time.Time) {
+	for _, item := range snapshot.Items {
+		if item.ShortWindowResetAt == nil || item.ShortWindowRemaining == nil || item.LongWindowRemaining == nil {
+			continue
+		}
+		rate, samples, baseline := state.UpdateSamplesAndCycleBurnRate(
+			item.CycleBurnRate,
+			nil,
+			0,
+			observedAt,
+			*item.ShortWindowResetAt,
+			item.ShortWindowRemaining,
+			item.LongWindowRemaining,
+			d.sampleCapacity(),
+		)
+		d.sampleStates[devSampleKey(item.Identity.AuthIndex, modelGroup)] = devSampleState{
+			rate:     rate,
+			samples:  samples,
+			baseline: baseline,
+		}
+	}
+}
+
+func (d *devRunner) sampleCapacity() int {
+	capacity := d.dynamicConfig.QuotaSampleCapacity
+	if capacity < state.MinQuotaSampleCapacity || capacity > state.MaxQuotaSampleCapacity {
+		return state.DefaultQuotaSampleCapacity
+	}
+	return capacity
+}
+
+func (d *devRunner) advanceProbeScenario(observedAt time.Time) {
+	d.probeRound++
+	for key, entry := range d.sampleStates {
+		if len(entry.samples) == 0 {
+			continue
+		}
+		latest := entry.samples[len(entry.samples)-1]
+		shortRemaining := latest.ShortWindowRem
+		longRemaining := latest.LongWindowRem
+		shortReset := latest.ShortWindowResetAt
+
+		switch d.probeRound {
+		case 1, 3:
+			// Identical evidence exercises timestamp-only deduplication.
+		case 2:
+			shortRemaining = decrementQuota(shortRemaining, 2)
+			longRemaining = decrementQuota(longRemaining, 1)
+		case 4:
+			// A changed reset timestamp is a distinct window observation even when quota is unchanged.
+			shortReset = shortReset.Add(5 * time.Hour)
+		default:
+			shortRemaining = decrementQuota(shortRemaining, 1)
+			longRemaining = decrementQuota(longRemaining, 1)
+		}
+
+		entry.rate, entry.samples, entry.baseline = state.UpdateSamplesAndCycleBurnRate(
+			entry.rate,
+			entry.samples,
+			entry.baseline,
+			observedAt,
+			shortReset,
+			&shortRemaining,
+			&longRemaining,
+			d.sampleCapacity(),
+		)
+		d.sampleStates[key] = entry
+	}
+	d.applySampleStates("gemini", &d.geminiSnapshot)
+	d.applySampleStates("claude_gpt", &d.claudeSnapshot)
+}
+
+func decrementQuota(value, amount int64) int64 {
+	if value <= amount {
+		return 0
+	}
+	return value - amount
+}
+
+func (d *devRunner) applySampleStates(modelGroup string, snapshot *apply.PlanSnapshot) {
+	for index := range snapshot.Items {
+		item := &snapshot.Items[index]
+		entry, ok := d.sampleStates[devSampleKey(item.Identity.AuthIndex, modelGroup)]
+		if !ok || len(entry.samples) == 0 {
+			continue
+		}
+		latest := entry.samples[len(entry.samples)-1]
+		shortReset := latest.ShortWindowResetAt
+		shortRemaining := latest.ShortWindowRem
+		longRemaining := latest.LongWindowRem
+		item.ShortWindowResetAt = &shortReset
+		item.ShortWindowRemaining = &shortRemaining
+		item.LongWindowRemaining = &longRemaining
+		item.R5h = float64(shortRemaining) / 100
+		item.R7d = float64(longRemaining) / 100
+		item.CycleBurnRate = entry.rate
+	}
+	snapshot.Changes = buildDevChanges(snapshot.Items)
+	snapshot.TotalChanges = len(snapshot.Changes)
+}
+
 func (d *devRunner) GetSamples(ctx context.Context, authIndex, modelGroup string) ([]state.QuotaSample, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	now := time.Now().UTC()
-	if modelGroup == "claude_gpt" {
-		return []state.QuotaSample{
-			{
-				ObservedAt:     now.Add(-45 * time.Minute),
-				ShortWindowRem: 90,
-				LongWindowRem:  80,
-			},
-			{
-				ObservedAt:     now.Add(-30 * time.Minute),
-				ShortWindowRem: 85,
-				LongWindowRem:  78,
-			},
-			{
-				ObservedAt:     now.Add(-15 * time.Minute),
-				ShortWindowRem: 80,
-				LongWindowRem:  75,
-			},
-			{
-				ObservedAt:     now,
-				ShortWindowRem: 75,
-				LongWindowRem:  72,
-			},
-		}, nil
+	entry, ok := d.sampleStates[devSampleKey(authIndex, modelGroup)]
+	if !ok {
+		return nil, nil
 	}
-	return []state.QuotaSample{
-		{
-			ObservedAt:     now.Add(-45 * time.Minute),
-			ShortWindowRem: 95,
-			LongWindowRem:  85,
-		},
-		{
-			ObservedAt:     now.Add(-30 * time.Minute),
-			ShortWindowRem: 90,
-			LongWindowRem:  82,
-		},
-		{
-			ObservedAt:     now.Add(-15 * time.Minute),
-			ShortWindowRem: 85,
-			LongWindowRem:  80,
-		},
-		{
-			ObservedAt:     now,
-			ShortWindowRem: 80,
-			LongWindowRem:  78,
-		},
-	}, nil
+	return append([]state.QuotaSample(nil), entry.samples...), nil
 }
 
 func (d *devRunner) Diagnostics(ctx context.Context) (map[string]any, error) {
@@ -696,16 +801,20 @@ func (d *devRunner) SetDynamicConfig(ctx context.Context, cfg state.DynamicConfi
 func main() {
 	runner := newDevRunner()
 	handler := management.NewHandler(runner)
+	address := strings.TrimSpace(os.Getenv("ANTIGRAVITY_DEVSERVER_ADDR"))
+	if address == "" {
+		address = ":8080"
+	}
 
 	server := &http.Server{
-		Addr:    ":8080",
+		Addr:    address,
 		Handler: handler,
 	}
 
 	fmt.Println("=========================================================")
-	fmt.Println(" Antigravity Priority - Embedded WebUI Dev Server (v1.2.3)")
+	fmt.Println(" Antigravity Priority - Embedded WebUI Dev Server")
 	fmt.Println("=========================================================")
-	fmt.Println(" Server listening on: http://localhost:8080/status")
+	fmt.Printf(" Server listening on: http://localhost%s/status\n", address)
 	fmt.Println(" Open the link above in your browser to interact with the UI!")
 	fmt.Println(" Supports full verification of REQ-01 through REQ-11 & Bug Fixes")
 	fmt.Println(" Press Ctrl+C to stop the server.")

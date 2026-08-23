@@ -672,6 +672,10 @@ func TestRuntime_ProductionRunner_CachedEvidence(t *testing.T) {
 	_ = store.SaveAtomic(context.Background())
 
 	mock := newMockHost()
+	mock.authDocs["auth_cached"] = host.AuthDocument{
+		AuthIndex: "auth_cached",
+		JSON:      json.RawMessage(`{"access_token":"mock_token_123","project_id":"mock-project","email":"test@example.com"}`),
+	}
 	mock.files = []host.AuthFile{
 		{
 			Name:      "test-account-cached",
@@ -707,6 +711,21 @@ func TestRuntime_ProductionRunner_CachedEvidence(t *testing.T) {
 	}
 	if got := strings.Join(mock.operations, ","); !strings.HasPrefix(got, "host-sync,google-probe,host-sync") {
 		t.Fatalf("operation order = %s; want host-sync,google-probe,host-sync before planning/apply", got)
+	}
+	snapshot, err := r.LatestSnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := snapshot.Groups["gemini"].Items
+	if len(items) != 1 || items[0].Identity.AuthIndex != "auth_cached" || items[0].Identity.Email != "test@example.com" {
+		t.Fatalf("auto-apply snapshot identity = %+v; want full CPA identity", items)
+	}
+	samples, err := r.GetSamples(context.Background(), items[0].Identity.AuthIndex, "gemini")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(samples) != 2 {
+		t.Fatalf("auto-apply samples = %d; want cached and current observations", len(samples))
 	}
 }
 

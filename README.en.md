@@ -32,7 +32,7 @@ A high-performance, single-provider priority scheduler and quota management plug
 - **Adaptive Online Learning ($C_{\text{cycle}}$)**: Automatically measures and smooths real consumption velocity without requiring manual coefficient tuning.
 - **Self-Healing Soft Fallback & Hard Disabling**: Soft-depletes 5-hour burst exhaustion for automatic recovery upon reset, and hard-disables exhausted 7-day weekly accounts.
 - **Web UI Dynamic Config Center**: CPA host YAML only requires `enabled: true`. All scheduling intervals, concurrency, model groups, and scoring rules are visually managed with instant zero-restart hot-reloads.
-- **Embedded Dual-Theme Dashboard**: Zero external CDN, strictly CSP-compliant, providing real-time quota meters, instant prediction switching, write-back diff confirmation controls, and end-to-end data redaction.
+- **Embedded Dual-Theme Dashboard**: Zero external CDN and strictly CSP-compliant, providing real-time quota meters, instant prediction switching, complete credential identity, and write-back diff confirmation controls while keeping tokens, keys, audits, and diagnostics safely redacted.
 
 ---
 
@@ -52,8 +52,8 @@ Load plugin
        - Tier 3 (Depleted): Weekly hard-disable > 5h soft-fallback (-1)
   -> Execute according to run mode
        - apply: replace each credential document once through the unified Host Transition and verify the resulting state (min_change filter)
-       - probe / sync: update in-memory state, redacted diagnostics, and snapshot only
-  -> Display double-window meters, urgency scores, boost badges, and audit summary on management page
+       - probe / sync: update in-memory state, diagnostics, and management snapshots only
+  -> Display full CPA email/authIndex, double-window meters, urgency scores, boost badges, and a redacted audit summary on the authenticated management page
 ```
 
 ---
@@ -132,7 +132,7 @@ In the **`⚙️ Config Center`** tab of the management dashboard, the following
 | **Max Probe Concurrency (`max_concurrency`)** | `6` | `1 ~ 32` | Maximum concurrent goroutines for quota probe requests to Google API. |
 | **Priority Min Change Threshold (`min_change`)** | `1` | `0 ~ 100` | Minimum priority delta required to trigger a write-back to host. |
 | **Urgency Bucket Tolerance (`urgency_tolerance`)** | `0.05` | `0.00 ~ 0.50` | Accounts within this tolerance share the same priority for round-robin balancing. |
-| **Adaptive Sample Capacity (`quota_sample_capacity`)** | `6` | `2 ~ 30` | Sliding window sample count retained for burn rate estimation. |
+| **Adaptive Sample Capacity (`quota_sample_capacity`)** | `6` | `2 ~ 30` | FIFO history retained for both consumption-trend inspection and burn-rate learning. |
 | **429 Cooldown Duration (`rate_limit_cooldown_minutes`)** | `5` | `1 ~ 1440` min | Cooldown duration demoting account to `-1` fallback tier on 429 errors. |
 | **Boost Start Priority (`boost_start_priority`)** | `999` | `1 ~ 999` | Base priority for tier-1 boosted credentials. |
 | **Normal Healthy Start Priority (`normal_start_priority`)** | `100` | `1 ~ 999`, not above Boost start | Base priority for tier-2 regular healthy credentials. |
@@ -178,7 +178,7 @@ The plugin registers **resources** (static management dashboard) and **routes** 
 - `GET /v0/management/plugins/antigravity-priority/samples?auth_index=xxx`
   - Retrieves multi-sample sliding window time-series quota observations for a specific credential.
 - `GET /v0/management/plugins/antigravity-priority/snapshot/latest`
-  - Returns the latest dual-group redacted decision planning snapshot (`DualGroupSnapshot`).
+  - Returns the latest dual-group decision planning snapshot (`DualGroupSnapshot`); the authenticated management page receives full CPA email/authIndex while sensitive tokens and audit fields remain redacted.
 
 ---
 

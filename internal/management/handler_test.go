@@ -281,8 +281,9 @@ func TestHandler_Snapshot_Latest(t *testing.T) {
 				TotalChanges: 1,
 				Items: []apply.SnapshotItem{
 					{
+						Identity:  apply.SnapshotIdentity{Email: "owner@example.com", AuthIndex: "auth_123"},
 						Name:      "test-account",
-						AuthIndex: "auth_123",
+						AuthIndex: "au***23",
 						Current:   apply.Target{Priority: 100},
 						Target:    apply.Target{Priority: 999},
 						Reason:    "fresh boosted",
@@ -317,6 +318,9 @@ func TestHandler_Snapshot_Latest(t *testing.T) {
 	}
 	if len(group.Items) != 1 {
 		t.Errorf("expected 1 item in gemini group, got %d", len(group.Items))
+	}
+	if group.Items[0].Email != "owner@example.com" || group.Items[0].AuthIndex != "auth_123" {
+		t.Errorf("expected full management identity, got email=%q auth_index=%q", group.Items[0].Email, group.Items[0].AuthIndex)
 	}
 }
 
