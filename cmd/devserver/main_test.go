@@ -21,7 +21,11 @@ func TestDevServerHTTPExposesFullIdentityAndStatefulSamples(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer response.Body.Close()
+	defer func() {
+		if err := response.Body.Close(); err != nil {
+			t.Errorf("close snapshot response: %v", err)
+		}
+	}()
 	var snapshot struct {
 		Groups map[string]struct {
 			Items []struct {
@@ -48,7 +52,9 @@ func TestDevServerHTTPExposesFullIdentityAndStatefulSamples(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		probeResponse.Body.Close()
+		if err := probeResponse.Body.Close(); err != nil {
+			t.Fatalf("close probe response: %v", err)
+		}
 		if probeResponse.StatusCode != http.StatusOK {
 			t.Fatalf("probe status = %d", probeResponse.StatusCode)
 		}
@@ -58,7 +64,11 @@ func TestDevServerHTTPExposesFullIdentityAndStatefulSamples(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer samplesResponse.Body.Close()
+	defer func() {
+		if err := samplesResponse.Body.Close(); err != nil {
+			t.Errorf("close samples response: %v", err)
+		}
+	}()
 	var samplesPayload struct {
 		Groups map[string]struct {
 			Samples []struct {
