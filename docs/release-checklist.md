@@ -58,19 +58,38 @@
 
 ## 4. 代码质量与测试验证矩阵
 
-提交前必须在本地终端执行以下全套验证命令，确保 **100% 通过且零告警**：
+每完成一项功能或缺陷修复，必须先在本地执行 lint，再执行单元测试；准备提交或发布前，必须再次执行同一套 lint，并完成完整质量矩阵。所有检查都必须 **100% 通过且零告警**。
+
+### 4.1 功能完成后的本地验证顺序
+
+本地完成代码后必须严格按以下顺序执行，不能用 `go vet` 替代 `golangci-lint`：
 
 ```bash
-# 1. 编译自检（确保所有包与子模块无语法/类型错误）
+# 1. Lint（必须使用与 release workflow 一致的 golangci-lint v2.12.2）
+golangci-lint run --timeout=5m
+
+# 2. 单元测试
+go test ./...
+```
+
+### 4.2 提交与发布前完整验证
+
+准备提交、创建版本标签或发布 Release 前，必须重新执行 lint，然后执行以下完整验证命令：
+
+```bash
+# 1. Lint（必须使用与 release workflow 一致的 golangci-lint v2.12.2）
+golangci-lint run --timeout=5m
+
+# 2. 编译自检（确保所有包与子模块无语法/类型错误）
 go build ./...
 
-# 2. 静态代码分析（确保无遗漏变量、无废弃调用）
+# 3. 基础静态代码分析
 go vet ./...
 
-# 3. 完整单元测试（包括文档完整性、注册表合规性、模板合规性测试）
+# 4. 完整单元测试（包括文档完整性、注册表合规性、模板合规性测试）
 go test -v ./...
 
-# 4. 数据竞争检测（确保并发调度、探针协程池与缓存读写零 race condition）
+# 5. 数据竞争检测（确保并发调度、探针协程池与缓存读写零 race condition）
 go test -race ./...
 ```
 
@@ -95,18 +114,24 @@ go test -race ./...
    └─ 同步更新 README.md 与 README.en.md (高度凝练、无技术细节堆砌)
          │
          ▼
-[2. 执行发布前质量自检]
+[2. 功能完成后的本地验证]
+   ├─ golangci-lint run --timeout=5m
+   └─ go test ./...
+         │
+         ▼
+[3. 执行提交与发布前完整质量自检]
+   ├─ 再次执行 golangci-lint run --timeout=5m
    ├─ go build ./...
    ├─ go vet ./...
    ├─ go test -v ./...
    └─ go test -race ./...
          │
          ▼
-[3. 用户确认 (安全底线)]
+[4. 用户确认 (安全底线)]
    └─ "Never commit without explicit user confirmation during the conversation"
          │
          ▼
-[4. Git Commit 提交与打标]
+[5. Git Commit 提交与打标]
    ├─ Commit 消息遵循 Conventional Commits 规范 (如 chore: bump version to v1.1.0)
    └─ 创建 Git Tag: git tag vX.Y.Z
          │

@@ -46,7 +46,7 @@
 1. **版本号 4 处一致性核对**：`registry.json`、`internal/runtime/runtime.go`、`internal/management/feature_shell_assets.go` 以及 `.github/release-notes/vX.Y.Z.md` 中的版本号必须 100% 同步一致；
 2. **公开文档与双语规范**：`README.md` 与 `README.en.md` 保持中英双语对齐，聚焦核心价值，**严禁在面向用户的文档和 Release Notes 中出现 `(REQ-xx)` 内部研发标签**；
 3. **架构与元数据契约**：确保 CPA 宿主 `config.yaml` 极简无扰、`buildMetadata()` 不暴露多余抽屉字段、`config.Default()` 作为基石兜底与 UI 配置中心保持一致；
-4. **全套质量验证**：执行 `go build ./...`、`go vet ./...`、`go test -v ./...`、`go test -race ./...` 确保零告警与零数据竞争。
+4. **全套质量验证**：每完成一项功能或缺陷修复，必须先执行与 release workflow 一致的 `golangci-lint v2.12.2`，通过后再执行 `go test ./...`；提交或发布前必须再次执行 `golangci-lint run --timeout=5m`，并执行 `go build ./...`、`go vet ./...`、`go test -v ./...`、`go test -race ./...`，确保零告警与零数据竞争。
 
 ---
 
