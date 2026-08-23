@@ -169,7 +169,9 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
 
             try {
                 const path = RUN_PATH + "?mode=apply&antigravity_model_group=" + encodeURIComponent(group);
-                const result = await apiFetch(path, { method: "POST" });
+                const previewID = latestSnapshot && latestSnapshot.preview_id ? latestSnapshot.preview_id : "";
+                const applyPath = previewID ? path + "&preview_id=" + encodeURIComponent(previewID) : path;
+                const result = await apiFetch(applyPath, { method: "POST" });
                 const succeeded = (result && result.succeeded !== undefined) ? result.succeeded : 0;
                 const attempted = (result && result.attempted !== undefined) ? result.attempted : 0;
                 if (succeeded > 0 || attempted > 0) {

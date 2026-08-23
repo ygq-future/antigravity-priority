@@ -228,5 +228,6 @@ type GroupSnapshot struct {
 type DualGroupSnapshot struct {
 	ActiveModelGroup string                   `json:"active_model_group"`
 	ObservedAt       time.Time                `json:"observed_at,omitempty"`
+	PreviewID        string                   `json:"preview_id,omitempty"`
 	Groups           map[string]GroupSnapshot `json:"groups"`
 }

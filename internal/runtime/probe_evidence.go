@@ -30,6 +30,7 @@ type collectInput struct {
 }
 
 type collectedEvidence struct {
+	RoundID      string
 	ByGroup      map[config.AntigravityModelGroup]evidence.Result
 	Observations []evidence.Observation
 	Probed       int
@@ -69,6 +70,7 @@ func collectFreshEvidence(ctx context.Context, input collectInput) (collectedEvi
 
 	historical := historicalObservations(input.store, input.credentials)
 	result := collectedEvidence{
+		RoundID:      roundID,
 		ByGroup:      make(map[config.AntigravityModelGroup]evidence.Result, 2),
 		Observations: make([]evidence.Observation, 0),
 		Probed:       uniqueProbeCredentials(probes),

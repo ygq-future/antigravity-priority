@@ -12,6 +12,7 @@ import (
 	"antigravity-priority/internal/apply"
 	"antigravity-priority/internal/config"
 	"antigravity-priority/internal/core"
+	"antigravity-priority/internal/evidence"
 	"antigravity-priority/internal/host"
 	"antigravity-priority/internal/management"
 	"antigravity-priority/internal/priority"
@@ -19,6 +20,14 @@ import (
 )
 
 const maxRunHistory = 10
+
+type quotaPreview struct {
+	ID              string
+	ModelGroup      config.AntigravityModelGroup
+	AuthScope       string
+	HostFingerprint string
+	EvidenceByGroup map[config.AntigravityModelGroup]evidence.Result
+}
 
 // Runtime manages plugin lifecycle, configuration, ticker worker, and single-flight execution.
 type Runtime struct {
@@ -36,6 +45,7 @@ type Runtime struct {
 	latestResult       apply.Result
 	latestAudit        string
 	latestDualSnapshot *apply.DualGroupSnapshot
+	latestQuotaPreview *quotaPreview
 	scheduleConfig     state.ScheduleConfig
 	stateCacheOverride string
 	runHistory         []RunHistoryEntry
@@ -185,7 +195,17 @@ func (r *Runtime) applyStateCacheOverride(cfg config.Config) config.Config {
 
 // ManualApply triggers an immediate priority calculation and host write-back.
 func (r *Runtime) ManualApply(ctx context.Context, modelGroup config.AntigravityModelGroup, authIndexes []string) error {
-	return r.run(ctx, TriggerManualApply, modelGroup, authIndexes)
+	previewID := ""
+	if preview := r.currentQuotaPreview(); preview != nil {
+		previewID = preview.ID
+	}
+	return r.runWithPreview(ctx, TriggerManualApply, modelGroup, authIndexes, previewID, true)
+}
+
+// ManualApplyWithPreview commits the quota preview identified by previewID
+// without issuing another quota request.
+func (r *Runtime) ManualApplyWithPreview(ctx context.Context, modelGroup config.AntigravityModelGroup, authIndexes []string, previewID string) error {
+	return r.runWithPreview(ctx, TriggerManualApply, modelGroup, authIndexes, previewID, true)
 }
 
 // Probe triggers a probe-only execution: fetches fresh quota and updates the cache without planning or applying.
@@ -263,6 +283,7 @@ func (r *Runtime) ResetAllPriorities(ctx context.Context) (map[string]any, error
 		return nil, err
 	}
 	primarySnapshot := projection.ControlSnapshot
+	r.clearQuotaPreview()
 	r.setDualSnapshot(projection.Snapshot)
 
 	summary := resultSummary("reset", result)
@@ -349,6 +370,7 @@ func (r *Runtime) SyncHost(ctx context.Context, modelGroup config.AntigravityMod
 	if err != nil {
 		return apply.DualGroupSnapshot{}, err
 	}
+	r.clearQuotaPreview()
 	r.setDualSnapshot(projection.Snapshot)
 	return cloneDualGroupSnapshot(projection.Snapshot), nil
 }
@@ -376,6 +398,10 @@ func (r *Runtime) AutoApply(ctx context.Context) error {
 }
 
 func (r *Runtime) run(ctx context.Context, trigger Trigger, modelGroup config.AntigravityModelGroup, authIndexes []string) error {
+	return r.runWithPreview(ctx, trigger, modelGroup, authIndexes, "", false)
+}
+
+func (r *Runtime) runWithPreview(ctx context.Context, trigger Trigger, modelGroup config.AntigravityModelGroup, authIndexes []string, previewID string, previewRequired bool) error {
 	if !r.runMu.TryLock() {
 		return ErrRunInProgress
 	}
@@ -392,9 +418,11 @@ func (r *Runtime) run(ctx context.Context, trigger Trigger, modelGroup config.An
 	}
 
 	if err := runner(taskCtx, TaskRequest{
-		Config:      cfg,
-		Trigger:     trigger,
-		AuthIndexes: append([]string(nil), authIndexes...),
+		Config:          cfg,
+		Trigger:         trigger,
+		AuthIndexes:     append([]string(nil), authIndexes...),
+		PreviewID:       strings.TrimSpace(previewID),
+		PreviewRequired: previewRequired,
 	}); err != nil && !errors.Is(err, context.Canceled) {
 		return fmt.Errorf("run %s: %w", trigger, err)
 	}
@@ -708,6 +736,38 @@ func (r *Runtime) setDualSnapshot(snap apply.DualGroupSnapshot) {
 	defer r.mu.Unlock()
 	cloned := cloneDualGroupSnapshot(snap)
 	r.latestDualSnapshot = &cloned
+}
+
+func (r *Runtime) setQuotaPreview(preview quotaPreview) {
+	cloned := cloneQuotaPreview(preview)
+	r.mu.Lock()
+	r.latestQuotaPreview = &cloned
+	r.mu.Unlock()
+}
+
+func (r *Runtime) currentQuotaPreview() *quotaPreview {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.latestQuotaPreview == nil {
+		return nil
+	}
+	cloned := cloneQuotaPreview(*r.latestQuotaPreview)
+	return &cloned
+}
+
+func (r *Runtime) clearQuotaPreview() {
+	r.mu.Lock()
+	r.latestQuotaPreview = nil
+	r.mu.Unlock()
+}
+
+func cloneQuotaPreview(preview quotaPreview) quotaPreview {
+	cloned := preview
+	cloned.EvidenceByGroup = make(map[config.AntigravityModelGroup]evidence.Result, len(preview.EvidenceByGroup))
+	for group, result := range preview.EvidenceByGroup {
+		cloned.EvidenceByGroup[group] = cloneEvidence(result)
+	}
+	return cloned
 }
 
 // GetScheduleConfig returns the current dynamic schedule configuration.

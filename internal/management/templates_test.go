@@ -237,6 +237,9 @@ func TestStatusHTML_ContainsRequiredUIElements(t *testing.T) {
 	if !strings.Contains(html, `await refreshDashboard({ silent: true });`) {
 		t.Error("automatic Overview refresh must suppress notifications")
 	}
+	if !strings.Contains(html, "latestSnapshot.preview_id") || !strings.Contains(html, "preview_id=\" + encodeURIComponent(previewID)") {
+		t.Error("manual apply must submit the latest quota preview id")
+	}
 	if !strings.Contains(html, `const pendingAuthIndexes = new Set((groupData.changes || []).map(change => change.auth_index));`) {
 		t.Error("pending badges must be sourced from write-qualified changes")
 	}

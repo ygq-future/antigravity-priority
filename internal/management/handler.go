@@ -45,6 +45,7 @@ type RunRequest struct {
 	Mode                  string
 	AntigravityModelGroup config.AntigravityModelGroup
 	AuthIndexes           []string
+	PreviewID             string
 }
 
 // Handler handles management HTTP API requests.
@@ -184,6 +185,7 @@ func (h *Handler) handleRun(w http.ResponseWriter, r *http.Request) {
 		Mode:                  mode,
 		AntigravityModelGroup: modelGroup,
 		AuthIndexes:           authIndexes,
+		PreviewID:             strings.TrimSpace(r.URL.Query().Get("preview_id")),
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "run already in progress") {

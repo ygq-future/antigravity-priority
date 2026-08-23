@@ -39,7 +39,15 @@ const templateScriptOverviewSamples = `        async function openSamplesModal(a
                 const groupSelect = document.getElementById("modelGroupSelect");
                 const selectedGroup = (groupSelect && groupSelect.value) || "gemini";
                 const selectedGroupData = groups[selectedGroup] || {};
-                const samples = Array.isArray(selectedGroupData.samples) ? selectedGroupData.samples : [];
+                const samples = (Array.isArray(selectedGroupData.samples) ? selectedGroupData.samples : []).slice().sort(function(left, right) {
+                    const leftTime = Date.parse(left && left.observed_at ? left.observed_at : "");
+                    const rightTime = Date.parse(right && right.observed_at ? right.observed_at : "");
+                    const leftValid = Number.isFinite(leftTime);
+                    const rightValid = Number.isFinite(rightTime);
+                    if (leftValid && rightValid && leftTime !== rightTime) return rightTime - leftTime;
+                    if (leftValid !== rightValid) return rightValid ? 1 : -1;
+                    return Number(right && right.sequence || 0) - Number(left && left.sequence || 0);
+                });
                 const groupLabel = selectedGroup === "claude_gpt" ? "Claude/GPT" : "Gemini";
 
                 if (samples.length === 0) {

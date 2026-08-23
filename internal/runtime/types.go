@@ -54,9 +54,11 @@ const (
 
 // TaskRequest holds parameters for an internal scheduling run.
 type TaskRequest struct {
-	Config      config.Config
-	Trigger     Trigger
-	AuthIndexes []string
+	Config          config.Config
+	Trigger         Trigger
+	AuthIndexes     []string
+	PreviewID       string
+	PreviewRequired bool
 }
 
 // TaskRunner executes a scheduling task.

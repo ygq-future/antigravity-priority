@@ -2,825 +2,191 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"path/filepath"
+	"strconv"
 	"strings"
-	"sync"
+	"syscall"
 	"time"
 
-	"antigravity-priority/internal/apply"
-	"antigravity-priority/internal/config"
-	"antigravity-priority/internal/management"
-	"antigravity-priority/internal/state"
+	"antigravity-priority/internal/runtime"
 )
 
-type devRunner struct {
-	mu             sync.Mutex
-	nowFn          func() time.Time
-	geminiSnapshot apply.PlanSnapshot
-	claudeSnapshot apply.PlanSnapshot
-	sampleStates   map[string]devSampleState
-	probeRound     int
-	runHistory     []map[string]any
-	scheduleConfig state.ScheduleConfig
-	dynamicConfig  state.DynamicConfig
-	latestAudit    string
+type devServerOptions struct {
+	AuthDir        string
+	QuotaStatePath string
+	StateCachePath string
+	AccountCount   int
+	Seed           int64
+	Clock          runtime.Clock
+	AutoApply      bool
 }
 
-type devSampleState struct {
-	rate     float64
-	samples  []state.QuotaSample
-	baseline uint64
+type devServer struct {
+	host    *devHost
+	runtime *runtime.Runtime
 }
 
-func buildDevChanges(items []apply.SnapshotItem) []apply.SnapshotChange {
-	res := make([]apply.SnapshotChange, 0)
-	for _, item := range items {
-		if item.Current.Priority != item.Target.Priority || item.Current.Disabled != item.Target.Disabled || item.Current.PriorityMissing {
-			res = append(res, apply.SnapshotChange{
-				Identity:      item.Identity,
-				Name:          item.Name,
-				AuthIndex:     item.AuthIndex,
-				Account:       item.Account,
-				Email:         item.Email,
-				Current:       item.Current,
-				Target:        item.Target,
-				EvidenceFresh: item.EvidenceFresh,
-				Reason:        item.Reason,
-				IsBoosted:     item.IsBoosted,
-			})
+func newDevServer(options devServerOptions) (*devServer, error) {
+	if strings.TrimSpace(options.AuthDir) == "" {
+		options.AuthDir = defaultDevAuthDir
+	}
+	if strings.TrimSpace(options.QuotaStatePath) == "" {
+		options.QuotaStatePath = defaultDevQuotaState
+	}
+	if strings.TrimSpace(options.StateCachePath) == "" {
+		options.StateCachePath = defaultDevCachePath
+	}
+	if options.AccountCount <= 0 {
+		options.AccountCount = defaultDevAccountCount
+	}
+
+	var nowFn func() time.Time
+	if options.Clock != nil {
+		nowFn = options.Clock.Now
+	}
+	fakeHost, err := newDevHost(devHostOptions{
+		AuthDir:        options.AuthDir,
+		QuotaStatePath: options.QuotaStatePath,
+		AccountCount:   options.AccountCount,
+		Seed:           options.Seed,
+		NowFn:          nowFn,
+	})
+	if err != nil {
+		return nil, err
+	}
+	rt := runtime.New(runtime.Options{
+		Host:           fakeHost,
+		Clock:          options.Clock,
+		StateCachePath: options.StateCachePath,
+	})
+	configJSON := fmt.Sprintf(`{"enabled":true,"state_cache_path":%q}`, options.StateCachePath)
+	if _, err := rt.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: configJSON}); err != nil {
+		_ = rt.Shutdown(context.Background())
+		return nil, fmt.Errorf("register dev runtime: %w", err)
+	}
+	if options.AutoApply {
+		dynamic, err := rt.GetDynamicConfig(context.Background())
+		if err != nil {
+			_ = rt.Shutdown(context.Background())
+			return nil, fmt.Errorf("read dev runtime config: %w", err)
+		}
+		dynamic.AutoApply = true
+		if err := rt.SetDynamicConfig(context.Background(), dynamic); err != nil {
+			_ = rt.Shutdown(context.Background())
+			return nil, fmt.Errorf("enable dev runtime scheduler: %w", err)
 		}
 	}
-	return res
-}
-
-func newDevRunner() *devRunner {
-	return newDevRunnerWithClock(time.Now)
-}
-
-func newDevRunnerWithClock(nowFn func() time.Time) *devRunner {
-	now := nowFn().UTC()
-
-	// Rolling quota reset timestamps
-	shortHealthy := now.Add(2*time.Hour + 35*time.Minute + 12*time.Second)
-	longBoost := now.Add(18 * time.Hour) // Urgency = 0.85 / 18 = 0.047, within boost horizon
-	longHealthy := now.Add(4*24*time.Hour + 12*time.Hour + 30*time.Minute)
-	shortDepleted := now.Add(22*time.Minute + 18*time.Second)
-	longDepleted := now.Add(1*24*time.Hour + 6*time.Hour)
-
-	rem90 := int64(90)
-	rem85 := int64(85)
-	rem80 := int64(80)
-	rem5 := int64(5)
-	rem0 := int64(0)
-
-	// 7 Representative Credentials for Gemini (Primary)
-	geminiItems := []apply.SnapshotItem{
-		// 1. Tier 1 (Boosted): Abundant weekly balance entering boost horizon -> Priority 999
-		{
-			Name:                 "work-gemini-pro@corp.com",
-			AuthIndex:            "auth_ag_001",
-			Provider:             "antigravity",
-			Type:                 "antigravity",
-			Status:               "active",
-			PlanType:             "Antigravity Gemini Pro",
-			Current:              apply.Target{Priority: 100, Disabled: false},
-			Target:               apply.Target{Priority: 999, Disabled: false},
-			EvidenceFresh:        true,
-			Reason:               "fresh boosted",
-			IsBoosted:            true,
-			Urgency:              1.42,
-			R7d:                  0.85,
-			T7d:                  0.60,
-			R5h:                  0.90,
-			T5h:                  0.40,
-			CycleBurnRate:        0.18,
-			TRequired:            24.5,
-			ShortWindowResetAt:   &shortHealthy,
-			ShortWindowRemaining: &rem90,
-			LongWindowResetAt:    &longBoost,
-			LongWindowRemaining:  &rem85,
-		},
-		// 2. Tier 2 (Regular Active): Healthy account Alpha -> Priority 100 (Unset on host initially)
-		{
-			Name:                 "developer-account-01@gmail.com",
-			AuthIndex:            "auth_ag_002",
-			Provider:             "antigravity",
-			Type:                 "antigravity",
-			Status:               "active",
-			PlanType:             "Antigravity Gemini Flash",
-			Current:              apply.Target{Priority: 0, PriorityMissing: true, Disabled: false}, // Unset on host
-			Target:               apply.Target{Priority: 100, Disabled: false},
-			EvidenceFresh:        true,
-			Reason:               "fresh remaining positive",
-			IsBoosted:            false,
-			Urgency:              0.88,
-			R7d:                  0.80,
-			T7d:                  0.62,
-			R5h:                  0.85,
-			T5h:                  0.80,
-			CycleBurnRate:        0.15,
-			TRequired:            30.0,
-			ShortWindowResetAt:   &shortHealthy,
-			ShortWindowRemaining: &rem85,
-			LongWindowResetAt:    &longHealthy,
-			LongWindowRemaining:  &rem80,
-		},
-		// 3. Tier 2 (Regular Active): Healthy account Beta -> Priority 98
-		{
-			Name:                 "developer-account-02@gmail.com",
-			AuthIndex:            "auth_ag_003",
-			Provider:             "antigravity",
-			Type:                 "antigravity",
-			Status:               "active",
-			PlanType:             "Antigravity Gemini Flash",
-			Current:              apply.Target{Priority: 80, Disabled: false},
-			Target:               apply.Target{Priority: 98, Disabled: false},
-			EvidenceFresh:        true,
-			Reason:               "fresh remaining positive",
-			IsBoosted:            false,
-			Urgency:              0.86,
-			R7d:                  0.78,
-			T7d:                  0.62,
-			R5h:                  0.80,
-			T5h:                  0.80,
-			CycleBurnRate:        0.15,
-			TRequired:            30.0,
-			ShortWindowResetAt:   &shortHealthy,
-			ShortWindowRemaining: &rem80,
-			LongWindowResetAt:    &longHealthy,
-			LongWindowRemaining:  &rem80,
-		},
-		// 4. Tier 3 (Soft Depleted): 5h Short window exhausted -> Priority -1, Disabled false
-		{
-			Name:                 "ci-runner-short-depleted@ci.org",
-			AuthIndex:            "auth_ag_004",
-			Provider:             "antigravity",
-			Type:                 "antigravity",
-			Status:               "active",
-			PlanType:             "Antigravity Gemini Flash",
-			Current:              apply.Target{Priority: 100, Disabled: false},
-			Target:               apply.Target{Priority: -1, Disabled: false},
-			EvidenceFresh:        true,
-			Reason:               "fresh short window depleted",
-			IsBoosted:            false,
-			Urgency:              0.45,
-			R7d:                  0.75,
-			T7d:                  0.70,
-			R5h:                  0.05,
-			T5h:                  0.10,
-			CycleBurnRate:        0.22,
-			TRequired:            18.0,
-			ShortWindowResetAt:   &shortDepleted,
-			ShortWindowRemaining: &rem5,
-			LongWindowResetAt:    &longHealthy,
-			LongWindowRemaining:  &rem80,
-		},
-		// 5. Tier 3 (Hard Depleted): 7d Weekly quota exhausted -> Priority -1, Disabled true
-		{
-			Name:                 "heavy-scraper-weekly-depleted@corp.io",
-			AuthIndex:            "auth_ag_005",
-			Provider:             "antigravity",
-			Type:                 "antigravity",
-			Status:               "active",
-			PlanType:             "Antigravity Gemini Pro",
-			Current:              apply.Target{Priority: 100, Disabled: false},
-			Target:               apply.Target{Priority: -1, Disabled: true},
-			EvidenceFresh:        true,
-			Reason:               "fresh weekly depleted",
-			IsBoosted:            false,
-			Urgency:              0.0,
-			R7d:                  0.0,
-			T7d:                  0.20,
-			R5h:                  0.0,
-			T5h:                  0.20,
-			CycleBurnRate:        0.28,
-			TRequired:            0.0,
-			ShortWindowResetAt:   &shortDepleted,
-			ShortWindowRemaining: &rem0,
-			LongWindowResetAt:    &longDepleted,
-			LongWindowRemaining:  &rem0,
-		},
-		// 6. 429 Reactive Cooldown (REQ-11): Rate limited, temporary soft cooldown -> Priority -1, Disabled false
-		{
-			Name:                 "rate-limited-cooldown@api.com",
-			AuthIndex:            "auth_ag_006",
-			Provider:             "antigravity",
-			Type:                 "antigravity",
-			Status:               "active",
-			PlanType:             "Antigravity Gemini Flash",
-			Current:              apply.Target{Priority: 100, Disabled: false},
-			Target:               apply.Target{Priority: -1, Disabled: false},
-			EvidenceFresh:        true,
-			Reason:               "429 rate limit cooldown",
-			IsBoosted:            false,
-			Urgency:              0.70,
-			R7d:                  0.65,
-			T7d:                  0.50,
-			R5h:                  0.70,
-			T5h:                  0.50,
-			CycleBurnRate:        0.15,
-			TRequired:            20.0,
-			ShortWindowResetAt:   &shortHealthy,
-			ShortWindowRemaining: &rem80,
-			LongWindowResetAt:    &longHealthy,
-			LongWindowRemaining:  &rem80,
-		},
-		// 7. Manually Disabled in CPA (Bug 2 Protection): Disabled true on host -> Priority -1, Disabled true
-		{
-			Name:                 "cpa-manually-disabled@admin.com",
-			AuthIndex:            "auth_ag_007",
-			Provider:             "antigravity",
-			Type:                 "antigravity",
-			Status:               "active",
-			PlanType:             "Antigravity Gemini Pro",
-			Current:              apply.Target{Priority: -1, Disabled: true},
-			Target:               apply.Target{Priority: -1, Disabled: true},
-			EvidenceFresh:        true,
-			Reason:               "disabled on host",
-			IsBoosted:            false,
-			Urgency:              0.80,
-			R7d:                  0.80,
-			T7d:                  0.50,
-			R5h:                  0.80,
-			T5h:                  0.50,
-			CycleBurnRate:        0.15,
-			TRequired:            20.0,
-			ShortWindowResetAt:   &shortHealthy,
-			ShortWindowRemaining: &rem80,
-			LongWindowResetAt:    &longHealthy,
-			LongWindowRemaining:  &rem80,
-		},
-	}
-	for index := range geminiItems {
-		email := geminiItems[index].Name
-		geminiItems[index].Email = email
-		geminiItems[index].Identity = apply.SnapshotIdentity{
-			Email:     email,
-			AuthIndex: geminiItems[index].AuthIndex,
-		}
-	}
-
-	geminiChanges := buildDevChanges(geminiItems)
-
-	geminiSnapshot := apply.PlanSnapshot{
-		TotalItems:   len(geminiItems),
-		TotalChanges: len(geminiChanges),
-		Items:        geminiItems,
-		Changes:      geminiChanges,
-	}
-
-	// Predicted snapshot for Claude & GPT Group (REQ-05)
-	claudeItems := make([]apply.SnapshotItem, len(geminiItems))
-	for i, item := range geminiItems {
-		item.PlanType = "Antigravity Claude/GPT"
-		item.IsPredicted = true
-		item.Reason = "predicted: " + item.Reason
-		switch i {
-		case 0:
-			item.Target.Priority = 980
-		case 1, 2:
-			item.Target.Priority = 100
-		}
-		claudeItems[i] = item
-	}
-	claudeChanges := buildDevChanges(claudeItems)
-	claudeSnapshot := apply.PlanSnapshot{
-		TotalItems:   len(claudeItems),
-		TotalChanges: len(claudeChanges),
-		Items:        claudeItems,
-		Changes:      claudeChanges,
-	}
-
-	// Execution History (REQ-07: includes embedded snapshots for inspection)
-	history := []map[string]any{
-		{
-			"at":        now.Add(-10 * time.Minute),
-			"kind":      "apply",
-			"trigger":   "auto_apply",
-			"attempted": 6,
-			"succeeded": 6,
-			"failed":    0,
-			"skipped":   1,
-			"message":   "auto_apply credentials=7 succeeded=6 failed=0 skipped=1",
-			"snapshot":  geminiSnapshot,
-		},
-		{
-			"at":        now.Add(-25 * time.Minute),
-			"kind":      "apply",
-			"trigger":   "manual_apply",
-			"attempted": 6,
-			"succeeded": 6,
-			"failed":    0,
-			"skipped":   1,
-			"message":   "manual_apply credentials=7 succeeded=6 failed=0 skipped=1",
-			"snapshot":  geminiSnapshot,
-		},
-		{
-			"at":        now.Add(-40 * time.Minute),
-			"kind":      "probe",
-			"trigger":   "manual",
-			"attempted": 7,
-			"succeeded": 7,
-			"failed":    0,
-			"skipped":   0,
-			"message":   "probe completed: 7 credentials probed",
-		},
-	}
-
-	runner := &devRunner{
-		nowFn:          nowFn,
-		geminiSnapshot: geminiSnapshot,
-		claudeSnapshot: claudeSnapshot,
-		runHistory:     history,
-		latestAudit:    "all 7 credentials double-window monitored & quota paced",
-		scheduleConfig: state.ScheduleConfig{
-			Paused:        false,
-			WindowEnabled: true,
-			WindowStart:   "09:00",
-			WindowEnd:     "23:00",
-		},
-		dynamicConfig: state.DynamicConfig{
-			AutoApply:                true,
-			Interval:                 "15m",
-			AntigravityModelGroup:    "gemini",
-			MaxConcurrency:           6,
-			MinChange:                1,
-			UrgencyTolerance:         0.05,
-			QuotaSampleCapacity:      6,
-			RateLimitCooldownMinutes: 5,
-			PriorityRules: state.PriorityRulesConfig{
-				BoostStartPriority:  999,
-				NormalStartPriority: 100,
-			},
-			Schedule: state.ScheduleConfig{
-				Paused:        false,
-				WindowEnabled: true,
-				WindowStart:   "09:00",
-				WindowEnd:     "23:00",
-			},
-		},
-	}
-	runner.initializeSampleStates(now)
-	return runner
-}
-
-func (d *devRunner) Run(ctx context.Context, request management.RunRequest) (apply.Result, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	now := d.nowUTC()
-
-	// Probe mode (REQ-04)
-	if request.Mode == "probe" {
-		d.advanceProbeScenario(now)
-		d.latestAudit = fmt.Sprintf("probe completed: %d credentials refreshed at %s", len(d.geminiSnapshot.Items), now.Format("15:04:05"))
-		d.runHistory = append([]map[string]any{
-			{
-				"at":        now,
-				"kind":      "probe",
-				"trigger":   "probe",
-				"attempted": len(d.geminiSnapshot.Items),
-				"succeeded": len(d.geminiSnapshot.Items),
-				"failed":    0,
-				"skipped":   0,
-				"message":   d.latestAudit,
-			},
-		}, d.runHistory...)
-		return apply.Result{
-			Attempted: len(d.geminiSnapshot.Items),
-			Succeeded: len(d.geminiSnapshot.Items),
-			Snapshot:  d.geminiSnapshot,
-		}, nil
-	}
-
-	if request.Mode != "apply" {
-		return apply.Result{}, fmt.Errorf("unsupported mode: %s", request.Mode)
-	}
-
-	activeChangesBefore := d.geminiSnapshot.Changes
-	activeItems := d.geminiSnapshot.Items
-	if d.dynamicConfig.AntigravityModelGroup == "claude_gpt" {
-		activeChangesBefore = d.claudeSnapshot.Changes
-		activeItems = d.claudeSnapshot.Items
-	}
-
-	if len(activeChangesBefore) == 0 {
-		d.latestAudit = fmt.Sprintf("all %d credentials in sync, no changes required", len(activeItems))
-		return apply.Result{
-			Attempted: 0,
-			Succeeded: 0,
-			Skipped:   len(activeItems),
-			Snapshot:  d.geminiSnapshot,
-		}, nil
-	}
-
-	for i := range d.geminiSnapshot.Items {
-		d.geminiSnapshot.Items[i].Current = d.geminiSnapshot.Items[i].Target
-		d.geminiSnapshot.Items[i].Current.PriorityMissing = false
-	}
-	for i := range d.claudeSnapshot.Items {
-		d.claudeSnapshot.Items[i].Current = d.claudeSnapshot.Items[i].Target
-		d.claudeSnapshot.Items[i].Current.PriorityMissing = false
-	}
-	d.geminiSnapshot.Changes = buildDevChanges(d.geminiSnapshot.Items)
-	d.claudeSnapshot.Changes = buildDevChanges(d.claudeSnapshot.Items)
-
-	result := apply.Result{
-		Attempted: len(activeChangesBefore),
-		Succeeded: len(activeChangesBefore),
-		Failed:    0,
-		Skipped:   len(activeItems) - len(activeChangesBefore),
-		Snapshot:  d.geminiSnapshot,
-		Changes:   make([]apply.ChangeResult, 0),
-	}
-	if d.dynamicConfig.AntigravityModelGroup == "claude_gpt" {
-		result.Snapshot = d.claudeSnapshot
-	}
-
-	for _, c := range activeChangesBefore {
-		result.Changes = append(result.Changes, apply.ChangeResult{
-			Name:            c.Name,
-			AuthIndex:       c.AuthIndex,
-			Status:          apply.ChangeStatusSuccess,
-			Success:         true,
-			PriorityFrom:    c.Current.Priority,
-			PriorityMissing: c.Current.PriorityMissing,
-			PriorityTo:      c.Target.Priority,
-			DisabledFrom:    c.Current.Disabled,
-			DisabledTo:      c.Target.Disabled,
-		})
-	}
-
-	d.latestAudit = fmt.Sprintf("apply completed: %d succeeded, 0 failed, %d skipped", len(activeChangesBefore), result.Skipped)
-	d.runHistory = append([]map[string]any{
-		{
-			"at":        now,
-			"kind":      "apply",
-			"trigger":   "manual_apply",
-			"attempted": result.Attempted,
-			"succeeded": result.Succeeded,
-			"failed":    0,
-			"skipped":   result.Skipped,
-			"message":   d.latestAudit,
-			"snapshot":  result.Snapshot,
-		},
-	}, d.runHistory...)
-
-	return result, nil
-}
-
-func (d *devRunner) Reset(ctx context.Context) (map[string]any, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	for i := range d.geminiSnapshot.Items {
-		if !d.geminiSnapshot.Items[i].Current.Disabled {
-			d.geminiSnapshot.Items[i].Current.Priority = 0
-			d.geminiSnapshot.Items[i].Current.PriorityMissing = true
-		}
-	}
-	for i := range d.claudeSnapshot.Items {
-		if !d.claudeSnapshot.Items[i].Current.Disabled {
-			d.claudeSnapshot.Items[i].Current.Priority = 0
-			d.claudeSnapshot.Items[i].Current.PriorityMissing = true
-		}
-	}
-	d.geminiSnapshot.Changes = buildDevChanges(d.geminiSnapshot.Items)
-	d.claudeSnapshot.Changes = buildDevChanges(d.claudeSnapshot.Items)
-
-	d.latestAudit = fmt.Sprintf("reset %d credential priorities to default", len(d.geminiSnapshot.Items))
-	now := time.Now().UTC()
-	d.runHistory = append([]map[string]any{
-		{
-			"at":        now,
-			"kind":      "reset",
-			"trigger":   "manual",
-			"attempted": len(d.geminiSnapshot.Items),
-			"succeeded": len(d.geminiSnapshot.Items),
-			"failed":    0,
-			"skipped":   0,
-			"message":   d.latestAudit,
-			"snapshot":  d.geminiSnapshot,
-		},
-	}, d.runHistory...)
-	return map[string]any{
-		"ok":          true,
-		"message":     d.latestAudit,
-		"reset_count": len(d.geminiSnapshot.Items),
-	}, nil
-}
-
-func (d *devRunner) Status(ctx context.Context) (management.StatusInfo, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return management.StatusInfo{
-		TotalCredentials: len(d.geminiSnapshot.Items),
-		FreshCount:       len(d.geminiSnapshot.Items),
-		LatestAudit:      d.latestAudit,
-	}, nil
-}
-
-func (d *devRunner) LatestSnapshot(ctx context.Context) (apply.DualGroupSnapshot, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	activeGroup := d.dynamicConfig.AntigravityModelGroup
-	if activeGroup == "" {
-		activeGroup = "gemini"
-	}
-	return d.dualSnapshot(activeGroup), nil
-}
-
-func (d *devRunner) SyncHost(ctx context.Context, modelGroup config.AntigravityModelGroup) (apply.DualGroupSnapshot, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	activeGroup := d.dynamicConfig.AntigravityModelGroup
-	if activeGroup == "" {
-		activeGroup = "gemini"
-	}
-	d.latestAudit = fmt.Sprintf("synchronized %d credentials from mock host at %s", len(d.geminiSnapshot.Items), d.nowUTC().Format("15:04:05"))
-	return d.dualSnapshot(activeGroup), nil
-}
-
-func (d *devRunner) dualSnapshot(activeGroup string) apply.DualGroupSnapshot {
-	primary := devSnapshotRole(d.geminiSnapshot, false)
-	predicted := devSnapshotRole(d.claudeSnapshot, true)
-	if activeGroup == "claude_gpt" {
-		primary = devSnapshotRole(d.claudeSnapshot, false)
-		predicted = devSnapshotRole(d.geminiSnapshot, true)
-	}
-	groups := map[string]apply.GroupSnapshot{}
-	if activeGroup == "claude_gpt" {
-		groups["claude_gpt"] = apply.GroupSnapshot{Items: primary.Items, Changes: primary.Changes}
-		groups["gemini"] = apply.GroupSnapshot{Items: predicted.Items, Changes: predicted.Changes}
-	} else {
-		groups["gemini"] = apply.GroupSnapshot{Items: primary.Items, Changes: primary.Changes}
-		groups["claude_gpt"] = apply.GroupSnapshot{Items: predicted.Items, Changes: predicted.Changes}
-	}
-	return apply.DualGroupSnapshot{ActiveModelGroup: activeGroup, ObservedAt: d.nowUTC(), Groups: groups}
-}
-
-func devSnapshotRole(snapshot apply.PlanSnapshot, predicted bool) apply.PlanSnapshot {
-	copy := snapshot
-	copy.Items = append([]apply.SnapshotItem(nil), snapshot.Items...)
-	copy.Changes = append([]apply.SnapshotChange(nil), snapshot.Changes...)
-	for index := range copy.Items {
-		copy.Items[index].IsPredicted = predicted
-		copy.Items[index].Reason = devReasonRole(copy.Items[index].Reason, predicted)
-	}
-	for index := range copy.Changes {
-		copy.Changes[index].Reason = devReasonRole(copy.Changes[index].Reason, predicted)
-	}
-	return copy
-}
-
-func devReasonRole(reason string, predicted bool) string {
-	reason = strings.TrimPrefix(reason, "predicted: ")
-	if predicted && reason != "" {
-		return "predicted: " + reason
-	}
-	return reason
-}
-
-func (d *devRunner) nowUTC() time.Time {
-	if d.nowFn == nil {
-		return time.Now().UTC()
-	}
-	return d.nowFn().UTC()
-}
-
-func devSampleKey(authIndex, modelGroup string) string {
-	return strings.TrimSpace(authIndex) + "|model_group=" + strings.TrimSpace(modelGroup)
-}
-
-func (d *devRunner) initializeSampleStates(now time.Time) {
-	d.sampleStates = make(map[string]devSampleState)
-	d.seedSnapshotSamples("gemini", d.geminiSnapshot, now.Add(-15*time.Minute))
-	d.seedSnapshotSamples("claude_gpt", d.claudeSnapshot, now.Add(-15*time.Minute))
-}
-
-func (d *devRunner) seedSnapshotSamples(modelGroup string, snapshot apply.PlanSnapshot, observedAt time.Time) {
-	for _, item := range snapshot.Items {
-		if item.ShortWindowResetAt == nil || item.ShortWindowRemaining == nil || item.LongWindowRemaining == nil {
-			continue
-		}
-		rate, samples, baseline := state.UpdateSamplesAndCycleBurnRate(
-			item.CycleBurnRate,
-			nil,
-			0,
-			observedAt,
-			*item.ShortWindowResetAt,
-			item.ShortWindowRemaining,
-			item.LongWindowRemaining,
-			d.sampleCapacity(),
-		)
-		d.sampleStates[devSampleKey(item.Identity.AuthIndex, modelGroup)] = devSampleState{
-			rate:     rate,
-			samples:  samples,
-			baseline: baseline,
-		}
-	}
-}
-
-func (d *devRunner) sampleCapacity() int {
-	capacity := d.dynamicConfig.QuotaSampleCapacity
-	if capacity < state.MinQuotaSampleCapacity || capacity > state.MaxQuotaSampleCapacity {
-		return state.DefaultQuotaSampleCapacity
-	}
-	return capacity
-}
-
-func (d *devRunner) advanceProbeScenario(observedAt time.Time) {
-	d.probeRound++
-	for key, entry := range d.sampleStates {
-		if len(entry.samples) == 0 {
-			continue
-		}
-		latest := entry.samples[len(entry.samples)-1]
-		shortRemaining := latest.ShortWindowRem
-		longRemaining := latest.LongWindowRem
-		shortReset := latest.ShortWindowResetAt
-
-		switch d.probeRound {
-		case 1, 3:
-			// Identical evidence exercises timestamp-only deduplication.
-		case 2:
-			shortRemaining = decrementQuota(shortRemaining, 2)
-			longRemaining = decrementQuota(longRemaining, 1)
-		case 4:
-			// A changed reset timestamp with unchanged quota exercises metadata-only deduplication.
-			shortReset = shortReset.Add(5 * time.Hour)
-		default:
-			shortRemaining = decrementQuota(shortRemaining, 1)
-			longRemaining = decrementQuota(longRemaining, 1)
-		}
-
-		entry.rate, entry.samples, entry.baseline = state.UpdateSamplesAndCycleBurnRate(
-			entry.rate,
-			entry.samples,
-			entry.baseline,
-			observedAt,
-			shortReset,
-			&shortRemaining,
-			&longRemaining,
-			d.sampleCapacity(),
-		)
-		d.sampleStates[key] = entry
-	}
-	d.applySampleStates("gemini", &d.geminiSnapshot)
-	d.applySampleStates("claude_gpt", &d.claudeSnapshot)
-}
-
-func decrementQuota(value, amount int64) int64 {
-	if value <= amount {
-		return 0
-	}
-	return value - amount
-}
-
-func (d *devRunner) applySampleStates(modelGroup string, snapshot *apply.PlanSnapshot) {
-	for index := range snapshot.Items {
-		item := &snapshot.Items[index]
-		entry, ok := d.sampleStates[devSampleKey(item.Identity.AuthIndex, modelGroup)]
-		if !ok || len(entry.samples) == 0 {
-			continue
-		}
-		latest := entry.samples[len(entry.samples)-1]
-		shortReset := latest.ShortWindowResetAt
-		shortRemaining := latest.ShortWindowRem
-		longRemaining := latest.LongWindowRem
-		item.ShortWindowResetAt = &shortReset
-		item.ShortWindowRemaining = &shortRemaining
-		item.LongWindowRemaining = &longRemaining
-		item.R5h = float64(shortRemaining) / 100
-		item.R7d = float64(longRemaining) / 100
-		item.CycleBurnRate = entry.rate
-	}
-	snapshot.Changes = buildDevChanges(snapshot.Items)
-	snapshot.TotalChanges = len(snapshot.Changes)
-}
-
-func (d *devRunner) GetSamples(ctx context.Context, authIndex, modelGroup string) ([]state.QuotaSample, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	entry, ok := d.sampleStates[devSampleKey(authIndex, modelGroup)]
-	if !ok {
-		return nil, nil
-	}
-	return append([]state.QuotaSample(nil), entry.samples...), nil
-}
-
-func (d *devRunner) Diagnostics(ctx context.Context) (map[string]any, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	interval, err := time.ParseDuration(d.dynamicConfig.Interval)
-	if err != nil || interval <= 0 {
-		interval = 15 * time.Minute
-	}
-	lastAuto := time.Now().Add(-10 * time.Second)
-	nextWaitDuration := interval - 10*time.Second
-	if nextWaitDuration <= 0 {
-		nextWaitDuration = interval
-	}
-	nextRunAt := time.Now().UTC().Add(nextWaitDuration)
-	var latestApply map[string]any
-	for _, entry := range d.runHistory {
-		if entry["kind"] == "apply" {
-			latestApply = entry
-			break
-		}
-	}
-
-	return map[string]any{
-		"management_api": map[string]any{
-			"status":     "ready",
-			"auto_apply": d.dynamicConfig.AutoApply,
-			"enabled":    true,
-		},
-		"scheduler": map[string]any{
-			"interval":           d.dynamicConfig.Interval,
-			"last_auto_apply_at": lastAuto,
-			"next_wait":          nextWaitDuration.String(),
-			"next_run_at":        nextRunAt.Format(time.RFC3339),
-			"worker_active":      true,
-			"paused":             d.scheduleConfig.Paused,
-			"window_enabled":     d.scheduleConfig.WindowEnabled,
-			"window_start":       d.scheduleConfig.WindowStart,
-			"window_end":         d.scheduleConfig.WindowEnd,
-		},
-		"active_cooldowns": []map[string]any{
-			{
-				"auth_index":     "rate-limited-cooldown@api.com",
-				"model_group":    "gemini",
-				"triggered_at":   time.Now().UTC().Add(-2 * time.Minute).Format(time.RFC3339),
-				"cooldown_until": time.Now().UTC().Add(3*time.Minute + 25*time.Second).Format(time.RFC3339),
-				"reason":         "429 rate limit cooldown",
-			},
-		},
-		"latest_audit": d.latestAudit,
-		"latest_apply": latestApply,
-		"last_result": apply.Result{
-			Attempted: 6,
-			Succeeded: 6,
-			Failed:    0,
-			Skipped:   1,
-		},
-		"run_history": d.runHistory,
-	}, nil
-}
-
-func (d *devRunner) GetScheduleConfig(ctx context.Context) (state.ScheduleConfig, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.scheduleConfig, nil
-}
-
-func (d *devRunner) SetScheduleConfig(ctx context.Context, cfg state.ScheduleConfig) error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.scheduleConfig = cfg
-	d.dynamicConfig.Schedule = cfg
-	return nil
-}
-
-func (d *devRunner) GetDynamicConfig(ctx context.Context) (state.DynamicConfig, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.dynamicConfig, nil
-}
-
-func (d *devRunner) SetDynamicConfig(ctx context.Context, cfg state.DynamicConfig) error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.dynamicConfig = cfg
-	d.scheduleConfig = cfg.Schedule
-	return nil
+	return &devServer{host: fakeHost, runtime: rt}, nil
 }
 
 func main() {
-	runner := newDevRunner()
-	handler := management.NewHandler(runner)
-	address := strings.TrimSpace(os.Getenv("ANTIGRAVITY_DEVSERVER_ADDR"))
-	if address == "" {
-		address = ":8080"
+	defaultAddress := strings.TrimSpace(os.Getenv("ANTIGRAVITY_DEVSERVER_ADDR"))
+	if defaultAddress == "" {
+		defaultAddress = ":8080"
+	}
+	defaultAccounts := envInt("ANTIGRAVITY_DEVSERVER_ACCOUNTS", defaultDevAccountCount)
+	defaultSeed := envInt64("ANTIGRAVITY_DEVSERVER_SEED", 0)
+	defaultAuthDir := envString("ANTIGRAVITY_DEVSERVER_AUTH_DIR", defaultDevAuthDir)
+	defaultQuotaState := envString("ANTIGRAVITY_DEVSERVER_QUOTA_STATE", defaultDevQuotaState)
+	defaultCachePath := envString("ANTIGRAVITY_DEVSERVER_CACHE", defaultDevCachePath)
+
+	address := flag.String("addr", defaultAddress, "HTTP listen address")
+	authDir := flag.String("auth-dir", defaultAuthDir, "directory containing simulated CPA auth JSON files")
+	quotaState := flag.String("quota-state", defaultQuotaState, "persistent state for simulated Antigravity quota")
+	cachePath := flag.String("state-cache", defaultCachePath, "Runtime state cache path")
+	accounts := flag.Int("accounts", defaultAccounts, "minimum number of simulated Antigravity auth files")
+	seed := flag.Int64("seed", defaultSeed, "random seed for deterministic quota simulation; zero selects a time-based seed")
+	autoApply := flag.Bool("auto-apply", false, "enable the Runtime scheduler at startup")
+	flag.Parse()
+
+	dev, err := newDevServer(devServerOptions{
+		AuthDir:        *authDir,
+		QuotaStatePath: *quotaState,
+		StateCachePath: *cachePath,
+		AccountCount:   *accounts,
+		Seed:           *seed,
+		AutoApply:      *autoApply,
+	})
+	if err != nil {
+		log.Fatalf("start devserver runtime: %v", err)
 	}
 
 	server := &http.Server{
-		Addr:    address,
-		Handler: handler,
+		Addr:              *address,
+		Handler:           dev.runtime.ManagementHandler(),
+		ReadHeaderTimeout: 5 * time.Second,
 	}
+	stopContext, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	fmt.Println("=========================================================")
-	fmt.Println(" Antigravity Priority - Embedded WebUI Dev Server")
+	fmt.Println(" Antigravity Priority - CPA Runtime Dev Server")
 	fmt.Println("=========================================================")
-	fmt.Printf(" Server listening on: http://localhost%s/status\n", address)
-	fmt.Println(" Open the link above in your browser to interact with the UI!")
-	fmt.Println(" Supports full verification of REQ-01 through REQ-11 & Bug Fixes")
+	displayAddress := *address
+	if strings.HasPrefix(displayAddress, ":") {
+		displayAddress = "localhost" + displayAddress
+	}
+	fmt.Printf(" Server listening on: http://%s/status\n", displayAddress)
+	fmt.Printf(" Simulated CPA auth files: %s (%d minimum accounts)\n", filepath.Clean(*authDir), *accounts)
+	fmt.Println(" Simulated Antigravity quota requests stay inside the devserver.")
 	fmt.Println(" Press Ctrl+C to stop the server.")
 	fmt.Println("=========================================================")
 
-	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("devserver error: %v", err)
+	serverError := make(chan error, 1)
+	go func() {
+		serverError <- server.ListenAndServe()
+	}()
+	select {
+	case err := <-serverError:
+		if err != nil && err != http.ErrServerClosed {
+			log.Fatalf("devserver error: %v", err)
+		}
+	case <-stopContext.Done():
+		shutdownContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownContext); err != nil {
+			log.Printf("devserver HTTP shutdown: %v", err)
+		}
+		if err := dev.runtime.Shutdown(shutdownContext); err != nil {
+			log.Printf("devserver runtime shutdown: %v", err)
+		}
+		<-serverError
 	}
+}
+
+func envString(key, fallback string) string {
+	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+		return value
+	}
+	return fallback
+}
+
+func envInt(key string, fallback int) int {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func envInt64(key string, fallback int64) int64 {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }

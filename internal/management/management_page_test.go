@@ -305,6 +305,7 @@ async function apiFetch() {
     if (html.indexOf("Gemini") >= 0) throw new Error("selected Claude/GPT view rendered Gemini data");
     if ((html.match(/class="sample-group"/g) || []).length !== 2) throw new Error("selected group sample count mismatch");
     if (html.indexOf("0%") < 0) throw new Error("zero quota was not rendered as 0%");
+    if (html.indexOf("100%") > html.indexOf("0%")) throw new Error("samples are not sorted newest first");
 })().catch(function(err) {
     console.error(err.stack || err.message);
     process.exit(1);

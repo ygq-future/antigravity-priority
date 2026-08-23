@@ -5,157 +5,310 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"antigravity-priority/internal/config"
+	"antigravity-priority/internal/host"
 	"antigravity-priority/internal/management"
+	"antigravity-priority/internal/provider/antigravity"
 )
 
-func TestDevServerHTTPExposesFullIdentityAndStatefulSamples(t *testing.T) {
-	now := time.Date(2026, 8, 23, 9, 0, 0, 0, time.UTC)
-	runner := newDevRunnerWithClock(func() time.Time { return now })
-	server := httptest.NewServer(management.NewHandler(runner))
-	defer server.Close()
+type devTestClock struct {
+	now time.Time
+}
 
-	response, err := http.Get(server.URL + "/snapshot/latest")
+func (c *devTestClock) Now() time.Time {
+	return c.now
+}
+
+func TestDevHostSeedsAndReadsCPAAuthFiles(t *testing.T) {
+	now := time.Date(2026, 8, 23, 10, 0, 0, 0, time.FixedZone("CST", 8*60*60))
+	hostAdapter, err := newDevHost(devHostOptions{
+		AuthDir:        t.TempDir(),
+		AccountCount:   10,
+		QuotaStatePath: filepath.Join(t.TempDir(), "quota.json"),
+		Seed:           7,
+		NowFn:          func() time.Time { return now },
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() {
-		if err := response.Body.Close(); err != nil {
-			t.Errorf("close snapshot response: %v", err)
-		}
-	}()
-	var snapshot struct {
-		Groups map[string]struct {
-			Items []struct {
-				Email     string `json:"email"`
-				AuthIndex string `json:"auth_index"`
-			} `json:"items"`
-		} `json:"groups"`
-	}
-	if err := json.NewDecoder(response.Body).Decode(&snapshot); err != nil {
+
+	files, err := hostAdapter.ListAuthFiles(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
-	item := snapshot.Groups["gemini"].Items[0]
-	if item.Email != "work-gemini-pro@corp.com" || item.AuthIndex != "auth_ag_001" {
-		t.Fatalf("HTTP snapshot identity = %+v", item)
+	if len(files) != 10 {
+		t.Fatalf("auth file count = %d, want 10", len(files))
+	}
+	if files[0].AuthIndex == "" || files[0].Email == "" || files[0].Type != "antigravity" {
+		t.Fatalf("auth file identity = %+v", files[0])
 	}
 
-	for range 5 {
+	document, err := hostAdapter.GetAuth(context.Background(), files[0].AuthIndex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if document.Path == "" || !strings.HasSuffix(document.Path, ".json") {
+		t.Fatalf("auth document path = %q", document.Path)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(document.JSON, &raw); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"access_token", "disabled", "email", "expired", "expires_in", "priority", "project_id", "refresh_token", "timestamp", "type"} {
+		if _, ok := raw[field]; !ok {
+			t.Fatalf("auth file is missing %q: %s", field, document.JSON)
+		}
+	}
+
+	data, err := os.ReadFile(document.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != string(document.JSON) {
+		t.Fatalf("GetAuth did not expose the physical document")
+	}
+	raw["disabled"] = true
+	raw["priority"] = float64(12)
+	updated, err := json.Marshal(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(document.Path, updated, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	updatedFiles, err := hostAdapter.ListAuthFiles(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !updatedFiles[0].Disabled || updatedFiles[0].Priority != 12 {
+		t.Fatalf("host list did not reread disabled/priority edits: %+v", updatedFiles[0])
+	}
+	runtimeAuth, err := hostAdapter.GetRuntime(context.Background(), updatedFiles[0].AuthIndex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !runtimeAuth.Disabled {
+		t.Fatalf("runtime auth did not reflect disabled edit: %+v", runtimeAuth)
+	}
+}
+
+func TestDevHostReturnsBothModelGroupsAndQuotaLifecycle(t *testing.T) {
+	now := time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
+	hostAdapter, err := newDevHost(devHostOptions{
+		AuthDir:        t.TempDir(),
+		AccountCount:   1,
+		QuotaStatePath: filepath.Join(t.TempDir(), "quota.json"),
+		Seed:           1,
+		NowFn:          func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := hostAdapter.ListAuthFiles(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	readQuota := func() map[antigravity.ModelGroup]antigravity.ProbeResult {
+		t.Helper()
+		response, err := hostAdapter.HTTPDo(context.Background(), host.HTTPRequest{
+			AuthIndex: files[0].AuthIndex,
+			Method:    http.MethodPost,
+			URL:       antigravity.RetrieveUserQuotaSummaryURL,
+			Body:      []byte(`{"project":"dev-project-001"}`),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("simulated quota status = %d", response.StatusCode)
+		}
+		return antigravity.ParseAllModelGroups(response.Body, now)
+	}
+
+	previous := readQuota()
+	if previous[antigravity.ModelGroupGemini].ShortWindowRemaining == nil || previous[antigravity.ModelGroupClaudeGPT].LongWindowRemaining == nil {
+		t.Fatalf("simulated response did not contain both complete groups: %+v", previous)
+	}
+	depleted := false
+	for round := 0; round < 40; round++ {
 		now = now.Add(time.Minute)
-		request, err := http.NewRequest(http.MethodPost, server.URL+"/run?mode=probe", nil)
-		if err != nil {
-			t.Fatal(err)
+		current := readQuota()
+		previouslyExhausted := false
+		for _, group := range simulatedModelGroups {
+			old := previous[antigravity.ModelGroup(group)]
+			if old.ShortWindowRemaining != nil && old.LongWindowRemaining != nil && (*old.ShortWindowRemaining == 0 || *old.LongWindowRemaining == 0) {
+				previouslyExhausted = true
+			}
 		}
-		probeResponse, err := http.DefaultClient.Do(request)
-		if err != nil {
-			t.Fatal(err)
+		for _, group := range []antigravity.ModelGroup{antigravity.ModelGroupGemini, antigravity.ModelGroupClaudeGPT} {
+			old := previous[group]
+			item := current[group]
+			if old.ShortWindowRemaining == nil || old.LongWindowRemaining == nil || item.ShortWindowRemaining == nil || item.LongWindowRemaining == nil {
+				t.Fatalf("round %d group %s lost a window", round, group)
+			}
+			if previouslyExhausted {
+				if *item.ShortWindowRemaining != 100 || *item.LongWindowRemaining != 100 {
+					t.Fatalf("round %d group %s did not recover after credential exhaustion: short=%d/%d long=%d/%d", round, group, *old.ShortWindowRemaining, *item.ShortWindowRemaining, *old.LongWindowRemaining, *item.LongWindowRemaining)
+				}
+				depleted = true
+			} else if *item.ShortWindowRemaining >= *old.ShortWindowRemaining || *item.LongWindowRemaining >= *old.LongWindowRemaining {
+				t.Fatalf("round %d group %s did not consume both windows: old=%+v current=%+v", round, group, old, item)
+			}
 		}
-		if err := probeResponse.Body.Close(); err != nil {
-			t.Fatalf("close probe response: %v", err)
-		}
-		if probeResponse.StatusCode != http.StatusOK {
-			t.Fatalf("probe status = %d", probeResponse.StatusCode)
+		previous = current
+		if depleted {
+			break
 		}
 	}
+	if !depleted {
+		t.Fatal("deterministic quota simulation did not reach exhaustion")
+	}
+}
 
-	samplesResponse, err := http.Get(server.URL + "/samples?auth_index=auth_ag_001")
+func TestDevRuntimeUsesProductionPathForProbeApplyAndManagement(t *testing.T) {
+	now := time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
+	clock := &devTestClock{now: now}
+	dev, err := newDevServer(devServerOptions{
+		AuthDir:        t.TempDir(),
+		QuotaStatePath: filepath.Join(t.TempDir(), "quota.json"),
+		StateCachePath: filepath.Join(t.TempDir(), "cache.json"),
+		AccountCount:   10,
+		Seed:           3,
+		Clock:          clock,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() {
-		if err := samplesResponse.Body.Close(); err != nil {
-			t.Errorf("close samples response: %v", err)
+		if err := dev.runtime.Shutdown(context.Background()); err != nil {
+			t.Errorf("shutdown runtime: %v", err)
 		}
 	}()
-	var samplesPayload struct {
-		Groups map[string]struct {
-			Samples []struct {
-				Sequence uint64 `json:"sequence"`
-			} `json:"samples"`
-		} `json:"groups"`
-	}
-	if err := json.NewDecoder(samplesResponse.Body).Decode(&samplesPayload); err != nil {
+
+	if err := dev.runtime.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
 		t.Fatal(err)
 	}
-	samples := samplesPayload.Groups["gemini"].Samples
-	if len(samples) != 3 || samples[0].Sequence != 1 || samples[2].Sequence != 3 {
-		t.Fatalf("HTTP samples do not reflect probe lifecycle: %+v", samples)
-	}
-}
-
-func TestDevRunnerSnapshotCarriesFullCPAIdentity(t *testing.T) {
-	now := time.Date(2026, 8, 23, 9, 0, 0, 0, time.UTC)
-	runner := newDevRunnerWithClock(func() time.Time { return now })
-
-	snapshot, err := runner.LatestSnapshot(context.Background())
+	snapshot, err := dev.runtime.LatestSnapshot(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	items := snapshot.Groups["gemini"].Items
-	if len(items) == 0 {
-		t.Fatal("dev snapshot has no credentials")
+	for _, group := range []string{"gemini", "claude_gpt"} {
+		if len(snapshot.Groups[group].Items) != 10 {
+			t.Fatalf("%s item count = %d, want 10", group, len(snapshot.Groups[group].Items))
+		}
 	}
-	if items[0].Identity.Email != "work-gemini-pro@corp.com" || items[0].Identity.AuthIndex != "auth_ag_001" {
-		t.Fatalf("dev identity = %+v; want full CPA email and auth index", items[0].Identity)
+	if snapshot.PreviewID == "" {
+		t.Fatal("probe did not publish a preview id")
 	}
-	changes := snapshot.Groups["gemini"].Changes
-	if len(changes) == 0 || changes[0].Identity.AuthIndex == "" {
-		t.Fatalf("dev change identity is missing: %+v", changes)
+	if err := dev.runtime.ManualApplyWithPreview(context.Background(), config.AntigravityModelGroupGemini, nil, snapshot.PreviewID); err != nil {
+		t.Fatalf("manual apply with preview failed: %v", err)
 	}
-}
-
-func TestDevRunnerProbeScenarioExercisesSampleLifecycle(t *testing.T) {
-	now := time.Date(2026, 8, 23, 9, 0, 0, 0, time.UTC)
-	runner := newDevRunnerWithClock(func() time.Time { return now })
-	runner.dynamicConfig.QuotaSampleCapacity = 3
-	ctx := context.Background()
-	const authIndex = "auth_ag_001"
-
-	initial, err := runner.GetSamples(ctx, authIndex, "gemini")
-	if err != nil || len(initial) != 1 || initial[0].Sequence != 1 {
-		t.Fatalf("initial samples = %+v, err=%v", initial, err)
-	}
-
-	now = now.Add(time.Minute)
-	if _, err := runner.Run(ctx, management.RunRequest{Mode: "probe"}); err != nil {
+	postApplySnapshot, err := dev.runtime.LatestSnapshot(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
-	unchanged, _ := runner.GetSamples(ctx, authIndex, "gemini")
-	if len(unchanged) != 1 || unchanged[0].Sequence != 1 || !unchanged[0].ObservedAt.Equal(now) {
-		t.Fatalf("unchanged probe did not refresh in place: %+v", unchanged)
+	if postApplySnapshot.PreviewID != "" || len(postApplySnapshot.Groups["gemini"].Changes) != 0 {
+		t.Fatalf("post-apply snapshot = %#v; want consumed preview and no pending changes", postApplySnapshot)
+	}
+
+	samples, err := dev.runtime.GetSamples(context.Background(), "dev-auth-001", "gemini")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(samples) != 1 {
+		t.Fatalf("initial Gemini samples = %d, want 1", len(samples))
+	}
+	claudeSamples, err := dev.runtime.GetSamples(context.Background(), "dev-auth-001", "claude_gpt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(claudeSamples) != 1 {
+		t.Fatalf("initial Claude/GPT samples = %d, want 1", len(claudeSamples))
+	}
+
+	dynamic, err := dev.runtime.GetDynamicConfig(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dynamic.AutoApply = true
+	dynamic.Interval = "1m"
+	if err := dev.runtime.SetDynamicConfig(context.Background(), dynamic); err != nil {
+		t.Fatal(err)
+	}
+	if err := dev.runtime.AutoApply(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	diagnostics, err := dev.runtime.Diagnostics(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	scheduler, ok := diagnostics["scheduler"].(map[string]any)
+	if !ok {
+		t.Fatalf("scheduler diagnostics = %#v", diagnostics["scheduler"])
+	}
+	if last, ok := scheduler["last_auto_apply_at"].(time.Time); !ok || last.IsZero() {
+		t.Fatalf("auto scheduler did not record a run: %#v", scheduler["last_auto_apply_at"])
+	}
+
+	if err := dev.runtime.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
+		t.Fatal(err)
+	}
+	previewSnapshot, err := dev.runtime.LatestSnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := dev.runtime.ManualApplyWithPreview(context.Background(), config.AntigravityModelGroupGemini, nil, previewSnapshot.PreviewID); err != nil {
+		t.Fatal(err)
+	}
+	files, err := dev.host.ListAuthFiles(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range files {
+		document, err := dev.host.GetAuth(context.Background(), file.AuthIndex)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var raw struct {
+			Priority *int `json:"priority"`
+		}
+		if err := json.Unmarshal(document.JSON, &raw); err != nil {
+			t.Fatal(err)
+		}
+		if raw.Priority == nil {
+			t.Fatalf("apply did not write priority for %s: %s", file.AuthIndex, document.JSON)
+		}
+	}
+
+	server := httptest.NewServer(dev.runtime.ManagementHandler())
+	defer server.Close()
+	response, err := http.Get(server.URL + management.PathDiagnostics)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("diagnostics status = %d", response.StatusCode)
+	}
+	if err := response.Body.Close(); err != nil {
+		t.Fatal(err)
 	}
 
 	now = now.Add(time.Minute)
-	_, _ = runner.Run(ctx, management.RunRequest{Mode: "probe"})
-	changed, _ := runner.GetSamples(ctx, authIndex, "gemini")
-	if len(changed) != 2 || changed[1].Sequence != 2 {
-		t.Fatalf("changed quota did not append: %+v", changed)
+	if err := dev.runtime.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
+		t.Fatal(err)
 	}
-
-	now = now.Add(time.Minute)
-	_, _ = runner.Run(ctx, management.RunRequest{Mode: "probe"})
-	deduplicated, _ := runner.GetSamples(ctx, authIndex, "gemini")
-	if len(deduplicated) != 2 || !deduplicated[1].ObservedAt.Equal(now) {
-		t.Fatalf("second unchanged probe was not deduplicated: %+v", deduplicated)
+	updatedSamples, err := dev.runtime.GetSamples(context.Background(), "dev-auth-001", "gemini")
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	now = now.Add(time.Minute)
-	_, _ = runner.Run(ctx, management.RunRequest{Mode: "probe"})
-	reset, _ := runner.GetSamples(ctx, authIndex, "gemini")
-	if len(reset) != 2 || reset[1].Sequence != 2 || reset[1].ShortWindowResetAt.Equal(reset[0].ShortWindowResetAt) || !reset[1].ObservedAt.Equal(now) {
-		t.Fatalf("same quota window reset did not refresh the latest sample metadata: %+v", reset)
-	}
-	entry := runner.sampleStates[devSampleKey(authIndex, "gemini")]
-	if entry.baseline != reset[0].Sequence {
-		t.Fatalf("metadata-only window reset changed baseline = %d, want %d", entry.baseline, reset[0].Sequence)
-	}
-
-	now = now.Add(time.Minute)
-	_, _ = runner.Run(ctx, management.RunRequest{Mode: "probe"})
-	rotated, _ := runner.GetSamples(ctx, authIndex, "gemini")
-	if len(rotated) != 3 || rotated[0].Sequence != 1 || rotated[2].Sequence != 3 {
-		t.Fatalf("quota change after metadata refresh did not append the next sample: %+v", rotated)
+	if len(updatedSamples) < 2 {
+		t.Fatalf("second probe did not append changed quota sample: %+v", updatedSamples)
 	}
 }

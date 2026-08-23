@@ -234,7 +234,7 @@ func envelopeManagement(result any, err error) []byte {
 
 func (r managementRunner) Run(ctx context.Context, request management.RunRequest) (apply.Result, error) {
 	if request.Mode == "apply" {
-		if err := r.runtime.ManualApply(ctx, request.AntigravityModelGroup, request.AuthIndexes); err != nil {
+		if err := r.runtime.ManualApplyWithPreview(ctx, request.AntigravityModelGroup, request.AuthIndexes, request.PreviewID); err != nil {
 			return apply.Result{}, err
 		}
 		result, _ := r.runtime.currentRunSnapshot()

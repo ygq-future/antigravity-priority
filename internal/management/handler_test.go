@@ -145,6 +145,9 @@ func TestHandler_Run_Apply_Success(t *testing.T) {
 			if req.Mode != "apply" {
 				t.Errorf("expected mode 'apply', got %q", req.Mode)
 			}
+			if req.PreviewID != "preview-123" {
+				t.Errorf("expected preview id preview-123, got %q", req.PreviewID)
+			}
 			return apply.Result{
 				Attempted: 1,
 				Succeeded: 1,
@@ -153,7 +156,7 @@ func TestHandler_Run_Apply_Success(t *testing.T) {
 	}
 
 	handler := management.NewHandler(runner)
-	req := httptest.NewRequest(http.MethodPost, "/run?mode=apply&auth_index=auth_1", nil)
+	req := httptest.NewRequest(http.MethodPost, "/run?mode=apply&auth_index=auth_1&preview_id=preview-123", nil)
 	rec := httptest.NewRecorder()
 
 	handler.ServeHTTP(rec, req)
