@@ -13,6 +13,8 @@ const (
 	MaxCycleBurnRate = 0.30
 	// MinDeltaThreshold is the minimum 5h quota consumption required to trigger a burn rate estimation update (5%).
 	MinDeltaThreshold = 0.05
+	// MinReplenishmentPoints is the same-window increase required to rebase learning instead of treating it as quota jitter.
+	MinReplenishmentPoints int64 = 5
 	// EMASmoothingAlpha is the exponential moving average smoothing factor.
 	EMASmoothingAlpha = 0.3
 	// DefaultQuotaSampleCapacity is the default sliding window capacity for multi-sample estimation.
@@ -89,8 +91,9 @@ func UpdateSamplesAndCycleBurnRate(
 		updatedSamples = updatedSamples[len(updatedSamples)-capacity:]
 	}
 
-	// 4. A reset boundary or replenishment starts a new learning span without deleting history.
-	if !currSample.ShortWindowResetAt.Equal(lastSample.ShortWindowResetAt) || currSample.ShortWindowRem > lastSample.ShortWindowRem {
+	// 4. A reset boundary or material replenishment starts a new learning span without deleting history.
+	// Small same-window increases can occur because the upstream estimate is rounded.
+	if !currSample.ShortWindowResetAt.Equal(lastSample.ShortWindowResetAt) || currSample.ShortWindowRem-lastSample.ShortWindowRem >= MinReplenishmentPoints {
 		return prevRate, updatedSamples, currSample.Sequence
 	}
 

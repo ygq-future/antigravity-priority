@@ -147,8 +147,44 @@ func TestStatusHTML_ProbeDetailsCoverBothModelGroups(t *testing.T) {
 	if !strings.Contains(html, "groups: groups") {
 		t.Fatal("probe details must pass grouped records to the modal")
 	}
-	if !strings.Contains(html, "probe-history-group") {
-		t.Fatal("probe details modal must render model-group sections")
+	if !strings.Contains(html, "history-comparison-table") || !strings.Contains(html, "本次探测 Gemini 额度") || !strings.Contains(html, "本次探测 Claude/GPT 额度") {
+		t.Fatal("probe details modal must render one account comparison table with both model-group columns")
+	}
+}
+
+func TestStatusHTML_DetailModalUsesContentWidthAndBackdropDismiss(t *testing.T) {
+	html := management.StatusHTML
+	if !strings.Contains(html, `onclick="closeModalFromBackdrop(event)"`) {
+		t.Fatal("detail modal must close when its backdrop is clicked")
+	}
+	if !strings.Contains(html, ".modal.modal-history-comparison") || !strings.Contains(html, "width: fit-content") {
+		t.Fatal("history comparison modal must size itself from its content")
+	}
+	if !strings.Contains(html, "width: min(720px, 100%)") {
+		t.Fatal("ordinary modals must retain their compact default width")
+	}
+	if !strings.Contains(html, "min-width: 120px") {
+		t.Fatal("history quota meters must keep a visible track width")
+	}
+	if !strings.Contains(html, "overflow-x: hidden") {
+		t.Fatal("detail modal must suppress horizontal scrolling")
+	}
+}
+
+func TestStatusHTML_CredentialMetadataIsInline(t *testing.T) {
+	html := management.StatusHTML
+	if !strings.Contains(html, `"<span class=\"cred-meta\"> · " + escapeHTML(item.plan_type || "Antigravity") + "</span>" +`) {
+		t.Fatal("credential metadata must follow the account email on the same header line")
+	}
+}
+
+func TestStatusHTML_AutoScheduleHasDistinctCompositeHistory(t *testing.T) {
+	html := management.StatusHTML
+	if !strings.Contains(html, `k === "auto_apply"`) || !strings.Contains(html, `"自动调度"`) {
+		t.Fatal("automatic scheduling must have a distinct execution-history label")
+	}
+	if !strings.Contains(html, `showModal("auto-history"`) {
+		t.Fatal("automatic scheduling details must combine quota-probe and Host write-back evidence")
 	}
 }
 

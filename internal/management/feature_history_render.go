@@ -1,8 +1,11 @@
 package management
 
-const templateScriptHistory = `        function formatHistoryKind(kind) {
-            var k = (kind || "").toLowerCase();
-            if (k === "apply" || k === "auto_apply" || k === "manual_apply") return currentLang === "zh-CN" ? "立即写回" : "APPLY";
+const templateScriptHistory = `        function formatHistoryKind(entry) {
+			var kind = entry && entry.kind ? entry.kind : "";
+			var trigger = entry && entry.trigger ? entry.trigger : "";
+			var k = kind.toLowerCase();
+			if (k === "auto_apply" || trigger.toLowerCase() === "auto_apply") return currentLang === "zh-CN" ? "自动调度" : "AUTO SCHEDULE";
+			if (k === "apply" || k === "manual_apply") return currentLang === "zh-CN" ? "立即写回" : "APPLY";
             if (k === "probe") return currentLang === "zh-CN" ? "配额探测" : "PROBE";
             if (k === "reset") return currentLang === "zh-CN" ? "重置优先级" : "RESET";
             return (kind || "RUN").toUpperCase();
@@ -23,9 +26,10 @@ const templateScriptHistory = `        function formatHistoryKind(kind) {
                 const item = document.createElement("div");
                 item.className = "history-item";
                 const dateStr = entry.at ? new Date(entry.at).toLocaleString(currentLang === "zh-CN" ? "zh-CN" : "en-US") : "-";
-                const kindText = formatHistoryKind(entry.kind);
+				const kindText = formatHistoryKind(entry);
                 const msg = entry.message || "";
-                const hasSnapshot = entry.kind === "probe" ? Boolean(entry.probe_round_id) : (entry.snapshot && (entry.snapshot.items || entry.snapshot.changes));
+				const isAutoSchedule = entry.kind === "auto_apply" || entry.trigger === "auto_apply";
+				const hasSnapshot = entry.kind === "probe" ? Boolean(entry.probe_round_id) : (isAutoSchedule ? Boolean(entry.probe_round_id || (entry.snapshot && (entry.snapshot.items || entry.snapshot.changes))) : (entry.snapshot && (entry.snapshot.items || entry.snapshot.changes)));
 
                 const succText = (currentLang === "zh-CN" ? "成功: " : "Succeeded: ") + (entry.succeeded || 0);
                 const failText = (currentLang === "zh-CN" ? "失败: " : "Failed: ") + (entry.failed || 0);

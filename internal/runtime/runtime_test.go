@@ -710,6 +710,12 @@ func TestRuntime_ProbeAndSyncHostUseTheSameLearnedCycleBurnRate(t *testing.T) {
 	if probeTarget != 100 {
 		t.Fatalf("consistent learned-rate target=%d, want regular 100", probeTarget)
 	}
+	if syncSnapshot.PreviewID == "" {
+		t.Fatal("SyncHost cleared the unused quota preview")
+	}
+	if err := r.ManualApplyWithPreview(context.Background(), config.AntigravityModelGroupGemini, nil, syncSnapshot.PreviewID); err != nil {
+		t.Fatalf("manual apply after an unchanged Host sync failed: %v", err)
+	}
 }
 
 func TestRuntime_ProductionRunner_FilteredAuthIndexes(t *testing.T) {
@@ -830,6 +836,17 @@ func TestRuntime_ProductionRunner_CachedEvidence(t *testing.T) {
 	}
 	if len(samples) != 2 {
 		t.Fatalf("auto-apply samples = %d; want cached and current observations", len(samples))
+	}
+	diagnostics, err := r.Diagnostics(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	history := diagnostics["run_history"].([]runtime.RunHistoryEntry)
+	if len(history) == 0 || history[0].Kind != runtime.KindAutoApply || history[0].Trigger != string(runtime.TriggerAutoApply) {
+		t.Fatalf("automatic scheduling history = %#v; want a distinct auto-apply entry", history)
+	}
+	if history[0].ProbeRoundID == "" || history[0].Snapshot == nil {
+		t.Fatalf("automatic scheduling history must combine probe and Host projection evidence: %#v", history[0])
 	}
 }
 

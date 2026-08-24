@@ -21,8 +21,8 @@ const shellModalMarkup = `
     </div>
 
     <!-- Diff & Run Result Modal -->
-    <div id="diffModal" class="modal-backdrop" hidden>
-        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div id="diffModal" class="modal-backdrop" hidden onclick="closeModalFromBackdrop(event)">
+        <div id="diffModalPanel" class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
             <div style="display:flex; justify-content:space-between; align-items:center;">
                 <h2 id="modalTitle" style="margin:0; font-size:17px;">调度变更预览</h2>
                 <button type="button" class="btn-secondary" onclick="closeModal()" style="min-height:28px; padding:3px 8px;">✕</button>

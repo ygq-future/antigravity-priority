@@ -5,7 +5,8 @@ const templateScriptHistoryDetails = `        function showHistoryDetails(index)
             var entry = latestDiagnostics.run_history[index];
             if (!entry) return;
 
-            if (entry.kind === "probe") {
+            var isAutoSchedule = entry.kind === "auto_apply" || entry.trigger === "auto_apply";
+            if (entry.kind === "probe" || isAutoSchedule) {
                 if (!entry.probe_round_id) {
                     showToast(currentLang === "zh-CN" ? "该探测记录没有可追溯的新样本" : "This probe record has no attributable new samples", "info");
                     return;
@@ -24,10 +25,22 @@ const templateScriptHistoryDetails = `        function showHistoryDetails(index)
                     groupResults.forEach(function(groupResult) {
                         groups[groupResult.model_group] = groupResult.records;
                     });
-                    showModal("probe-history", {
+					var detailResult = {
                         groups: groups,
-                        probe_round_id: entry.probe_round_id
-                    }, true);
+						probe_round_id: entry.probe_round_id,
+						snapshot: entry.snapshot,
+						items: entry.snapshot && entry.snapshot.items ? entry.snapshot.items : [],
+						changes: entry.snapshot && entry.snapshot.changes ? entry.snapshot.changes : [],
+						attempted: entry.attempted || 0,
+						succeeded: entry.succeeded || 0,
+						failed: entry.failed || 0,
+						skipped: entry.skipped || 0
+					};
+					if (isAutoSchedule) {
+						showModal("auto-history", detailResult, true);
+					} else {
+						showModal("probe-history", detailResult, true);
+					}
                 }).catch(function(err) {
                     showToast(err.message || (currentLang === "zh-CN" ? "读取探测明细失败" : "Failed to load probe details"), "error");
                 });

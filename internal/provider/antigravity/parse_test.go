@@ -93,6 +93,63 @@ func TestParseAvailableModels_DualWindow(t *testing.T) {
 	}
 }
 
+func TestParseQuotaSummary_UsesOfficialGroupBuckets(t *testing.T) {
+	raw := []byte(`{
+		"groups": [
+			{
+				"displayName": "Gemini Models",
+				"description": "Shared quota for Gemini models",
+				"buckets": [
+					{"bucketId":"gemini-5h","displayName":"5 hour","window":"5h","remainingFraction":0.914,"resetTime":"2026-08-24T15:00:00Z"},
+					{"bucketId":"gemini-7d","displayName":"Weekly","window":"7d","remainingFraction":0.556,"resetTime":"2026-08-31T00:00:00Z"}
+				]
+			},
+			{
+				"displayName": "Claude and GPT Models",
+				"description": "Shared quota for Claude and GPT models",
+				"buckets": [
+					{"bucketId":"claude-5h","window":"5h","remainingFraction":0.754,"resetTime":"2026-08-24T16:00:00Z"},
+					{"bucketId":"claude-7d","window":"7d","remainingFraction":0.245,"resetTime":"2026-08-31T00:00:00Z"}
+				]
+			}
+		]
+	}`)
+
+	now := time.Date(2026, 8, 24, 10, 0, 0, 0, time.UTC)
+	gemini := ParseAvailableModels(raw, now, ModelGroupGemini)
+	claude := ParseAvailableModels(raw, now, ModelGroupClaudeGPT)
+
+	if gemini.ShortWindowRemaining == nil || *gemini.ShortWindowRemaining != 91 || gemini.LongWindowRemaining == nil || *gemini.LongWindowRemaining != 56 {
+		t.Fatalf("Gemini group buckets = short %v long %v; want 91/56", gemini.ShortWindowRemaining, gemini.LongWindowRemaining)
+	}
+	if claude.ShortWindowRemaining == nil || *claude.ShortWindowRemaining != 75 || claude.LongWindowRemaining == nil || *claude.LongWindowRemaining != 25 {
+		t.Fatalf("Claude/GPT group buckets = short %v long %v; want 75/25", claude.ShortWindowRemaining, claude.LongWindowRemaining)
+	}
+}
+
+func TestParseQuotaSummary_PrefersCanonicalGroupBuckets(t *testing.T) {
+	raw := []byte(`{
+		"models": {
+			"gemini-legacy": {"quotaInfo":{"windows":[
+				{"name":"5h","remainingFraction":0.10,"resetTime":"2026-08-24T15:00:00Z"},
+				{"name":"7d","remainingFraction":0.20,"resetTime":"2026-08-31T00:00:00Z"}
+			]}}
+		},
+		"groups": [{
+			"displayName":"Gemini Models",
+			"buckets":[
+				{"window":"5h","remainingFraction":0.91,"resetTime":"2026-08-24T15:00:00Z"},
+				{"window":"7d","remainingFraction":0.56,"resetTime":"2026-08-31T00:00:00Z"}
+			]
+		}]
+	}`)
+
+	result := ParseAvailableModels(raw, time.Date(2026, 8, 24, 10, 0, 0, 0, time.UTC), ModelGroupGemini)
+	if result.ShortWindowRemaining == nil || *result.ShortWindowRemaining != 91 || result.LongWindowRemaining == nil || *result.LongWindowRemaining != 56 {
+		t.Fatalf("canonical group buckets were not authoritative: short %v long %v", result.ShortWindowRemaining, result.LongWindowRemaining)
+	}
+}
+
 func TestParseAvailableModels_WeeklyOnlyFree(t *testing.T) {
 	raw := []byte(`{
 		"models": {

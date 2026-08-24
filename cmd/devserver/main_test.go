@@ -129,6 +129,20 @@ func TestDevHostReturnsBothModelGroupsAndQuotaLifecycle(t *testing.T) {
 		if response.StatusCode != http.StatusOK {
 			t.Fatalf("simulated quota status = %d", response.StatusCode)
 		}
+		var contract struct {
+			Groups []struct {
+				DisplayName string `json:"displayName"`
+				Buckets     []struct {
+					Window string `json:"window"`
+				} `json:"buckets"`
+			} `json:"groups"`
+		}
+		if err := json.Unmarshal(response.Body, &contract); err != nil {
+			t.Fatalf("decode simulated quota contract: %v", err)
+		}
+		if len(contract.Groups) != 2 || len(contract.Groups[0].Buckets) != 2 || len(contract.Groups[1].Buckets) != 2 {
+			t.Fatalf("simulated quota response must expose two official group/bucket pairs: %+v", contract.Groups)
+		}
 		return antigravity.ParseAllModelGroups(response.Body, now)
 	}
 

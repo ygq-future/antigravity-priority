@@ -71,6 +71,25 @@ func TestEstimatorUnchangedObservationOnlyRefreshesTimestamp(t *testing.T) {
 	}
 }
 
+func TestEstimatorSmallIncreaseKeepsLearningBaseline(t *testing.T) {
+	now := time.Date(2026, 8, 24, 10, 0, 0, 0, time.UTC)
+	reset := now.Add(4 * time.Hour)
+	s := observe(learningState{rate: 0.18}, now, reset, int64Ptr(93), int64Ptr(56), 6)
+	baseline := s.baseline
+	s = observe(s, now.Add(15*time.Minute), reset, int64Ptr(92), int64Ptr(56), 6)
+	s = observe(s, now.Add(30*time.Minute), reset, int64Ptr(93), int64Ptr(55), 6)
+
+	if s.rate != 0.18 {
+		t.Fatalf("small quota increase changed learned rate: %v", s.rate)
+	}
+	if s.baseline != baseline {
+		t.Fatalf("small quota increase reset learning baseline: got %d want %d", s.baseline, baseline)
+	}
+	if len(s.samples) != 3 {
+		t.Fatalf("small quota increase should remain visible in sample history: %+v", s.samples)
+	}
+}
+
 func TestEstimatorWindowResetRebasesWithoutDeletingHistory(t *testing.T) {
 	now := time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC)
 	reset1 := now.Add(2 * time.Hour)

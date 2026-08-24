@@ -397,31 +397,34 @@ func consumeDevQuota(value int64, rng *rand.Rand) int64 {
 }
 
 func marshalDevQuotaResponse(state devQuotaState) ([]byte, error) {
-	type window struct {
-		Name              string  `json:"name"`
+	type bucket struct {
+		BucketID          string  `json:"bucketId"`
+		DisplayName       string  `json:"displayName"`
+		Window            string  `json:"window"`
 		RemainingFraction float64 `json:"remainingFraction"`
 		ResetTime         string  `json:"resetTime"`
+		Description       string  `json:"description"`
 	}
-	type model struct {
-		ModelProvider string `json:"modelProvider"`
-		QuotaInfo     struct {
-			Windows []window `json:"windows"`
-		} `json:"quotaInfo"`
+	type group struct {
+		DisplayName string   `json:"displayName"`
+		Description string   `json:"description"`
+		Buckets     []bucket `json:"buckets"`
 	}
-	makeModel := func(provider string, quota devQuotaGroupState) model {
-		result := model{ModelProvider: provider}
-		result.QuotaInfo.Windows = []window{
-			{Name: "5h", RemainingFraction: float64(quota.Short) / 100, ResetTime: quota.ShortResetAt.UTC().Format(time.RFC3339)},
-			{Name: "7d", RemainingFraction: float64(quota.Long) / 100, ResetTime: quota.LongResetAt.UTC().Format(time.RFC3339)},
+	makeGroup := func(id, displayName, description string, quota devQuotaGroupState) group {
+		return group{
+			DisplayName: displayName,
+			Description: description,
+			Buckets: []bucket{
+				{BucketID: id + "-5h", DisplayName: "5 hour", Window: "5h", RemainingFraction: float64(quota.Short) / 100, ResetTime: quota.ShortResetAt.UTC().Format(time.RFC3339), Description: "Five-hour quota window"},
+				{BucketID: id + "-7d", DisplayName: "Weekly", Window: "7d", RemainingFraction: float64(quota.Long) / 100, ResetTime: quota.LongResetAt.UTC().Format(time.RFC3339), Description: "Weekly quota window"},
+			},
 		}
-		return result
 	}
 	response := struct {
-		Models map[string]model `json:"models"`
-	}{Models: map[string]model{
-		"gemini-2.5-flash":  makeModel("google", state.Groups[string(antigravity.ModelGroupGemini)]),
-		"claude-3-5-sonnet": makeModel("anthropic", state.Groups[string(antigravity.ModelGroupClaudeGPT)]),
-		"gpt-4o":            makeModel("openai", state.Groups[string(antigravity.ModelGroupClaudeGPT)]),
+		Groups []group `json:"groups"`
+	}{Groups: []group{
+		makeGroup("gemini", "Gemini Models", "Shared quota for Gemini models", state.Groups[string(antigravity.ModelGroupGemini)]),
+		makeGroup("claude-gpt", "Claude and GPT Models", "Shared quota for Claude and GPT models", state.Groups[string(antigravity.ModelGroupClaudeGPT)]),
 	}}
 	return json.Marshal(response)
 }

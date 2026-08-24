@@ -26,8 +26,14 @@ const templateStyleOverlays = `        /* Modals */
             animation: modalIn 260ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
         }
 
+        .modal.modal-history-comparison {
+            width: fit-content;
+            max-width: 100%;
+        }
+
         .modal-body {
             overflow-y: auto;
+            overflow-x: hidden;
             display: flex;
             flex-direction: column;
             gap: 8px;
@@ -58,6 +64,122 @@ const templateStyleOverlays = `        /* Modals */
             color: var(--text-secondary);
             font-size: 12px;
             font-weight: 700;
+        }
+
+        .history-comparison-table {
+            width: max-content;
+            max-width: 100%;
+            min-width: 0;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            overflow: hidden;
+            font-size: 11px;
+        }
+
+        .history-comparison-row {
+            display: grid;
+            grid-template-columns: minmax(150px, max-content) 200px 200px minmax(140px, max-content);
+            align-items: center;
+            gap: 10px;
+            padding: 8px 10px;
+            border-top: 1px solid var(--border-subtle);
+            min-height: 52px;
+        }
+
+        .history-comparison-quota-only .history-comparison-row {
+            grid-template-columns: minmax(150px, max-content) 200px 200px;
+        }
+
+        .history-comparison-table,
+        .history-comparison-row,
+        .history-comparison-row > div {
+            min-width: 0;
+        }
+
+        .history-comparison-row:first-child {
+            border-top: 0;
+        }
+
+        .history-comparison-header {
+            background: var(--bg-subtle);
+            color: var(--text-secondary);
+            font-weight: 700;
+            min-height: 34px;
+        }
+
+        .history-account-cell {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        .history-quota-values {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .history-quota-values > div {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .history-quota-values b {
+            width: 20px;
+            color: var(--text-muted);
+            font-size: 10px;
+        }
+
+        .history-quota-meter {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            width: 168px;
+        }
+
+        .history-quota-meter > span {
+            min-width: 32px;
+            text-align: right;
+            font-weight: 700;
+        }
+
+        .history-meter-track {
+            flex: 1;
+            min-width: 120px;
+            height: 7px;
+            background: var(--meter-track-bg);
+            border: 1px solid var(--meter-track-border);
+            border-radius: 999px;
+            overflow: hidden;
+        }
+
+        .history-meter-fill {
+            height: 100%;
+            background: var(--meter-fill);
+            border-radius: inherit;
+        }
+
+        .history-priority-value {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-family: SFMono-Regular, Consolas, Menlo, monospace;
+            font-weight: 700;
+        }
+
+        .history-priority-reason {
+            margin-top: 4px;
+            color: var(--text-muted);
+            line-height: 1.2;
+        }
+
+        .history-empty-cell {
+            display: block;
+            min-height: 18px;
         }
 
         .diff-value-box {

@@ -43,7 +43,7 @@ const templateStyleOverviewCards = `        /* Credentials Display (Grid 3 Colum
             min-width: 0;
         }
 
-        .cred-name {
+		.cred-name {
             font-size: 13px;
             font-weight: 700;
             color: var(--text-primary);
@@ -53,9 +53,16 @@ const templateStyleOverviewCards = `        /* Credentials Display (Grid 3 Colum
             display: flex;
             align-items: center;
             gap: 6px;
-        }
+		}
 
-        .cred-meta {
+		.cred-email {
+			min-width: 0;
+			overflow: hidden;
+			text-overflow: ellipsis;
+		}
+
+		.cred-meta {
+			flex: 0 0 auto;
             font-size: 11px;
             color: var(--text-muted);
             font-family: SFMono-Regular, Consolas, Menlo, monospace;

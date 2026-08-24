@@ -133,11 +133,11 @@ const templateScriptOverviewRender = `        function renderDashboard() {
                 const credDisplayName = item.email || "Credential";
 
                 card.innerHTML =
-                    "<div class=\"cred-info\">" +
-                        "<div class=\"cred-name\">" +
-                            "<span>" + escapeHTML(credDisplayName) + "</span>" +
-                        "</div>" +
-                        "<div class=\"cred-meta\">" + escapeHTML(item.plan_type || "Antigravity") + "</div>" +
+					"<div class=\"cred-info\">" +
+						"<div class=\"cred-name\">" +
+							"<span class=\"cred-email\">" + escapeHTML(credDisplayName) + "</span>" +
+							"<span class=\"cred-meta\"> · " + escapeHTML(item.plan_type || "Antigravity") + "</span>" +
+						"</div>" +
                         "<div class=\"cred-badge-row\">" +
                             statusBadge +
                             "<div class=\"metric-pill metric-pill-urgency\">" + t("urgencyLabel") + "<strong>" + urgency + "</strong></div>" +

@@ -283,6 +283,9 @@ func (r *Runtime) managementRunHistory() []map[string]any {
 	emailByMask := uniqueEmailByMask(r.currentSnapshotEmails(), func(_ string, email string) string {
 		return redactRuntimeIdentifier(email)
 	})
+	emailByAuthMask := uniqueEmailByMask(r.currentSnapshotEmails(), func(authIndex, _ string) string {
+		return redactRuntimeIdentifier(authIndex)
+	})
 	result := make([]map[string]any, 0, len(history))
 	for _, entry := range history {
 		encoded, err := json.Marshal(entry)
@@ -295,8 +298,8 @@ func (r *Runtime) managementRunHistory() []map[string]any {
 		}
 		if entry.Snapshot != nil {
 			if snapshot, ok := item["snapshot"].(map[string]any); ok {
-				overlayManagementItemEmails(snapshot["items"], entry.Snapshot.Items, emailByMask)
-				overlayManagementChangeEmails(snapshot["changes"], entry.Snapshot.Changes, emailByMask)
+				overlayManagementItemEmails(snapshot["items"], entry.Snapshot.Items, emailByMask, emailByAuthMask)
+				overlayManagementChangeEmails(snapshot["changes"], entry.Snapshot.Changes, emailByMask, emailByAuthMask)
 			}
 		}
 		result = append(result, item)
@@ -304,7 +307,7 @@ func (r *Runtime) managementRunHistory() []map[string]any {
 	return result
 }
 
-func overlayManagementItemEmails(raw any, identities []apply.SnapshotItem, emailByMask map[string]string) {
+func overlayManagementItemEmails(raw any, identities []apply.SnapshotItem, emailByMask, emailByAuthMask map[string]string) {
 	items, ok := raw.([]any)
 	if !ok {
 		return
@@ -317,11 +320,11 @@ func overlayManagementItemEmails(raw any, identities []apply.SnapshotItem, email
 		if !ok {
 			continue
 		}
-		overlayManagementEmail(item, identity.Identity.Email, emailByMask)
+		overlayManagementEmail(item, identity.Identity.Email, emailByMask, emailByAuthMask)
 	}
 }
 
-func overlayManagementChangeEmails(raw any, identities []apply.SnapshotChange, emailByMask map[string]string) {
+func overlayManagementChangeEmails(raw any, identities []apply.SnapshotChange, emailByMask, emailByAuthMask map[string]string) {
 	items, ok := raw.([]any)
 	if !ok {
 		return
@@ -334,17 +337,23 @@ func overlayManagementChangeEmails(raw any, identities []apply.SnapshotChange, e
 		if !ok {
 			continue
 		}
-		overlayManagementEmail(item, identity.Identity.Email, emailByMask)
+		overlayManagementEmail(item, identity.Identity.Email, emailByMask, emailByAuthMask)
 	}
 }
 
-func overlayManagementEmail(item map[string]any, identityEmail string, emailByMask map[string]string) {
+func overlayManagementEmail(item map[string]any, identityEmail string, emailByMask, emailByAuthMask map[string]string) {
 	if identityEmail != "" {
 		item["email"] = identityEmail
 		return
 	}
 	if masked, ok := item["email"].(string); ok {
 		if email := emailByMask[masked]; email != "" {
+			item["email"] = email
+			return
+		}
+	}
+	if maskedAuthIndex, ok := item["auth_index"].(string); ok {
+		if email := emailByAuthMask[maskedAuthIndex]; email != "" {
 			item["email"] = email
 			return
 		}

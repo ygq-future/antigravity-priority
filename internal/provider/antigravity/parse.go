@@ -41,6 +41,9 @@ type quotaWindow struct {
 }
 
 type quotaBucket struct {
+	BucketID          string `json:"bucketId"`
+	DisplayName       string `json:"displayName"`
+	Description       string `json:"description"`
 	ModelID           string `json:"modelId"`
 	Window            string `json:"window"`
 	RemainingFraction any    `json:"remainingFraction"`
@@ -114,6 +117,11 @@ func parseGroupFromResponse(response availableModelsResponse, observedAt time.Ti
 }
 
 func collectGroupWindows(response availableModelsResponse, group ModelGroup) []candidateWindow {
+	canonical, foundCanonicalGroup := collectCanonicalGroupWindows(response.Groups, group)
+	if foundCanonicalGroup {
+		return canonical
+	}
+
 	windows := make([]candidateWindow, 0)
 	for modelID, model := range response.Models {
 		if !modelBelongsToGroup(modelID, model.ModelProvider, group) {
@@ -140,17 +148,24 @@ func collectGroupWindows(response availableModelsResponse, group ModelGroup) []c
 			windows = append(windows, window)
 		}
 	}
-	for _, quotaGroup := range response.Groups {
+	return windows
+}
+
+func collectCanonicalGroupWindows(groups []quotaGroup, group ModelGroup) ([]candidateWindow, bool) {
+	windows := make([]candidateWindow, 0)
+	found := false
+	for _, quotaGroup := range groups {
 		if !quotaGroupBelongsToModelGroup(quotaGroup, group) {
 			continue
 		}
+		found = true
 		for _, bucket := range quotaGroup.Buckets {
 			if window, ok := quotaFieldsToWindow(bucket.RemainingFraction, bucket.ResetTime, classifyWindow(bucket.Window)); ok {
 				windows = append(windows, window)
 			}
 		}
 	}
-	return windows
+	return windows, found
 }
 
 func quotaGroupBelongsToModelGroup(quotaGroup quotaGroup, group ModelGroup) bool {
@@ -394,7 +409,7 @@ func remainingPercent(raw any) (int64, bool) {
 	if value <= 0 {
 		return 0, true
 	}
-	return int64(math.Ceil(value)), true
+	return int64(math.Round(value)), true
 }
 
 func toFloat64(raw any) (float64, bool) {

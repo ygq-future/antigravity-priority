@@ -370,7 +370,12 @@ func (r *Runtime) SyncHost(ctx context.Context, modelGroup config.AntigravityMod
 	if err != nil {
 		return apply.DualGroupSnapshot{}, err
 	}
-	r.clearQuotaPreview()
+	// Host synchronization only refreshes the projection. It must not consume
+	// an unused Fresh Evidence preview; ManualApplyWithPreview still validates
+	// the preview's host fingerprint before any transition is executed.
+	if preview := r.currentQuotaPreview(); preview != nil {
+		projection.Snapshot.PreviewID = preview.ID
+	}
 	r.setDualSnapshot(projection.Snapshot)
 	return cloneDualGroupSnapshot(projection.Snapshot), nil
 }
@@ -1131,7 +1136,7 @@ func redactRuntimeIdentifier(value string) string {
 func buildMetadata() Metadata {
 	return Metadata{
 		Name:             "Antigravity Priority",
-		Version:          "1.2.8",
+		Version:          "1.2.9",
 		Author:           "ygq-future",
 		GitHubRepository: "https://github.com/ygq-future/antigravity-priority",
 		Description:      "Intelligent quota pacing and adaptive burn-rate priority scheduler exclusively for Google Antigravity in CLIProxyAPI.",

@@ -145,7 +145,18 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 		r.setDualSnapshot(projection.Snapshot)
 		result := apply.Result{Snapshot: primarySnapshot}
 		summary := fmt.Sprintf("all %d credentials in sync, no changes required", len(primarySnapshot.Items))
-		_, projectErr := r.projectSnapshot(ctx, store, result, summary)
+		if request.Trigger != TriggerAutoApply {
+			_, projectErr := r.projectSnapshot(ctx, store, result, summary)
+			return projectErr
+		}
+		summary = fmt.Sprintf("auto schedule probed=%d; %s", evidence.Probed, summary)
+		_, projectErr := r.projectRun(ctx, store, result, summary, RunHistoryEntry{
+			Kind:         KindAutoApply,
+			Trigger:      string(request.Trigger),
+			ProbeRoundID: evidence.RoundID,
+			Message:      summary,
+			Snapshot:     &primarySnapshot,
+		})
 		return projectErr
 	}
 
@@ -163,12 +174,20 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 	r.setDualSnapshot(postApplyProjection.Snapshot)
 
 	summary := resultSummary("apply", result)
+	kind := KindApply
+	probeRoundID := ""
+	if request.Trigger == TriggerAutoApply {
+		kind = KindAutoApply
+		probeRoundID = evidence.RoundID
+		summary = fmt.Sprintf("auto schedule probed=%d; %s", evidence.Probed, summary)
+	}
 
 	_, projectErr := r.projectRun(ctx, store, result, summary, RunHistoryEntry{
-		Kind:     KindApply,
-		Trigger:  string(request.Trigger),
-		Message:  summary,
-		Snapshot: &primarySnapshot,
+		Kind:         kind,
+		Trigger:      string(request.Trigger),
+		ProbeRoundID: probeRoundID,
+		Message:      summary,
+		Snapshot:     &primarySnapshot,
 	})
 	return projectErr
 }
