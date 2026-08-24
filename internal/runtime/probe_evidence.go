@@ -85,10 +85,33 @@ func collectFreshEvidence(ctx context.Context, input collectInput) (collectedEvi
 			Probes:      probes,
 			Historical:  historical,
 		})
+		classified = enrichFreshCycleBurnRate(input.store, classified)
 		result.ByGroup[group] = classified
 		result.Observations = append(result.Observations, classified.Observations...)
 	}
 	return result, nil
+}
+
+// enrichFreshCycleBurnRate makes the in-memory result use the same learned
+// rate that buildProjectionEvidence will use after the state write. Without
+// this boundary, a fresh probe can be planned with the cold-start default and
+// the next dashboard sync can plan the identical quota with the learned rate.
+func enrichFreshCycleBurnRate(store *state.Store, result evidence.Result) evidence.Result {
+	if store == nil {
+		return result
+	}
+	for index := range result.Eligible {
+		rate := store.GetCycleBurnRate(result.Eligible[index].AuthIndex, string(result.Eligible[index].ModelGroup))
+		result.Eligible[index].CycleBurnRate = rate
+	}
+	for index := range result.Observations {
+		observation := &result.Observations[index]
+		if observation.Kind != evidence.ObservationFresh || observation.Evidence == nil {
+			continue
+		}
+		observation.Evidence.CycleBurnRate = store.GetCycleBurnRate(observation.AuthIndex, string(observation.ModelGroup))
+	}
+	return result
 }
 
 func newProbeRoundID(now time.Time) string {
@@ -138,7 +161,7 @@ func runProbeJobs(ctx context.Context, input collectInput, jobs []probeJob, roun
 	if workers == 1 {
 		observations := make([]evidence.ProbeObservation, 0, len(jobs)*2)
 		for _, job := range jobs {
-			items, err := probeAndRecord(ctx, input.client, input.store, job, input.now, input.sampleCapacity)
+			items, err := probeAndRecord(ctx, input.client, input.store, job, input.now, input.sampleCapacity, roundID)
 			if err != nil {
 				return nil, err
 			}
@@ -169,7 +192,7 @@ func runProbeJobs(ctx context.Context, input collectInput, jobs []probeJob, roun
 				if runCtx.Err() != nil {
 					return
 				}
-				items, err := probeAndRecord(runCtx, input.client, input.store, jobs[index], input.now, input.sampleCapacity)
+				items, err := probeAndRecord(runCtx, input.client, input.store, jobs[index], input.now, input.sampleCapacity, roundID)
 				select {
 				case resultsCh <- result{index: index, items: items, err: err}:
 				case <-runCtx.Done():
@@ -223,7 +246,7 @@ func runProbeJobs(ctx context.Context, input collectInput, jobs []probeJob, roun
 	return observations, nil
 }
 
-func probeAndRecord(ctx context.Context, client *host.Client, store *state.Store, job probeJob, now time.Time, sampleCapacity int) ([]antigravity.ProbeResult, error) {
+func probeAndRecord(ctx context.Context, client *host.Client, store *state.Store, job probeJob, now time.Time, sampleCapacity int, roundID string) ([]antigravity.ProbeResult, error) {
 	results := executeAntigravityQuotaRequest(ctx, client, antigravityQuotaRequest{
 		AuthIndex:   job.credential.AuthIndex,
 		AccessToken: job.authMaterial.accessToken,
@@ -240,7 +263,7 @@ func probeAndRecord(ctx context.Context, client *host.Client, store *state.Store
 		if !ok {
 			continue
 		}
-		if err := recordAntigravityProbeResult(ctx, store, result, now, sampleCapacity); err != nil {
+		if err := recordAntigravityProbeResult(ctx, store, result, now, sampleCapacity, roundID); err != nil {
 			return nil, err
 		}
 		items = append(items, result)
@@ -248,7 +271,7 @@ func probeAndRecord(ctx context.Context, client *host.Client, store *state.Store
 	return items, nil
 }
 
-func recordAntigravityProbeResult(ctx context.Context, store *state.Store, result antigravity.ProbeResult, now time.Time, sampleCapacity int) error {
+func recordAntigravityProbeResult(ctx context.Context, store *state.Store, result antigravity.ProbeResult, now time.Time, sampleCapacity int, roundID string) error {
 	if result.Status != antigravity.StatusReady || result.ResetAt == nil || result.Remaining == nil {
 		return store.MarkProbeFailure(ctx, state.ProbeFailure{
 			AuthIndex:   result.AuthIndex,
@@ -274,6 +297,7 @@ func recordAntigravityProbeResult(ctx context.Context, store *state.Store, resul
 		Source:               state.SourceFreshProbe,
 		NextProbeAt:          result.ObservedAt.Add(time.Hour),
 		SampleCapacity:       sampleCapacity,
+		ProbeRoundID:         roundID,
 	})
 }
 

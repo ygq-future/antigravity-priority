@@ -267,7 +267,126 @@ func (r managementRunner) SyncHost(ctx context.Context, modelGroup config.Antigr
 }
 
 func (r managementRunner) Diagnostics(ctx context.Context) (map[string]any, error) {
-	return r.runtime.Diagnostics(ctx)
+	diagnostics, err := r.runtime.Diagnostics(ctx)
+	if err != nil {
+		return nil, err
+	}
+	diagnostics["run_history"] = r.runtime.managementRunHistory()
+	overlayManagementCooldownEmails(diagnostics["active_cooldowns"], r.runtime.currentSnapshotEmails())
+	return diagnostics, nil
+}
+
+// managementRunHistory projects full display emails only at the authenticated
+// management adapter boundary. Persisted run history remains redacted.
+func (r *Runtime) managementRunHistory() []map[string]any {
+	history := r.currentRunHistory()
+	emailByMask := uniqueEmailByMask(r.currentSnapshotEmails(), func(_ string, email string) string {
+		return redactRuntimeIdentifier(email)
+	})
+	result := make([]map[string]any, 0, len(history))
+	for _, entry := range history {
+		encoded, err := json.Marshal(entry)
+		if err != nil {
+			continue
+		}
+		var item map[string]any
+		if err := json.Unmarshal(encoded, &item); err != nil {
+			continue
+		}
+		if entry.Snapshot != nil {
+			if snapshot, ok := item["snapshot"].(map[string]any); ok {
+				overlayManagementItemEmails(snapshot["items"], entry.Snapshot.Items, emailByMask)
+				overlayManagementChangeEmails(snapshot["changes"], entry.Snapshot.Changes, emailByMask)
+			}
+		}
+		result = append(result, item)
+	}
+	return result
+}
+
+func overlayManagementItemEmails(raw any, identities []apply.SnapshotItem, emailByMask map[string]string) {
+	items, ok := raw.([]any)
+	if !ok {
+		return
+	}
+	for index, identity := range identities {
+		if index >= len(items) {
+			continue
+		}
+		item, ok := items[index].(map[string]any)
+		if !ok {
+			continue
+		}
+		overlayManagementEmail(item, identity.Identity.Email, emailByMask)
+	}
+}
+
+func overlayManagementChangeEmails(raw any, identities []apply.SnapshotChange, emailByMask map[string]string) {
+	items, ok := raw.([]any)
+	if !ok {
+		return
+	}
+	for index, identity := range identities {
+		if index >= len(items) {
+			continue
+		}
+		item, ok := items[index].(map[string]any)
+		if !ok {
+			continue
+		}
+		overlayManagementEmail(item, identity.Identity.Email, emailByMask)
+	}
+}
+
+func overlayManagementEmail(item map[string]any, identityEmail string, emailByMask map[string]string) {
+	if identityEmail != "" {
+		item["email"] = identityEmail
+		return
+	}
+	if masked, ok := item["email"].(string); ok {
+		if email := emailByMask[masked]; email != "" {
+			item["email"] = email
+			return
+		}
+	}
+	item["email"] = ""
+}
+
+func overlayManagementCooldownEmails(raw any, emailsByAuthIndex map[string]string) {
+	cooldowns, ok := raw.([]map[string]any)
+	if !ok {
+		return
+	}
+	emailByAuthMask := uniqueEmailByMask(emailsByAuthIndex, func(authIndex string, _ string) string {
+		return redactRuntimeIdentifier(authIndex)
+	})
+	for _, cooldown := range cooldowns {
+		maskedAuthIndex, _ := cooldown["auth_index"].(string)
+		if email := emailByAuthMask[maskedAuthIndex]; email != "" {
+			cooldown["email"] = email
+		}
+	}
+}
+
+func uniqueEmailByMask(emailsByAuthIndex map[string]string, mask func(authIndex, email string) string) map[string]string {
+	result := make(map[string]string)
+	ambiguous := make(map[string]struct{})
+	for authIndex, email := range emailsByAuthIndex {
+		masked := mask(authIndex, email)
+		if masked == "" {
+			continue
+		}
+		if _, exists := ambiguous[masked]; exists {
+			continue
+		}
+		if previous, exists := result[masked]; exists && previous != email {
+			delete(result, masked)
+			ambiguous[masked] = struct{}{}
+			continue
+		}
+		result[masked] = email
+	}
+	return result
 }
 
 func (r managementRunner) GetScheduleConfig(ctx context.Context) (config.ScheduleConfig, error) {
@@ -288,6 +407,10 @@ func (r managementRunner) SetDynamicConfig(ctx context.Context, cfg config.Dynam
 
 func (r managementRunner) GetSamples(ctx context.Context, authIndex, modelGroup string) ([]state.QuotaSample, error) {
 	return r.runtime.GetSamples(ctx, authIndex, modelGroup)
+}
+
+func (r managementRunner) GetProbeSamples(ctx context.Context, probeRoundID, modelGroup string) ([]state.ProbeSampleRecord, error) {
+	return r.runtime.GetProbeSamples(ctx, probeRoundID, modelGroup)
 }
 
 var _ management.Runner = managementRunner{}

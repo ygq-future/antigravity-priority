@@ -392,6 +392,23 @@ func (r *Runtime) GetSamples(ctx context.Context, authIndex, modelGroup string) 
 	return store.GetSamples(authIndex, modelGroup), nil
 }
 
+// GetProbeSamples returns only samples appended by one probe round.
+func (r *Runtime) GetProbeSamples(ctx context.Context, probeRoundID, modelGroup string) ([]state.ProbeSampleRecord, error) {
+	r.mu.Lock()
+	cfg := r.cfg
+	r.mu.Unlock()
+
+	cachePath := cfg.StateCachePath
+	if strings.TrimSpace(cachePath) == "" {
+		cachePath = config.DefaultStateCachePath
+	}
+	store, err := state.Load(ctx, cachePath)
+	if err != nil {
+		return nil, err
+	}
+	return store.GetSamplesByProbeRound(probeRoundID, modelGroup), nil
+}
+
 // AutoApply executes a background scheduled run respecting interval cooldown.
 func (r *Runtime) AutoApply(ctx context.Context) error {
 	return r.runAuto(ctx)
@@ -736,6 +753,25 @@ func (r *Runtime) setDualSnapshot(snap apply.DualGroupSnapshot) {
 	defer r.mu.Unlock()
 	cloned := cloneDualGroupSnapshot(snap)
 	r.latestDualSnapshot = &cloned
+}
+
+func (r *Runtime) currentSnapshotEmails() map[string]string {
+	r.mu.Lock()
+	snapshot := r.latestDualSnapshot
+	r.mu.Unlock()
+	if snapshot == nil {
+		return nil
+	}
+	emails := make(map[string]string)
+	for _, group := range snapshot.Groups {
+		for _, item := range group.Items {
+			if item.Identity.AuthIndex == "" || item.Identity.Email == "" {
+				continue
+			}
+			emails[item.Identity.AuthIndex] = item.Identity.Email
+		}
+	}
+	return emails
 }
 
 func (r *Runtime) setQuotaPreview(preview quotaPreview) {
@@ -1095,7 +1131,7 @@ func redactRuntimeIdentifier(value string) string {
 func buildMetadata() Metadata {
 	return Metadata{
 		Name:             "Antigravity Priority",
-		Version:          "1.2.7",
+		Version:          "1.2.8",
 		Author:           "ygq-future",
 		GitHubRepository: "https://github.com/ygq-future/antigravity-priority",
 		Description:      "Intelligent quota pacing and adaptive burn-rate priority scheduler exclusively for Google Antigravity in CLIProxyAPI.",

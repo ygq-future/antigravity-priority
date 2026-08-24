@@ -87,19 +87,20 @@ type TickerFactory interface {
 
 // RunHistoryEntry records the execution outcome of a scheduling run.
 type RunHistoryEntry struct {
-	Kind      string              `json:"kind"`
-	Trigger   string              `json:"trigger"`
-	At        time.Time           `json:"at"`
-	Attempted int                 `json:"attempted"`
-	Succeeded int                 `json:"succeeded"`
-	Failed    int                 `json:"failed"`
-	Skipped   int                 `json:"skipped"`
-	NoChange  int                 `json:"no_change"`
-	Conflicts int                 `json:"conflicts"`
-	Uncertain int                 `json:"uncertain"`
-	Message   string              `json:"message"`
-	Snapshot  *apply.PlanSnapshot `json:"snapshot,omitempty"`
-	Record    apply.RecordResult  `json:"record"`
+	Kind         string              `json:"kind"`
+	Trigger      string              `json:"trigger"`
+	At           time.Time           `json:"at"`
+	Attempted    int                 `json:"attempted"`
+	Succeeded    int                 `json:"succeeded"`
+	Failed       int                 `json:"failed"`
+	Skipped      int                 `json:"skipped"`
+	NoChange     int                 `json:"no_change"`
+	Conflicts    int                 `json:"conflicts"`
+	Uncertain    int                 `json:"uncertain"`
+	Message      string              `json:"message"`
+	ProbeRoundID string              `json:"probe_round_id,omitempty"`
+	Snapshot     *apply.PlanSnapshot `json:"snapshot,omitempty"`
+	Record       apply.RecordResult  `json:"record"`
 }
 
 // RegisterRequest is the JSON request payload for plugin.register.

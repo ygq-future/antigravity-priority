@@ -278,6 +278,66 @@ func TestStore_SaveAtomic_And_Reload(t *testing.T) {
 	}
 }
 
+func TestStore_ProbeRoundMarksOnlyAppendedSamples(t *testing.T) {
+	store, err := state.Load(context.Background(), filepath.Join(t.TempDir(), "round-cache.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
+	reset5h := now.Add(5 * time.Hour)
+	reset7d := now.Add(7 * 24 * time.Hour)
+	mark := func(at time.Time, short, long int64, round string) {
+		t.Helper()
+		err := store.MarkProbeSuccess(context.Background(), state.ProbeSuccess{
+			AuthIndex:            "round-auth",
+			Provider:             core.ProviderAntigravity,
+			ModelGroup:           "gemini",
+			ObservedAt:           at,
+			ResetAt:              reset7d,
+			ShortWindowResetAt:   reset5h,
+			ShortWindowRemaining: &short,
+			LongWindowResetAt:    reset7d,
+			LongWindowRemaining:  &long,
+			ProbeRoundID:         round,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	mark(now, 100, 100, "round-1")
+	mark(now.Add(15*time.Minute), 100, 100, "round-2")
+	if records := store.GetSamplesByProbeRound("round-2", "gemini"); len(records) != 0 {
+		t.Fatalf("unchanged probe created round-2 samples: %+v", records)
+	}
+	mark(now.Add(30*time.Minute), 95, 99, "round-3")
+	newerShort, newerLong := int64(90), int64(98)
+	if err := store.MarkProbeSuccess(context.Background(), state.ProbeSuccess{
+		AuthIndex:            "round-auth-newer",
+		Provider:             core.ProviderAntigravity,
+		ModelGroup:           "gemini",
+		ObservedAt:           now.Add(45 * time.Minute),
+		ResetAt:              reset7d,
+		ShortWindowResetAt:   reset5h,
+		ShortWindowRemaining: &newerShort,
+		LongWindowResetAt:    reset7d,
+		LongWindowRemaining:  &newerLong,
+		ProbeRoundID:         "round-3",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	records := store.GetSamplesByProbeRound("round-3", "gemini")
+	if len(records) != 2 || records[0].Sample.ProbeRoundID != "round-3" {
+		t.Fatalf("appended probe sample not attributable to round-3: %+v", records)
+	}
+	if records[0].AuthIndex != "round-auth-newer" {
+		t.Fatalf("probe samples are not newest-first: %+v", records)
+	}
+	if samples := store.GetSamples("round-auth", "gemini"); len(samples) != 2 {
+		t.Fatalf("expected one cold-start and one changed sample, got %d", len(samples))
+	}
+}
+
 func TestStore_MarkProbeScheduled(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()

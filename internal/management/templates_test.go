@@ -139,6 +139,34 @@ func TestStatusHTML_CSSTokenCompleteness(t *testing.T) {
 	}
 }
 
+func TestStatusHTML_ProbeDetailsCoverBothModelGroups(t *testing.T) {
+	html := management.StatusHTML
+	if !strings.Contains(html, `const probeModelGroups = ["gemini", "claude_gpt"];`) {
+		t.Fatal("probe details must request both Antigravity model groups")
+	}
+	if !strings.Contains(html, "groups: groups") {
+		t.Fatal("probe details must pass grouped records to the modal")
+	}
+	if !strings.Contains(html, "probe-history-group") {
+		t.Fatal("probe details modal must render model-group sections")
+	}
+}
+
+func TestStatusHTML_QuotaTracksRemainVisibleWhenEmpty(t *testing.T) {
+	html := management.StatusHTML
+	for _, token := range []string{"--meter-track-bg", "--meter-track-border"} {
+		if !strings.Contains(html, token) {
+			t.Fatalf("quota track contrast token %s is missing", token)
+		}
+	}
+	if !strings.Contains(html, "border: 1px solid var(--meter-track-border)") {
+		t.Fatal("quota tracks must retain a visible border at 0%")
+	}
+	if strings.Contains(html, "background:var(--meter-bg)") {
+		t.Fatal("quota meters must not use the CPA-overridable background token")
+	}
+}
+
 func TestStatusHTML_AllReferencedVarsDefined(t *testing.T) {
 	html := management.StatusHTML
 	styleStart := strings.Index(html, "<style>")
@@ -242,6 +270,15 @@ func TestStatusHTML_ContainsRequiredUIElements(t *testing.T) {
 	}
 	if !strings.Contains(html, `const pendingAuthIndexes = new Set((groupData.changes || []).map(change => change.auth_index));`) {
 		t.Error("pending badges must be sourced from write-qualified changes")
+	}
+	if !strings.Contains(html, `const name = c.email || "Credential";`) {
+		t.Error("apply/history details must display the full email identity")
+	}
+	if strings.Contains(html, `const name = c.name || c.auth_index || "Credential";`) {
+		t.Error("apply/history details must not fall back to masked technical identity")
+	}
+	if !strings.Contains(html, `showModal("probe-history"`) || !strings.Contains(html, "probe_round_id") {
+		t.Error("probe history details must load samples by probe round")
 	}
 	if strings.Contains(html, `else if (String(actualP) !== String(targetP)) {
                     tagBadge = "<span class=\"badge badge-pending\">"`) {

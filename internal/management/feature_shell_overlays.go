@@ -47,6 +47,19 @@ const templateStyleOverlays = `        /* Modals */
             flex-wrap: wrap;
         }
 
+        .probe-history-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .probe-history-group-title {
+            padding: 4px 2px 0;
+            color: var(--text-secondary);
+            font-size: 12px;
+            font-weight: 700;
+        }
+
         .diff-value-box {
             display: flex;
             align-items: center;

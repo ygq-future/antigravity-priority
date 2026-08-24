@@ -128,12 +128,13 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 		audit := fmt.Sprintf("probe completed: %d probe observations", evidence.Probed)
 		snap := primarySnapshot
 		_, projectErr := r.projectRun(ctx, store, result, audit, RunHistoryEntry{
-			Kind:      KindProbe,
-			Trigger:   string(request.Trigger),
-			Attempted: evidence.Probed,
-			Succeeded: len(evidence.ByGroup[request.Config.AntigravityModelGroup].Eligible),
-			Message:   audit,
-			Snapshot:  &snap,
+			Kind:         KindProbe,
+			Trigger:      string(request.Trigger),
+			ProbeRoundID: evidence.RoundID,
+			Attempted:    evidence.Probed,
+			Succeeded:    len(evidence.ByGroup[request.Config.AntigravityModelGroup].Eligible),
+			Message:      audit,
+			Snapshot:     &snap,
 		})
 		return projectErr
 	}

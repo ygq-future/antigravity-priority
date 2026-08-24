@@ -38,6 +38,7 @@ type Runner interface {
 	GetDynamicConfig(ctx context.Context) (config.DynamicConfig, error)
 	SetDynamicConfig(ctx context.Context, cfg config.DynamicConfig) error
 	GetSamples(ctx context.Context, authIndex, modelGroup string) ([]state.QuotaSample, error)
+	GetProbeSamples(ctx context.Context, probeRoundID, modelGroup string) ([]state.ProbeSampleRecord, error)
 }
 
 // RunRequest encapsulates parameters for a manual scheduling run.
@@ -294,10 +295,32 @@ func (h *Handler) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleSetConfig(w http.ResponseWriter, r *http.Request) {
-	var req config.DynamicConfig
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	var fields map[string]json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&fields); err != nil {
 		h.writeJSONError(w, http.StatusBadRequest, "invalid dynamic config JSON: "+err.Error())
 		return
+	}
+	payload, err := json.Marshal(fields)
+	if err != nil {
+		h.writeJSONError(w, http.StatusBadRequest, "invalid dynamic config JSON: "+err.Error())
+		return
+	}
+	var req config.DynamicConfig
+	if err := json.Unmarshal(payload, &req); err != nil {
+		h.writeJSONError(w, http.StatusBadRequest, "invalid dynamic config JSON: "+err.Error())
+		return
+	}
+	// DynamicConfig.UnmarshalJSON seeds omitted fields from defaults so old
+	// persisted documents remain valid. HTTP updates are different: an older
+	// page may omit a newer field, and that omission must preserve the active
+	// runtime value rather than silently applying a default.
+	if _, present := fields["ignore_disabled_host"]; !present {
+		current, err := h.runner.GetDynamicConfig(r.Context())
+		if err != nil {
+			h.writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		req.IgnoreDisabledHost = current.IgnoreDisabledHost
 	}
 
 	if err := h.runner.SetDynamicConfig(r.Context(), req); err != nil {
@@ -397,6 +420,11 @@ func overlaySnapshotIdentities(rawItems any, identities []apply.SnapshotIdentity
 }
 
 func (h *Handler) handleGetSamples(w http.ResponseWriter, r *http.Request) {
+	if probeRoundID := strings.TrimSpace(r.URL.Query().Get("probe_round_id")); probeRoundID != "" {
+		h.handleGetProbeSamples(w, r, probeRoundID)
+		return
+	}
+
 	authIndex := r.URL.Query().Get("auth_index")
 	if authIndex == "" {
 		h.writeJSONError(w, http.StatusBadRequest, "auth_index is required")
@@ -420,6 +448,44 @@ func (h *Handler) handleGetSamples(w http.ResponseWriter, r *http.Request) {
 				"samples": claudeSamples,
 			},
 		},
+	})
+}
+
+func (h *Handler) handleGetProbeSamples(w http.ResponseWriter, r *http.Request, probeRoundID string) {
+	modelGroup, err := config.ParseAntigravityModelGroup(strings.TrimSpace(r.URL.Query().Get("model_group")))
+	if err != nil {
+		h.writeJSONError(w, http.StatusBadRequest, "model_group is required")
+		return
+	}
+	records, err := h.runner.GetProbeSamples(r.Context(), probeRoundID, string(modelGroup))
+	if err != nil {
+		h.writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	emailByAuthIndex := make(map[string]string)
+	if snapshot, snapshotErr := h.runner.LatestSnapshot(r.Context()); snapshotErr == nil {
+		for _, group := range snapshot.Groups {
+			for _, item := range group.Items {
+				emailByAuthIndex[item.Identity.AuthIndex] = item.Identity.Email
+			}
+		}
+	}
+	result := make([]map[string]any, 0, len(records))
+	for _, record := range records {
+		result = append(result, map[string]any{
+			"auth_index": record.AuthIndex,
+			"email":      emailByAuthIndex[record.AuthIndex],
+			"sample":     record.Sample,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"probe_round_id": probeRoundID,
+		"model_group":    string(modelGroup),
+		"records":        result,
 	})
 }
 

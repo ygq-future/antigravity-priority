@@ -20,15 +20,15 @@ const overviewSamplesMarkup = `
     </div>
 `
 
-const templateScriptOverviewSamples = `        async function openSamplesModal(authIndex, name) {
+const templateScriptOverviewSamples = `        async function openSamplesModal(authIndex, email) {
             const modal = document.getElementById("samplesModal");
             const title = document.getElementById("samplesModalTitle");
             const sub = document.getElementById("samplesModalSubtitle");
             const body = document.getElementById("samplesModalBody");
             if (!modal || !body) return;
 
-            title.textContent = (name || authIndex) + " - " + t("samplesModalTitle");
-            sub.textContent = "ID: " + authIndex;
+            title.textContent = (email || "Credential") + " - " + t("samplesModalTitle");
+            sub.textContent = email ? "Email: " + email : "";
             body.innerHTML = "<div class=\"empty-state\">" + t("loading") + "</div>";
             modal.hidden = false;
 
@@ -65,7 +65,7 @@ const templateScriptOverviewSamples = `        async function openSamplesModal(a
                     else if (num <= 30) fillClass = "meter-fill-warning";
 
                     return "<div style=\"display:flex; align-items:center; gap:8px; width:100%; min-width:85px; max-width:140px;\">" +
-                        "<div style=\"flex:1; height:5px; background:var(--meter-bg); border-radius:999px; overflow:hidden;\">" +
+                        "<div style=\"flex:1; height:7px; background:var(--meter-track-bg); border:1px solid var(--meter-track-border); border-radius:999px; overflow:hidden;\">" +
                             "<div class=\"meter-fill " + fillClass + "\" style=\"width:" + num + "%; height:100%; border-radius:999px;\"></div>" +
                         "</div>" +
                         "<strong style=\"font-size:11px; font-family:monospace; min-width:32px; text-align:right;\">" + num + "%</strong>" +
@@ -97,7 +97,7 @@ const templateScriptOverviewSamples = `        async function openSamplesModal(a
 
                 html += "</table>";
                 body.innerHTML = html;
-                sub.textContent = "ID: " + authIndex + " · " + groupLabel;
+                sub.textContent = (email ? "Email: " + email : "") + " · " + groupLabel;
             } catch (err) {
                 body.innerHTML = "<div class=\"empty-state\" style=\"color:var(--accent-red-text);\">" + escapeHTML(err.message) + "</div>";
             }

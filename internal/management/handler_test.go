@@ -97,6 +97,18 @@ func (m *mockRunner) GetSamples(ctx context.Context, authIndex, modelGroup strin
 	}, nil
 }
 
+func (m *mockRunner) GetProbeSamples(ctx context.Context, probeRoundID, modelGroup string) ([]state.ProbeSampleRecord, error) {
+	return []state.ProbeSampleRecord{{
+		AuthIndex:  "auth_test",
+		ModelGroup: modelGroup,
+		Sample: state.QuotaSample{
+			ObservedAt:     time.Now().UTC(),
+			ShortWindowRem: 85,
+			LongWindowRem:  80,
+		},
+	}}, nil
+}
+
 func TestHandler_Run_Probe_Success(t *testing.T) {
 	called := false
 	runner := &mockRunner{
@@ -602,6 +614,44 @@ func TestHandler_SetDynamicConfig_Success(t *testing.T) {
 	}
 }
 
+func TestHandler_SetDynamicConfig_MissingIgnoreDisabledHostPreservesCurrentValue(t *testing.T) {
+	runner := &mockRunner{dynamicConfig: state.DynamicConfig{
+		AutoApply:                true,
+		Interval:                 "20m",
+		AntigravityModelGroup:    "gemini",
+		MaxConcurrency:           4,
+		MinChange:                1,
+		UrgencyTolerance:         0.05,
+		RateLimitCooldownMinutes: 5,
+		QuotaSampleCapacity:      6,
+		IgnoreDisabledHost:       false,
+		PriorityRules: state.PriorityRulesConfig{
+			BoostStartPriority:  999,
+			NormalStartPriority: 100,
+		},
+		Schedule: state.ScheduleConfig{
+			WindowStart: "09:00",
+			WindowEnd:   "23:00",
+		},
+	}}
+	handler := management.NewHandler(runner)
+
+	// Older clients may omit this field. An omitted field must not silently
+	// restore the canonical default and re-enable disabled-host filtering.
+	body := `{"auto_apply":true,"interval":"20m","antigravity_model_group":"gemini","max_concurrency":4,"min_change":1,"urgency_tolerance":0.05,"rate_limit_cooldown_minutes":5,"quota_sample_capacity":6,"priority_rules":{"boost_start_priority":999,"normal_start_priority":100},"schedule":{"paused":false,"window_enabled":true,"window_start":"09:00","window_end":"23:00"}}`
+	req := httptest.NewRequest(http.MethodPost, "/runtime-config", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if runner.dynamicConfig.IgnoreDisabledHost {
+		t.Fatal("omitted ignore_disabled_host must preserve the active false value")
+	}
+}
+
 func TestHandler_SetDynamicConfig_InvalidJSON(t *testing.T) {
 	handler := management.NewHandler(&mockRunner{})
 	req := httptest.NewRequest(http.MethodPost, "/runtime-config", strings.NewReader("{invalid"))
@@ -693,5 +743,40 @@ func TestHandler_GetSamples_Success(t *testing.T) {
 	samples, ok := geminiGroup["samples"].([]any)
 	if !ok || len(samples) != 1 {
 		t.Fatalf("expected 1 sample for gemini, got %v", geminiGroup["samples"])
+	}
+}
+
+func TestHandler_GetProbeSamples_Success(t *testing.T) {
+	runner := &mockRunner{snapshotFunc: func(context.Context) (apply.DualGroupSnapshot, error) {
+		return apply.DualGroupSnapshot{Groups: map[string]apply.GroupSnapshot{
+			"gemini": {Items: []apply.SnapshotItem{{Identity: apply.SnapshotIdentity{
+				AuthIndex: "auth_test",
+				Email:     "probe@example.com",
+			}}}},
+		}}, nil
+	}}
+	handler := management.NewHandler(runner)
+	req := httptest.NewRequest(http.MethodGet, "/samples?probe_round_id=round-1&model_group=gemini", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var result map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode probe samples failed: %v", err)
+	}
+	if result["probe_round_id"] != "round-1" || result["model_group"] != "gemini" {
+		t.Fatalf("unexpected probe sample metadata: %+v", result)
+	}
+	records, ok := result["records"].([]any)
+	if !ok || len(records) != 1 {
+		t.Fatalf("expected one probe sample record, got %v", result["records"])
+	}
+	record, _ := records[0].(map[string]any)
+	if record["email"] != "probe@example.com" {
+		t.Fatalf("probe sample email=%v, want full CPA Host email", record["email"])
 	}
 }

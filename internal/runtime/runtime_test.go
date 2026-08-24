@@ -629,6 +629,89 @@ func TestRuntime_ProbeProjectsBothGroupsFromOneQuotaResponse(t *testing.T) {
 	}
 }
 
+func TestRuntime_ProbeAndSyncHostUseTheSameLearnedCycleBurnRate(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	now := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
+	reset5h := now.Add(5 * time.Hour)
+	reset7d := now.Add(17 * time.Hour)
+	store, err := state.Load(context.Background(), cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, sample := range []struct {
+		at    time.Time
+		short int64
+		long  int64
+	}{
+		{at: now.Add(-time.Hour), short: 100, long: 100},
+		{at: now.Add(-30 * time.Minute), short: 90, long: 97},
+	} {
+		if err := store.MarkProbeSuccess(context.Background(), state.ProbeSuccess{
+			AuthIndex:            "consistent-auth",
+			Provider:             core.ProviderAntigravity,
+			ModelGroup:           "gemini",
+			ObservedAt:           sample.at,
+			ResetAt:              reset7d,
+			Remaining:            sample.long,
+			ShortWindowResetAt:   reset5h,
+			ShortWindowRemaining: &sample.short,
+			LongWindowResetAt:    reset7d,
+			LongWindowRemaining:  &sample.long,
+			Source:               state.SourceFreshProbe,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if rate := store.GetCycleBurnRate("consistent-auth", "gemini"); rate < 0.195-1e-6 || rate > 0.195+1e-6 {
+		t.Fatalf("learned cycle burn rate = %v, want 0.195", rate)
+	}
+	if err := store.SaveAtomic(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := newMockHost()
+	mock.files = []host.AuthFile{{
+		Name:      "consistent-account",
+		Email:     "consistent@example.com",
+		AuthIndex: "consistent-auth",
+		Provider:  string(core.ProviderAntigravity),
+		Type:      string(core.CredentialTypeAntigravity),
+		Priority:  100,
+	}}
+	mock.httpResponse.Body = []byte(`{
+		"models": {
+			"gemini-2.5-pro": {"quotaInfo":{"windows":[
+				{"name":"5h","remainingFraction":1.0,"resetTime":"2026-08-23T17:00:00Z"},
+				{"name":"7d","remainingFraction":0.57,"resetTime":"2026-08-24T05:00:00Z"}
+			]}}
+		}
+	}`)
+	r := newTestRuntime(t, runtime.Options{Host: mock, Clock: &testClock{now: now}, Sleeper: testSleeper{}})
+	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "enabled: true\nstate_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
+		t.Fatal(err)
+	}
+	probeSnapshot, err := r.LatestSnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	probeTarget := probeSnapshot.Groups["gemini"].Items[0].Target.Priority
+
+	syncSnapshot, err := r.SyncHost(context.Background(), config.AntigravityModelGroupGemini)
+	if err != nil {
+		t.Fatal(err)
+	}
+	syncTarget := syncSnapshot.Groups["gemini"].Items[0].Target.Priority
+	if probeTarget != syncTarget {
+		t.Fatalf("probe target=%d and sync target=%d diverged for identical quota evidence", probeTarget, syncTarget)
+	}
+	if probeTarget != 100 {
+		t.Fatalf("consistent learned-rate target=%d, want regular 100", probeTarget)
+	}
+}
+
 func TestRuntime_ProductionRunner_FilteredAuthIndexes(t *testing.T) {
 	mock := newMockHost()
 	mock.files = []host.AuthFile{
@@ -1708,6 +1791,7 @@ func TestRuntime_DynamicConfig_SurvivesReconfigure(t *testing.T) {
 		UrgencyTolerance:         0.05,
 		RateLimitCooldownMinutes: 5,
 		QuotaSampleCapacity:      6,
+		IgnoreDisabledHost:       false,
 		PriorityRules: state.PriorityRulesConfig{
 			BoostStartPriority:  980,
 			NormalStartPriority: 200,
@@ -1743,6 +1827,35 @@ func TestRuntime_DynamicConfig_SurvivesReconfigure(t *testing.T) {
 	}
 	if cfg.MaxConcurrency != 10 {
 		t.Errorf("expected MaxConcurrency=10, got %d", cfg.MaxConcurrency)
+	}
+	if cfg.IgnoreDisabledHost {
+		t.Fatal("expected ignore disabled host=false to survive Reconfigure")
+	}
+
+	if err := r.SetScheduleConfig(context.Background(), state.ScheduleConfig{
+		Paused:        false,
+		WindowEnabled: true,
+		WindowStart:   "09:00",
+		WindowEnd:     "23:00",
+	}); err != nil {
+		t.Fatalf("set schedule config failed: %v", err)
+	}
+	gotDynamic, err := r.GetDynamicConfig(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotDynamic.IgnoreDisabledHost {
+		t.Fatal("schedule persistence must not re-enable disabled-host inclusion filtering")
+	}
+
+	reloaded := runtime.New(runtime.Options{StateCachePath: cachePath})
+	defer func() { _ = reloaded.Shutdown(context.Background()) }()
+	reloadedDynamic, err := reloaded.GetDynamicConfig(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloadedDynamic.IgnoreDisabledHost {
+		t.Fatal("ignore disabled host=false must survive runtime reload")
 	}
 }
 

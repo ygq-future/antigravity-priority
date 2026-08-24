@@ -100,7 +100,7 @@ const templateScriptDiagnostics = `        let latestDiagnostics = null;
                     var r = (it.reason || "").toLowerCase();
                     if (r.indexOf("429") >= 0 || r.indexOf("cooldown") >= 0) {
                         cooldowns.push({
-                            auth_index: it.name || it.auth_index,
+                            email: it.email || "Credential",
                             model_group: groupKey,
                             reason: it.reason || "429 rate limit cooldown",
                             cooldown_until: (it.short_window_reset_at || it.reset_at || null)
@@ -217,7 +217,7 @@ const templateScriptDiagnostics = `        let latestDiagnostics = null;
                         html += "<div class=\"diag-cooldown-item\">" +
                             "<div style=\"display:flex; flex-direction:column; gap:4px; min-width:0;\">" +
                                 "<div style=\"display:flex; align-items:center; gap:6px;\">" +
-                                    "<strong style=\"font-size:13px; color:var(--text-primary);\">" + escapeHTML(c.auth_index || "Credential") + "</strong>" +
+                                    "<strong style=\"font-size:13px; color:var(--text-primary);\">" + escapeHTML(c.email || "Credential") + "</strong>" +
                                     groupTag +
                                     "<span class=\"badge badge-danger\" style=\"font-size:10px;\">429 Cooldown</span>" +
                                 "</div>" +

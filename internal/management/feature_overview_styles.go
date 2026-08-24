@@ -115,8 +115,10 @@ const templateStyleOverviewCards = `        /* Credentials Display (Grid 3 Colum
         }
 
         .meter-track {
-            height: 5px;
-            background: var(--meter-bg);
+            height: 7px;
+            min-height: 7px;
+            background: var(--meter-track-bg);
+            border: 1px solid var(--meter-track-border);
             border-radius: 999px;
             overflow: hidden;
             position: relative;

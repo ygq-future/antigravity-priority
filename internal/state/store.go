@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -86,6 +87,16 @@ type ProbeSuccess struct {
 	PlanType             core.PlanType
 	Source               Source
 	SampleCapacity       int
+	ProbeRoundID         string
+}
+
+// ProbeSampleRecord identifies a quota sample appended during a probe round.
+// It intentionally contains only the sample and its technical credential key;
+// management adapters may resolve the key to a display email.
+type ProbeSampleRecord struct {
+	AuthIndex  string
+	ModelGroup string
+	Sample     QuotaSample
 }
 
 // ProbeFailure contains diagnostic information after a probe failure.
@@ -282,6 +293,9 @@ func (s *Store) MarkProbeSuccess(ctx context.Context, success ProbeSuccess) erro
 		success.LongWindowRemaining,
 		capacity,
 	)
+	if sampleAppended(prev.Samples, newSamples) && strings.TrimSpace(success.ProbeRoundID) != "" && len(newSamples) > 0 {
+		newSamples[len(newSamples)-1].ProbeRoundID = strings.TrimSpace(success.ProbeRoundID)
+	}
 
 	entry := Entry{
 		SchemaVersion:            SchemaVersion,
@@ -390,6 +404,47 @@ func (s *Store) GetSamples(authIndex, modelGroup string) []QuotaSample {
 		return nil
 	}
 	return append([]QuotaSample(nil), entry.Samples...)
+}
+
+// GetSamplesByProbeRound returns only samples appended by the specified probe
+// round. Unchanged quota observations are deliberately absent.
+func (s *Store) GetSamplesByProbeRound(probeRoundID, modelGroup string) []ProbeSampleRecord {
+	probeRoundID = strings.TrimSpace(probeRoundID)
+	modelGroup = entryModelGroup(modelGroup)
+	if probeRoundID == "" || modelGroup == "" {
+		return nil
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	records := make([]ProbeSampleRecord, 0)
+	for _, entry := range s.entries {
+		if entry.ModelGroup != modelGroup {
+			continue
+		}
+		for _, sample := range entry.Samples {
+			if sample.ProbeRoundID != probeRoundID {
+				continue
+			}
+			records = append(records, ProbeSampleRecord{
+				AuthIndex:  entry.AuthIndex,
+				ModelGroup: modelGroup,
+				Sample:     sample,
+			})
+		}
+	}
+	sort.Slice(records, func(left, right int) bool {
+		leftSample := records[left].Sample
+		rightSample := records[right].Sample
+		if !leftSample.ObservedAt.Equal(rightSample.ObservedAt) {
+			return leftSample.ObservedAt.After(rightSample.ObservedAt)
+		}
+		if leftSample.Sequence != rightSample.Sequence {
+			return leftSample.Sequence > rightSample.Sequence
+		}
+		return records[left].AuthIndex < records[right].AuthIndex
+	})
+	return records
 }
 
 // NeedsProbe evaluates whether the entry requires a fresh probe.

@@ -32,7 +32,7 @@ A high-performance, single-provider priority scheduler and quota management plug
 - **Adaptive Online Learning ($C_{\text{cycle}}$)**: Automatically measures and smooths real consumption velocity without requiring manual coefficient tuning.
 - **Self-Healing Soft Fallback & Hard Disabling**: Soft-depletes 5-hour burst exhaustion for automatic recovery upon reset, and hard-disables exhausted 7-day weekly accounts.
 - **Web UI Dynamic Config Center**: CPA host YAML only requires `enabled: true`. All scheduling intervals, concurrency, model groups, and scoring rules are visually managed with instant zero-restart hot-reloads.
-- **Embedded Dual-Theme Dashboard**: Zero external CDN and strictly CSP-compliant, providing real-time quota meters, instant prediction switching, complete credential identity, and write-back diff confirmation controls while keeping tokens, keys, audits, and diagnostics safely redacted.
+- **Embedded Dual-Theme Dashboard**: Zero external CDN and strictly CSP-compliant, providing real-time quota meters, instant prediction switching, complete email identity, and write-back diff confirmation controls while keeping tokens, keys, and persisted audits safely redacted.
 
 ---
 
@@ -53,7 +53,7 @@ Load plugin
   -> Execute according to run mode
        - apply: replace each credential document once through the unified Host Transition and verify the resulting state (min_change filter)
        - probe / sync: update in-memory state, diagnostics, and management snapshots only
-  -> Display full CPA email/authIndex, double-window meters, urgency scores, boost badges, and a redacted audit summary on the authenticated management page
+  -> Display full CPA email, double-window meters, urgency scores, boost badges, and a redacted audit summary on the authenticated management page; authIndex remains an internal technical correlation key
 ```
 
 ---
@@ -154,7 +154,7 @@ The plugin registers **resources** (static management dashboard) and **routes** 
     - **Instant Model Group Switching**: Toggle between Gemini and Claude/GPT views with smart `🔮 Predicted Priority` badges.
     - **Two-Stage Control**: `📡 Fetch Quota (10s cooldown)`, `⚡ Apply Now (with Diff confirmation)`, `🔄 Reset to Default`.
     - **Execution History**: Last 10 runs with `🔍 View Details` modal to inspect Apply write-back or Probe snapshots.
-    - **System Diagnostics**: Scheduler engine lifecycle, active window states, 429 rate limit circuit breaking monitor, and last apply health metrics with one-click JSON Copy.
+    - **System Diagnostics**: Scheduler engine lifecycle, active window states, 429 rate limit circuit breaking monitor, full email identity, and last apply health metrics with one-click JSON Copy.
     - **⚙️ Config Center**: Online management of all scheduling and algorithm parameters with instant hot reload.
 
 ### Management API (Dynamic, Key Required)
@@ -172,13 +172,15 @@ The plugin registers **resources** (static management dashboard) and **routes** 
 - `POST /v0/management/plugins/antigravity-priority/schedule/config`
   - Updates active schedule time window or toggles pause/resume.
 - `GET /v0/management/plugins/antigravity-priority/diagnostics`
-  - Exports redacted scheduler diagnostic metrics, active 429 cooldowns, background worker state, and run history.
+  - Exports scheduler diagnostic metrics, active 429 cooldowns, background worker state, and run history; account identity uses full email while tokens, keys, and persisted audit fields remain redacted.
 - `POST /v0/management/plugins/antigravity-priority/sync`
   - Actively re-syncs latest credential files from CPA host and regenerates dual-group snapshots immediately.
 - `GET /v0/management/plugins/antigravity-priority/samples?auth_index=xxx`
   - Retrieves multi-sample sliding window time-series quota observations for a specific credential.
+- `GET /v0/management/plugins/antigravity-priority/samples?probe_round_id=xxx&model_group=gemini|claude_gpt`
+  - Retrieves quota samples actually appended for the specified probe round and model group; credentials with unchanged quota are absent from the result.
 - `GET /v0/management/plugins/antigravity-priority/snapshot/latest`
-  - Returns the latest dual-group decision planning snapshot (`DualGroupSnapshot`); the authenticated management page receives full CPA email/authIndex while sensitive tokens and audit fields remain redacted.
+  - Returns the latest dual-group decision planning snapshot (`DualGroupSnapshot`) with full CPA email and technical `auth_index` for API correlation; the management page uses email as the account name while sensitive tokens and audit fields remain redacted.
 
 ---
 

@@ -130,14 +130,14 @@ const templateScriptOverviewRender = `        function renderDashboard() {
 
                 const formattedReason = formatReason(item.reason, isBoosted, item.target && item.target.disabled);
                 const authIdx = item.auth_index || "";
-                const credDisplayName = item.email;
+                const credDisplayName = item.email || "Credential";
 
                 card.innerHTML =
                     "<div class=\"cred-info\">" +
                         "<div class=\"cred-name\">" +
                             "<span>" + escapeHTML(credDisplayName) + "</span>" +
                         "</div>" +
-                        "<div class=\"cred-meta\">ID: " + escapeHTML(item.auth_index || "-") + " · " + escapeHTML(item.plan_type || "Antigravity") + "</div>" +
+                        "<div class=\"cred-meta\">" + escapeHTML(item.plan_type || "Antigravity") + "</div>" +
                         "<div class=\"cred-badge-row\">" +
                             statusBadge +
                             "<div class=\"metric-pill metric-pill-urgency\">" + t("urgencyLabel") + "<strong>" + urgency + "</strong></div>" +

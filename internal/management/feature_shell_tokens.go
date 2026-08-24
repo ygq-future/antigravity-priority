@@ -35,6 +35,8 @@ const templateStyleTokens = `
             --accent-purple-subtle: #faf5ff;
             --accent-purple-text: #6d28d9;
             --meter-bg: #e2e8f0;
+            --meter-track-bg: #cbd5e1;
+            --meter-track-border: #94a3b8;
             --meter-fill: #10b981;
             --meter-warn: #f59e0b;
             --meter-danger: #ef4444;
@@ -84,6 +86,8 @@ const templateStyleTokens = `
                 --accent-purple-subtle: rgba(88, 28, 135, 0.25);
                 --accent-purple-text: #c084fc;
                 --meter-bg: #27272a;
+                --meter-track-bg: #3f3f46;
+                --meter-track-border: #52525b;
                 --meter-fill: #3b82f6;
                 --meter-warn: #f59e0b;
                 --meter-danger: #ef4444;
@@ -133,6 +137,8 @@ const templateStyleTokens = `
             --accent-purple-subtle: rgba(88, 28, 135, 0.25);
             --accent-purple-text: #c084fc;
             --meter-bg: #27272a;
+            --meter-track-bg: #3f3f46;
+            --meter-track-border: #52525b;
             --meter-fill: #3b82f6;
             --meter-warn: #f59e0b;
             --meter-danger: #ef4444;
@@ -181,6 +187,8 @@ const templateStyleTokens = `
             --accent-purple-subtle: #faf5ff;
             --accent-purple-text: #6d28d9;
             --meter-bg: #e2e8f0;
+            --meter-track-bg: #cbd5e1;
+            --meter-track-border: #94a3b8;
             --meter-fill: #10b981;
             --meter-warn: #f59e0b;
             --meter-danger: #ef4444;

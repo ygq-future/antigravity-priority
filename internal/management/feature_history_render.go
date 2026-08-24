@@ -25,7 +25,7 @@ const templateScriptHistory = `        function formatHistoryKind(kind) {
                 const dateStr = entry.at ? new Date(entry.at).toLocaleString(currentLang === "zh-CN" ? "zh-CN" : "en-US") : "-";
                 const kindText = formatHistoryKind(entry.kind);
                 const msg = entry.message || "";
-                const hasSnapshot = entry.snapshot && (entry.snapshot.items || entry.snapshot.changes);
+                const hasSnapshot = entry.kind === "probe" ? Boolean(entry.probe_round_id) : (entry.snapshot && (entry.snapshot.items || entry.snapshot.changes));
 
                 const succText = (currentLang === "zh-CN" ? "成功: " : "Succeeded: ") + (entry.succeeded || 0);
                 const failText = (currentLang === "zh-CN" ? "失败: " : "Failed: ") + (entry.failed || 0);

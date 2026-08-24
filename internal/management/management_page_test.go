@@ -40,7 +40,7 @@ func TestManagementPageAssetContract(t *testing.T) {
 }
 
 func TestOverviewUsesCPAEmailAsCredentialTitle(t *testing.T) {
-	if !strings.Contains(StatusHTML, `const credDisplayName = item.email;`) {
+	if !strings.Contains(StatusHTML, `const credDisplayName = item.email || "Credential";`) {
 		t.Fatal("overview credential title must use the CPA Host email")
 	}
 	if strings.Contains(StatusHTML, `item.name || item.account || item.auth_index`) {
@@ -312,6 +312,58 @@ async function apiFetch() {
 });
 `
 	runNodeFixture(t, node, "samples-modal.js", harness)
+}
+
+func TestProbeHistoryDetailsRenderBothModelGroups(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not available; probe history behavior is checked in the Node-enabled verification environment")
+	}
+
+	harness := templateScriptHistoryDetails + templateScriptModals + `
+const calls = [];
+function element(initial) {
+    return Object.assign({hidden:true,textContent:"",innerHTML:"",children:[],appendChild:function(child){this.children.push(child);}}, initial || {});
+}
+const elements = {
+    diffModal: element(),
+    modalTitle: element(),
+    modalSummary: element(),
+    modalDiffList: element(),
+    btnModalApply: element()
+};
+const document = {
+    getElementById: function(id) { return elements[id] || null; },
+    createElement: function() { return element(); }
+};
+const SAMPLES_PATH = "/samples";
+const currentLang = "zh-CN";
+const latestDiagnostics = {run_history:[{kind:"probe",probe_round_id:"round-1"}]};
+function showToast(message, kind) { throw new Error(message + " (" + kind + ")"); }
+function escapeHTML(value) { return String(value); }
+function apiFetch(path) {
+    calls.push(path);
+    if (path.indexOf("model_group=gemini") >= 0) {
+        return Promise.resolve({records:[{email:"gemini@example.com",sample:{observed_at:"2026-08-23T02:00:00Z",short_window_rem:0,long_window_rem:25}}]});
+    }
+    return Promise.resolve({records:[{email:"claude@example.com",sample:{observed_at:"2026-08-23T02:01:00Z",short_window_rem:75,long_window_rem:0}}]});
+}
+function t(key) { return key; }
+(async function() {
+    showHistoryDetails(0);
+    await new Promise(function(resolve) { setTimeout(resolve, 0); });
+    if (calls.length !== 2) throw new Error("probe history did not request both model groups");
+    if (!calls.some(function(path) { return path.indexOf("model_group=gemini") >= 0; })) throw new Error("Gemini probe samples were not requested");
+    if (!calls.some(function(path) { return path.indexOf("model_group=claude_gpt") >= 0; })) throw new Error("Claude/GPT probe samples were not requested");
+    if (elements.modalDiffList.children.length !== 2) throw new Error("probe history did not render one section per changed model group");
+    if (elements.modalDiffList.children[0].innerHTML.indexOf("Gemini") < 0) throw new Error("Gemini section is missing");
+    if (elements.modalDiffList.children[1].innerHTML.indexOf("Claude/GPT") < 0) throw new Error("Claude/GPT section is missing");
+})().catch(function(err) {
+    console.error(err.stack || err.message);
+    process.exit(1);
+});
+`
+	runNodeFixture(t, node, "probe-history.js", harness)
 }
 
 func applyPreviewExpectationJSON(wantModal bool, wantMode string, wantCount, wantToasts int) string {

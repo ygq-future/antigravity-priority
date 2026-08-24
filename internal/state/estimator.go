@@ -30,6 +30,7 @@ type QuotaSample struct {
 	ShortWindowResetAt time.Time `json:"short_window_reset_at,omitempty"`
 	ShortWindowRem     int64     `json:"short_window_rem"`
 	LongWindowRem      int64     `json:"long_window_rem"`
+	ProbeRoundID       string    `json:"probe_round_id,omitempty"`
 }
 
 // UpdateSamplesAndCycleBurnRate updates the sliding window sample queue and adaptively estimates
@@ -154,6 +155,16 @@ func nextSampleSequence(samples []QuotaSample) uint64 {
 		return 1
 	}
 	return samples[len(samples)-1].Sequence + 1
+}
+
+func sampleAppended(previous, current []QuotaSample) bool {
+	if len(current) == 0 {
+		return false
+	}
+	if len(previous) == 0 {
+		return true
+	}
+	return current[len(current)-1].Sequence > previous[len(previous)-1].Sequence
 }
 
 func sampleBySequence(samples []QuotaSample, sequence uint64) (QuotaSample, bool) {

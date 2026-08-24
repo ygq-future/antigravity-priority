@@ -32,7 +32,7 @@ CLIProxyAPI (CPA) 专精型 **Google Antigravity 凭证智能配额调度与自�
 - **自适应动态学习率（Adaptive $C_{\text{cycle}}$）**：基于连续探测增量自动推算每个账号真实的周期消耗能力并平滑收敛，无需用户手动猜测和配置复杂的数学系数。
 - **自愈式软降级与硬禁用**：5 小时短窗耗尽仅软降级优先级至 `-1`（重置后自动静默自愈），7 天周额度耗尽写入宿主硬禁用 `disabled = true`。
 - **UI 动态配置中心（免重启热生效）**：CPA 宿主 YAML 仅需保留 `enabled: true`，所有业务与调度参数统一在 Web UI **`⚙️ 配置中心`** 可视化调节并即时热生效。
-- **嵌入式双主题仪表盘**：零外部 CDN，严格 CSP 安全，完全自适应 CPA 宿主主题，提供配额监控、双组即时预测切换、完整凭证标识与变动 Diff 确认写回控制；令牌、密钥、审计和诊断数据保持安全脱敏。
+- **嵌入式双主题仪表盘**：零外部 CDN，严格 CSP 安全，完全自适应 CPA 宿主主题，提供配额监控、双组即时预测切换、完整 email 身份与变动 Diff 确认写回控制；令牌、密钥和持久化审计保持安全脱敏。
 
 ---
 
@@ -53,7 +53,7 @@ CLIProxyAPI (CPA) 专精型 **Google Antigravity 凭证智能配额调度与自�
   -> 根据运行模式执行
        - apply：通过统一 Host Transition 对单个凭证执行一次完整文档替换并回读验证 (min_change 过滤微小变动)
        - probe / sync：仅更新内存状态、诊断与管理快照
-  -> 在认证管理页面展示完整 CPA email/authIndex、双窗口仪表、紧迫度评分、提权状态与脱敏审计摘要
+  -> 在认证管理页面展示完整 CPA email、双窗口仪表、紧迫度评分、提权状态与脱敏审计摘要；authIndex 仅作为内部技术关联键
 ```
 
 ---
@@ -154,7 +154,7 @@ plugins:
     - **双模型组即时切换**：随时切换 Gemini 或 Claude/GPT 视图，非主控组智能标注 `🔮 预测优先级`。
     - **两阶段控制**：提供 `📡 刷新配额 (10s冷却)`、`⚡ 立即写回 (带Diff确认)`、`🔄 重置默认`。
     - **执行历史**：最近 10 次执行记录，支持点击 `🔍 查看明细` 弹窗查看 Apply 实际写回或 Probe 探测快照明细。
-    - **系统诊断**：调度引擎生命周期、时段状态、429 熔断与冷却监控看板、最近写入健康度与脱敏审计流，支持一键复制完整诊断 JSON。
+    - **系统诊断**：调度引擎生命周期、时段状态、429 熔断与冷却监控看板、完整 email 身份、最近写入健康度与脱敏审计流，支持一键复制诊断 JSON。
     - **⚙️ 配置中心**：在线修改所有调度与算法参数，0 秒热生效与一键恢复默认。
 
 ### 管理 API（动态接口，需 Management Key 鉴权）
@@ -172,13 +172,15 @@ plugins:
 - `POST /v0/management/plugins/antigravity-priority/schedule/config`
   - 动态切换自动调度暂停/恢复或更新生效时间区间。
 - `GET /v0/management/plugins/antigravity-priority/diagnostics`
-  - 导出全脱敏的调度器运行诊断数据、429 活跃熔断记录、后台 Ticker 状态、最近写入体征与近期执行记录。
+  - 导出调度器运行诊断数据、429 活跃熔断记录、后台 Ticker 状态、最近写入体征与近期执行记录；账号身份使用完整 email，令牌、密钥及持久化审计字段保持脱敏。
 - `POST /v0/management/plugins/antigravity-priority/sync`
   - 主动从 CPA 宿主同步最新凭证文件列表并即时重新生成双组快照。
 - `GET /v0/management/plugins/antigravity-priority/samples?auth_index=xxx`
   - 获取指定凭证在各模型组下的历史滑动窗口时序采样数据。
+- `GET /v0/management/plugins/antigravity-priority/samples?probe_round_id=xxx&model_group=gemini|claude_gpt`
+  - 获取指定探测轮次和模型组内实际新增的额度样本；额度未变化的凭证不会出现在结果中。
 - `GET /v0/management/plugins/antigravity-priority/snapshot/latest`
-  - 获取最近一次双模型组决策规划快照（`DualGroupSnapshot`）；认证管理页使用完整 CPA email/authIndex，敏感令牌与审计字段保持脱敏。
+  - 获取最近一次双模型组决策规划快照（`DualGroupSnapshot`）；响应保留完整 CPA email 和供 API 关联使用的技术 `auth_index`，管理页仅以 email 作为账号名称，敏感令牌与审计字段保持脱敏。
 
 ---
 
