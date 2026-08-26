@@ -848,6 +848,13 @@ func TestRuntime_ProductionRunner_CachedEvidence(t *testing.T) {
 	if history[0].ProbeRoundID == "" || history[0].Snapshot == nil {
 		t.Fatalf("automatic scheduling history must combine probe and Host projection evidence: %#v", history[0])
 	}
+	latestApply, ok := diagnostics["latest_apply"].(*runtime.RunHistoryEntry)
+	if !ok || latestApply == nil {
+		t.Fatalf("expected latest_apply to be populated by auto_apply run, got %#v", diagnostics["latest_apply"])
+	}
+	if latestApply.Kind != runtime.KindAutoApply {
+		t.Fatalf("latest_apply kind = %q; want %q", latestApply.Kind, runtime.KindAutoApply)
+	}
 }
 
 func TestRuntime_ManualApplyReusesRecentProbeEvidence(t *testing.T) {
@@ -2237,5 +2244,113 @@ func TestRuntime_ResetAllPriorities_ContinuesAfterCredentialFailure(t *testing.T
 	data, _ := os.ReadFile(goodPath)
 	if strings.Contains(string(data), "priority") {
 		t.Fatalf("later reset credential was not processed: %s", data)
+	}
+}
+
+func TestRuntime_Diagnostics_LatestApply_AutoApplyAndManualApply(t *testing.T) {
+	tempDir := t.TempDir()
+	cachePath := filepath.Join(tempDir, "cache.json")
+	authFilePath := filepath.Join(tempDir, "auth.json")
+	_ = os.WriteFile(authFilePath, []byte(`{"access_token":"token_123","project_id":"proj_123","priority":100}`), 0o600)
+
+	mock := newMockHost()
+	mock.files = []host.AuthFile{
+		{
+			Name:      "test-account",
+			AuthIndex: "auth_1",
+			Provider:  string(core.ProviderAntigravity),
+			Type:      string(core.CredentialTypeAntigravity),
+			Priority:  100,
+		},
+	}
+	mock.authDocs["auth_1"] = host.AuthDocument{
+		AuthIndex: "auth_1",
+		Path:      authFilePath,
+	}
+
+	clock := &testClock{now: time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)}
+	r := newTestRuntime(t, runtime.Options{
+		Host:    mock,
+		Clock:   clock,
+		Sleeper: testSleeper{},
+	})
+
+	if _, err := r.Register(context.Background(), runtime.RegisterRequest{
+		ConfigYAML: "enabled: true\nstate_cache_path: " + filepath.ToSlash(cachePath) + "\n",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	dyn, err := r.GetDynamicConfig(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dyn.AutoApply = true
+	if err := r.SetDynamicConfig(context.Background(), dyn); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Initially, no apply has run, latest_apply is nil
+	diag1, err := r.Diagnostics(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diag1["latest_apply"].(*runtime.RunHistoryEntry) != nil {
+		t.Fatalf("expected nil latest_apply before any apply runs, got %#v", diag1["latest_apply"])
+	}
+
+	// 2. Run AutoApply (which results in an auto_apply history entry)
+	if err := r.AutoApply(context.Background()); err != nil {
+		t.Fatalf("auto apply failed: %v", err)
+	}
+	diag2, err := r.Diagnostics(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest2, ok := diag2["latest_apply"].(*runtime.RunHistoryEntry)
+	if !ok || latest2 == nil {
+		t.Fatalf("expected latest_apply to be populated after AutoApply, got %#v", diag2["latest_apply"])
+	}
+	if latest2.Kind != runtime.KindAutoApply {
+		t.Fatalf("expected latest_apply.Kind == %q, got %q", runtime.KindAutoApply, latest2.Kind)
+	}
+
+	// 3. Probe should not overwrite latest_apply
+	clock.now = clock.now.Add(5 * time.Minute)
+	if err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
+		t.Fatalf("probe failed: %v", err)
+	}
+	diag3, err := r.Diagnostics(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest3, ok := diag3["latest_apply"].(*runtime.RunHistoryEntry)
+	if !ok || latest3 == nil {
+		t.Fatalf("expected latest_apply to be preserved after Probe, got %#v", diag3["latest_apply"])
+	}
+	if latest3.Kind != runtime.KindAutoApply || !latest3.At.Equal(latest2.At) {
+		t.Fatalf("Probe unexpectedly modified latest_apply: was %#v, now %#v", latest2, latest3)
+	}
+
+	// 4. Run ManualApply with changes -> latest_apply should now be the manual apply
+	clock.now = clock.now.Add(5 * time.Minute)
+	_ = os.WriteFile(authFilePath, []byte(`{"access_token":"token_123","project_id":"proj_123","priority":50}`), 0o600)
+	mock.mu.Lock()
+	mock.files[0].Priority = 50
+	mock.mu.Unlock()
+	prepareManualApply(t, r, config.AntigravityModelGroupGemini, nil)
+	if err := r.ManualApply(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
+		t.Fatalf("manual apply failed: %v", err)
+	}
+	diag4, err := r.Diagnostics(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest4, ok := diag4["latest_apply"].(*runtime.RunHistoryEntry)
+	if !ok || latest4 == nil {
+		t.Fatalf("expected latest_apply to be populated after ManualApply, got %#v", diag4["latest_apply"])
+	}
+	if latest4.Kind != runtime.KindApply {
+		t.Fatalf("expected latest_apply.Kind == %q, got %q", runtime.KindApply, latest4.Kind)
 	}
 }

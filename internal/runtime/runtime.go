@@ -943,7 +943,7 @@ func (r *Runtime) latestApplyEntry() *RunHistoryEntry {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, entry := range r.runHistory {
-		if entry.Kind == KindApply {
+		if entry.Kind == KindApply || entry.Kind == KindAutoApply {
 			copy := entry
 			return &copy
 		}
@@ -1136,7 +1136,7 @@ func redactRuntimeIdentifier(value string) string {
 func buildMetadata() Metadata {
 	return Metadata{
 		Name:             "Antigravity Priority",
-		Version:          "1.2.9",
+		Version:          "1.2.10",
 		Author:           "ygq-future",
 		GitHubRepository: "https://github.com/ygq-future/antigravity-priority",
 		Description:      "Intelligent quota pacing and adaptive burn-rate priority scheduler exclusively for Google Antigravity in CLIProxyAPI.",
