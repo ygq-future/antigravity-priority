@@ -15,6 +15,7 @@ const templateScriptShellCore = `        const LANG_STORAGE_KEY = "antigravity_p
         let probeCooldownTimer = null;
         let scheduleConfig = null;
         let dynamicConfig = null;
+        let isAuthBlocked = false;
 
         function getManagementKey() {
             try {
@@ -76,8 +77,9 @@ const templateScriptShellCore = `        const LANG_STORAGE_KEY = "antigravity_p
             if (input) {
                 setSavedKey(input.value);
             }
+            isAuthBlocked = false;
             closeKeyModal();
-            refreshDashboard();
+            initializeApp();
         }
 
         const THEME_STORAGE_KEY = "antigravity_priority_theme";

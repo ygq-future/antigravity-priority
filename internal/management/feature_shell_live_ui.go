@@ -40,7 +40,7 @@ const templateScriptLiveUI = `        function updateAllCountdowns() {
         }
 
         async function refreshOverviewSilently() {
-            if (activeTab !== "overview" || document.hidden || silentDashboardRefreshInFlight) return;
+            if (isAuthBlocked || activeTab !== "overview" || document.hidden || silentDashboardRefreshInFlight) return;
             silentDashboardRefreshInFlight = true;
             try {
                 await refreshDashboard({ silent: true });

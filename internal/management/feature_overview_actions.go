@@ -22,6 +22,7 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
         }
 
         async function fetchSnapshot(options) {
+            if (isAuthBlocked) return;
             const settings = options || {};
             try {
                 const data = await apiFetch(SNAPSHOT_PATH);
@@ -42,11 +43,12 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
                 }
                 renderDashboard();
             } catch (err) {
-                if (!settings.silent) showToast(err.message, "error");
+                if (!settings.silent && !isAuthBlocked) showToast(err.message, "error");
             }
         }
 
         async function fetchDiagnostics(options) {
+            if (isAuthBlocked) return;
             const settings = options || {};
             try {
                 const data = await apiFetch(DIAGNOSTICS_PATH);
@@ -56,11 +58,12 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
                 renderDiagnostics();
                 renderScheduleStatus();
             } catch (err) {
-                if (!settings.silent) showToast(err.message, "error");
+                if (!settings.silent && !isAuthBlocked) showToast(err.message, "error");
             }
         }
 
         async function syncHost(options) {
+            if (isAuthBlocked) return;
             const settings = options || {};
             try {
 				const data = await apiFetch(SYNC_PATH, { method: "POST" });
@@ -68,11 +71,13 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
                 renderDashboard();
                 if (settings.notifySync) showToast(t("syncSuccess"), "success");
             } catch (err) {
+                if (isAuthBlocked) throw err;
                 await fetchSnapshot(settings);
             }
         }
 
         async function refreshDashboard(options) {
+            if (isAuthBlocked) return;
             const settings = options || {};
             const btn = document.getElementById("btnRefresh");
             if (btn && settings.notifySync) btn.disabled = true;
@@ -82,7 +87,9 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
                 } else {
                     await fetchSnapshot(settings);
                 }
-                await fetchDiagnostics(settings);
+                if (!isAuthBlocked) {
+                    await fetchDiagnostics(settings);
+                }
             } finally {
                 if (btn && settings.notifySync) btn.disabled = false;
             }

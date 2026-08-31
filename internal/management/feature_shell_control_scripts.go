@@ -182,10 +182,11 @@ const templateScriptControls = `        // Custom Select: Main Model Group
             document.getElementById("panelDiagnostics").hidden = tabId !== "diagnostics";
             document.getElementById("panelConfig").hidden = tabId !== "config";
             document.getElementById("panelHelp").hidden = tabId !== "help";
+            if (isAuthBlocked) return;
             if (tabId === "history") fetchDiagnostics();
             if (tabId === "diagnostics") fetchDiagnostics();
             if (tabId === "config") fetchDynamicConfig();
-			if (tabId === "overview") refreshDashboard({ withSync: true, silent: true });
+            if (tabId === "overview") refreshDashboard({ withSync: true, silent: true });
         }
 
         function getAuthHeader() {
@@ -199,14 +200,34 @@ const templateScriptControls = `        // Custom Select: Main Model Group
         }
 
         async function apiFetch(path, options) {
+            if (isAuthBlocked) {
+                openKeyModal();
+                throw new Error(currentLang === "zh-CN" ? "需要 CPA 管理密钥进行认证 (401 Unauthorized)" : "Management Key required (401 Unauthorized)");
+            }
             const resp = await fetch(path, {
                 ...(options || {}),
                 headers: { ...getAuthHeader(), ...((options && options.headers) || {}) }
             });
             if (resp.status === 401) {
+                isAuthBlocked = true;
+                if (dashboardRefreshInterval) {
+                    clearInterval(dashboardRefreshInterval);
+                    dashboardRefreshInterval = null;
+                }
                 openKeyModal();
                 throw new Error(currentLang === "zh-CN" ? "需要 CPA 管理密钥进行认证 (401 Unauthorized)" : "Management Key required (401 Unauthorized)");
             }
+            if (resp.status === 403) {
+                const text = await resp.text();
+                if (text.indexOf("banned") >= 0 || text.indexOf("IP") >= 0) {
+                    if (dashboardRefreshInterval) {
+                        clearInterval(dashboardRefreshInterval);
+                        dashboardRefreshInterval = null;
+                    }
+                }
+                throw new Error(text || resp.statusText);
+            }
+            isAuthBlocked = false;
             const text = await resp.text();
             if (!resp.ok) {
                 let errMessage = text || resp.statusText;

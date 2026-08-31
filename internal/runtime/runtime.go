@@ -1136,7 +1136,7 @@ func redactRuntimeIdentifier(value string) string {
 func buildMetadata() Metadata {
 	return Metadata{
 		Name:             "Antigravity Priority",
-		Version:          "1.2.10",
+		Version:          "1.2.11",
 		Author:           "ygq-future",
 		GitHubRepository: "https://github.com/ygq-future/antigravity-priority",
 		Description:      "Intelligent quota pacing and adaptive burn-rate priority scheduler exclusively for Google Antigravity in CLIProxyAPI.",

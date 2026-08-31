@@ -35,6 +35,7 @@ const templateScriptProbeSchedule = `        async function triggerProbe() {
         }
 
         async function fetchScheduleConfig() {
+            if (isAuthBlocked) return;
             try {
                 scheduleConfig = await apiFetch(SCHEDULE_CONFIG_PATH);
                 renderScheduleStatus();

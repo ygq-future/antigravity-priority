@@ -424,6 +424,114 @@ function formatReason(reason) { return reason || ""; }
 	runNodeFixture(t, node, "auto-schedule-history.js", harness)
 }
 
+func TestStatusHTML_AuthCircuitBreaker(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not available; auth circuit-breaker behavior is checked in the Node-enabled verification environment")
+	}
+
+	harness := `
+function element(initial) {
+    return Object.assign({hidden:true,textContent:"",innerHTML:"",value:"",disabled:false,classList:{add:function(){},remove:function(){},toggle:function(){}}}, initial || {});
+}
+const elements = {
+    keyModal: element(),
+    manualKeyInput: element(),
+    panelOverview: element(),
+    panelHistory: element(),
+    panelDiagnostics: element(),
+    panelConfig: element(),
+    panelHelp: element(),
+    toastRoot: element()
+};
+const document = {
+    getElementById: function(id) { return elements[id] || null; },
+    querySelectorAll: function() { return []; },
+    addEventListener: function() {},
+    createElement: function() { return element(); },
+    documentElement: { getAttribute: function() { return "dark"; } }
+};
+const window = {
+    matchMedia: function() { return { matches: true }; },
+    location: { search: "" }
+};
+const localStorage = {
+    getItem: function() { return null; },
+    setItem: function() {},
+    removeItem: function() {}
+};
+const sessionStorage = {
+    getItem: function() { return null; },
+    setItem: function() {},
+    removeItem: function() {}
+};
+
+let fetchCount = 0;
+global.fetch = async function(path) {
+    fetchCount++;
+    return {
+        status: 401,
+        ok: false,
+        statusText: "Unauthorized",
+        text: async function() { return "missing management key"; }
+    };
+};
+` + extractPageScript(t) + `
+(async function() {
+    // 1. Initial boot: top-level initializeApp() gets 401 -> sets isAuthBlocked -> stops further initialization
+    await new Promise(function(resolve) { setTimeout(resolve, 50); });
+    if (fetchCount !== 1) {
+        throw new Error("expected exactly 1 fetch before auth circuit-breaker tripped, got " + fetchCount);
+    }
+    if (!isAuthBlocked) {
+        throw new Error("expected isAuthBlocked to be true after 401");
+    }
+    if (elements.keyModal.hidden !== false) {
+        throw new Error("expected keyModal to be visible after 401");
+    }
+
+    // 2. Further calls while auth is blocked must NOT issue network requests
+    try {
+        await apiFetch("/test");
+    } catch (_) {}
+    if (fetchCount !== 1) {
+        throw new Error("expected apiFetch to block without network call when isAuthBlocked=true");
+    }
+
+    // 3. Tab switches while blocked must NOT issue network requests
+    switchTab("diagnostics");
+    if (fetchCount !== 1) {
+        throw new Error("expected switchTab to not fetch when isAuthBlocked=true");
+    }
+
+    // 4. Entering valid key and saving resets auth block and allows successful fetch
+    global.fetch = async function(path) {
+        fetchCount++;
+        return {
+            status: 200,
+            ok: true,
+            statusText: "OK",
+            text: async function() { return JSON.stringify({ ok: true, active_model_group: "gemini" }); }
+        };
+    };
+    elements.manualKeyInput.value = "secret_key";
+    saveKeyAndRefresh();
+    await new Promise(function(resolve) { setTimeout(resolve, 50); });
+    if (isAuthBlocked) {
+        throw new Error("expected isAuthBlocked to be false after saveKeyAndRefresh with valid key");
+    }
+    if (fetchCount <= 1) {
+        throw new Error("expected initializeApp to retry requests after key save");
+    }
+    process.exit(0);
+})().catch(function(err) {
+    console.error(err.stack || err.message);
+    process.exit(1);
+});
+`
+	runNodeFixture(t, node, "auth-circuit-breaker.js", harness)
+}
+
 func applyPreviewExpectationJSON(wantModal bool, wantMode string, wantCount, wantToasts int) string {
 	return fmt.Sprintf(`{modal:%t,mode:%q,count:%d,toasts:%d}`, wantModal, wantMode, wantCount, wantToasts)
 }

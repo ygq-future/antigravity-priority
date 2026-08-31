@@ -3,6 +3,7 @@ package management
 const templateScriptConfig = `        let originalConfigState = null;
 
         async function fetchDynamicConfig() {
+            if (isAuthBlocked) return;
             try {
                 dynamicConfig = await apiFetch(CONFIG_PATH);
                 if (!userSelectedModelGroup && dynamicConfig && dynamicConfig.antigravity_model_group) {
@@ -22,7 +23,7 @@ const templateScriptConfig = `        let originalConfigState = null;
                 renderDynamicConfigForm(dynamicConfig);
                 renderScheduleStatus();
             } catch (err) {
-                showToast(err.message, "error");
+                if (!isAuthBlocked) showToast(err.message, "error");
             }
         }
 
