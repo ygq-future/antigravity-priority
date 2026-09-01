@@ -31,32 +31,34 @@ type quotaPreview struct {
 
 // Runtime manages plugin lifecycle, configuration, ticker worker, and single-flight execution.
 type Runtime struct {
-	mu                 sync.Mutex
-	runMu              sync.Mutex
-	tickerFactory      TickerFactory
-	runner             TaskRunner
-	rootCtx            context.Context
-	cancel             context.CancelFunc
-	cfg                config.Config
-	hostCallbacks      host.HostCallbacks
-	clock              Clock
-	sleeper            Sleeper
-	management         *management.Handler
-	latestResult       apply.Result
-	latestAudit        string
-	latestDualSnapshot *apply.DualGroupSnapshot
-	latestQuotaPreview *quotaPreview
-	scheduleConfig     state.ScheduleConfig
-	stateCacheOverride string
-	runHistory         []RunHistoryEntry
-	lastAutoApplyAt    time.Time
-	worker             *tickerWorker
-	shutdown           bool
-	rateLimitMu        sync.Mutex
-	pending429         map[string]pending429
-	stormUntil         time.Time
-	rateLimitWake      chan struct{}
-	rateLimitDone      chan struct{}
+	mu                   sync.Mutex
+	runMu                sync.Mutex
+	tickerFactory        TickerFactory
+	runner               TaskRunner
+	rootCtx              context.Context
+	cancel               context.CancelFunc
+	cfg                  config.Config
+	hostCallbacks        host.HostCallbacks
+	clock                Clock
+	sleeper              Sleeper
+	management           *management.Handler
+	latestResult         apply.Result
+	latestAudit          string
+	latestDualSnapshot   *apply.DualGroupSnapshot
+	latestQuotaPreview   *quotaPreview
+	scheduleConfig       state.ScheduleConfig
+	stateCacheOverride   string
+	runHistory           []RunHistoryEntry
+	lastAutoApplyAt      time.Time
+	worker               *tickerWorker
+	shutdown             bool
+	rateLimitMu          sync.Mutex
+	pending429           map[string]pending429
+	stormUntil           time.Time
+	stormAccounts        map[string]bool
+	activeCooldownGroups map[string]string
+	rateLimitWake        chan struct{}
+	rateLimitDone        chan struct{}
 }
 
 // New creates an initialized Runtime instance.
@@ -75,16 +77,18 @@ func New(options Options) *Runtime {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	rt := &Runtime{
-		tickerFactory: factory,
-		rootCtx:       ctx,
-		cancel:        cancel,
-		cfg:           config.Default(),
-		hostCallbacks: options.Host,
-		clock:         clock,
-		sleeper:       sleeper,
-		pending429:    make(map[string]pending429),
-		rateLimitWake: make(chan struct{}, 1),
-		rateLimitDone: make(chan struct{}),
+		tickerFactory:        factory,
+		rootCtx:              ctx,
+		cancel:               cancel,
+		cfg:                  config.Default(),
+		hostCallbacks:        options.Host,
+		clock:                clock,
+		sleeper:              sleeper,
+		pending429:           make(map[string]pending429),
+		stormAccounts:        make(map[string]bool),
+		activeCooldownGroups: make(map[string]string),
+		rateLimitWake:        make(chan struct{}, 1),
+		rateLimitDone:        make(chan struct{}),
 	}
 	if strings.TrimSpace(options.StateCachePath) != "" {
 		rt.cfg.StateCachePath = options.StateCachePath
@@ -103,6 +107,9 @@ func New(options Options) *Runtime {
 		cachePath = config.DefaultStateCachePath
 	}
 	if store, err := state.Load(context.Background(), cachePath); err == nil {
+		for authIndex, entry := range store.GetCooldowns() {
+			rt.activeCooldownGroups[authIndex] = entry.ModelGroup
+		}
 		audit, resJSON, histJSON := store.GetRuntimeSnapshot()
 		if len(resJSON) > 0 {
 			var res apply.Result
@@ -1014,7 +1021,9 @@ func (r *Runtime) handleUsageEvent(ctx context.Context, raw []byte) []byte {
 	}
 
 	if !payload.Failed {
-		r.observeUsageSuccess(authIndex)
+		if err := r.observeUsageSuccess(ctx, authIndex, modelGroupForUsage(payload.Model)); err != nil {
+			return failure(err)
+		}
 		return mustMarshal(Envelope{OK: true})
 	}
 	if payload.Failure.StatusCode != 429 {
@@ -1110,6 +1119,9 @@ func (r *Runtime) triggerCooldown(ctx context.Context, authIndex, modelGroup, re
 		r.recordCooldownFailure(ctx, store, authIndex, reason, err)
 		return fmt.Errorf("persist cooldown state: %w", err)
 	}
+	r.rateLimitMu.Lock()
+	r.activeCooldownGroups[authIndex] = modelGroup
+	r.rateLimitMu.Unlock()
 	if r.hostCallbacks == nil {
 		err := errMissingHostCallbacks
 		r.recordCooldownFailure(ctx, store, authIndex, reason, err)
@@ -1189,7 +1201,7 @@ func redactRuntimeIdentifier(value string) string {
 func buildMetadata() Metadata {
 	return Metadata{
 		Name:             "Antigravity Priority",
-		Version:          "1.2.13",
+		Version:          "1.2.14",
 		Author:           "ygq-future",
 		GitHubRepository: "https://github.com/ygq-future/antigravity-priority",
 		Description:      "Intelligent quota pacing and adaptive burn-rate priority scheduler exclusively for Google Antigravity in CLIProxyAPI.",

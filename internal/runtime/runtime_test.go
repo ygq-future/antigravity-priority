@@ -2133,6 +2133,54 @@ func TestRuntime_UsageSuccessCancelsPending429(t *testing.T) {
 	}
 }
 
+func TestRuntime_SameModelSuccessRestoresActiveCooldownImmediately(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	authFilePath := filepath.Join(t.TempDir(), "auth.json")
+	if err := os.WriteFile(authFilePath, []byte(`{"priority":999,"disabled":false}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mock := newMockHost()
+	mock.files = []host.AuthFile{{Name: "account", AuthIndex: "auth", Provider: "antigravity", Priority: 999}}
+	mock.authDocs["auth"] = host.AuthDocument{AuthIndex: "auth", Path: authFilePath}
+	r := newTestRuntime(t, runtime.Options{Host: mock})
+	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
+		t.Fatal(err)
+	}
+	failurePayload := []byte(`{"Provider":"antigravity","Model":"gemini-3.7-flash-high","AuthIndex":"auth","Failed":true,"Failure":{"StatusCode":429}}`)
+	_ = r.Handle(context.Background(), runtime.MethodUsageHandle, failurePayload)
+	_ = r.Handle(context.Background(), runtime.MethodUsageHandle, failurePayload)
+
+	// A success from another model group does not prove that Gemini recovered.
+	_ = r.Handle(context.Background(), runtime.MethodUsageHandle, []byte(`{"Provider":"antigravity","Model":"claude-opus-4-6-thinking","AuthIndex":"auth","Failed":false}`))
+	document, err := os.ReadFile(authFilePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(document), `"priority":-1`) {
+		t.Fatalf("cross-group success incorrectly ended cooldown: %s", document)
+	}
+
+	response := r.Handle(context.Background(), runtime.MethodUsageHandle, []byte(`{"Provider":"antigravity","Model":"gemini-3.7-flash-high","AuthIndex":"auth","Failed":false}`))
+	var envelope runtime.Envelope
+	if err := json.Unmarshal(response, &envelope); err != nil || !envelope.OK {
+		t.Fatalf("same-group recovery failed: %s", response)
+	}
+	document, err = os.ReadFile(authFilePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(document), `"priority":999`) {
+		t.Fatalf("same-group success did not restore prior priority: %s", document)
+	}
+	store, err := state.Load(context.Background(), cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := store.GetCooldowns()["auth"]; exists {
+		t.Fatal("successful recovery left an active cooldown record")
+	}
+}
+
 func TestRuntime_Burst429EntersStormProtection(t *testing.T) {
 	mock := newMockHost()
 	for i := 0; i < 4; i++ {
@@ -2158,6 +2206,24 @@ func TestRuntime_Burst429EntersStormProtection(t *testing.T) {
 	}
 	if pending := diagnostics["pending_429"].([]map[string]any); len(pending) != 0 {
 		t.Fatalf("storm must suppress individual pending cooldowns, got %#v", pending)
+	}
+	_ = r.Handle(context.Background(), runtime.MethodUsageHandle, []byte(`{"Provider":"antigravity","Model":"gemini-3.7-flash-high","AuthIndex":"auth-0","Failed":false}`))
+	diagnostics, err = r.Diagnostics(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	storm, ok = diagnostics["rate_limit_storm"].(map[string]any)
+	if !ok || storm["active"] != true {
+		t.Fatalf("one recovered credential must not clear a pool-wide storm: %#v", diagnostics["rate_limit_storm"])
+	}
+	_ = r.Handle(context.Background(), runtime.MethodUsageHandle, []byte(`{"Provider":"antigravity","Model":"gemini-3.7-flash-high","AuthIndex":"auth-1","Failed":false}`))
+	diagnostics, err = r.Diagnostics(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	clearedStorm, _ := diagnostics["rate_limit_storm"].(map[string]any)
+	if clearedStorm != nil {
+		t.Fatalf("majority recovery should clear storm protection: %#v", diagnostics["rate_limit_storm"])
 	}
 }
 

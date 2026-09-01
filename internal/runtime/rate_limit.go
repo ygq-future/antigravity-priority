@@ -29,6 +29,7 @@ func (r *Runtime) observe429(ctx context.Context, authIndex, modelGroup, reason 
 	now := r.clock.Now().UTC()
 	r.rateLimitMu.Lock()
 	if now.Before(r.stormUntil) {
+		r.stormAccounts[authIndex] = false
 		r.rateLimitMu.Unlock()
 		return nil
 	}
@@ -53,6 +54,10 @@ func (r *Runtime) observe429(ctx context.Context, authIndex, modelGroup, reason 
 	if pendingCount >= 3 && active > 0 && pendingCount*2 >= active {
 		r.rateLimitMu.Lock()
 		if len(r.pending429) >= 3 && len(r.pending429)*2 >= active {
+			r.stormAccounts = make(map[string]bool, len(r.pending429))
+			for authIndex := range r.pending429 {
+				r.stormAccounts[authIndex] = false
+			}
 			r.pending429 = make(map[string]pending429)
 			r.stormUntil = now.Add(rateLimitStormWindow)
 		}
@@ -62,14 +67,53 @@ func (r *Runtime) observe429(ctx context.Context, authIndex, modelGroup, reason 
 	return nil
 }
 
-func (r *Runtime) observeUsageSuccess(authIndex string) {
+func (r *Runtime) observeUsageSuccess(ctx context.Context, authIndex, modelGroup string) error {
 	r.rateLimitMu.Lock()
 	delete(r.pending429, authIndex)
-	if !r.stormUntil.IsZero() {
-		r.stormUntil = time.Time{}
+	if !r.stormUntil.IsZero() && r.clock.Now().UTC().Before(r.stormUntil) {
+		if _, participant := r.stormAccounts[authIndex]; participant {
+			r.stormAccounts[authIndex] = true
+		}
+		recovered := 0
+		for _, ok := range r.stormAccounts {
+			if ok {
+				recovered++
+			}
+		}
+		if len(r.stormAccounts) > 0 && recovered*2 >= len(r.stormAccounts) {
+			r.stormUntil = time.Time{}
+			r.stormAccounts = make(map[string]bool)
+		}
 	}
 	r.rateLimitMu.Unlock()
 	r.signalRateLimitWorker()
+	r.rateLimitMu.Lock()
+	activeGroup, activeCooldown := r.activeCooldownGroups[authIndex]
+	r.rateLimitMu.Unlock()
+	if !activeCooldown || activeGroup != modelGroup {
+		return nil
+	}
+
+	cfg, err := r.Config()
+	if err != nil {
+		return err
+	}
+	store, err := state.Load(ctx, cfg.StateCachePath)
+	if err != nil {
+		return err
+	}
+	entry, active := store.GetCooldowns()[authIndex]
+	if !active {
+		r.clearActiveCooldown(authIndex)
+		return nil
+	}
+	if !r.clock.Now().UTC().Before(entry.CooldownUntil) || entry.ModelGroup != modelGroup {
+		return nil
+	}
+	r.runMu.Lock()
+	err = r.restoreCooldown(ctx, store, entry, "429 cooldown recovered by successful request", "rate_limit_success")
+	r.runMu.Unlock()
+	return err
 }
 
 func (r *Runtime) activeAntigravityCredentialCount(ctx context.Context) int {
@@ -165,6 +209,7 @@ func (r *Runtime) processRateLimitDeadlines(ctx context.Context) {
 	due := make([]pending429, 0)
 	if !r.stormUntil.IsZero() && !now.Before(r.stormUntil) {
 		r.stormUntil = time.Time{}
+		r.stormAccounts = make(map[string]bool)
 	}
 	if r.stormUntil.IsZero() {
 		for key, pending := range r.pending429 {
@@ -191,7 +236,7 @@ func (r *Runtime) processRateLimitDeadlines(ctx context.Context) {
 	for _, entry := range store.GetCooldowns() {
 		if !now.Before(entry.CooldownUntil) && (entry.NextRecoveryAt.IsZero() || !now.Before(entry.NextRecoveryAt)) {
 			r.runMu.Lock()
-			restoreErr := r.restoreCooldown(ctx, store, entry)
+			restoreErr := r.restoreCooldown(ctx, store, entry, "429 cooldown expired", "rate_limit_expiry")
 			r.runMu.Unlock()
 			if restoreErr != nil {
 				entry.NextRecoveryAt = now.Add(30 * time.Second)
@@ -202,7 +247,7 @@ func (r *Runtime) processRateLimitDeadlines(ctx context.Context) {
 	}
 }
 
-func (r *Runtime) restoreCooldown(ctx context.Context, store *state.Store, entry state.CooldownEntry) error {
+func (r *Runtime) restoreCooldown(ctx context.Context, store *state.Store, entry state.CooldownEntry, cause, trigger string) error {
 	credential, err := r.findCredential(ctx, entry.AuthIndex)
 	if err != nil {
 		return err
@@ -210,10 +255,14 @@ func (r *Runtime) restoreCooldown(ctx context.Context, store *state.Store, entry
 	// A manual change supersedes the transaction; never overwrite it.
 	if credential.Priority != priority.DepletedPriority || credential.Disabled != entry.AppliedDisabled {
 		store.DeleteCooldown(entry.AuthIndex)
-		return store.SaveAtomic(ctx)
+		err := store.SaveAtomic(ctx)
+		if err == nil {
+			r.clearActiveCooldown(entry.AuthIndex)
+		}
+		return err
 	}
 	client := host.NewClient(r.hostCallbacks)
-	intent := apply.CooldownRecoveryIntent(credential, entry.PreviousPriority, entry.PreviousPriorityMissing, entry.PreviousDisabled, "429 cooldown expired")
+	intent := apply.CooldownRecoveryIntent(credential, entry.PreviousPriority, entry.PreviousPriorityMissing, entry.PreviousDisabled, cause)
 	result, applyErr := apply.ExecuteRound(ctx, apply.NewHostTransition(client), apply.TransitionRound{Intents: []apply.TransitionIntent{intent}})
 	if applyErr != nil {
 		return applyErr
@@ -223,9 +272,16 @@ func (r *Runtime) restoreCooldown(ctx context.Context, store *state.Store, entry
 	if err := store.SaveAtomic(ctx); err != nil {
 		return err
 	}
+	r.clearActiveCooldown(entry.AuthIndex)
 	summary := resultSummary("429 cooldown recovery", result)
-	_, err = r.projectRun(ctx, store, result, summary, RunHistoryEntry{Kind: KindCooldownRecovery, Trigger: "rate_limit_recovery", Message: summary, Snapshot: &result.Snapshot})
+	_, err = r.projectRun(ctx, store, result, summary, RunHistoryEntry{Kind: KindCooldownRecovery, Trigger: trigger, Message: summary, Snapshot: &result.Snapshot})
 	return err
+}
+
+func (r *Runtime) clearActiveCooldown(authIndex string) {
+	r.rateLimitMu.Lock()
+	delete(r.activeCooldownGroups, authIndex)
+	r.rateLimitMu.Unlock()
 }
 
 func (r *Runtime) findCredential(ctx context.Context, authIndex string) (core.Credential, error) {
@@ -260,7 +316,13 @@ func (r *Runtime) rateLimitDiagnostics() (pending []map[string]any, storm map[st
 		pending = append(pending, map[string]any{"auth_index": redactRuntimeIdentifier(item.AuthIndex), "first_seen_at": item.FirstSeen, "confirm_at": item.Deadline})
 	}
 	if !r.stormUntil.IsZero() {
-		storm = map[string]any{"active": r.clock.Now().UTC().Before(r.stormUntil), "until": r.stormUntil}
+		recovered := 0
+		for _, ok := range r.stormAccounts {
+			if ok {
+				recovered++
+			}
+		}
+		storm = map[string]any{"active": r.clock.Now().UTC().Before(r.stormUntil), "until": r.stormUntil, "credentials": len(r.stormAccounts), "recovered": recovered}
 	}
 	return pending, storm
 }
