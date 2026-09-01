@@ -59,7 +59,7 @@ func executeAntigravityQuotaRequest(ctx context.Context, doer quotaHTTPDoer, req
 	if lastErr != nil && lastStatus == 0 {
 		message = "host http do failed"
 	}
-	return failedAntigravityQuotaResults(request, message)
+	return failedAntigravityQuotaResults(request, message, lastStatus)
 }
 
 func antigravityQuotaBody(projectID string) []byte {
@@ -86,12 +86,13 @@ func antigravityQuotaHeaders(accessToken string) host.Header {
 	}
 }
 
-func failedAntigravityQuotaResults(request antigravityQuotaRequest, message string) map[antigravity.ModelGroup]antigravity.ProbeResult {
+func failedAntigravityQuotaResults(request antigravityQuotaRequest, message string, statusCode int) map[antigravity.ModelGroup]antigravity.ProbeResult {
 	results := make(map[antigravity.ModelGroup]antigravity.ProbeResult, 2)
 	for _, group := range []antigravity.ModelGroup{antigravity.ModelGroupGemini, antigravity.ModelGroupClaudeGPT} {
 		result := antigravity.ParseAvailableModels(nil, request.ObservedAt.UTC(), group)
 		result.AuthIndex = request.AuthIndex
 		result.Error = message
+		result.HTTPStatusCode = statusCode
 		results[group] = result
 	}
 	return results

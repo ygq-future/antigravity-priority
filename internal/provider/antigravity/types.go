@@ -58,4 +58,5 @@ type ProbeResult struct {
 	Status               Status
 	PlanType             core.PlanType
 	Error                string
+	HTTPStatusCode       int
 }

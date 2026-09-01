@@ -148,6 +148,8 @@ func (r *Runtime) Handle(ctx context.Context, method string, request []byte) []b
 		return r.registerManagement()
 	case MethodManagementHandle:
 		return r.handleManagement(ctx, request)
+	case MethodUsageHandle:
+		return r.handleUsageEvent(ctx, request)
 	case MethodFilterResponse, MethodFilterComplete, MethodFilterError, MethodFilterOutbound, MethodFilterInbound:
 		return r.handleFilterEvent(ctx, request)
 	default:
@@ -956,13 +958,55 @@ func registrationResult() RegisterResult {
 		SchemaVersion: 1,
 		Metadata:      buildMetadata(),
 		Capabilities: map[string]bool{
-			"management_api":     true,
-			"management":         true,
-			MethodFilterResponse: true,
-			MethodFilterComplete: true,
-			MethodFilterError:    true,
+			"management_api": true,
+			"management":     true,
+			"usage_plugin":   true,
 		},
 	}
+}
+
+type usageFailure struct {
+	StatusCode int    `json:"StatusCode"`
+	Body       string `json:"Body"`
+}
+
+type usageEvent struct {
+	Provider  string       `json:"Provider"`
+	Model     string       `json:"Model"`
+	AuthID    string       `json:"AuthID"`
+	AuthIndex string       `json:"AuthIndex"`
+	Failed    bool         `json:"Failed"`
+	Failure   usageFailure `json:"Failure"`
+}
+
+func (r *Runtime) handleUsageEvent(ctx context.Context, raw []byte) []byte {
+	var payload usageEvent
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return failure(fmt.Errorf("decode usage event: %w", err))
+	}
+	if !strings.EqualFold(strings.TrimSpace(payload.Provider), string(core.ProviderAntigravity)) ||
+		!payload.Failed || payload.Failure.StatusCode != 429 {
+		return mustMarshal(Envelope{OK: true})
+	}
+	authIndex := firstNonEmpty(payload.AuthIndex, payload.AuthID)
+	if authIndex == "" {
+		return mustMarshal(Envelope{OK: true})
+	}
+
+	r.runMu.Lock()
+	err := r.triggerCooldown(ctx, authIndex, modelGroupForUsage(payload.Model), "429 rate limit detected")
+	r.runMu.Unlock()
+	if err != nil {
+		return failure(err)
+	}
+	return mustMarshal(Envelope{OK: true})
+}
+
+func modelGroupForUsage(model string) string {
+	if strings.Contains(strings.ToLower(model), "gemini") {
+		return string(config.AntigravityModelGroupGemini)
+	}
+	return string(config.AntigravityModelGroupClaudeGPT)
 }
 
 func (r *Runtime) handleFilterEvent(ctx context.Context, raw []byte) []byte {
@@ -1009,6 +1053,9 @@ func (r *Runtime) triggerCooldown(ctx context.Context, authIndex, modelGroup, re
 	if err != nil {
 		r.recordCooldownFailure(ctx, nil, authIndex, reason, err)
 		return fmt.Errorf("record cooldown state: %w", err)
+	}
+	if _, active := store.GetActiveCooldowns(now)[authIndex]; active {
+		return nil
 	}
 
 	cooldownMinutes := cfg.RateLimitCooldownMinutes
@@ -1085,7 +1132,7 @@ func (r *Runtime) triggerCooldown(ctx context.Context, authIndex, modelGroup, re
 	summary := resultSummary("429 cooldown", result)
 	_, projectErr := r.projectRun(ctx, store, result, summary, RunHistoryEntry{
 		Kind:     KindCooldown,
-		Trigger:  "filter_429",
+		Trigger:  "rate_limit_429",
 		Message:  summary,
 		Snapshot: &result.Snapshot,
 	})
@@ -1109,7 +1156,7 @@ func (r *Runtime) recordCooldownFailure(ctx context.Context, store *state.Store,
 	}}})
 	entry := RunHistoryEntry{
 		Kind:      KindCooldown,
-		Trigger:   "filter_429",
+		Trigger:   "rate_limit_429",
 		Attempted: result.Attempted,
 		Succeeded: result.Succeeded,
 		Failed:    result.Failed,
@@ -1136,7 +1183,7 @@ func redactRuntimeIdentifier(value string) string {
 func buildMetadata() Metadata {
 	return Metadata{
 		Name:             "Antigravity Priority",
-		Version:          "1.2.11",
+		Version:          "1.2.12",
 		Author:           "ygq-future",
 		GitHubRepository: "https://github.com/ygq-future/antigravity-priority",
 		Description:      "Intelligent quota pacing and adaptive burn-rate priority scheduler exclusively for Google Antigravity in CLIProxyAPI.",

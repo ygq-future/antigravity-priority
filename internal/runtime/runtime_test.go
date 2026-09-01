@@ -209,6 +209,9 @@ func TestRuntime_Handle_Register(t *testing.T) {
 	if !envelope.Result.Capabilities["management"] {
 		t.Errorf("expected management capability to be true")
 	}
+	if !envelope.Result.Capabilities["usage_plugin"] {
+		t.Errorf("expected usage_plugin capability to be true")
+	}
 
 	if len(envelope.Result.Metadata.ConfigFields) != 0 {
 		t.Errorf("expected Metadata.ConfigFields to remain empty, got %+v", envelope.Result.Metadata.ConfigFields)
@@ -1955,7 +1958,7 @@ func TestRuntime_ProductionRunner_RespectsManuallyDisabledAccounts(t *testing.T)
 	}
 }
 
-func TestRuntime_FilterEvent_429Cooldown(t *testing.T) {
+func TestRuntime_UsageHandle_429Cooldown(t *testing.T) {
 	cachePath := filepath.Join(t.TempDir(), "cache.json")
 	authFilePath := filepath.Join(t.TempDir(), "auth_429.json")
 	_ = os.WriteFile(authFilePath, []byte(`{"access_token":"token_123","project_id":"proj_123","priority":100}`), 0o600)
@@ -1989,15 +1992,15 @@ func TestRuntime_FilterEvent_429Cooldown(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 1. Simulate CPA calling filter.response with 429
-	eventPayload := []byte(`{"auth_index":"auth_429","status_code":429,"error":"RESOURCE_EXHAUSTED: quota rate limit exceeded"}`)
-	resBytes := r.Handle(context.Background(), "filter.response", eventPayload)
+	// Simulate the official CPA UsagePlugin callback for a failed request.
+	eventPayload := []byte(`{"Provider":"antigravity","Model":"gemini-3.7-flash-high","AuthID":"auth_429","AuthIndex":"auth_429","Failed":true,"Failure":{"StatusCode":429,"Body":"RESOURCE_EXHAUSTED: quota rate limit exceeded"}}`)
+	resBytes := r.Handle(context.Background(), runtime.MethodUsageHandle, eventPayload)
 
 	var env struct {
 		OK bool `json:"ok"`
 	}
 	if err := json.Unmarshal(resBytes, &env); err != nil || !env.OK {
-		t.Fatalf("expected filter event to return OK, got %s", string(resBytes))
+		t.Fatalf("expected usage event to return OK, got %s", string(resBytes))
 	}
 
 	// 2. Verify priority was immediately patched to -1
@@ -2045,9 +2048,59 @@ func TestRuntime_FilterEvent_429Cooldown(t *testing.T) {
 	if len(history) == 0 || history[0].Kind != runtime.KindCooldown || history[0].Succeeded != 1 {
 		t.Fatalf("expected successful cooldown audit record, got %#v", history)
 	}
+
+	clock.now = clock.now.Add(time.Minute)
+	secondResponse := r.Handle(context.Background(), runtime.MethodUsageHandle, eventPayload)
+	if err := json.Unmarshal(secondResponse, &env); err != nil || !env.OK {
+		t.Fatalf("expected repeated usage event to be idempotent, got %s", secondResponse)
+	}
+	reloaded, err := state.Load(context.Background(), cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := reloaded.GetActiveCooldowns(clock.now)["auth_429"]; !got.Equal(expectedUntil) {
+		t.Fatalf("repeated 429 extended cooldown to %v; want %v", got, expectedUntil)
+	}
+	diag, _ = r.Diagnostics(context.Background())
+	history = diag["run_history"].([]runtime.RunHistoryEntry)
+	if len(history) != 1 {
+		t.Fatalf("repeated 429 created duplicate history: %#v", history)
+	}
 }
 
-func TestRuntime_FilterEvent_429FailureIsReportedAndAudited(t *testing.T) {
+func TestRuntime_Probe429TriggersCooldown(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	authFilePath := filepath.Join(t.TempDir(), "auth_probe_429.json")
+	if err := os.WriteFile(authFilePath, []byte(`{"access_token":"token","project_id":"project","priority":100,"disabled":false}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mock := newMockHost()
+	mock.files = []host.AuthFile{{Name: "probe-429", AuthIndex: "auth-probe-429", Provider: "antigravity", Type: "antigravity", Priority: 100}}
+	mock.authDocs["auth-probe-429"] = host.AuthDocument{AuthIndex: "auth-probe-429", Path: authFilePath}
+	mock.httpResponse = host.HTTPResponse{StatusCode: http.StatusTooManyRequests, Body: []byte(`{"error":{"code":429,"status":"RESOURCE_EXHAUSTED"}}`)}
+	r := newTestRuntime(t, runtime.Options{Host: mock, Clock: &testClock{now: time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)}, Sleeper: testSleeper{}})
+	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
+		t.Fatal(err)
+	}
+	document, err := os.ReadFile(authFilePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stateAfter struct {
+		Priority int `json:"priority"`
+	}
+	if err := json.Unmarshal(document, &stateAfter); err != nil {
+		t.Fatal(err)
+	}
+	if stateAfter.Priority != -1 {
+		t.Fatalf("probe 429 did not apply cooldown: %s", document)
+	}
+}
+
+func TestRuntime_UsageHandle_429FailureIsReportedAndAudited(t *testing.T) {
 	cachePath := filepath.Join(t.TempDir(), "cache.json")
 	mock := newMockHost()
 	mock.files = []host.AuthFile{{Name: "broken", AuthIndex: "auth-broken", Provider: "antigravity", Priority: 100}}
@@ -2057,7 +2110,7 @@ func TestRuntime_FilterEvent_429FailureIsReportedAndAudited(t *testing.T) {
 		t.Fatal(err)
 	}
 	var envelope runtime.Envelope
-	response := r.Handle(context.Background(), runtime.MethodFilterResponse, []byte(`{"auth_index":"auth-broken","status_code":429}`))
+	response := r.Handle(context.Background(), runtime.MethodUsageHandle, []byte(`{"Provider":"antigravity","AuthIndex":"auth-broken","Failed":true,"Failure":{"StatusCode":429}}`))
 	if err := json.Unmarshal(response, &envelope); err != nil {
 		t.Fatal(err)
 	}
@@ -2071,7 +2124,7 @@ func TestRuntime_FilterEvent_429FailureIsReportedAndAudited(t *testing.T) {
 	}
 }
 
-func TestRuntime_FilterEvent_429WaitsForSingleFlightBoundary(t *testing.T) {
+func TestRuntime_UsageHandle_429WaitsForSingleFlightBoundary(t *testing.T) {
 	cachePath := filepath.Join(t.TempDir(), "cache.json")
 	authPath := filepath.Join(t.TempDir(), "auth.json")
 	if err := os.WriteFile(authPath, []byte(`{"priority":100,"disabled":false}`), 0o600); err != nil {
@@ -2098,7 +2151,7 @@ func TestRuntime_FilterEvent_429WaitsForSingleFlightBoundary(t *testing.T) {
 	<-started
 	filterDone := make(chan []byte, 1)
 	go func() {
-		filterDone <- r.Handle(context.Background(), runtime.MethodFilterResponse, []byte(`{"auth_index":"auth-serial","status_code":429}`))
+		filterDone <- r.Handle(context.Background(), runtime.MethodUsageHandle, []byte(`{"Provider":"antigravity","AuthIndex":"auth-serial","Failed":true,"Failure":{"StatusCode":429}}`))
 	}()
 	select {
 	case <-filterDone:

@@ -26,6 +26,7 @@ const (
 	MethodPluginShutdown     = "plugin.shutdown"
 	MethodManagementRegister = "management.register"
 	MethodManagementHandle   = "management.handle"
+	MethodUsageHandle        = "usage.handle"
 	MethodFilterResponse     = "filter.response"
 	MethodFilterComplete     = "filter.complete"
 	MethodFilterError        = "filter.error"

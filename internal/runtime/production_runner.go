@@ -95,6 +95,21 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 		}
 	}
 
+	if len(evidence.RateLimited) > 0 {
+		if err := store.SaveAtomic(ctx); err != nil {
+			return err
+		}
+		for authIndex, modelGroup := range evidence.RateLimited {
+			if err := r.triggerCooldown(ctx, authIndex, modelGroup, "429 rate limit detected during quota probe"); err != nil {
+				return err
+			}
+		}
+		store, err = state.Load(ctx, cachePath)
+		if err != nil {
+			return err
+		}
+	}
+
 	if err := store.SaveAtomic(ctx); err != nil {
 		return err
 	}

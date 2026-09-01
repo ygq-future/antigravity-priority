@@ -34,6 +34,7 @@ type collectedEvidence struct {
 	ByGroup      map[config.AntigravityModelGroup]evidence.Result
 	Observations []evidence.Observation
 	Probed       int
+	RateLimited  map[string]string
 }
 
 type probeJob struct {
@@ -74,6 +75,7 @@ func collectFreshEvidence(ctx context.Context, input collectInput) (collectedEvi
 		ByGroup:      make(map[config.AntigravityModelGroup]evidence.Result, 2),
 		Observations: make([]evidence.Observation, 0),
 		Probed:       uniqueProbeCredentials(probes),
+		RateLimited:  rateLimitedCredentials(probes),
 	}
 	for _, group := range []config.AntigravityModelGroup{
 		config.AntigravityModelGroupGemini,
@@ -90,6 +92,16 @@ func collectFreshEvidence(ctx context.Context, input collectInput) (collectedEvi
 		result.Observations = append(result.Observations, classified.Observations...)
 	}
 	return result, nil
+}
+
+func rateLimitedCredentials(probes []evidence.ProbeObservation) map[string]string {
+	result := make(map[string]string)
+	for _, probe := range probes {
+		if probe.Result.HTTPStatusCode == 429 {
+			result[probe.Result.AuthIndex] = string(probe.Result.ModelGroup)
+		}
+	}
+	return result
 }
 
 // enrichFreshCycleBurnRate makes the in-memory result use the same learned
