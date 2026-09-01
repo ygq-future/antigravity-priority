@@ -96,7 +96,6 @@ func New(options Options) *Runtime {
 		rt.runner = rt.runProductionTask
 	}
 	rt.management = management.NewHandler(managementRunner{runtime: rt})
-	go rt.runRateLimitWorker()
 
 	// Restore persisted cache, learned rates, and execution snapshot from disk on startup
 	cachePath := rt.cfg.StateCachePath
@@ -130,6 +129,7 @@ func New(options Options) *Runtime {
 		// Unconditionally ensure cache file exists on disk upon initialization
 		_ = store.SaveAtomic(context.Background())
 	}
+	go rt.runRateLimitWorker()
 
 	return rt
 }
