@@ -332,6 +332,9 @@ func TestStatusHTML_ContainsRequiredUIElements(t *testing.T) {
 	if strings.Contains(html, `SYNC_PATH + "?antigravity_model_group="`) {
 		t.Error("dashboard view selector must not be sent as write-back/control authority")
 	}
+	if strings.Contains(html, `it.short_window_reset_at || it.reset_at`) || strings.Contains(html, "Fallback scan across snapshot items") {
+		t.Error("429 diagnostics must use persisted cooldown deadlines, not quota reset timestamps")
+	}
 	// Verify no double "} else {" syntax error
 	if strings.Contains(html, "} else {\n                summary.textContent") || strings.Contains(html, "} else {\r\n                summary.textContent") {
 		t.Errorf("StatusHTML should not contain duplicate else block")

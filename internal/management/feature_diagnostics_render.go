@@ -92,22 +92,6 @@ const templateScriptDiagnostics = `        let latestDiagnostics = null;
 
             // --- 2. KPI Card 2: 429 Cooldowns ---
             var cooldowns = (latestDiagnostics.active_cooldowns || []).slice();
-            if (cooldowns.length === 0 && latestSnapshot && latestSnapshot.groups) {
-                // Fallback scan across snapshot items in case active_cooldowns was not populated
-                var groupKey = (document.getElementById("modelGroupSelect") && document.getElementById("modelGroupSelect").value) || (latestSnapshot.active_model_group || "gemini");
-                var gData = latestSnapshot.groups[groupKey] || {};
-                (gData.items || []).forEach(function(it) {
-                    var r = (it.reason || "").toLowerCase();
-                    if (r.indexOf("429") >= 0 || r.indexOf("cooldown") >= 0) {
-                        cooldowns.push({
-                            email: it.email || "Credential",
-                            model_group: groupKey,
-                            reason: it.reason || "429 rate limit cooldown",
-                            cooldown_until: (it.short_window_reset_at || it.reset_at || null)
-                        });
-                    }
-                });
-            }
             var cdBadge = document.getElementById("diagCooldownBadge");
             var cdCount = document.getElementById("diagCooldownCount");
             var cdSub = document.getElementById("diagCooldownSub");

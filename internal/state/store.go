@@ -123,11 +123,16 @@ type DynamicConfig = config.DynamicConfig
 
 // CooldownEntry tracks temporary 429 rate limit circuit breaking for a credential.
 type CooldownEntry struct {
-	AuthIndex     string    `json:"auth_index"`
-	ModelGroup    string    `json:"model_group,omitempty"`
-	TriggeredAt   time.Time `json:"triggered_at"`
-	CooldownUntil time.Time `json:"cooldown_until"`
-	Reason        string    `json:"reason"`
+	AuthIndex               string    `json:"auth_index"`
+	ModelGroup              string    `json:"model_group,omitempty"`
+	TriggeredAt             time.Time `json:"triggered_at"`
+	CooldownUntil           time.Time `json:"cooldown_until"`
+	Reason                  string    `json:"reason"`
+	PreviousPriority        int       `json:"previous_priority,omitempty"`
+	PreviousPriorityMissing bool      `json:"previous_priority_missing,omitempty"`
+	PreviousDisabled        bool      `json:"previous_disabled,omitempty"`
+	AppliedDisabled         bool      `json:"applied_disabled,omitempty"`
+	NextRecoveryAt          time.Time `json:"next_recovery_at,omitempty"`
 }
 
 // PriorityRulesConfig holds priority rule settings for DynamicConfig.
@@ -678,19 +683,24 @@ func (s *Store) BuildHistoricalEvidence(credentials []core.Credential, modelGrou
 }
 
 // GetActiveCooldowns returns a map of auth_index -> CooldownUntil for unexpired 429 rate limit cooldowns.
-// Expired cooldown entries are automatically pruned.
+// Expired entries remain available until Runtime has restored the Host state.
 func (s *Store) GetActiveCooldowns(now time.Time) map[string]time.Time {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	active := make(map[string]time.Time)
 	for k, v := range s.cooldowns {
 		if now.Before(v.CooldownUntil) {
 			active[k] = v.CooldownUntil
-		} else {
-			delete(s.cooldowns, k)
 		}
 	}
 	return active
+}
+
+// DeleteCooldown removes a completed or superseded cooldown transaction.
+func (s *Store) DeleteCooldown(authIndex string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.cooldowns, authIndex)
 }
 
 // GetCooldowns returns a copy of all current cooldown entries.

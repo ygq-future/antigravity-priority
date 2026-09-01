@@ -100,7 +100,7 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 			return err
 		}
 		for authIndex, modelGroup := range evidence.RateLimited {
-			if err := r.triggerCooldown(ctx, authIndex, modelGroup, "429 rate limit detected during quota probe"); err != nil {
+			if err := r.observe429(ctx, authIndex, modelGroup, "429 rate limit detected during quota probe", false); err != nil {
 				return err
 			}
 		}

@@ -120,11 +120,21 @@ func (m *mockHost) HTTPDo(ctx context.Context, req host.HTTPRequest) (host.HTTPR
 }
 
 type testClock struct {
+	mu  sync.Mutex
 	now time.Time
 }
 
 func (t *testClock) Now() time.Time {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	return t.now
+}
+
+func (t *testClock) Set(now time.Time) { t.mu.Lock(); t.now = now; t.mu.Unlock() }
+func (t *testClock) Advance(delta time.Duration) {
+	t.mu.Lock()
+	t.now = t.now.Add(delta)
+	t.mu.Unlock()
 }
 
 type testSleeper struct{}
@@ -527,7 +537,7 @@ func TestRuntime_AutoApply_Cooldown(t *testing.T) {
 	}
 
 	// Advance clock past 15m interval
-	clock.now = clock.now.Add(16 * time.Minute)
+	clock.Advance(16 * time.Minute)
 	if err := r.AutoApply(context.Background()); err != nil {
 		t.Fatalf("third auto apply failed: %v", err)
 	}
@@ -897,7 +907,7 @@ func TestRuntime_ManualApplyReusesRecentProbeEvidence(t *testing.T) {
 		t.Fatalf("quota HTTP calls after preview probe = %d; want 1", probeCalls)
 	}
 
-	clock.now = clock.now.Add(2 * time.Hour)
+	clock.Advance(2 * time.Hour)
 	if err := r.ManualApplyWithPreview(context.Background(), config.AntigravityModelGroupGemini, nil, snapshot.PreviewID); err != nil {
 		t.Fatalf("manual apply failed: %v", err)
 	}
@@ -1555,7 +1565,7 @@ func TestRuntime_AutoApply_OutsideScheduleWindow(t *testing.T) {
 	}
 
 	// Move clock into the window (12:00)
-	clock.now = time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	clock.Set(time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC))
 	if err := r.AutoApply(context.Background()); err != nil {
 		t.Fatalf("auto apply inside window failed: %v", err)
 	}
@@ -2002,6 +2012,11 @@ func TestRuntime_UsageHandle_429Cooldown(t *testing.T) {
 	if err := json.Unmarshal(resBytes, &env); err != nil || !env.OK {
 		t.Fatalf("expected usage event to return OK, got %s", string(resBytes))
 	}
+	// A first isolated 429 is observed without disrupting traffic; a repeat confirms it.
+	resBytes = r.Handle(context.Background(), runtime.MethodUsageHandle, eventPayload)
+	if err := json.Unmarshal(resBytes, &env); err != nil || !env.OK {
+		t.Fatalf("expected repeated usage event to confirm cooldown, got %s", string(resBytes))
+	}
 
 	// 2. Verify priority was immediately patched to -1
 	updatedData, err := os.ReadFile(authFilePath)
@@ -2019,12 +2034,12 @@ func TestRuntime_UsageHandle_429Cooldown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cooldowns := store.GetActiveCooldowns(clock.now)
+	cooldowns := store.GetActiveCooldowns(clock.Now())
 	until, inCooldown := cooldowns["auth_429"]
 	if !inCooldown {
 		t.Fatal("expected auth_429 to be in active cooldown")
 	}
-	expectedUntil := clock.now.Add(5 * time.Minute)
+	expectedUntil := clock.Now().Add(5 * time.Minute)
 	if !until.Equal(expectedUntil) {
 		t.Errorf("cooldown until = %v; want %v", until, expectedUntil)
 	}
@@ -2049,7 +2064,7 @@ func TestRuntime_UsageHandle_429Cooldown(t *testing.T) {
 		t.Fatalf("expected successful cooldown audit record, got %#v", history)
 	}
 
-	clock.now = clock.now.Add(time.Minute)
+	clock.Advance(time.Minute)
 	secondResponse := r.Handle(context.Background(), runtime.MethodUsageHandle, eventPayload)
 	if err := json.Unmarshal(secondResponse, &env); err != nil || !env.OK {
 		t.Fatalf("expected repeated usage event to be idempotent, got %s", secondResponse)
@@ -2058,13 +2073,91 @@ func TestRuntime_UsageHandle_429Cooldown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := reloaded.GetActiveCooldowns(clock.now)["auth_429"]; !got.Equal(expectedUntil) {
+	if got := reloaded.GetActiveCooldowns(clock.Now())["auth_429"]; !got.Equal(expectedUntil) {
 		t.Fatalf("repeated 429 extended cooldown to %v; want %v", got, expectedUntil)
 	}
 	diag, _ = r.Diagnostics(context.Background())
 	history = diag["run_history"].([]runtime.RunHistoryEntry)
 	if len(history) != 1 {
 		t.Fatalf("repeated 429 created duplicate history: %#v", history)
+	}
+
+	// Expiry restoration is independent of the scheduler and Fresh Evidence.
+	clock.Set(expectedUntil)
+	_ = r.Handle(context.Background(), runtime.MethodUsageHandle, []byte(`{"Provider":"antigravity","AuthIndex":"auth_429","Failed":false}`))
+	deadline := time.Now().Add(time.Second)
+	for {
+		restoredData, readErr := os.ReadFile(authFilePath)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		var restored map[string]any
+		_ = json.Unmarshal(restoredData, &restored)
+		if restored["priority"] == float64(100) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("cooldown expiry did not restore previous priority: %s", restoredData)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	reloaded, err = state.Load(context.Background(), cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := reloaded.GetCooldowns()["auth_429"]; exists {
+		t.Fatal("completed cooldown transaction was not removed")
+	}
+}
+
+func TestRuntime_UsageSuccessCancelsPending429(t *testing.T) {
+	authFilePath := filepath.Join(t.TempDir(), "auth.json")
+	if err := os.WriteFile(authFilePath, []byte(`{"priority":100,"disabled":false}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mock := newMockHost()
+	mock.files = []host.AuthFile{{Name: "account", AuthIndex: "auth", Provider: "antigravity", Priority: 100}}
+	mock.authDocs["auth"] = host.AuthDocument{AuthIndex: "auth", Path: authFilePath}
+	r := newTestRuntime(t, runtime.Options{Host: mock})
+	failurePayload := []byte(`{"Provider":"antigravity","AuthIndex":"auth","Failed":true,"Failure":{"StatusCode":429}}`)
+	successPayload := []byte(`{"Provider":"antigravity","AuthIndex":"auth","Failed":false}`)
+	_ = r.Handle(context.Background(), runtime.MethodUsageHandle, failurePayload)
+	_ = r.Handle(context.Background(), runtime.MethodUsageHandle, successPayload)
+	_ = r.Handle(context.Background(), runtime.MethodUsageHandle, failurePayload)
+	document, err := os.ReadFile(authFilePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(document), `"priority":-1`) {
+		t.Fatalf("transient 429 was not cancelled by a successful request: %s", document)
+	}
+}
+
+func TestRuntime_Burst429EntersStormProtection(t *testing.T) {
+	mock := newMockHost()
+	for i := 0; i < 4; i++ {
+		authIndex := fmt.Sprintf("auth-%d", i)
+		mock.files = append(mock.files, host.AuthFile{Name: authIndex, AuthIndex: authIndex, Provider: "antigravity", Priority: 100})
+	}
+	r := newTestRuntime(t, runtime.Options{Host: mock})
+	for i := 0; i < 3; i++ {
+		payload := []byte(fmt.Sprintf(`{"Provider":"antigravity","AuthIndex":"auth-%d","Failed":true,"Failure":{"StatusCode":429}}`, i))
+		response := r.Handle(context.Background(), runtime.MethodUsageHandle, payload)
+		var envelope runtime.Envelope
+		if err := json.Unmarshal(response, &envelope); err != nil || !envelope.OK {
+			t.Fatalf("429 observation failed: %s", response)
+		}
+	}
+	diagnostics, err := r.Diagnostics(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	storm, ok := diagnostics["rate_limit_storm"].(map[string]any)
+	if !ok || storm["active"] != true {
+		t.Fatalf("expected active transient 429 storm protection, got %#v", diagnostics["rate_limit_storm"])
+	}
+	if pending := diagnostics["pending_429"].([]map[string]any); len(pending) != 0 {
+		t.Fatalf("storm must suppress individual pending cooldowns, got %#v", pending)
 	}
 }
 
@@ -2080,6 +2173,9 @@ func TestRuntime_Probe429TriggersCooldown(t *testing.T) {
 	mock.httpResponse = host.HTTPResponse{StatusCode: http.StatusTooManyRequests, Body: []byte(`{"error":{"code":429,"status":"RESOURCE_EXHAUSTED"}}`)}
 	r := newTestRuntime(t, runtime.Options{Host: mock, Clock: &testClock{now: time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)}, Sleeper: testSleeper{}})
 	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
@@ -2110,7 +2206,9 @@ func TestRuntime_UsageHandle_429FailureIsReportedAndAudited(t *testing.T) {
 		t.Fatal(err)
 	}
 	var envelope runtime.Envelope
-	response := r.Handle(context.Background(), runtime.MethodUsageHandle, []byte(`{"Provider":"antigravity","AuthIndex":"auth-broken","Failed":true,"Failure":{"StatusCode":429}}`))
+	payload := []byte(`{"Provider":"antigravity","AuthIndex":"auth-broken","Failed":true,"Failure":{"StatusCode":429}}`)
+	_ = r.Handle(context.Background(), runtime.MethodUsageHandle, payload)
+	response := r.Handle(context.Background(), runtime.MethodUsageHandle, payload)
 	if err := json.Unmarshal(response, &envelope); err != nil {
 		t.Fatal(err)
 	}
@@ -2151,7 +2249,9 @@ func TestRuntime_UsageHandle_429WaitsForSingleFlightBoundary(t *testing.T) {
 	<-started
 	filterDone := make(chan []byte, 1)
 	go func() {
-		filterDone <- r.Handle(context.Background(), runtime.MethodUsageHandle, []byte(`{"Provider":"antigravity","AuthIndex":"auth-serial","Failed":true,"Failure":{"StatusCode":429}}`))
+		payload := []byte(`{"Provider":"antigravity","AuthIndex":"auth-serial","Failed":true,"Failure":{"StatusCode":429}}`)
+		_ = r.Handle(context.Background(), runtime.MethodUsageHandle, payload)
+		filterDone <- r.Handle(context.Background(), runtime.MethodUsageHandle, payload)
 	}()
 	select {
 	case <-filterDone:
@@ -2369,7 +2469,7 @@ func TestRuntime_Diagnostics_LatestApply_AutoApplyAndManualApply(t *testing.T) {
 	}
 
 	// 3. Probe should not overwrite latest_apply
-	clock.now = clock.now.Add(5 * time.Minute)
+	clock.Advance(5 * time.Minute)
 	if err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
 		t.Fatalf("probe failed: %v", err)
 	}
@@ -2386,7 +2486,7 @@ func TestRuntime_Diagnostics_LatestApply_AutoApplyAndManualApply(t *testing.T) {
 	}
 
 	// 4. Run ManualApply with changes -> latest_apply should now be the manual apply
-	clock.now = clock.now.Add(5 * time.Minute)
+	clock.Advance(5 * time.Minute)
 	_ = os.WriteFile(authFilePath, []byte(`{"access_token":"token_123","project_id":"proj_123","priority":50}`), 0o600)
 	mock.mu.Lock()
 	mock.files[0].Priority = 50

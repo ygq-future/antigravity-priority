@@ -52,6 +52,11 @@ type Runtime struct {
 	lastAutoApplyAt    time.Time
 	worker             *tickerWorker
 	shutdown           bool
+	rateLimitMu        sync.Mutex
+	pending429         map[string]pending429
+	stormUntil         time.Time
+	rateLimitWake      chan struct{}
+	rateLimitDone      chan struct{}
 }
 
 // New creates an initialized Runtime instance.
@@ -77,6 +82,9 @@ func New(options Options) *Runtime {
 		hostCallbacks: options.Host,
 		clock:         clock,
 		sleeper:       sleeper,
+		pending429:    make(map[string]pending429),
+		rateLimitWake: make(chan struct{}, 1),
+		rateLimitDone: make(chan struct{}),
 	}
 	if strings.TrimSpace(options.StateCachePath) != "" {
 		rt.cfg.StateCachePath = options.StateCachePath
@@ -88,6 +96,7 @@ func New(options Options) *Runtime {
 		rt.runner = rt.runProductionTask
 	}
 	rt.management = management.NewHandler(managementRunner{runtime: rt})
+	go rt.runRateLimitWorker()
 
 	// Restore persisted cache, learned rates, and execution snapshot from disk on startup
 	cachePath := rt.cfg.StateCachePath
@@ -620,6 +629,7 @@ func (r *Runtime) Diagnostics(ctx context.Context) (map[string]any, error) {
 			}
 		}
 	}
+	pending429, rateLimitStorm := r.rateLimitDiagnostics()
 
 	return map[string]any{
 		"management_api": map[string]any{
@@ -639,6 +649,8 @@ func (r *Runtime) Diagnostics(ctx context.Context) (map[string]any, error) {
 			"window_end":         sched.WindowEnd,
 		},
 		"active_cooldowns": activeCooldowns,
+		"pending_429":      pending429,
+		"rate_limit_storm": rateLimitStorm,
 		"latest_audit":     audit,
 		"last_result":      result,
 		"latest_apply":     r.latestApplyEntry(),
@@ -658,7 +670,15 @@ func (r *Runtime) Shutdown(ctx context.Context) error {
 	worker := r.worker
 	r.worker = nil
 	r.mu.Unlock()
-	return stopWorker(ctx, worker)
+	if err := stopWorker(ctx, worker); err != nil {
+		return err
+	}
+	select {
+	case <-r.rateLimitDone:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (r *Runtime) replaceConfig(ctx context.Context, cfg config.Config) error {
@@ -679,6 +699,7 @@ func (r *Runtime) replaceConfig(ctx context.Context, cfg config.Config) error {
 		oldCfg.Interval != cfg.Interval
 	r.cfg = cfg
 	r.mu.Unlock()
+	r.signalRateLimitWorker()
 
 	if !needRestartWorker {
 		return nil
@@ -984,8 +1005,7 @@ func (r *Runtime) handleUsageEvent(ctx context.Context, raw []byte) []byte {
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return failure(fmt.Errorf("decode usage event: %w", err))
 	}
-	if !strings.EqualFold(strings.TrimSpace(payload.Provider), string(core.ProviderAntigravity)) ||
-		!payload.Failed || payload.Failure.StatusCode != 429 {
+	if !strings.EqualFold(strings.TrimSpace(payload.Provider), string(core.ProviderAntigravity)) {
 		return mustMarshal(Envelope{OK: true})
 	}
 	authIndex := firstNonEmpty(payload.AuthIndex, payload.AuthID)
@@ -993,9 +1013,14 @@ func (r *Runtime) handleUsageEvent(ctx context.Context, raw []byte) []byte {
 		return mustMarshal(Envelope{OK: true})
 	}
 
-	r.runMu.Lock()
-	err := r.triggerCooldown(ctx, authIndex, modelGroupForUsage(payload.Model), "429 rate limit detected")
-	r.runMu.Unlock()
+	if !payload.Failed {
+		r.observeUsageSuccess(authIndex)
+		return mustMarshal(Envelope{OK: true})
+	}
+	if payload.Failure.StatusCode != 429 {
+		return mustMarshal(Envelope{OK: true})
+	}
+	err := r.observe429(ctx, authIndex, modelGroupForUsage(payload.Model), "429 rate limit detected", true)
 	if err != nil {
 		return failure(err)
 	}
@@ -1028,9 +1053,7 @@ func (r *Runtime) handleFilterEvent(ctx context.Context, raw []byte) []byte {
 		strings.Contains(strings.ToUpper(payload.Error), "RATE_LIMIT")
 
 	if is429 {
-		r.runMu.Lock()
-		err := r.triggerCooldown(ctx, authIndex, payload.ModelGroup, "429 rate limit detected")
-		r.runMu.Unlock()
+		err := r.observe429(ctx, authIndex, payload.ModelGroup, "429 rate limit detected", true)
 		if err != nil {
 			return failure(err)
 		}
@@ -1064,12 +1087,24 @@ func (r *Runtime) triggerCooldown(ctx context.Context, authIndex, modelGroup, re
 	}
 	cooldownUntil := now.Add(time.Duration(cooldownMinutes) * time.Minute)
 
+	credential, findErr := r.findCredential(ctx, authIndex)
+	if findErr != nil {
+		r.recordCooldownFailure(ctx, store, authIndex, reason, findErr)
+		return findErr
+	}
+	if credential.Disabled {
+		return nil
+	}
 	store.SetCooldown(state.CooldownEntry{
-		AuthIndex:     authIndex,
-		ModelGroup:    modelGroup,
-		TriggeredAt:   now,
-		CooldownUntil: cooldownUntil,
-		Reason:        reason,
+		AuthIndex:               authIndex,
+		ModelGroup:              modelGroup,
+		TriggeredAt:             now,
+		CooldownUntil:           cooldownUntil,
+		Reason:                  reason,
+		PreviousPriority:        credential.Priority,
+		PreviousPriorityMissing: credential.PriorityMissing,
+		PreviousDisabled:        credential.Disabled,
+		AppliedDisabled:         credential.Disabled,
 	})
 	if err := store.SaveAtomic(ctx); err != nil {
 		r.recordCooldownFailure(ctx, store, authIndex, reason, err)
@@ -1082,36 +1117,6 @@ func (r *Runtime) triggerCooldown(ctx context.Context, authIndex, modelGroup, re
 	}
 
 	client := host.NewClient(r.hostCallbacks)
-	credential := core.Credential{
-		Name:      authIndex,
-		AuthIndex: authIndex,
-		Provider:  core.ProviderAntigravity,
-		Type:      core.CredentialTypeAntigravity,
-	}
-	files, listErr := client.ListAuthFiles(ctx)
-	if listErr != nil {
-		r.recordCooldownFailure(ctx, store, authIndex, reason, listErr)
-		return fmt.Errorf("synchronize cooldown credential: %w", listErr)
-	}
-	found := false
-	for _, candidate := range credentialsFromAuthFiles(files) {
-		if candidate.AuthIndex == authIndex || candidate.Name == authIndex {
-			credential = candidate
-			found = true
-			break
-		}
-	}
-	if !found {
-		err := errors.New("cooldown credential not found in Host inventory")
-		r.recordCooldownFailure(ctx, store, authIndex, reason, err)
-		return err
-	}
-	if enriched, _, enrichErr := enrichCredentialsFromAuthDocuments(ctx, client, []core.Credential{credential}); enrichErr != nil {
-		r.recordCooldownFailure(ctx, store, authIndex, reason, enrichErr)
-		return fmt.Errorf("synchronize cooldown Host state: %w", enrichErr)
-	} else if len(enriched) == 1 {
-		credential = enriched[0]
-	}
 	transition := apply.NewHostTransition(client)
 	result, applyErr := apply.ExecuteRound(ctx, transition, apply.TransitionRound{
 		Intents: []apply.TransitionIntent{apply.CooldownIntent(credential, reason)},
@@ -1139,6 +1144,7 @@ func (r *Runtime) triggerCooldown(ctx context.Context, authIndex, modelGroup, re
 	if projectErr != nil {
 		return projectErr
 	}
+	r.signalRateLimitWorker()
 	if result.Transitions.Totals.Failed > 0 || result.Transitions.Totals.Conflicts > 0 || result.Transitions.Totals.Uncertain > 0 {
 		return errors.New("429 cooldown host mutation failed")
 	}
@@ -1183,7 +1189,7 @@ func redactRuntimeIdentifier(value string) string {
 func buildMetadata() Metadata {
 	return Metadata{
 		Name:             "Antigravity Priority",
-		Version:          "1.2.12",
+		Version:          "1.2.13",
 		Author:           "ygq-future",
 		GitHubRepository: "https://github.com/ygq-future/antigravity-priority",
 		Description:      "Intelligent quota pacing and adaptive burn-rate priority scheduler exclusively for Google Antigravity in CLIProxyAPI.",

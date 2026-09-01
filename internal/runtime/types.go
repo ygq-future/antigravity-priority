@@ -34,11 +34,12 @@ const (
 	MethodFilterInbound      = "filter.inbound"
 
 	// Run History Kinds
-	KindApply     = "apply"
-	KindProbe     = "probe"
-	KindReset     = "reset"
-	KindAutoApply = "auto_apply"
-	KindCooldown  = "cooldown"
+	KindApply            = "apply"
+	KindProbe            = "probe"
+	KindReset            = "reset"
+	KindAutoApply        = "auto_apply"
+	KindCooldown         = "cooldown"
+	KindCooldownRecovery = "cooldown_recovery"
 )
 
 // Trigger represents the initiator of a scheduling execution.
