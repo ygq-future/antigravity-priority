@@ -88,9 +88,9 @@ func (r *Runtime) observeUsageSuccess(ctx context.Context, authIndex, modelGroup
 	r.rateLimitMu.Unlock()
 	r.signalRateLimitWorker()
 	r.rateLimitMu.Lock()
-	activeGroup, activeCooldown := r.activeCooldownGroups[authIndex]
+	activeEntry, activeCooldown := r.activeCooldowns[authIndex]
 	r.rateLimitMu.Unlock()
-	if !activeCooldown || activeGroup != modelGroup {
+	if !activeCooldown || activeEntry.ModelGroup != modelGroup {
 		return nil
 	}
 
@@ -172,6 +172,7 @@ func (r *Runtime) runRateLimitWorker() {
 
 func (r *Runtime) nextRateLimitDeadline() time.Time {
 	r.rateLimitMu.Lock()
+	defer r.rateLimitMu.Unlock()
 	var next time.Time
 	for _, pending := range r.pending429 {
 		next = earlierTime(next, pending.Deadline)
@@ -179,19 +180,12 @@ func (r *Runtime) nextRateLimitDeadline() time.Time {
 	if !r.stormUntil.IsZero() {
 		next = earlierTime(next, r.stormUntil)
 	}
-	r.rateLimitMu.Unlock()
-	cfg, err := r.Config()
-	if err == nil {
-		store, loadErr := state.Load(context.Background(), cfg.StateCachePath)
-		if loadErr == nil {
-			for _, entry := range store.GetCooldowns() {
-				deadline := entry.CooldownUntil
-				if !entry.NextRecoveryAt.IsZero() && entry.NextRecoveryAt.After(deadline) {
-					deadline = entry.NextRecoveryAt
-				}
-				next = earlierTime(next, deadline)
-			}
+	for _, entry := range r.activeCooldowns {
+		deadline := entry.CooldownUntil
+		if !entry.NextRecoveryAt.IsZero() && entry.NextRecoveryAt.After(deadline) {
+			deadline = entry.NextRecoveryAt
 		}
+		next = earlierTime(next, deadline)
 	}
 	return next
 }
@@ -219,31 +213,54 @@ func (r *Runtime) processRateLimitDeadlines(ctx context.Context) {
 			}
 		}
 	}
+	dueCooldowns := make([]state.CooldownEntry, 0)
+	for _, entry := range r.activeCooldowns {
+		if !now.Before(entry.CooldownUntil) && (entry.NextRecoveryAt.IsZero() || !now.Before(entry.NextRecoveryAt)) {
+			dueCooldowns = append(dueCooldowns, entry)
+		}
+	}
 	r.rateLimitMu.Unlock()
 	for _, pending := range due {
 		r.runMu.Lock()
 		_ = r.triggerCooldown(ctx, pending.AuthIndex, pending.ModelGroup, pending.Reason)
 		r.runMu.Unlock()
 	}
+	if len(dueCooldowns) == 0 {
+		return
+	}
 	cfg, err := r.Config()
 	if err != nil {
+		r.deferCooldownRecovery(dueCooldowns, now)
 		return
 	}
 	store, err := state.Load(ctx, cfg.StateCachePath)
 	if err != nil {
+		r.deferCooldownRecovery(dueCooldowns, now)
 		return
 	}
-	for _, entry := range store.GetCooldowns() {
-		if !now.Before(entry.CooldownUntil) && (entry.NextRecoveryAt.IsZero() || !now.Before(entry.NextRecoveryAt)) {
-			r.runMu.Lock()
-			restoreErr := r.restoreCooldown(ctx, store, entry, "429 cooldown expired", "rate_limit_expiry")
-			r.runMu.Unlock()
-			if restoreErr != nil {
-				entry.NextRecoveryAt = now.Add(30 * time.Second)
-				store.SetCooldown(entry)
-				_ = store.SaveAtomic(ctx)
-			}
+	persisted := store.GetCooldowns()
+	for _, scheduled := range dueCooldowns {
+		entry, active := persisted[scheduled.AuthIndex]
+		if !active {
+			r.clearActiveCooldown(scheduled.AuthIndex)
+			continue
 		}
+		r.runMu.Lock()
+		restoreErr := r.restoreCooldown(ctx, store, entry, "429 cooldown expired", "rate_limit_expiry")
+		r.runMu.Unlock()
+		if restoreErr != nil {
+			entry.NextRecoveryAt = now.Add(30 * time.Second)
+			store.SetCooldown(entry)
+			r.setActiveCooldown(entry)
+			_ = store.SaveAtomic(ctx)
+		}
+	}
+}
+
+func (r *Runtime) deferCooldownRecovery(entries []state.CooldownEntry, now time.Time) {
+	for _, entry := range entries {
+		entry.NextRecoveryAt = now.Add(30 * time.Second)
+		r.setActiveCooldown(entry)
 	}
 }
 
@@ -280,7 +297,13 @@ func (r *Runtime) restoreCooldown(ctx context.Context, store *state.Store, entry
 
 func (r *Runtime) clearActiveCooldown(authIndex string) {
 	r.rateLimitMu.Lock()
-	delete(r.activeCooldownGroups, authIndex)
+	delete(r.activeCooldowns, authIndex)
+	r.rateLimitMu.Unlock()
+}
+
+func (r *Runtime) setActiveCooldown(entry state.CooldownEntry) {
+	r.rateLimitMu.Lock()
+	r.activeCooldowns[entry.AuthIndex] = entry
 	r.rateLimitMu.Unlock()
 }
 
