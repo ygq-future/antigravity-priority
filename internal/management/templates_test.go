@@ -249,7 +249,6 @@ func TestStatusHTML_ContainsRequiredUIElements(t *testing.T) {
 		{"Confirm modal container", "confirmModal"},
 		{"Config center panel", "panelConfig"},
 		{"Auto apply toggle", "cfgAutoApply"},
-		{"Ignore disabled host toggle", "cfgIgnoreDisabledHost"},
 		{"Interval select", "cfgIntervalSelect"},
 		{"Save config button", "btnSaveConfig"},
 		{"Reset config button", "btnResetConfig"},

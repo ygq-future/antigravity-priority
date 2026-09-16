@@ -48,7 +48,7 @@ func collectFreshEvidence(ctx context.Context, input collectInput) (collectedEvi
 	probes := make([]evidence.ProbeObservation, 0)
 	jobs := make([]probeJob, 0, len(input.credentials))
 	for _, cred := range input.credentials {
-		needsProbe, err := freshProbeNeeded(ctx, input, cred.AuthIndex, string(input.modelGroup))
+		needsProbe, err := freshProbeNeeded(ctx, input, cred, string(input.modelGroup))
 		if err != nil {
 			return collectedEvidence{}, err
 		}
@@ -141,12 +141,17 @@ func uniqueProbeCredentials(probes []evidence.ProbeObservation) int {
 	return len(authIndexes)
 }
 
-func freshProbeNeeded(ctx context.Context, input collectInput, authIndex string, modelGroup string) (bool, error) {
+func freshProbeNeeded(ctx context.Context, input collectInput, cred core.Credential, modelGroup string) (bool, error) {
 	if input.forceProbe {
 		return true, nil
 	}
+	if cred.Disabled {
+		if input.store == nil || !input.store.IsAutoDisabled(cred.AuthIndex) {
+			return false, nil
+		}
+	}
 	return input.store.NeedsProbe(ctx, state.ProbeCheck{
-		AuthIndex:  authIndex,
+		AuthIndex:  cred.AuthIndex,
 		Provider:   core.ProviderAntigravity,
 		ModelGroup: modelGroup,
 		Now:        input.now,

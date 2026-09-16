@@ -53,7 +53,8 @@ const templateScriptOverviewRender = `        function renderDashboard() {
 
             items.forEach(item => {
                 if (item.is_boosted) boostedCount++;
-                if (item.target && item.target.disabled) depletedCount++;
+                const isManuallyDisabled = item.reason && item.reason.indexOf("disabled on host") >= 0;
+                if (item.target && item.target.disabled && !isManuallyDisabled) depletedCount++;
                 if (item.target && !item.target.disabled) activeCount++;
             });
 
@@ -117,9 +118,12 @@ const templateScriptOverviewRender = `        function renderDashboard() {
                 }
 
                 const probeFailed = item.reason && (item.reason.indexOf("probe failed") >= 0 || item.reason.indexOf("probe invalid") >= 0);
+                const isManuallyDisabled = item.reason && item.reason.indexOf("disabled on host") >= 0;
                 let statusBadge = "<span class=\"badge badge-success\">" + t("statusActive") + "</span>";
                 if (probeFailed) {
                     statusBadge = "<span class=\"badge badge-warning\">" + t("statusFailed") + "</span>";
+                } else if (isManuallyDisabled) {
+                    statusBadge = "<span class=\"badge badge-secondary\">" + t("statusDisabled") + "</span>";
                 } else if (item.target && item.target.disabled) {
                     statusBadge = "<span class=\"badge badge-danger\">" + t("statusWeeklyDepleted") + "</span>";
                 } else if (item.reason && item.reason.indexOf("429") >= 0) {
@@ -127,7 +131,6 @@ const templateScriptOverviewRender = `        function renderDashboard() {
                 } else if (isBoosted) {
                     statusBadge = "<span class=\"badge badge-boost\">" + t("statusBoosted") + "</span>";
                 }
-
                 const formattedReason = formatReason(item.reason, isBoosted, item.target && item.target.disabled);
                 const authIdx = item.auth_index || "";
                 const credDisplayName = item.email || "Credential";
@@ -142,7 +145,10 @@ const templateScriptOverviewRender = `        function renderDashboard() {
                             statusBadge +
                             "<div class=\"metric-pill metric-pill-urgency\">" + t("urgencyLabel") + "<strong>" + urgency + "</strong></div>" +
                             "<div class=\"metric-pill metric-pill-burn\">" + t("burnLabel") + "<strong>" + burnRate + "</strong></div>" +
-                            "<button type=\"button\" class=\"btn-secondary\" style=\"min-height:20px; height:20px; padding:0 6px; font-size:11px; margin-left:auto; border-radius:4px;\" onclick=\"openSamplesModal('" + escapeHTML(authIdx) + "', '" + escapeHTML(credDisplayName) + "')\">📊 " + t("btnSamples") + "</button>" +
+                            "<div style=\"margin-left:auto; display:flex; gap:4px;\">" +
+                                "<button type=\"button\" class=\"btn-secondary\" style=\"min-height:20px; height:20px; padding:0 6px; font-size:11px; border-radius:4px;\" onclick=\"probeSingleCredential('" + escapeHTML(authIdx) + "', this)\">⚡ " + t("btnProbeSingle") + "</button>" +
+                                "<button type=\"button\" class=\"btn-secondary\" style=\"min-height:20px; height:20px; padding:0 6px; font-size:11px; border-radius:4px;\" onclick=\"openSamplesModal('" + escapeHTML(authIdx) + "', '" + escapeHTML(credDisplayName) + "')\">📊 " + t("btnSamples") + "</button>" +
+                            "</div>" +
                         "</div>" +
                     "</div>" +
 

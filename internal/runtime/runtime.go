@@ -375,6 +375,7 @@ func (r *Runtime) SyncHost(ctx context.Context, modelGroup config.AntigravityMod
 	if err != nil {
 		return apply.DualGroupSnapshot{}, err
 	}
+	_ = reconcileAutoDisabledDrift(ctx, store, credentials)
 	evidenceByGroup := buildProjectionEvidence(store, credentials)
 
 	now := r.clock.Now().UTC()

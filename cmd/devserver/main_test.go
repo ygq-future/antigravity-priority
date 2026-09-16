@@ -326,3 +326,81 @@ func TestDevRuntimeUsesProductionPathForProbeApplyAndManagement(t *testing.T) {
 		t.Fatalf("second probe did not append changed quota sample: %+v", updatedSamples)
 	}
 }
+
+func TestDevServer_ManuallyDisabledAccountSimulation(t *testing.T) {
+	now := time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
+	clock := &devTestClock{now: now}
+	dev, err := newDevServer(devServerOptions{
+		AuthDir:        t.TempDir(),
+		QuotaStatePath: filepath.Join(t.TempDir(), "quota.json"),
+		StateCachePath: filepath.Join(t.TempDir(), "cache.json"),
+		AccountCount:   2,
+		Seed:           42,
+		Clock:          clock,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = dev.runtime.Shutdown(context.Background()) }()
+
+	// 1. Manually disable account 0 on host
+	files, err := dev.host.ListAuthFiles(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetAuth := files[0].AuthIndex
+	doc, err := dev.host.GetAuth(context.Background(), files[0].Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(doc.JSON, &raw); err != nil {
+		t.Fatal(err)
+	}
+	raw["disabled"] = true
+	updated, _ := json.Marshal(raw)
+	if err := dev.host.SaveAuth(context.Background(), files[0].Name, updated); err != nil {
+		t.Fatal(err)
+	}
+
+	// 2. Perform single-credential probe via management endpoint
+	handler := dev.runtime.ManagementHandler()
+	req := httptest.NewRequest(http.MethodPost, "/v0/management/plugins/antigravity-priority/run?mode=probe&auth_index="+targetAuth+"&antigravity_model_group=gemini", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("single probe failed: %d, body: %s", rec.Code, rec.Body.String())
+	}
+
+	// 3. Snapshot inspection: disabled on host, full quota visible, changes empty
+	snapshot, err := dev.runtime.LatestSnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	group := snapshot.Groups["gemini"]
+	if len(group.Items) != 2 {
+		t.Fatalf("expected all 2 accounts in snapshot after single-credential probe, got %d", len(group.Items))
+	}
+	found := false
+	for _, it := range group.Items {
+		if it.Identity.AuthIndex == targetAuth {
+			found = true
+			if it.Reason != "disabled on host" {
+				t.Fatalf("expected reason %q, got %q", "disabled on host", it.Reason)
+			}
+			if !it.Current.Disabled || !it.Target.Disabled {
+				t.Fatalf("expected item disabled on both current and target: %+v", it)
+			}
+			if it.R7d <= 0 || it.R5h <= 0 {
+				t.Fatalf("expected valid non-zero quota for probed manually disabled item, got R7d=%v, R5h=%v", it.R7d, it.R5h)
+			}
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("target credential %q not found in snapshot", targetAuth)
+	}
+	if len(group.Changes) != 0 {
+		t.Fatalf("manually disabled account must not produce changes, got %+v", group.Changes)
+	}
+}

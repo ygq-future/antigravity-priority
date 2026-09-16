@@ -60,6 +60,9 @@ const featureOverviewTranslations = `        const OVERVIEW_ZH = {
                 probeCooldown: "冷却中...",
                 viewDetails: "🔍 查看明细",
                 statusCooldown: "⏳ 429 冷却中",
+                statusDisabled: "已禁用",
+                btnProbeSingle: "探测",
+                probeSingleSuccess: "已更新该凭证配额",
             }
         };
         const OVERVIEW_EN = {
@@ -122,6 +125,9 @@ const featureOverviewTranslations = `        const OVERVIEW_ZH = {
                 probeCooldown: "Cooling down...",
                 viewDetails: "🔍 Details",
                 statusCooldown: "⏳ 429 Cooldown",
+                statusDisabled: "Disabled",
+                btnProbeSingle: "Probe",
+                probeSingleSuccess: "Credential quota updated",
             }
         };
 `

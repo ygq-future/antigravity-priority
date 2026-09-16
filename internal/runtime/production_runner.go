@@ -44,16 +44,21 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 		return err
 	}
 
-	credentials := credentialsFromAuthFiles(files)
-	credentials = filterCredentialsByAuthIndex(credentials, request.AuthIndexes)
+	allCredentials := credentialsFromAuthFiles(files)
+	allCredentials, allAuthMaterials, err := enrichCredentialsFromAuthDocuments(ctx, client, allCredentials)
+	if err != nil {
+		return err
+	}
+
+	probeCredentials := allCredentials
+	probeAuthMaterials := allAuthMaterials
+	if len(request.AuthIndexes) > 0 {
+		probeCredentials = filterCredentialsByAuthIndex(allCredentials, request.AuthIndexes)
+		probeAuthMaterials = filterAuthMaterialsByAuthIndex(allAuthMaterials, request.AuthIndexes)
+	}
 	cachePath := request.Config.StateCachePath
 	if strings.TrimSpace(cachePath) == "" {
 		cachePath = config.DefaultStateCachePath
-	}
-
-	credentials, authMaterials, err := enrichCredentialsFromAuthDocuments(ctx, client, credentials)
-	if err != nil {
-		return err
 	}
 
 	store, err := state.Load(ctx, cachePath)
@@ -81,8 +86,8 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 		evidence, err = r.collectEvidenceForTrigger(ctx, collectInput{
 			client:         client,
 			store:          store,
-			credentials:    credentials,
-			authMaterials:  authMaterials,
+			credentials:    probeCredentials,
+			authMaterials:  probeAuthMaterials,
 			now:            now,
 			cacheTTL:       defaultProbeCacheTTL,
 			forceProbe:     forceProbe,
@@ -123,6 +128,9 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 	}
 	plan := projection.ControlPlan
 	primarySnapshot := projection.ControlSnapshot
+	if len(request.AuthIndexes) > 0 {
+		plan.Changes = filterChangesByAuthIndex(plan.Changes, request.AuthIndexes)
+	}
 	if preview != nil && preview.HostFingerprint != hostFingerprint(primarySnapshot.Items) {
 		return fmt.Errorf("quota preview %q is stale: CPA host state changed; refresh quota before applying", preview.ID)
 	}
@@ -135,7 +143,7 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 			ModelGroup:      request.Config.AntigravityModelGroup,
 			AuthScope:       authScopeKey(request.AuthIndexes),
 			HostFingerprint: hostFingerprint(primarySnapshot.Items),
-			EvidenceByGroup: evidence.ByGroup,
+			EvidenceByGroup: projectionEffectiveEvidence(store, allCredentials, evidence.ByGroup, request),
 		})
 		projection.Snapshot.PreviewID = previewID
 		r.setDualSnapshot(projection.Snapshot)
@@ -179,6 +187,21 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 	result, err := apply.ExecutePlan(ctx, transition, plan, true)
 	if err != nil {
 		return err
+	}
+	if store != nil {
+		for _, change := range plan.Changes {
+			if change.Disabled && change.Reason == priority.ReasonFreshWeeklyDepleted {
+				store.SetAutoDisabled(state.AutoDisabledEntry{
+					AuthIndex:  change.Credential.AuthIndex,
+					ModelGroup: string(request.Config.AntigravityModelGroup),
+					Reason:     change.Reason,
+					DisabledAt: now,
+				})
+			} else if !change.Disabled {
+				store.DeleteAutoDisabled(change.Credential.AuthIndex)
+			}
+		}
+		_ = store.SaveAtomic(ctx)
 	}
 	postApplyProjection, err := projectCurrentHost(ctx, client, request, evidence.ByGroup, store, now)
 	if err != nil {
@@ -293,15 +316,19 @@ func projectCurrentHost(
 		return DualModelGroupProjection{}, err
 	}
 	credentials := credentialsFromAuthFiles(files)
-	credentials = filterCredentialsByAuthIndex(credentials, request.AuthIndexes)
+	effectiveEvidence := evidenceByGroup
+	if len(request.AuthIndexes) > 0 {
+		effectiveEvidence = projectionEffectiveEvidence(store, credentials, evidenceByGroup, request)
+	}
 	credentials, _, err = enrichCredentialsFromAuthDocuments(ctx, client, credentials)
 	if err != nil {
 		return DualModelGroupProjection{}, err
 	}
+	_ = reconcileAutoDisabledDrift(ctx, store, credentials)
 	return ProjectDualModelGroups(ProjectionInput{
 		ControlModelGroup: request.Config.AntigravityModelGroup,
 		Credentials:       credentials,
-		EvidenceByGroup:   evidenceByGroup,
+		EvidenceByGroup:   effectiveEvidence,
 		PlanningOptions:   priorityOptions(request.Config, store, now),
 		ProjectionTime:    now,
 	})
@@ -371,6 +398,88 @@ func isAntigravityAuthFile(file host.AuthFile) bool {
 		strings.Contains(name, "antigravity")
 }
 
+func filterAuthMaterialsByAuthIndex(materials map[string]authMaterial, authIndexes []string) map[string]authMaterial {
+	if len(authIndexes) == 0 {
+		return materials
+	}
+	allowed := make(map[string]struct{}, len(authIndexes))
+	for _, idx := range authIndexes {
+		allowed[idx] = struct{}{}
+	}
+	filtered := make(map[string]authMaterial, len(materials))
+	for idx, mat := range materials {
+		if _, ok := allowed[idx]; ok {
+			filtered[idx] = mat
+		}
+	}
+	return filtered
+}
+
+func projectionEffectiveEvidence(
+	store *state.Store,
+	credentials []core.Credential,
+	fresh map[config.AntigravityModelGroup]evidence.Result,
+	request TaskRequest,
+) map[config.AntigravityModelGroup]evidence.Result {
+	if len(request.AuthIndexes) == 0 || store == nil {
+		return fresh
+	}
+	base := buildProjectionEvidence(store, credentials)
+	merged := make(map[config.AntigravityModelGroup]evidence.Result, len(base))
+	for group, baseRes := range base {
+		freshRes, hasFresh := fresh[group]
+		if !hasFresh {
+			merged[group] = baseRes
+			continue
+		}
+		freshEligible := make(map[string]priority.QuotaEvidence, len(freshRes.Eligible))
+		for _, e := range freshRes.Eligible {
+			freshEligible[e.AuthIndex] = e
+		}
+		freshObs := make(map[string]evidence.Observation, len(freshRes.Observations))
+		for _, o := range freshRes.Observations {
+			freshObs[o.AuthIndex] = o
+		}
+
+		res := evidence.Result{
+			Eligible:     make([]priority.QuotaEvidence, 0, len(baseRes.Eligible)+len(freshRes.Eligible)),
+			Observations: make([]evidence.Observation, 0, len(baseRes.Observations)+len(freshRes.Observations)),
+		}
+		res.Eligible = append(res.Eligible, freshRes.Eligible...)
+		for _, e := range baseRes.Eligible {
+			if _, exists := freshEligible[e.AuthIndex]; !exists {
+				res.Eligible = append(res.Eligible, e)
+			}
+		}
+		res.Observations = append(res.Observations, freshRes.Observations...)
+		for _, o := range baseRes.Observations {
+			if _, exists := freshObs[o.AuthIndex]; !exists {
+				res.Observations = append(res.Observations, o)
+			}
+		}
+
+		merged[group] = res
+	}
+	return merged
+}
+
+func filterChangesByAuthIndex(changes []priority.Change, authIndexes []string) []priority.Change {
+	if len(authIndexes) == 0 {
+		return changes
+	}
+	allowed := make(map[string]struct{}, len(authIndexes))
+	for _, idx := range authIndexes {
+		allowed[idx] = struct{}{}
+	}
+	filtered := make([]priority.Change, 0, len(changes))
+	for _, c := range changes {
+		if _, ok := allowed[c.Credential.AuthIndex]; ok {
+			filtered = append(filtered, c)
+		}
+	}
+	return filtered
+}
+
 func filterCredentialsByAuthIndex(credentials []core.Credential, authIndexes []string) []core.Credential {
 	if len(authIndexes) == 0 {
 		return credentials
@@ -390,18 +499,43 @@ func filterCredentialsByAuthIndex(credentials []core.Credential, authIndexes []s
 
 func priorityOptions(cfg config.Config, store *state.Store, now time.Time) priority.Options {
 	var cooldowns map[string]time.Time
+	var autoDisabled map[string]struct{}
 	if store != nil {
 		cooldowns = store.GetActiveCooldowns(now)
+		autoMap := store.GetAutoDisabled()
+		if len(autoMap) > 0 {
+			autoDisabled = make(map[string]struct{}, len(autoMap))
+			for k := range autoMap {
+				autoDisabled[k] = struct{}{}
+			}
+		}
 	}
 	return priority.Options{
-		Now:                 now,
-		BoostStartPriority:  cfg.PriorityRules.BoostStartPriority,
-		NormalStartPriority: cfg.PriorityRules.NormalStartPriority,
-		MinChange:           cfg.MinChange,
-		UrgencyTolerance:    cfg.UrgencyTolerance,
-		IgnoreDisabledHost:  cfg.IgnoreDisabledHost,
-		CooldownAuthIndexes: cooldowns,
+		Now:                     now,
+		BoostStartPriority:      cfg.PriorityRules.BoostStartPriority,
+		NormalStartPriority:     cfg.PriorityRules.NormalStartPriority,
+		MinChange:               cfg.MinChange,
+		UrgencyTolerance:        cfg.UrgencyTolerance,
+		AutoDisabledAuthIndexes: autoDisabled,
+		CooldownAuthIndexes:     cooldowns,
 	}
+}
+
+func reconcileAutoDisabledDrift(ctx context.Context, store *state.Store, credentials []core.Credential) error {
+	if store == nil {
+		return nil
+	}
+	mutated := false
+	for _, cred := range credentials {
+		if !cred.Disabled && store.IsAutoDisabled(cred.AuthIndex) {
+			store.DeleteAutoDisabled(cred.AuthIndex)
+			mutated = true
+		}
+	}
+	if mutated {
+		return store.SaveAtomic(ctx)
+	}
+	return nil
 }
 
 func buildProjectionEvidence(store *state.Store, credentials []core.Credential) map[config.AntigravityModelGroup]evidence.Result {

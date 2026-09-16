@@ -693,3 +693,63 @@ func TestStore_GetHistoricalEvidence_And_BuildHistoricalEvidence(t *testing.T) {
 		t.Fatalf("expected only historical success from 3 credentials, got %d", len(groupEv))
 	}
 }
+
+func TestStore_AutoDisabled_PersistenceAndOperations(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state.json")
+
+	store, err := state.Load(ctx, path)
+	if err != nil {
+		t.Fatalf("load empty store: %v", err)
+	}
+
+	if store.IsAutoDisabled("acc-1") {
+		t.Fatal("expected acc-1 not auto-disabled")
+	}
+
+	now := time.Date(2026, 9, 16, 14, 0, 0, 0, time.UTC)
+	store.SetAutoDisabled(state.AutoDisabledEntry{
+		AuthIndex:  "acc-1",
+		ModelGroup: "gemini",
+		Reason:     "weekly_depleted",
+		DisabledAt: now,
+	})
+
+	if !store.IsAutoDisabled("acc-1") {
+		t.Fatal("expected acc-1 auto-disabled after SetAutoDisabled")
+	}
+
+	all := store.GetAutoDisabled()
+	if len(all) != 1 || all["acc-1"].Reason != "weekly_depleted" {
+		t.Fatalf("unexpected GetAutoDisabled map: %+v", all)
+	}
+
+	if err := store.SaveAtomic(ctx); err != nil {
+		t.Fatalf("save atomic: %v", err)
+	}
+
+	// Reload and verify persistence
+	reloaded, err := state.Load(ctx, path)
+	if err != nil {
+		t.Fatalf("reload store: %v", err)
+	}
+
+	if !reloaded.IsAutoDisabled("acc-1") {
+		t.Fatal("expected acc-1 still auto-disabled after reload")
+	}
+
+	reloadedAll := reloaded.GetAutoDisabled()
+	if len(reloadedAll) != 1 || !reloadedAll["acc-1"].DisabledAt.Equal(now) {
+		t.Fatalf("unexpected reloaded auto-disabled entry: %+v", reloadedAll)
+	}
+
+	// Delete
+	reloaded.DeleteAutoDisabled("acc-1")
+	if reloaded.IsAutoDisabled("acc-1") {
+		t.Fatal("expected acc-1 deleted")
+	}
+	if len(reloaded.GetAutoDisabled()) != 0 {
+		t.Fatal("expected empty auto-disabled map after deletion")
+	}
+}

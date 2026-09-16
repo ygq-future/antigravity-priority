@@ -767,8 +767,8 @@ func TestRuntime_ProductionRunner_FilteredAuthIndexes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("latest snapshot failed: %v", err)
 	}
-	if len(snap.Groups[snap.ActiveModelGroup].Items) != 1 {
-		t.Errorf("expected 1 item when filtered, got %d", len(snap.Groups[snap.ActiveModelGroup].Items))
+	if len(snap.Groups[snap.ActiveModelGroup].Items) != 2 {
+		t.Errorf("expected all 2 items retained in snapshot, got %d", len(snap.Groups[snap.ActiveModelGroup].Items))
 	}
 }
 
@@ -1828,7 +1828,6 @@ func TestRuntime_DynamicConfig_SurvivesReconfigure(t *testing.T) {
 		UrgencyTolerance:         0.05,
 		RateLimitCooldownMinutes: 5,
 		QuotaSampleCapacity:      6,
-		IgnoreDisabledHost:       false,
 		PriorityRules: state.PriorityRulesConfig{
 			BoostStartPriority:  980,
 			NormalStartPriority: 200,
@@ -1865,9 +1864,6 @@ func TestRuntime_DynamicConfig_SurvivesReconfigure(t *testing.T) {
 	if cfg.MaxConcurrency != 10 {
 		t.Errorf("expected MaxConcurrency=10, got %d", cfg.MaxConcurrency)
 	}
-	if cfg.IgnoreDisabledHost {
-		t.Fatal("expected ignore disabled host=false to survive Reconfigure")
-	}
 
 	if err := r.SetScheduleConfig(context.Background(), state.ScheduleConfig{
 		Paused:        false,
@@ -1881,8 +1877,8 @@ func TestRuntime_DynamicConfig_SurvivesReconfigure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotDynamic.IgnoreDisabledHost {
-		t.Fatal("schedule persistence must not re-enable disabled-host inclusion filtering")
+	if !gotDynamic.AutoApply || gotDynamic.Interval != "45m" {
+		t.Fatal("schedule persistence corrupted dynamic config")
 	}
 
 	reloaded := runtime.New(runtime.Options{StateCachePath: cachePath})
@@ -1891,8 +1887,8 @@ func TestRuntime_DynamicConfig_SurvivesReconfigure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reloadedDynamic.IgnoreDisabledHost {
-		t.Fatal("ignore disabled host=false must survive runtime reload")
+	if !reloadedDynamic.AutoApply || reloadedDynamic.Interval != "45m" {
+		t.Fatal("dynamic config did not survive runtime reload")
 	}
 }
 
@@ -2571,5 +2567,86 @@ func TestRuntime_Diagnostics_LatestApply_AutoApplyAndManualApply(t *testing.T) {
 	}
 	if latest4.Kind != runtime.KindApply {
 		t.Fatalf("expected latest_apply.Kind == %q, got %q", runtime.KindApply, latest4.Kind)
+	}
+}
+
+func TestRuntime_AutoDisabled_LifecycleAndProbeBypass(t *testing.T) {
+	tempDir := t.TempDir()
+	cachePath := filepath.Join(tempDir, "cache.json")
+	authFilePath := filepath.Join(tempDir, "auth.json")
+	_ = os.WriteFile(authFilePath, []byte(`{"access_token":"token_123","project_id":"proj_123","priority":100,"disabled":true}`), 0o600)
+
+	mock := newMockHost()
+	mock.files = []host.AuthFile{
+		{
+			Name:      "manually-disabled",
+			AuthIndex: "auth_manual",
+			Provider:  string(core.ProviderAntigravity),
+			Type:      string(core.CredentialTypeAntigravity),
+			Priority:  100,
+			Disabled:  true,
+		},
+	}
+	mock.authDocs["auth_manual"] = host.AuthDocument{AuthIndex: "auth_manual", Path: authFilePath}
+	clock := &testClock{now: time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)}
+	r := newTestRuntime(t, runtime.Options{
+		Host:           mock,
+		Clock:          clock,
+		Sleeper:        testSleeper{},
+		StateCachePath: cachePath,
+	})
+
+	// 1. Manually disabled account should not be auto-probed during AutoApply
+	if err := r.AutoApply(context.Background()); err != nil {
+		t.Fatalf("auto apply failed: %v", err)
+	}
+	if len(mock.httpCalls) != 0 {
+		t.Fatalf("manually disabled account must not be auto-probed, got %d http calls", len(mock.httpCalls))
+	}
+
+	// 2. Explicit Probe allows probing manually disabled account to view quota
+	if err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
+		t.Fatalf("probe failed: %v", err)
+	}
+	if len(mock.httpCalls) == 0 {
+		t.Fatal("explicit probe should probe manually disabled account")
+	}
+
+	// Snapshot should retain quota metrics and reason ReasonDisabledOnHost
+	snap, err := r.LatestSnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := snap.Groups[snap.ActiveModelGroup].Items
+	if len(items) != 1 || items[0].Reason != "disabled on host" {
+		t.Fatalf("expected reason %q, got %+v", "disabled on host", items)
+	}
+	if !items[0].Current.Disabled || !items[0].Target.Disabled {
+		t.Fatalf("expected both current and target disabled: %+v", items[0])
+	}
+
+	// 3. User manually re-enables in host -> state drift clears AutoDisabled if it was set
+	store, err := state.Load(context.Background(), cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.SetAutoDisabled(state.AutoDisabledEntry{AuthIndex: "auth_manual", Reason: "weekly_depleted"})
+	_ = store.SaveAtomic(context.Background())
+
+	mock.mu.Lock()
+	mock.files[0].Disabled = false
+	mock.mu.Unlock()
+	_ = os.WriteFile(authFilePath, []byte(`{"access_token":"token_123","project_id":"proj_123","priority":100,"disabled":false}`), 0o600)
+
+	_, err = r.SyncHost(context.Background(), config.AntigravityModelGroupGemini)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reloadedStore, err := state.Load(context.Background(), cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloadedStore.IsAutoDisabled("auth_manual") {
+		t.Fatal("manual re-enable in host must clear AutoDisabled record")
 	}
 }

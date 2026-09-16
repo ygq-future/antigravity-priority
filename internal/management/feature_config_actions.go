@@ -36,7 +36,6 @@ const templateScriptConfig = `        let originalConfigState = null;
                 interval = intervalSelect.value === "custom" ? ((intervalCustom && intervalCustom.value.trim()) || "") : intervalSelect.value;
             }
             var modelGroup = (document.getElementById("cfgModelGroup") && document.getElementById("cfgModelGroup").value) || "gemini";
-            var ignoreDisabledHost = Boolean(document.getElementById("cfgIgnoreDisabledHost") && document.getElementById("cfgIgnoreDisabledHost").checked);
             var windowEnabled = Boolean(document.getElementById("cfgWindowEnabled") && document.getElementById("cfgWindowEnabled").checked);
             var windowStart = (document.getElementById("cfgWindowStart") && document.getElementById("cfgWindowStart").value.trim()) || "";
             var windowEnd = (document.getElementById("cfgWindowEnd") && document.getElementById("cfgWindowEnd").value.trim()) || "";
@@ -50,7 +49,7 @@ const templateScriptConfig = `        let originalConfigState = null;
 
             return JSON.stringify({
                 autoApply, interval, modelGroup, windowEnabled, windowStart, windowEnd,
-                maxConcurrency, minChange, urgencyTol, sampleCapacity, cooldownMin, boostStart, normalStart, ignoreDisabledHost
+                maxConcurrency, minChange, urgencyTol, sampleCapacity, cooldownMin, boostStart, normalStart
             });
         }
 
@@ -96,13 +95,6 @@ const templateScriptConfig = `        let originalConfigState = null;
             if (modelGroup) {
                 modelGroup.value = cfg.antigravity_model_group || "gemini";
                 updateCustomCfgModelDisplay();
-            }
-
-            var ignoreDisabledHost = document.getElementById("cfgIgnoreDisabledHost");
-            var ignoreDisabledHostText = document.getElementById("cfgIgnoreDisabledHostStatusText");
-            if (ignoreDisabledHost) {
-                ignoreDisabledHost.checked = cfg.ignore_disabled_host !== undefined ? Boolean(cfg.ignore_disabled_host) : true;
-                if (ignoreDisabledHostText) ignoreDisabledHostText.textContent = ignoreDisabledHost.checked ? (currentLang === "zh-CN" ? "已开启" : "Enabled") : (currentLang === "zh-CN" ? "已关闭" : "Disabled");
             }
 
             var windowEnabled = document.getElementById("cfgWindowEnabled");
@@ -171,12 +163,6 @@ const templateScriptConfig = `        let originalConfigState = null;
                     autoText.textContent = e.target.checked ? (currentLang === "zh-CN" ? "已开启" : "Enabled") : (currentLang === "zh-CN" ? "已关闭" : "Disabled");
                 }
             }
-            if (e.target && e.target.id === "cfgIgnoreDisabledHost") {
-                var ignoreText = document.getElementById("cfgIgnoreDisabledHostStatusText");
-                if (ignoreText) {
-                    ignoreText.textContent = e.target.checked ? (currentLang === "zh-CN" ? "已开启" : "Enabled") : (currentLang === "zh-CN" ? "已关闭" : "Disabled");
-                }
-            }
             if (e.target && e.target.closest("#panelConfig")) {
                 updateSaveButtonState();
             }
@@ -233,8 +219,6 @@ const templateScriptConfig = `        let originalConfigState = null;
                     }
                 }
 
-                var modelGroup = (document.getElementById("cfgModelGroup") && document.getElementById("cfgModelGroup").value) || "gemini";
-                var ignoreDisabledHost = Boolean(document.getElementById("cfgIgnoreDisabledHost") && document.getElementById("cfgIgnoreDisabledHost").checked);
                 var windowEnabled = Boolean(document.getElementById("cfgWindowEnabled") && document.getElementById("cfgWindowEnabled").checked);
                 var windowStart = (document.getElementById("cfgWindowStart") && document.getElementById("cfgWindowStart").value.trim()) || "09:00";
                 var windowEnd = (document.getElementById("cfgWindowEnd") && document.getElementById("cfgWindowEnd").value.trim()) || "23:00";
@@ -301,8 +285,6 @@ const templateScriptConfig = `        let originalConfigState = null;
                 var reqBody = {
                     auto_apply: autoApply,
                     interval: interval,
-                    antigravity_model_group: modelGroup,
-                    ignore_disabled_host: ignoreDisabledHost,
                     max_concurrency: maxConcurrency,
                     min_change: minChange,
                     urgency_tolerance: urgencyTol,
@@ -346,9 +328,7 @@ const templateScriptConfig = `        let originalConfigState = null;
 
             var defaultCfg = {
                 auto_apply: false,
-                interval: "15m",
                 antigravity_model_group: "gemini",
-                ignore_disabled_host: true,
                 max_concurrency: 6,
                 min_change: 1,
                 urgency_tolerance: 0.05,

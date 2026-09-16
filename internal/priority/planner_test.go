@@ -75,7 +75,6 @@ func TestPlanFreshOnly(t *testing.T) {
 		NormalStartPriority: 100,
 		MinChange:           1,
 		UrgencyTolerance:    0.05,
-		IgnoreDisabledHost:  true,
 	}
 
 	t.Run("acceptance: boosted tier clustering with tolerance", func(t *testing.T) {
@@ -272,7 +271,7 @@ func TestPlanFreshOnly(t *testing.T) {
 		}
 	})
 
-	t.Run("ignored disabled credential keeps its host state without a target", func(t *testing.T) {
+	t.Run("manually disabled credential keeps host state and retains quota meters without host write", func(t *testing.T) {
 		creds := []core.Credential{
 			{AuthIndex: "user-disabled-healthy", Priority: 100, Disabled: true},
 		}
@@ -283,7 +282,7 @@ func TestPlanFreshOnly(t *testing.T) {
 				AuthIndex:            "user-disabled-healthy",
 				LongWindowRemaining:  int64Ptr(90),
 				LongWindowResetAt:    &reset7d,
-				ShortWindowRemaining: int64Ptr(90),
+				ShortWindowRemaining: int64Ptr(85),
 				ShortWindowResetAt:   &reset5h,
 				CycleBurnRate:        0.15,
 			},
@@ -293,49 +292,102 @@ func TestPlanFreshOnly(t *testing.T) {
 		if len(plan.Items) != 1 {
 			t.Fatalf("expected 1 item, got %d", len(plan.Items))
 		}
-		if !plan.Items[0].Disabled || plan.Items[0].Priority != 100 {
-			t.Errorf("expected ignored account to keep host state, got %+v", plan.Items[0])
+		item := plan.Items[0]
+		if !item.Disabled || item.Priority != 100 {
+			t.Errorf("expected manually disabled account to keep host state, got %+v", item)
 		}
-		if plan.Items[0].EvidenceFresh {
-			t.Errorf("ignored account must not expose fresh planning evidence: %+v", plan.Items[0])
+		if item.EvidenceFresh {
+			t.Errorf("manually disabled account must not expose fresh planning evidence: %+v", item)
+		}
+		if item.Reason != ReasonDisabledOnHost {
+			t.Errorf("expected reason %q, got %q", ReasonDisabledOnHost, item.Reason)
+		}
+		if item.R7d != 0.90 || item.R5h != 0.85 {
+			t.Errorf("expected quota metrics preserved (R7d=0.9, R5h=0.85), got R7d=%v, R5h=%v", item.R7d, item.R5h)
+		}
+		if item.ShortWindowResetAt == nil || !item.ShortWindowResetAt.Equal(reset5h) {
+			t.Errorf("expected reset timestamp preserved, got %+v", item.ShortWindowResetAt)
 		}
 		if len(plan.Changes) != 0 {
-			t.Errorf("ignored account must not produce a host write: %+v", plan.Changes)
+			t.Errorf("manually disabled account must not produce a host write: %+v", plan.Changes)
 		}
 	})
 
-	t.Run("disabled credential is planned and write-qualified when disabled hosts are not ignored", func(t *testing.T) {
+	t.Run("auto-disabled credential requires >= 10% 7d quota to recover", func(t *testing.T) {
 		creds := []core.Credential{
-			{AuthIndex: "user-disabled-healthy", Priority: 50, Disabled: true},
+			{AuthIndex: "auto-disabled-below-threshold", Priority: -1, Disabled: true},
+			{AuthIndex: "auto-disabled-healthy", Priority: -1, Disabled: true},
+			{AuthIndex: "auto-disabled-short-depleted", Priority: -1, Disabled: true},
 		}
 		reset7d := now.Add(100 * time.Hour)
 		reset5h := now.Add(3 * time.Hour)
 		evidence := []QuotaEvidence{
 			{
-				AuthIndex:            "user-disabled-healthy",
-				LongWindowRemaining:  int64Ptr(90),
+				// 5% 7d quota (< 10% threshold): must stay disabled
+				AuthIndex:            "auto-disabled-below-threshold",
+				LongWindowRemaining:  int64Ptr(5),
 				LongWindowResetAt:    &reset7d,
-				ShortWindowRemaining: int64Ptr(90),
+				ShortWindowRemaining: int64Ptr(80),
+				ShortWindowResetAt:   &reset5h,
+				CycleBurnRate:        0.15,
+			},
+			{
+				// 15% 7d quota (>= 10% threshold) & 80% 5h: healthy recovery
+				AuthIndex:            "auto-disabled-healthy",
+				LongWindowRemaining:  int64Ptr(15),
+				LongWindowResetAt:    &reset7d,
+				ShortWindowRemaining: int64Ptr(80),
+				ShortWindowResetAt:   &reset5h,
+				CycleBurnRate:        0.15,
+			},
+			{
+				// 15% 7d quota (>= 10% threshold) but 0% 5h: soft-depleted recovery
+				AuthIndex:            "auto-disabled-short-depleted",
+				LongWindowRemaining:  int64Ptr(15),
+				LongWindowResetAt:    &reset7d,
+				ShortWindowRemaining: int64Ptr(0),
 				ShortWindowResetAt:   &reset5h,
 				CycleBurnRate:        0.15,
 			},
 		}
 
 		opts := defaultOptions
-		opts.IgnoreDisabledHost = false
+		opts.AutoDisabledAuthIndexes = map[string]struct{}{
+			"auto-disabled-below-threshold": {},
+			"auto-disabled-healthy":         {},
+			"auto-disabled-short-depleted":  {},
+		}
 		plan := planFreshOnly(creds, evidence, opts)
-		if len(plan.Items) != 1 {
-			t.Fatalf("expected 1 item, got %d", len(plan.Items))
+		if len(plan.Items) != 3 {
+			t.Fatalf("expected 3 items, got %d", len(plan.Items))
 		}
-		item := plan.Items[0]
-		if !item.EvidenceFresh || item.Disabled {
-			t.Errorf("expected fresh evidence to calculate a re-enabled target, got %+v", item)
+
+		itemMap := make(map[string]PlanItem, 3)
+		for _, it := range plan.Items {
+			itemMap[it.Credential.AuthIndex] = it
 		}
-		if item.Priority != defaultOptions.NormalStartPriority {
-			t.Errorf("expected healthy target priority %d, got %d", defaultOptions.NormalStartPriority, item.Priority)
+
+		// 1. Below threshold: stay depleted & disabled
+		below := itemMap["auto-disabled-below-threshold"]
+		if !below.Disabled || below.Priority != -1 || below.Reason != ReasonFreshWeeklyDepleted {
+			t.Errorf("below threshold should stay weekly depleted: %+v", below)
 		}
-		if len(plan.Changes) != 1 || plan.Changes[0].Disabled || plan.Changes[0].Priority != item.Priority {
-			t.Errorf("expected write-qualified priority and disabled changes, got %+v", plan.Changes)
+
+		// 2. Healthy recovery: re-enabled, positive priority, change produced
+		healthy := itemMap["auto-disabled-healthy"]
+		if healthy.Disabled || healthy.Priority != 100 || healthy.Reason != ReasonFreshRemainingPositive {
+			t.Errorf("healthy recovery failed: %+v", healthy)
+		}
+
+		// 3. Short depleted recovery: re-enabled, priority=-1, soft depletion
+		shortDep := itemMap["auto-disabled-short-depleted"]
+		if shortDep.Disabled || shortDep.Priority != -1 || shortDep.Reason != ReasonFreshShortWindowDepleted {
+			t.Errorf("short depleted recovery failed: %+v", shortDep)
+		}
+
+		// Changes should contain healthy and shortDep (both re-enabled with disabled=false)
+		if len(plan.Changes) != 2 {
+			t.Fatalf("expected 2 re-enable changes, got %d: %+v", len(plan.Changes), plan.Changes)
 		}
 	})
 

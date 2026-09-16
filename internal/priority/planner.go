@@ -19,6 +19,10 @@ const (
 	Reason429Cooldown              = "429 rate limit cooldown"
 )
 
+// WeeklyRecoveryThreshold is the minimum 7d quota remaining required to re-enable
+// an account that was automatically disabled due to weekly depletion.
+const WeeklyRecoveryThreshold = 0.10
+
 // QuotaEvidence represents a validated quota observation. It intentionally
 // contains no freshness or probe-status flags: only the Evidence authority
 // decides whether an instance belongs to the Fresh or Historical set supplied
@@ -66,7 +70,7 @@ type Options struct {
 	NormalStartPriority int
 	MinChange           int
 	UrgencyTolerance    float64
-	IgnoreDisabledHost  bool
+	AutoDisabledAuthIndexes map[string]struct{}
 	CooldownAuthIndexes map[string]time.Time
 }
 
@@ -195,22 +199,14 @@ func planItems(credentials []core.Credential, evidence plannerEvidence, options 
 			PlanType:   credential.PlanType,
 			Reason:     ReasonKeepCurrentState,
 		}
-		if credential.Disabled && options.IgnoreDisabledHost {
-			// Disabled credentials are intentionally outside the planning domain
-			// when configured to be ignored. Keep their host state untouched and
-			// do not expose a target derived from quota evidence.
-			item.Reason = ReasonDisabledOnHost
-			items[index] = item
-			continue
-		}
 
-		evidence, hasFresh := freshByAuthIndex[credential.AuthIndex]
+		evidence, hasEvidence := freshByAuthIndex[credential.AuthIndex]
 		evidenceFresh := true
-		if !hasFresh {
-			evidence, hasFresh = historicalByAuthIndex[credential.AuthIndex]
+		if !hasEvidence {
+			evidence, hasEvidence = historicalByAuthIndex[credential.AuthIndex]
 			evidenceFresh = false
 		}
-		if hasFresh {
+		if hasEvidence {
 			item.EvidenceFresh = evidenceFresh
 			item.hasQuotaEvidence = true
 			item.PlanType = evidence.PlanType
@@ -232,28 +228,73 @@ func planItems(credentials []core.Credential, evidence plannerEvidence, options 
 			item.Urgency = metrics.Urgency
 			item.IsBoosted = metrics.IsBoosted
 
-			switch {
-			case metrics.IsWeeklyDepleted:
-				// Tier 3: Weekly hard depletion has highest precedence
-				item.Priority = DepletedPriority
-				item.Disabled = true
-				item.Reason = ReasonFreshWeeklyDepleted
-				item.quotaState = quotaStateWeeklyDepleted
-			case metrics.IsShortDepleted:
-				// Tier 3: Short-window soft depletion
-				item.Priority = DepletedPriority
-				item.Disabled = false
-				item.Reason = ReasonFreshShortWindowDepleted
-				item.quotaState = quotaStateShortDepleted
-			default:
-				// Healthy candidate
-				item.Disabled = false
-				if item.IsBoosted {
-					item.Reason = ReasonFreshBoosted
+			if credential.Disabled {
+				_, isAutoDisabled := options.AutoDisabledAuthIndexes[credential.AuthIndex]
+				if !isAutoDisabled {
+					// Manually disabled on host: keep current priority and disabled state untouched.
+					// Quota metrics are retained for UI display, but the credential must never be
+					// planned with positive priority, modified, or written back.
+					item.Reason = ReasonDisabledOnHost
+					item.Priority = credential.Priority
+					item.Disabled = true
+					item.EvidenceFresh = false
+					item.quotaState = quotaStateUnknown
 				} else {
-					item.Reason = ReasonFreshRemainingPositive
+					// Automatically disabled by plugin due to weekly depletion.
+					// Must exceed WeeklyRecoveryThreshold (10%) on 7d window to recover.
+					switch {
+					case metrics.R7d < WeeklyRecoveryThreshold:
+						// Below 10%: keep weekly depleted
+						item.Priority = DepletedPriority
+						item.Disabled = true
+						item.Reason = ReasonFreshWeeklyDepleted
+						item.quotaState = quotaStateWeeklyDepleted
+					case metrics.IsShortDepleted:
+						// Exceeds 10% 7d, but short window exhausted -> soft depletion
+						item.Priority = DepletedPriority
+						item.Disabled = false
+						item.Reason = ReasonFreshShortWindowDepleted
+						item.quotaState = quotaStateShortDepleted
+					default:
+						// Healthy recovery
+						item.Disabled = false
+						if item.IsBoosted {
+							item.Reason = ReasonFreshBoosted
+						} else {
+							item.Reason = ReasonFreshRemainingPositive
+						}
+						item.quotaState = quotaStateHealthy
+					}
 				}
-				item.quotaState = quotaStateHealthy
+			} else {
+				// Not disabled on host
+				switch {
+				case metrics.IsWeeklyDepleted:
+					// Tier 3: Weekly hard depletion has highest precedence
+					item.Priority = DepletedPriority
+					item.Disabled = true
+					item.Reason = ReasonFreshWeeklyDepleted
+					item.quotaState = quotaStateWeeklyDepleted
+				case metrics.IsShortDepleted:
+					// Tier 3: Short-window soft depletion
+					item.Priority = DepletedPriority
+					item.Disabled = false
+					item.Reason = ReasonFreshShortWindowDepleted
+					item.quotaState = quotaStateShortDepleted
+				default:
+					// Healthy candidate
+					item.Disabled = false
+					if item.IsBoosted {
+						item.Reason = ReasonFreshBoosted
+					} else {
+						item.Reason = ReasonFreshRemainingPositive
+					}
+					item.quotaState = quotaStateHealthy
+				}
+			}
+		} else if credential.Disabled {
+			if _, isAutoDisabled := options.AutoDisabledAuthIndexes[credential.AuthIndex]; !isAutoDisabled {
+				item.Reason = ReasonDisabledOnHost
 			}
 		}
 

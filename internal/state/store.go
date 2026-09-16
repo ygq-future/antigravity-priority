@@ -135,6 +135,15 @@ type CooldownEntry struct {
 	NextRecoveryAt          time.Time `json:"next_recovery_at,omitempty"`
 }
 
+// AutoDisabledEntry tracks credentials automatically disabled by the plugin
+// due to weekly quota depletion (7d exhausted).
+type AutoDisabledEntry struct {
+	AuthIndex  string    `json:"auth_index"`
+	ModelGroup string    `json:"model_group,omitempty"`
+	Reason     string    `json:"reason"`
+	DisabledAt time.Time `json:"disabled_at"`
+}
+
 // PriorityRulesConfig holds priority rule settings for DynamicConfig.
 type PriorityRulesConfig = config.PriorityRulesConfig
 
@@ -149,6 +158,7 @@ type Store struct {
 	scheduleConfig *ScheduleConfig
 	dynamicConfig  *DynamicConfig
 	cooldowns      map[string]CooldownEntry
+	autoDisabled   map[string]AutoDisabledEntry
 }
 
 type document struct {
@@ -159,7 +169,8 @@ type document struct {
 	RunHistory     json.RawMessage          `json:"run_history,omitempty"`
 	ScheduleConfig *ScheduleConfig          `json:"schedule_config,omitempty"`
 	DynamicConfig  *DynamicConfig           `json:"app_config,omitempty"`
-	Cooldowns      map[string]CooldownEntry `json:"cooldowns,omitempty"`
+	Cooldowns      map[string]CooldownEntry      `json:"cooldowns,omitempty"`
+	AutoDisabled   map[string]AutoDisabledEntry  `json:"auto_disabled,omitempty"`
 }
 
 // Load loads the state document from path. If the file does not exist, an empty store is returned.
@@ -167,7 +178,12 @@ func Load(ctx context.Context, path string) (*Store, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("load state context: %w", err)
 	}
-	store := &Store{path: path, entries: make(map[string]Entry), cooldowns: make(map[string]CooldownEntry)}
+	store := &Store{
+		path:         path,
+		entries:      make(map[string]Entry),
+		cooldowns:    make(map[string]CooldownEntry),
+		autoDisabled: make(map[string]AutoDisabledEntry),
+	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -207,6 +223,9 @@ func Load(ctx context.Context, path string) (*Store, error) {
 	if doc.Cooldowns != nil {
 		store.cooldowns = doc.Cooldowns
 	}
+	if doc.AutoDisabled != nil {
+		store.autoDisabled = doc.AutoDisabled
+	}
 	return store, nil
 }
 
@@ -226,6 +245,7 @@ func (s *Store) SaveAtomic(ctx context.Context) (err error) {
 		ScheduleConfig: s.scheduleConfig,
 		DynamicConfig:  s.dynamicConfig,
 		Cooldowns:      s.cooldowns,
+		AutoDisabled:   s.autoDisabled,
 	}
 	data, err := json.MarshalIndent(doc, "", "  ")
 	s.mu.RUnlock()
@@ -733,6 +753,42 @@ func (s *Store) ClearExpiredCooldowns(now time.Time) {
 			delete(s.cooldowns, k)
 		}
 	}
+}
+
+// GetAutoDisabled returns a copy of all current auto-disabled entries.
+func (s *Store) GetAutoDisabled() map[string]AutoDisabledEntry {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	copied := make(map[string]AutoDisabledEntry, len(s.autoDisabled))
+	for k, v := range s.autoDisabled {
+		copied[k] = v
+	}
+	return copied
+}
+
+// IsAutoDisabled checks if a credential is automatically disabled by the plugin.
+func (s *Store) IsAutoDisabled(authIndex string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, ok := s.autoDisabled[authIndex]
+	return ok
+}
+
+// SetAutoDisabled records an auto-disabled state for a credential.
+func (s *Store) SetAutoDisabled(entry AutoDisabledEntry) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.autoDisabled == nil {
+		s.autoDisabled = make(map[string]AutoDisabledEntry)
+	}
+	s.autoDisabled[entry.AuthIndex] = entry
+}
+
+// DeleteAutoDisabled removes an auto-disabled record for a credential.
+func (s *Store) DeleteAutoDisabled(authIndex string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.autoDisabled, authIndex)
 }
 
 // Path returns the file path of the state cache.

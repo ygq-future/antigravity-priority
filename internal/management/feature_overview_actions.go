@@ -95,6 +95,30 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
             }
         }
 
+        async function probeSingleCredential(authIndex, btn) {
+            if (isAuthBlocked || !authIndex) return;
+            const originalText = btn ? btn.textContent : "";
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = "⏳ " + (currentLang === "zh-CN" ? "探测中..." : "Probing...");
+            }
+            try {
+                const groupSelect = document.getElementById("modelGroupSelect");
+                const modelGroup = groupSelect ? groupSelect.value : "gemini";
+                const url = RUN_PATH + "?mode=probe&antigravity_model_group=" + encodeURIComponent(modelGroup) + "&auth_index=" + encodeURIComponent(authIndex);
+                await apiFetch(url, { method: "POST" });
+                await fetchSnapshot({ silent: true });
+                showToast(t("probeSingleSuccess"), "success");
+            } catch (err) {
+                showToast(err.message, "error");
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.textContent = originalText || ("⚡ " + t("btnProbeSingle"));
+                }
+            }
+        }
+
         function extractChanges(result) {
             if (!result) return [];
             if (Array.isArray(result.changes) && result.changes.length > 0) {

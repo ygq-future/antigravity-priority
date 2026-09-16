@@ -48,6 +48,21 @@ func TestOverviewUsesCPAEmailAsCredentialTitle(t *testing.T) {
 	}
 }
 
+func TestOverview_SingleProbeButtonAndStatusDisabledBadge(t *testing.T) {
+	if !strings.Contains(StatusHTML, `probeSingleCredential`) {
+		t.Fatal("overview must include probeSingleCredential script function")
+	}
+	if !strings.Contains(StatusHTML, `onclick=\"probeSingleCredential('`) {
+		t.Fatal("overview card must render single-credential probe button")
+	}
+	if !strings.Contains(StatusHTML, `t("statusDisabled")`) {
+		t.Fatal("overview card must render statusDisabled badge for manually disabled accounts")
+	}
+	if !strings.Contains(StatusHTML, `item.target && item.target.disabled && !isManuallyDisabled`) {
+		t.Fatal("overview depleted count must exclude manually disabled accounts")
+	}
+}
+
 func TestStatusHTML_FeatureTranslationsExistInBothLanguages(t *testing.T) {
 	zhKeys := languageKeys(t, "zh-CN")
 	enKeys := languageKeys(t, "en-US")

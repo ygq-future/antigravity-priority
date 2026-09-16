@@ -310,18 +310,6 @@ func (h *Handler) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 		h.writeJSONError(w, http.StatusBadRequest, "invalid dynamic config JSON: "+err.Error())
 		return
 	}
-	// DynamicConfig.UnmarshalJSON seeds omitted fields from defaults so old
-	// persisted documents remain valid. HTTP updates are different: an older
-	// page may omit a newer field, and that omission must preserve the active
-	// runtime value rather than silently applying a default.
-	if _, present := fields["ignore_disabled_host"]; !present {
-		current, err := h.runner.GetDynamicConfig(r.Context())
-		if err != nil {
-			h.writeJSONError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		req.IgnoreDisabledHost = current.IgnoreDisabledHost
-	}
 
 	if err := h.runner.SetDynamicConfig(r.Context(), req); err != nil {
 		h.writeJSONError(w, http.StatusBadRequest, err.Error())
