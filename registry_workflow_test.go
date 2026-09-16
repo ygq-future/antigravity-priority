@@ -185,3 +185,53 @@ func TestDocumentation_BilingualCompleteness(t *testing.T) {
 		}
 	}
 }
+
+func TestVersionConsistency_FourWayMatch(t *testing.T) {
+	// 1. registry.json
+	regData, err := os.ReadFile("registry.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reg storeRegistry
+	if err := json.Unmarshal(regData, &reg); err != nil {
+		t.Fatal(err)
+	}
+	regVersion := ""
+	for _, p := range reg.Plugins {
+		if p.ID == "antigravity-priority" {
+			regVersion = p.Version
+		}
+	}
+	if regVersion == "" {
+		t.Fatal("registry version empty")
+	}
+
+	// 2. runtime.go
+	runtimeData, err := os.ReadFile(filepath.Join("internal", "runtime", "runtime.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(runtimeData), `Version:          "`+regVersion+`",`) {
+		t.Fatalf("internal/runtime/runtime.go does not match registry version %q", regVersion)
+	}
+
+	// 3. feature_shell_assets.go
+	shellData, err := os.ReadFile(filepath.Join("internal", "management", "feature_shell_assets.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedBadge := `<span class="version-badge">v` + regVersion + `</span>`
+	if !strings.Contains(string(shellData), expectedBadge) {
+		t.Fatalf("feature_shell_assets.go does not contain badge %q", expectedBadge)
+	}
+
+	// 4. Release note file exists
+	notePath := filepath.Join(".github", "release-notes", "v"+regVersion+".md")
+	noteData, err := os.ReadFile(notePath)
+	if err != nil {
+		t.Fatalf("release note %s does not exist: %v", notePath, err)
+	}
+	if !strings.Contains(string(noteData), "# antigravity-priority v"+regVersion) {
+		t.Fatalf("release note header missing v%s", regVersion)
+	}
+}
