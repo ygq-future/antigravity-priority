@@ -35,8 +35,8 @@ const templateStyleTokens = `
             --accent-purple-subtle: #faf5ff;
             --accent-purple-text: #6d28d9;
             --meter-bg: #e2e8f0;
-            --meter-track-bg: #cbd5e1;
-            --meter-track-border: #94a3b8;
+            --meter-track-bg: #e2e8f0;
+            --meter-track-border: #cbd5e1;
             --meter-fill: #10b981;
             --meter-warn: #f59e0b;
             --meter-danger: #ef4444;
@@ -187,8 +187,8 @@ const templateStyleTokens = `
             --accent-purple-subtle: #faf5ff;
             --accent-purple-text: #6d28d9;
             --meter-bg: #e2e8f0;
-            --meter-track-bg: #cbd5e1;
-            --meter-track-border: #94a3b8;
+            --meter-track-bg: #e2e8f0;
+            --meter-track-border: #cbd5e1;
             --meter-fill: #10b981;
             --meter-warn: #f59e0b;
             --meter-danger: #ef4444;

@@ -82,35 +82,30 @@ const templateScriptShellCore = `        const LANG_STORAGE_KEY = "antigravity_p
             initializeApp();
         }
 
-        const THEME_STORAGE_KEY = "antigravity_priority_theme";
-
-        function updateThemeIcon(theme) {
-            const icon = document.getElementById("themeIcon");
-            if (!icon) return;
-            if (theme === "dark") {
-                icon.textContent = "🌙";
-            } else if (theme === "light") {
-                icon.textContent = "☀️";
-            } else {
-                icon.textContent = "🌓";
+        function cleanInlineThemeStyles() {
+            const root = document.documentElement;
+            const cpaVarNames = [
+                '--bg-primary', '--bg-secondary', '--bg-tertiary', '--bg-quinary', '--bg-hover',
+                '--text-primary', '--text-secondary', '--text-tertiary', '--text-muted',
+                '--border-color', '--border-primary', '--border-secondary', '--border-hover',
+                '--primary-color', '--primary-hover', '--primary-active', '--primary-contrast',
+                '--success-color', '--warning-color', '--error-color', '--danger-color',
+                '--amber-color', '--quota-medium-color', '--floating-surface',
+                '--bg-surface', '--bg-card', '--bg-subtle', '--meter-bg'
+            ];
+            for (const name of cpaVarNames) {
+                root.style.removeProperty(name);
             }
         }
 
-        function toggleTheme() {
-            const currentTheme = document.documentElement.getAttribute("data-theme");
-            let nextTheme = "light";
-            if (!currentTheme) {
-                const isDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
-                nextTheme = isDark ? "light" : "dark";
-            } else {
-                nextTheme = currentTheme === "dark" ? "light" : "dark";
-            }
-            document.documentElement.setAttribute("data-theme", nextTheme);
-            try {
-                localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
-            } catch (_) {}
-            updateThemeIcon(nextTheme);
-        }
+        // Helper for DevServer and standalone console debugging:
+        // window.__setTheme('light' | 'dark') or window.setTheme('light' | 'dark')
+        window.__setTheme = window.setTheme = function(theme) {
+            cleanInlineThemeStyles();
+            const targetTheme = (theme === "dark" || theme === "light") ? theme : "light";
+            document.documentElement.setAttribute("data-theme", targetTheme);
+            return "Theme switched to: " + targetTheme;
+        };
 
         function syncThemeFromParent() {
             try {
@@ -119,19 +114,14 @@ const templateScriptShellCore = `        const LANG_STORAGE_KEY = "antigravity_p
                     const pBody = window.parent.document.body;
 
                     const pTheme = pDoc.getAttribute("data-theme") || (pBody && pBody.getAttribute("data-theme"));
-                    if (pTheme) {
-                        document.documentElement.setAttribute("data-theme", pTheme);
-                        updateThemeIcon(pTheme);
-                    } else {
-                        document.documentElement.removeAttribute("data-theme");
-                        updateThemeIcon("system");
-                    }
+                    const isDark = (pDoc.classList && pDoc.classList.contains("dark")) ||
+                                   (pBody && pBody.classList && pBody.classList.contains("dark")) ||
+                                   pTheme === "dark";
 
-                    const isDark = pDoc.classList.contains("dark") || (pBody && pBody.classList.contains("dark")) || pTheme === "dark";
-                    if (isDark) {
-                        document.documentElement.setAttribute("data-theme", "dark");
-                        updateThemeIcon("dark");
-                    }
+                    const resolvedTheme = isDark ? "dark" : "light";
+                    document.documentElement.setAttribute("data-theme", resolvedTheme);
+
+                    cleanInlineThemeStyles();
 
                     const parentStyle = window.parent.getComputedStyle(pDoc);
                     const cpaVarNames = [
@@ -164,17 +154,11 @@ const templateScriptShellCore = `        const LANG_STORAGE_KEY = "antigravity_p
                 }
             } catch (_) {}
 
-            // Standalone or DevServer mode: restore saved theme
-            try {
-                const savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
-                if (savedTheme === "dark" || savedTheme === "light") {
-                    document.documentElement.setAttribute("data-theme", savedTheme);
-                    updateThemeIcon(savedTheme);
-                } else {
-                    const isDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
-                    updateThemeIcon(isDark ? "dark" : "light");
-                }
-            } catch (_) {}
+            // Standalone or DevServer mode (no parent CPA iframe)
+            if (!document.documentElement.getAttribute("data-theme")) {
+                const isDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+                document.documentElement.setAttribute("data-theme", isDark ? "dark" : "light");
+            }
         }
 
         syncThemeFromParent();

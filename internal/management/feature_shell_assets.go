@@ -21,9 +21,6 @@ const managementPageShellMarkup = `
                 <button type="button" class="btn-secondary" onclick="toggleLanguage()" aria-label="Toggle Language">
                     <span id="langLabel">EN / 中文</span>
                 </button>
-                <button type="button" class="btn-secondary" onclick="toggleTheme()" aria-label="Toggle Theme" id="btnThemeToggle" title="Toggle Theme">
-                    <span id="themeIcon">🌓</span>
-                </button>
             </div>
         </header>
 

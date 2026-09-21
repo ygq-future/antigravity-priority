@@ -590,3 +590,23 @@ func languageKeys(t *testing.T, language string) map[string]struct{} {
 	}
 	return keys
 }
+
+func TestStatusHTML_CPAThemeAlignmentAndDevServerHelper(t *testing.T) {
+	if strings.Contains(StatusHTML, "id=\"btnThemeToggle\"") {
+		t.Fatal("assembled markup must not expose standalone theme toggle button")
+	}
+	if strings.Contains(StatusHTML, "toggleTheme()") {
+		t.Fatal("assembled markup must not expose toggleTheme inline handler")
+	}
+
+	script := extractPageScript(t)
+	if !strings.Contains(script, "window.__setTheme = window.setTheme = function") {
+		t.Fatal("assembled script must provide window.__setTheme / window.setTheme helper for console debugging")
+	}
+	if !strings.Contains(script, `cleanInlineThemeStyles()`) {
+		t.Fatal("assembled script must clean inline styles when synchronizing theme")
+	}
+	if !strings.Contains(script, `const resolvedTheme = isDark ? "dark" : "light";`) {
+		t.Fatal("syncThemeFromParent must explicitly resolve to dark or light")
+	}
+}
