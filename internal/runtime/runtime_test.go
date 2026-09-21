@@ -2346,6 +2346,135 @@ func TestRuntime_UsageHandle_429WaitsForSingleFlightBoundary(t *testing.T) {
 	}
 }
 
+func TestRuntime_MultiAccountRoundRobinConsecutive429(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	authPathA := filepath.Join(t.TempDir(), "auth_a.json")
+	authPathB := filepath.Join(t.TempDir(), "auth_b.json")
+	if err := os.WriteFile(authPathA, []byte(`{"priority":100,"disabled":false}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(authPathB, []byte(`{"priority":100,"disabled":false}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mock := newMockHost()
+	mock.files = []host.AuthFile{
+		{Name: "account_a", AuthIndex: "auth_a", Provider: "antigravity", Priority: 100},
+		{Name: "account_b", AuthIndex: "auth_b", Provider: "antigravity", Priority: 100},
+	}
+	mock.authDocs["auth_a"] = host.AuthDocument{AuthIndex: "auth_a", Path: authPathA}
+	mock.authDocs["auth_b"] = host.AuthDocument{AuthIndex: "auth_b", Path: authPathB}
+	clock := &testClock{now: time.Now()}
+	r := newTestRuntime(t, runtime.Options{Host: mock, Clock: clock})
+	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Step 1: Account A encounters 429 (strike 1)
+	_ = r.Handle(context.Background(), runtime.MethodUsageHandle, []byte(`{"Provider":"antigravity","AuthIndex":"auth_a","Failed":true,"Failure":{"StatusCode":429}}`))
+	docA, _ := os.ReadFile(authPathA)
+	if strings.Contains(string(docA), `"priority":-1`) {
+		t.Fatal("first 429 should be pending observation and not demoted yet")
+	}
+
+	// Step 2: 45 seconds elapse; in between, Account B is called and succeeds
+	clock.Advance(45 * time.Second)
+	_ = r.Handle(context.Background(), runtime.MethodUsageHandle, []byte(`{"Provider":"antigravity","AuthIndex":"auth_b","Failed":false}`))
+
+	// Step 3: Round-robin returns to Account A after 45s, and it encounters 429 again (strike 2)
+	_ = r.Handle(context.Background(), runtime.MethodUsageHandle, []byte(`{"Provider":"antigravity","AuthIndex":"auth_a","Failed":true,"Failure":{"StatusCode":429}}`))
+	docA, _ = os.ReadFile(authPathA)
+	if !strings.Contains(string(docA), `"priority":-1`) {
+		t.Fatalf("second consecutive 429 after 45s across round-robin must trigger cooldown: %s", docA)
+	}
+}
+
+func TestRuntime_429CooldownUpdatesLatestSnapshotInPlace(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	authPath := filepath.Join(t.TempDir(), "auth.json")
+	if err := os.WriteFile(authPath, []byte(`{"priority":100,"disabled":false}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mock := newMockHost()
+	mock.files = []host.AuthFile{
+		{Name: "account", AuthIndex: "auth_snap", Provider: "antigravity", Priority: 100},
+	}
+	mock.authDocs["auth_snap"] = host.AuthDocument{AuthIndex: "auth_snap", Path: authPath}
+	mock.httpResponse = host.HTTPResponse{
+		StatusCode: 200,
+		Body:       []byte(`{"userQuotaConfigs":[{"userQuotaSummary":{"windowQuotas":[{"windowType":"USER_QUOTA_WINDOW_TYPE_5_HOUR","remainingQuota":100},{"windowType":"USER_QUOTA_WINDOW_TYPE_WEEKLY","remainingQuota":100}]}}]}`),
+	}
+	r := newTestRuntime(t, runtime.Options{Host: mock})
+	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Prime initial snapshot
+	snap, err := r.SyncHost(context.Background(), config.AntigravityModelGroupGemini)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap.Groups["gemini"].Items) != 1 || snap.Groups["gemini"].Items[0].Current.Priority != 100 {
+		t.Fatalf("initial snapshot = %+v, want priority 100", snap)
+	}
+
+	// Trigger 2 consecutive 429s on auth_snap
+	_ = r.Handle(context.Background(), runtime.MethodUsageHandle, []byte(`{"Provider":"antigravity","Model":"gemini-3.7-flash","AuthIndex":"auth_snap","Failed":true,"Failure":{"StatusCode":429}}`))
+	_ = r.Handle(context.Background(), runtime.MethodUsageHandle, []byte(`{"Provider":"antigravity","Model":"gemini-3.7-flash","AuthIndex":"auth_snap","Failed":true,"Failure":{"StatusCode":429}}`))
+
+	// Verify snapshot is updated in-place immediately without a Sync/Probe call
+	latest, err := r.LatestSnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	geminiItems := latest.Groups["gemini"].Items
+	if len(geminiItems) != 1 {
+		t.Fatalf("items count = %d, want 1", len(geminiItems))
+	}
+	if geminiItems[0].Current.Priority != -1 || geminiItems[0].Target.Priority != -1 {
+		t.Fatalf("in-place snapshot priority = %d/%d, want -1/-1", geminiItems[0].Current.Priority, geminiItems[0].Target.Priority)
+	}
+	if !strings.Contains(geminiItems[0].Reason, "429") {
+		t.Fatalf("in-place snapshot reason = %q, want 429 cooldown", geminiItems[0].Reason)
+	}
+
+	// Send success and verify snapshot restores priority in-place
+	_ = r.Handle(context.Background(), runtime.MethodUsageHandle, []byte(`{"Provider":"antigravity","Model":"gemini-3.7-flash","AuthIndex":"auth_snap","Failed":false}`))
+	recovered, err := r.LatestSnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	recoveredItems := recovered.Groups["gemini"].Items
+	if recoveredItems[0].Current.Priority != 100 || recoveredItems[0].Target.Priority != 100 {
+		t.Fatalf("in-place recovered priority = %d/%d, want 100/100", recoveredItems[0].Current.Priority, recoveredItems[0].Target.Priority)
+	}
+}
+
+func TestRuntime_UsageHandle_ProviderAliases(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	authPath := filepath.Join(t.TempDir(), "auth.json")
+	if err := os.WriteFile(authPath, []byte(`{"priority":100,"disabled":false}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mock := newMockHost()
+	mock.files = []host.AuthFile{
+		{Name: "account", AuthIndex: "auth_alias", Provider: "antigravity", Priority: 100},
+	}
+	mock.authDocs["auth_alias"] = host.AuthDocument{AuthIndex: "auth_alias", Path: authPath}
+	r := newTestRuntime(t, runtime.Options{Host: mock})
+	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Provider: "gemini" should be accepted as Antigravity usage
+	_ = r.Handle(context.Background(), runtime.MethodUsageHandle, []byte(`{"Provider":"gemini","Model":"gemini-3.7-flash","AuthIndex":"auth_alias","Failed":true,"Failure":{"StatusCode":429}}`))
+	_ = r.Handle(context.Background(), runtime.MethodUsageHandle, []byte(`{"Provider":"google","Model":"gemini-3.7-flash","AuthIndex":"auth_alias","Failed":true,"Failure":{"StatusCode":429}}`))
+
+	doc, _ := os.ReadFile(authPath)
+	if !strings.Contains(string(doc), `"priority":-1`) {
+		t.Fatalf("usage events with provider aliases 'gemini' and 'google' should trigger cooldown: %s", doc)
+	}
+}
+
 func TestRuntime_ResetAllPriorities_UsesAtomicTransitionRound(t *testing.T) {
 	tempDir := t.TempDir()
 	cachePath := filepath.Join(tempDir, "cache.json")

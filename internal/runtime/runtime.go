@@ -11,7 +11,6 @@ import (
 
 	"antigravity-priority/internal/apply"
 	"antigravity-priority/internal/config"
-	"antigravity-priority/internal/core"
 	"antigravity-priority/internal/evidence"
 	"antigravity-priority/internal/host"
 	"antigravity-priority/internal/management"
@@ -791,6 +790,33 @@ func (r *Runtime) setDualSnapshot(snap apply.DualGroupSnapshot) {
 	r.latestDualSnapshot = &cloned
 }
 
+func (r *Runtime) patchSnapshotCooldown(authIndex string, inCooldown bool, reason string, restoredPriority int, restoredDisabled bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.latestDualSnapshot == nil {
+		return
+	}
+	for groupKey, group := range r.latestDualSnapshot.Groups {
+		for i, item := range group.Items {
+			if item.Identity.AuthIndex == authIndex || item.Name == authIndex || item.Identity.Email == authIndex || item.Email == authIndex || strings.EqualFold(item.AuthIndex, authIndex) {
+				if inCooldown {
+					group.Items[i].Current.Priority = priority.DepletedPriority
+					group.Items[i].Target.Priority = priority.DepletedPriority
+					group.Items[i].Reason = reason
+					group.Items[i].IsBoosted = false
+				} else {
+					group.Items[i].Current.Priority = restoredPriority
+					group.Items[i].Target.Priority = restoredPriority
+					group.Items[i].Current.Disabled = restoredDisabled
+					group.Items[i].Target.Disabled = restoredDisabled
+					group.Items[i].Reason = reason
+				}
+			}
+		}
+		r.latestDualSnapshot.Groups[groupKey] = group
+	}
+}
+
 func (r *Runtime) currentSnapshotEmails() map[string]string {
 	r.mu.Lock()
 	snapshot := r.latestDualSnapshot
@@ -1013,7 +1039,7 @@ func (r *Runtime) handleUsageEvent(ctx context.Context, raw []byte) []byte {
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return failure(fmt.Errorf("decode usage event: %w", err))
 	}
-	if !strings.EqualFold(strings.TrimSpace(payload.Provider), string(core.ProviderAntigravity)) {
+	if !isAntigravityUsageProvider(payload.Provider) {
 		return mustMarshal(Envelope{OK: true})
 	}
 	authIndex := firstNonEmpty(payload.AuthIndex, payload.AuthID)
@@ -1027,7 +1053,7 @@ func (r *Runtime) handleUsageEvent(ctx context.Context, raw []byte) []byte {
 		}
 		return mustMarshal(Envelope{OK: true})
 	}
-	if payload.Failure.StatusCode != 429 {
+	if !is429UsageFailure(payload.Failure) {
 		return mustMarshal(Envelope{OK: true})
 	}
 	err := r.observe429(ctx, authIndex, modelGroupForUsage(payload.Model), "429 rate limit detected", true)
@@ -1042,6 +1068,19 @@ func modelGroupForUsage(model string) string {
 		return string(config.AntigravityModelGroupGemini)
 	}
 	return string(config.AntigravityModelGroupClaudeGPT)
+}
+
+func isAntigravityUsageProvider(provider string) bool {
+	p := strings.ToLower(strings.TrimSpace(provider))
+	return p == "antigravity" || p == "google" || p == "gemini" || p == "google-antigravity" || strings.Contains(p, "antigravity")
+}
+
+func is429UsageFailure(failure usageFailure) bool {
+	if failure.StatusCode == 429 {
+		return true
+	}
+	body := strings.ToUpper(failure.Body)
+	return strings.Contains(body, "429") || strings.Contains(body, "RESOURCE_EXHAUSTED") || strings.Contains(body, "RATE_LIMIT")
 }
 
 func (r *Runtime) handleFilterEvent(ctx context.Context, raw []byte) []byte {
@@ -1146,6 +1185,7 @@ func (r *Runtime) triggerCooldown(ctx context.Context, authIndex, modelGroup, re
 		r.recordCooldownFailure(ctx, store, authIndex, reason, applyErr)
 		return applyErr
 	}
+	r.patchSnapshotCooldown(authIndex, true, priority.Reason429Cooldown, priority.DepletedPriority, credential.Disabled)
 	summary := resultSummary("429 cooldown", result)
 	_, projectErr := r.projectRun(ctx, store, result, summary, RunHistoryEntry{
 		Kind:     KindCooldown,

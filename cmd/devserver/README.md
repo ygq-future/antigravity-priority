@@ -40,3 +40,17 @@ data/devserver/refresh-cache.json
 - 首次探测返回满额；后续探测随机消耗两个模型组的额度。
 - 任一模型组的任一窗口耗尽后，下一次该凭证探测恢复两个模型组的满额。
 - 配额状态、样本历史、优先级写回和调度诊断分别由模拟 Host 与生产 Runtime 持久化。
+
+## 429 熔断与恢复仿真 (Manual Testing)
+
+Dev Server 提供了快速注入 429 异常和成功请求的辅助接口，方便在本地人工验收 429 熔断与自愈机制：
+
+```bash
+# 模拟向某个凭证注入 429 报错（连续两次触发降权至 -1 与 429 冷却）：
+curl -X POST "http://localhost:8080/dev/simulate-429?auth_index=auth-001"
+
+# 模拟某凭证请求成功（清零连续 429 计数，或触发冷却即时自愈恢复）：
+curl -X POST "http://localhost:8080/dev/simulate-success?auth_index=auth-001"
+```
+
+若不传 `auth_index` 参数，默认选择第一个可用的凭证账号。

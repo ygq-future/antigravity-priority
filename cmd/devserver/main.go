@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -85,6 +87,78 @@ func newDevServer(options devServerOptions) (*devServer, error) {
 	return &devServer{host: fakeHost, runtime: rt}, nil
 }
 
+func (d *devServer) resolveAuthIndex(r *http.Request) (string, error) {
+	queryIndex := strings.TrimSpace(r.URL.Query().Get("auth_index"))
+	if queryIndex == "" {
+		var body struct {
+			AuthIndex string `json:"auth_index"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		queryIndex = strings.TrimSpace(body.AuthIndex)
+	}
+	files, err := d.host.ListAuthFiles(r.Context())
+	if err != nil {
+		return "", err
+	}
+	if len(files) == 0 {
+		return "", errors.New("no accounts available")
+	}
+	if queryIndex == "" {
+		return files[0].AuthIndex, nil
+	}
+	for _, f := range files {
+		if strings.EqualFold(f.AuthIndex, queryIndex) || strings.EqualFold(f.Name, queryIndex) || strings.EqualFold(f.Email, queryIndex) {
+			return f.AuthIndex, nil
+		}
+	}
+	for _, f := range files {
+		if strings.Contains(strings.ToLower(f.AuthIndex), strings.ToLower(queryIndex)) ||
+			strings.Contains(strings.ToLower(f.Name), strings.ToLower(queryIndex)) ||
+			strings.Contains(strings.ToLower(f.Email), strings.ToLower(queryIndex)) {
+			return f.AuthIndex, nil
+		}
+	}
+	return queryIndex, nil
+}
+
+func (d *devServer) Handler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/dev/simulate-429", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		authIndex, err := d.resolveAuthIndex(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		payload := fmt.Sprintf(`{"Provider":"antigravity","Model":"gemini-3.7-flash","AuthIndex":%q,"Failed":true,"Failure":{"StatusCode":429,"Body":"RESOURCE_EXHAUSTED"}}`, authIndex)
+		resp := d.runtime.Handle(r.Context(), runtime.MethodUsageHandle, []byte(payload))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(resp)
+	})
+
+	mux.HandleFunc("/dev/simulate-success", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		authIndex, err := d.resolveAuthIndex(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		payload := fmt.Sprintf(`{"Provider":"antigravity","Model":"gemini-3.7-flash","AuthIndex":%q,"Failed":false}`, authIndex)
+		resp := d.runtime.Handle(r.Context(), runtime.MethodUsageHandle, []byte(payload))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(resp)
+	})
+
+	mux.Handle("/", d.runtime.ManagementHandler())
+	return mux
+}
+
 func main() {
 	defaultAddress := strings.TrimSpace(os.Getenv("ANTIGRAVITY_DEVSERVER_ADDR"))
 	if defaultAddress == "" {
@@ -119,7 +193,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              *address,
-		Handler:           dev.runtime.ManagementHandler(),
+		Handler:           dev.Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	stopContext, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -135,6 +209,9 @@ func main() {
 	fmt.Printf(" Server listening on: http://%s/status\n", displayAddress)
 	fmt.Printf(" Simulated CPA auth files: %s (%d minimum accounts)\n", filepath.Clean(*authDir), *accounts)
 	fmt.Println(" Simulated Antigravity quota requests stay inside the devserver.")
+	fmt.Println(" Simulation Hooks for Manual 429 Testing:")
+	fmt.Printf("   POST http://%s/dev/simulate-429?auth_index=<authIndex>\n", displayAddress)
+	fmt.Printf("   POST http://%s/dev/simulate-success?auth_index=<authIndex>\n", displayAddress)
 	fmt.Println(" Press Ctrl+C to stop the server.")
 	fmt.Println("=========================================================")
 

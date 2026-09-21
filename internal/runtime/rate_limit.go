@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	rateLimitObservationWindow = 10 * time.Second
-	rateLimitStormWindow       = 30 * time.Second
+	rateLimitStormWindow = 30 * time.Second
+	rateLimitPendingTTL   = 24 * time.Hour
 )
 
 type pending429 struct {
@@ -22,18 +22,23 @@ type pending429 struct {
 	ModelGroup string
 	Reason     string
 	FirstSeen  time.Time
-	Deadline   time.Time
+	UpdatedAt  time.Time
+	Count      int
 }
 
 func (r *Runtime) observe429(ctx context.Context, authIndex, modelGroup, reason string, acquireRunLock bool) error {
 	now := r.clock.Now().UTC()
 	r.rateLimitMu.Lock()
+	if _, active := r.activeCooldowns[authIndex]; active {
+		r.rateLimitMu.Unlock()
+		return nil
+	}
 	if now.Before(r.stormUntil) {
 		r.stormAccounts[authIndex] = false
 		r.rateLimitMu.Unlock()
 		return nil
 	}
-	if pending, ok := r.pending429[authIndex]; ok {
+	if pending, ok := r.pending429[authIndex]; ok && pending.Count >= 1 {
 		delete(r.pending429, authIndex)
 		r.rateLimitMu.Unlock()
 		r.signalRateLimitWorker()
@@ -46,7 +51,7 @@ func (r *Runtime) observe429(ctx context.Context, authIndex, modelGroup, reason 
 		}
 		return err
 	}
-	r.pending429[authIndex] = pending429{AuthIndex: authIndex, ModelGroup: modelGroup, Reason: reason, FirstSeen: now, Deadline: now.Add(rateLimitObservationWindow)}
+	r.pending429[authIndex] = pending429{AuthIndex: authIndex, ModelGroup: modelGroup, Reason: reason, FirstSeen: now, UpdatedAt: now, Count: 1}
 	pendingCount := len(r.pending429)
 	r.rateLimitMu.Unlock()
 
@@ -164,6 +169,7 @@ func (r *Runtime) runRateLimitWorker() {
 			if timer != nil {
 				timer.Stop()
 			}
+			r.processRateLimitDeadlines(r.rootCtx)
 		case <-timerC:
 			r.processRateLimitDeadlines(r.rootCtx)
 		}
@@ -174,9 +180,6 @@ func (r *Runtime) nextRateLimitDeadline() time.Time {
 	r.rateLimitMu.Lock()
 	defer r.rateLimitMu.Unlock()
 	var next time.Time
-	for _, pending := range r.pending429 {
-		next = earlierTime(next, pending.Deadline)
-	}
 	if !r.stormUntil.IsZero() {
 		next = earlierTime(next, r.stormUntil)
 	}
@@ -200,17 +203,13 @@ func earlierTime(a, b time.Time) time.Time {
 func (r *Runtime) processRateLimitDeadlines(ctx context.Context) {
 	now := r.clock.Now().UTC()
 	r.rateLimitMu.Lock()
-	due := make([]pending429, 0)
 	if !r.stormUntil.IsZero() && !now.Before(r.stormUntil) {
 		r.stormUntil = time.Time{}
 		r.stormAccounts = make(map[string]bool)
 	}
-	if r.stormUntil.IsZero() {
-		for key, pending := range r.pending429 {
-			if !now.Before(pending.Deadline) {
-				due = append(due, pending)
-				delete(r.pending429, key)
-			}
+	for key, pending := range r.pending429 {
+		if now.Sub(pending.UpdatedAt) > rateLimitPendingTTL {
+			delete(r.pending429, key)
 		}
 	}
 	dueCooldowns := make([]state.CooldownEntry, 0)
@@ -220,11 +219,6 @@ func (r *Runtime) processRateLimitDeadlines(ctx context.Context) {
 		}
 	}
 	r.rateLimitMu.Unlock()
-	for _, pending := range due {
-		r.runMu.Lock()
-		_ = r.triggerCooldown(ctx, pending.AuthIndex, pending.ModelGroup, pending.Reason)
-		r.runMu.Unlock()
-	}
 	if len(dueCooldowns) == 0 {
 		return
 	}
@@ -284,6 +278,7 @@ func (r *Runtime) restoreCooldown(ctx context.Context, store *state.Store, entry
 	if applyErr != nil {
 		return applyErr
 	}
+	r.patchSnapshotCooldown(entry.AuthIndex, false, "cooldown recovered", entry.PreviousPriority, entry.PreviousDisabled)
 	result.Snapshot = apply.Snapshot(priority.Plan{DecidedAt: r.clock.Now().UTC(), Items: []priority.PlanItem{{Credential: credential, Priority: entry.PreviousPriority, Disabled: entry.PreviousDisabled, Reason: priority.Reason429Cooldown}}})
 	store.DeleteCooldown(entry.AuthIndex)
 	if err := store.SaveAtomic(ctx); err != nil {
@@ -317,7 +312,7 @@ func (r *Runtime) findCredential(ctx context.Context, authIndex string) (core.Cr
 		return core.Credential{}, err
 	}
 	for _, candidate := range credentialsFromAuthFiles(files) {
-		if candidate.AuthIndex != authIndex && candidate.Name != authIndex {
+		if candidate.AuthIndex != authIndex && candidate.Name != authIndex && candidate.Email != authIndex {
 			continue
 		}
 		enriched, _, enrichErr := enrichCredentialsFromAuthDocuments(ctx, client, []core.Credential{candidate})
@@ -336,7 +331,12 @@ func (r *Runtime) rateLimitDiagnostics() (pending []map[string]any, storm map[st
 	r.rateLimitMu.Lock()
 	defer r.rateLimitMu.Unlock()
 	for _, item := range r.pending429 {
-		pending = append(pending, map[string]any{"auth_index": redactRuntimeIdentifier(item.AuthIndex), "first_seen_at": item.FirstSeen, "confirm_at": item.Deadline})
+		pending = append(pending, map[string]any{
+			"auth_index":    redactRuntimeIdentifier(item.AuthIndex),
+			"first_seen_at": item.FirstSeen,
+			"updated_at":    item.UpdatedAt,
+			"count":         item.Count,
+		})
 	}
 	if !r.stormUntil.IsZero() {
 		recovered := 0

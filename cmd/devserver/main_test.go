@@ -404,3 +404,92 @@ func TestDevServer_ManuallyDisabledAccountSimulation(t *testing.T) {
 		t.Fatalf("manually disabled account must not produce changes, got %+v", group.Changes)
 	}
 }
+
+func TestDevServer_SimulationEndpoints(t *testing.T) {
+	now := time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
+	clock := &devTestClock{now: now}
+	tempDir := t.TempDir()
+	authDir := filepath.Join(tempDir, "auths")
+	quotaPath := filepath.Join(tempDir, "quota.json")
+	cachePath := filepath.Join(tempDir, "cache.json")
+
+	dev, err := newDevServer(devServerOptions{
+		AuthDir:        authDir,
+		QuotaStatePath: quotaPath,
+		StateCachePath: cachePath,
+		AccountCount:   3,
+		Clock:          clock,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = dev.runtime.Shutdown(context.Background())
+	}()
+
+	handler := dev.Handler()
+	files, err := dev.host.ListAuthFiles(context.Background())
+	if err != nil || len(files) == 0 {
+		t.Fatalf("list auth files failed: %v", err)
+	}
+	targetAuth := files[0].AuthIndex
+	origPriority := files[0].Priority
+
+	// 1. First 429 using fuzzy match "auth-001" (matching dev-auth-001): strike 1 (pending)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/dev/simulate-429?auth_index=auth-001", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("first simulate-429 status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	curFiles, _ := dev.host.ListAuthFiles(context.Background())
+	if curFiles[0].Priority != origPriority {
+		t.Fatalf("priority changed after first 429 = %d, want %d", curFiles[0].Priority, origPriority)
+	}
+
+	// 2. Second 429 using fuzzy match "auth-001": strike 2 (cooldown triggered!)
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/dev/simulate-429?auth_index=auth-001", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("second simulate-429 status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	curFiles, _ = dev.host.ListAuthFiles(context.Background())
+	if curFiles[0].Priority != -1 {
+		t.Fatalf("priority after second 429 = %d, want -1", curFiles[0].Priority)
+	}
+
+	// Also verify snapshot has the cooldown item
+	snap, err := dev.runtime.LatestSnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := snap.Groups["gemini"].Items
+	if len(items) > 0 && items[0].Current.Priority != -1 {
+		t.Fatalf("snapshot priority = %d, want -1", items[0].Current.Priority)
+	}
+
+	// 3. Success using fuzzy match: immediate recovery
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/dev/simulate-success?auth_index=auth-001", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("simulate-success status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	curFiles, _ = dev.host.ListAuthFiles(context.Background())
+	if curFiles[0].Priority != origPriority {
+		t.Fatalf("priority after success = %d, want %d", curFiles[0].Priority, origPriority)
+	}
+
+	// 3. Success: immediate recovery
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/dev/simulate-success?auth_index="+targetAuth, nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("simulate-success status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	curFiles, _ = dev.host.ListAuthFiles(context.Background())
+	if curFiles[0].Priority != origPriority {
+		t.Fatalf("priority after success = %d, want %d", curFiles[0].Priority, origPriority)
+	}
+}
