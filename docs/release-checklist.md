@@ -36,11 +36,17 @@
 2. **纯净化原则（无内部研发代号）**：
    - **严禁在 `README.md`、`README.en.md` 和 Release Notes 中暴露 `(REQ-xx)` 内部研发标签**。
 
+3. **Git 提交历史溯源原则（全量回溯）**：
+   - **每次编写 Release Notes 严禁仅凭记忆或单次对话任务起草**，必须首先执行：
+     ```bash
+     git log <last-release-tag>..HEAD --oneline
+     ```
+   - 必须完整回溯自上一次发布 Tag 以来包含的**所有 Commit 历史**，逐一核对变更项，确保将该时间区间内的所有功能升级、缺陷修复（如主题优化、调度改动、样式修复等）全量纳入 Release Notes，杜绝任何遗漏。
 | 文档 | 审阅重点 | 检查要点 |
 | :--- | :--- | :--- |
 | **`README.md`** (中文) | 功能概览、极简配置、管理 API | - 聚焦核心功能，无细碎实现堆砌；<br>- **严禁带有 `(REQ-xx)` 内部标签**；<br>- 配置说明准确体现“极简 YAML + Web 配置中心”模式；<br>- 接口列表与路由变更保持同步。 |
 | **`README.en.md`** (英文) | 英文对照完整性 | - 中英文段落结构 1:1 对齐；<br>- 英文表达地道准确；<br>- **严禁带有 `(REQ-xx)` 内部标签**。 |
-| **`.github/release-notes/vX.Y.Z.md`** | 双语 Release Note | - 包含 `### 中文` 与 `### English` 两大章节；<br>- 重点分模块梳理核心功能升级、性能优化、体验改善；<br>- **严禁带有 `(REQ-xx)` 内部标签**。 |
+| **`.github/release-notes/vX.Y.Z.md`** | 双语 Release Note | - **必须基于 `git log <last-tag>..HEAD` 完整包含该区间的所有 commit 变更，严禁遗漏历史提交**；<br>- 包含 `### 中文` 与 `### English` 两大章节；<br>- 重点分模块梳理核心功能升级、性能优化、体验改善；<br>- **严禁带有 `(REQ-xx)` 内部标签**。 |
 | **`docs/requirements/`** | 需求与技术规格路线图 | - 状态从 `待实施 (Ready)` 更新为 `已完成 (Completed)`；<br>- 涵盖需求规格、领域模型与架构设计（内部研发文档可保留 REQ 编号）。 |
 
 ---
@@ -109,8 +115,9 @@ go test -race ./...
          ▼
 [1. 关联代码与文档更新]
    ├─ 更新业务代码与单元测试 (TDD)
+   ├─ 查阅自上个版本以来的全部提交：git log <last-tag>..HEAD --oneline
    ├─ 检查版本号一致性 (registry.json, runtime.go, feature_shell_assets.go)
-   ├─ 编写 .github/release-notes/vX.Y.Z.md (双语、无 REQ 标签、核心功能)
+   ├─ 编写 .github/release-notes/vX.Y.Z.md (基于 git log 全量回溯、双语、无 REQ 标签)
    └─ 同步更新 README.md 与 README.en.md (高度凝练、无技术细节堆砌)
          │
          ▼
