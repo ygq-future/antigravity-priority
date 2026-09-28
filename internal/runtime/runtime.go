@@ -47,8 +47,9 @@ type Runtime struct {
 	latestQuotaPreview *quotaPreview
 	scheduleConfig     state.ScheduleConfig
 	stateCacheOverride string
-	runHistory         []RunHistoryEntry
-	lastAutoApplyAt    time.Time
+	runHistory          []RunHistoryEntry
+	latestProbeOutcomes []management.ProbeOutcome
+	lastAutoApplyAt     time.Time
 	worker             *tickerWorker
 	shutdown           bool
 	rateLimitMu        sync.Mutex
@@ -858,6 +859,26 @@ func (r *Runtime) clearQuotaPreview() {
 	r.latestQuotaPreview = nil
 	r.mu.Unlock()
 }
+func (r *Runtime) setLastProbeOutcomes(outcomes []management.ProbeOutcome) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if outcomes == nil {
+		r.latestProbeOutcomes = nil
+		return
+	}
+	r.latestProbeOutcomes = append([]management.ProbeOutcome(nil), outcomes...)
+}
+
+// LastProbeOutcomes returns the probe outcomes from the most recent probe execution.
+func (r *Runtime) LastProbeOutcomes(ctx context.Context) []management.ProbeOutcome {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.latestProbeOutcomes) == 0 {
+		return nil
+	}
+	return append([]management.ProbeOutcome(nil), r.latestProbeOutcomes...)
+}
+
 
 func cloneQuotaPreview(preview quotaPreview) quotaPreview {
 	cloned := preview

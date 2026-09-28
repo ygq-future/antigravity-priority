@@ -13,6 +13,7 @@ var overviewTranslationKeys = []string{
 	"statusFailed", "shortWindow", "longWindow", "resetIn", "priority", "urgencyLabel", "burnLabel", "running",
 	"scheduleActive", "schedulePaused", "scheduleSleeping", "scheduleDisabled", "predictedBadge", "predictedNote",
 	"probeSuccess", "probeCooldown", "viewDetails", "statusCooldown", "statusDisabled", "btnProbeSingle", "probeSingleSuccess",
+	"probeSingleFailed", "probeSingleNoResult", "probeBatchFailed", "staleEvidence",
 }
 
 var historyTranslationKeys = []string{

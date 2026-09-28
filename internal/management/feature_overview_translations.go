@@ -63,6 +63,10 @@ const featureOverviewTranslations = `        const OVERVIEW_ZH = {
                 statusDisabled: "已禁用",
                 btnProbeSingle: "探测",
                 probeSingleSuccess: "已更新该凭证配额",
+                probeSingleFailed: "探测失败",
+                probeSingleNoResult: "未返回该凭证的探测结果",
+                probeBatchFailed: "配额探测完成，存在失败凭证",
+                staleEvidence: "历史数据",
             }
         };
         const OVERVIEW_EN = {
@@ -128,6 +132,10 @@ const featureOverviewTranslations = `        const OVERVIEW_ZH = {
                 statusDisabled: "Disabled",
                 btnProbeSingle: "Probe",
                 probeSingleSuccess: "Credential quota updated",
+                probeSingleFailed: "Probe failed",
+                probeSingleNoResult: "No probe result for credential",
+                probeBatchFailed: "Quota probe finished with failures",
+                staleEvidence: "Historical",
             }
         };
 `

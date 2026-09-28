@@ -1426,6 +1426,125 @@ func TestRuntime_ProductionRunner_ProbeFailure(t *testing.T) {
 	if activeGroup.Items[0].Target.Priority != 100 || !strings.Contains(activeGroup.Items[0].Reason, "probe failed") {
 		t.Errorf("failing probe changed the Host target or lost its diagnostic: %#v", activeGroup.Items[0])
 	}
+
+	outcomes := r.LastProbeOutcomes(context.Background())
+	if len(outcomes) == 0 {
+		t.Fatalf("expected probe outcomes to be recorded on failing probe")
+	}
+	foundFail := false
+	for _, outcome := range outcomes {
+		if outcome.AuthIndex == "auth_fail_1" {
+			if outcome.Status != "failed" {
+				t.Errorf("expected outcome status 'failed', got %q", outcome.Status)
+			}
+			if outcome.HTTPStatusCode != http.StatusUnauthorized {
+				t.Errorf("expected status code %d, got %d", http.StatusUnauthorized, outcome.HTTPStatusCode)
+			}
+			foundFail = true
+		}
+	}
+	if !foundFail {
+		t.Errorf("auth_fail_1 not found in probe outcomes: %+v", outcomes)
+	}
+}
+
+func TestRuntime_LastProbeOutcomes_SuccessAndFailure(t *testing.T) {
+	mock := newMockHost()
+	mock.files = []host.AuthFile{
+		{
+			Name:      "test-success",
+			AuthIndex: "auth_success",
+			Provider:  string(core.ProviderAntigravity),
+			Type:      string(core.CredentialTypeAntigravity),
+			Priority:  100,
+		},
+	}
+	mock.httpResponse.Body = []byte(`{
+		"models": {
+			"gemini-2.5-pro": {
+				"quotaInfo": {
+					"windows": [{
+						"name": "5h",
+						"remainingFraction": 0.8,
+						"resetTime": "2026-08-18T17:00:00Z"
+					}, {
+						"name": "7d",
+						"remainingFraction": 0.9,
+						"resetTime": "2026-08-25T12:00:00Z"
+					}]
+				}
+			},
+			"claude-3-5-sonnet": {
+				"modelProvider": "anthropic",
+				"quotaInfo": {
+					"windows": [{
+						"name": "5hr",
+						"remainingFraction": 0.5,
+						"resetTime": "2026-08-18T17:00:00Z"
+					}, {
+						"name": "7d",
+						"remainingFraction": 0.6,
+						"resetTime": "2026-08-25T12:00:00Z"
+					}]
+				}
+			}
+		}
+	}`)
+	r := newTestRuntime(t, runtime.Options{
+		Host:    mock,
+		Clock:   &testClock{now: time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)},
+		Sleeper: testSleeper{},
+	})
+
+	// 1. Success probe
+	if err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
+		t.Fatalf("probe failed: %v", err)
+	}
+	successOutcomes := r.LastProbeOutcomes(context.Background())
+	if len(successOutcomes) != 2 {
+		t.Fatalf("expected 2 success probe outcomes, got %d", len(successOutcomes))
+	}
+	for _, o := range successOutcomes {
+		if o.AuthIndex == "auth_success" {
+			if o.Status != "success" {
+				t.Errorf("expected success status for %s, got %q", o.ModelGroup, o.Status)
+			}
+			if o.HTTPStatusCode != http.StatusOK {
+				t.Errorf("expected status 200, got %d", o.HTTPStatusCode)
+			}
+			if o.Error != "" {
+				t.Errorf("expected empty error on success, got %q", o.Error)
+			}
+		}
+	}
+
+	// 2. 403 Forbidden probe
+	mock.httpResponse = host.HTTPResponse{
+		StatusCode: http.StatusForbidden,
+		Body:       []byte(`{"error": "forbidden"}`),
+	}
+	if err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
+		t.Fatalf("probe failed: %v", err)
+	}
+	failOutcomes := r.LastProbeOutcomes(context.Background())
+	found403 := false
+	for _, o := range failOutcomes {
+		if o.AuthIndex == "auth_success" {
+			if o.Status != "failed" {
+				t.Errorf("expected failed status, got %q", o.Status)
+			}
+			if o.HTTPStatusCode != http.StatusForbidden {
+				t.Errorf("expected status 403, got %d", o.HTTPStatusCode)
+			}
+			if !strings.Contains(o.Error, "403") {
+				t.Errorf("expected error to mention 403, got %q", o.Error)
+			}
+			found403 = true
+		}
+	}
+	if !found403 {
+		t.Fatalf("did not find 403 outcome for auth_success: %+v", failOutcomes)
+	}
 }
 
 func TestRuntime_TickerWorker_StartAndStop(t *testing.T) {

@@ -35,6 +35,7 @@ type collectedEvidence struct {
 	Observations []evidence.Observation
 	Probed       int
 	RateLimited  map[string]string
+	Probes       []evidence.ProbeObservation
 }
 
 type probeJob struct {
@@ -91,6 +92,7 @@ func collectFreshEvidence(ctx context.Context, input collectInput) (collectedEvi
 		result.ByGroup[group] = classified
 		result.Observations = append(result.Observations, classified.Observations...)
 	}
+	result.Probes = probes
 	return result, nil
 }
 

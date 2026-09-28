@@ -117,17 +117,18 @@ const templateScriptOverviewRender = `        function renderDashboard() {
                     tagBadge = "<span class=\"badge badge-warning\">" + t("targetChanged") + "</span>";
                 }
 
+                const isCooldown = Boolean(item.reason && (item.reason.indexOf("rate limit cooldown") >= 0 || item.reason.indexOf("cooldown") >= 0));
                 const probeFailed = item.reason && (item.reason.indexOf("probe failed") >= 0 || item.reason.indexOf("probe invalid") >= 0);
                 const isManuallyDisabled = item.reason && item.reason.indexOf("disabled on host") >= 0;
                 let statusBadge = "<span class=\"badge badge-success\">" + t("statusActive") + "</span>";
-                if (probeFailed) {
-                    statusBadge = "<span class=\"badge badge-warning\">" + t("statusFailed") + "</span>";
+                if (isCooldown) {
+                    statusBadge = "<span class=\"badge badge-warning\">" + t("statusCooldown") + "</span>";
+                } else if (probeFailed) {
+                    statusBadge = "<span class=\"badge badge-danger\">" + t("statusFailed") + "</span>";
                 } else if (isManuallyDisabled) {
                     statusBadge = "<span class=\"badge badge-secondary\">" + t("statusDisabled") + "</span>";
                 } else if (item.target && item.target.disabled) {
                     statusBadge = "<span class=\"badge badge-danger\">" + t("statusWeeklyDepleted") + "</span>";
-                } else if (item.reason && item.reason.indexOf("429") >= 0) {
-                    statusBadge = "<span class=\"badge badge-warning\">" + t("statusCooldown") + "</span>";
                 } else if (isBoosted) {
                     statusBadge = "<span class=\"badge badge-boost\">" + t("statusBoosted") + "</span>";
                 }
@@ -150,11 +151,16 @@ const templateScriptOverviewRender = `        function renderDashboard() {
                                 "<button type=\"button\" class=\"btn-secondary\" style=\"min-height:20px; height:20px; padding:0 6px; font-size:11px; border-radius:4px;\" onclick=\"openSamplesModal('" + escapeHTML(authIdx) + "', '" + escapeHTML(credDisplayName) + "')\">📊 " + t("btnSamples") + "</button>" +
                             "</div>" +
                         "</div>" +
-                    "</div>" +
+                    "</div>";
 
-                    "<div class=\"meter-container\">" +
+                const isStale = (item.evidence_fresh === false);
+                const staleTag = isStale ? " <span class=\"meter-stale-tag\">" + t("staleEvidence") + "</span>" : "";
+                const meterContainerClass = "meter-container" + (isStale ? " meter-container-stale" : "");
+
+                card.innerHTML +=
+                    "<div class=\"" + meterContainerClass + "\">" +
                         "<div class=\"meter-label-row\">" +
-                            "<span>" + t("shortWindow") + " (" + r5hPercent + "%)</span>" +
+                            "<span>" + t("shortWindow") + " (" + r5hPercent + "%)" + staleTag + "</span>" +
                             "<span class=\"meter-countdown\" data-reset-time=\"" + (item.short_window_reset_at || "") + "\">" + formatCountdown(item.short_window_reset_at) + "</span>" +
                         "</div>" +
                         "<div class=\"meter-track\">" +
@@ -162,9 +168,9 @@ const templateScriptOverviewRender = `        function renderDashboard() {
                         "</div>" +
                     "</div>" +
 
-                    "<div class=\"meter-container\">" +
+                    "<div class=\"" + meterContainerClass + "\">" +
                         "<div class=\"meter-label-row\">" +
-                            "<span>" + t("longWindow") + " (" + r7dPercent + "%)</span>" +
+                            "<span>" + t("longWindow") + " (" + r7dPercent + "%)" + staleTag + "</span>" +
                             "<span class=\"meter-countdown\" data-reset-time=\"" + (item.long_window_reset_at || "") + "\">" + formatCountdown(item.long_window_reset_at) + "</span>" +
                         "</div>" +
                         "<div class=\"meter-track\">" +

@@ -10,11 +10,26 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
                 return currentLang === "zh-CN" ? "正常活跃" : "Active";
             }
             var lower = reason.toLowerCase();
+            if (lower.indexOf("probe failed") >= 0 || lower.indexOf("probe invalid") >= 0) {
+                var prefix = lower.indexOf("probe invalid") >= 0
+                    ? (currentLang === "zh-CN" ? "探测异常: " : "Probe invalid: ")
+                    : (currentLang === "zh-CN" ? "探测失败: " : "Probe failed: ");
+                var detail = reason;
+                var colonIdx = reason.indexOf(":");
+                if (colonIdx >= 0) {
+                    detail = reason.substring(colonIdx + 1).trim();
+                }
+                var histIdx = detail.indexOf("; historical:");
+                if (histIdx >= 0) {
+                    detail = detail.substring(0, histIdx).trim();
+                }
+                return detail ? prefix + detail : (currentLang === "zh-CN" ? "探测失败" : "Probe failed");
+            }
+            if (lower.indexOf("cooldown") >= 0 || (lower.indexOf("429") >= 0 && lower.indexOf("status 429") < 0)) return currentLang === "zh-CN" ? "⏳ 429 冷却中" : "⏳ 429 Cooldown";
             if (lower.indexOf("boost") >= 0) return currentLang === "zh-CN" ? "🚀 优先提权" : "🚀 Boosted";
             if (lower.indexOf("remaining positive") >= 0) return currentLang === "zh-CN" ? "余量充足" : "Positive Balance";
             if (lower.indexOf("weekly depleted") >= 0) return currentLang === "zh-CN" ? "周额度耗尽" : "Weekly Depleted";
             if (lower.indexOf("short") >= 0 && lower.indexOf("depleted") >= 0) return currentLang === "zh-CN" ? "5h短窗口耗尽" : "5h Depleted";
-            if (lower.indexOf("429") >= 0 || lower.indexOf("cooldown") >= 0) return currentLang === "zh-CN" ? "⏳ 429 冷却中" : "⏳ 429 Cooldown";
             if (lower.indexOf("predicted") >= 0) return currentLang === "zh-CN" ? "🔮 预测优先级" : "🔮 Predicted";
             if (lower.indexOf("in sync") >= 0 || lower.indexOf("optimal") >= 0) return currentLang === "zh-CN" ? "状态最优" : "In Sync";
             if (lower.indexOf("disabled on host") >= 0) return currentLang === "zh-CN" ? "已禁用" : "Disabled";
@@ -106,9 +121,24 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
                 const groupSelect = document.getElementById("modelGroupSelect");
                 const modelGroup = groupSelect ? groupSelect.value : "gemini";
                 const url = RUN_PATH + "?mode=probe&antigravity_model_group=" + encodeURIComponent(modelGroup) + "&auth_index=" + encodeURIComponent(authIndex);
-                await apiFetch(url, { method: "POST" });
+                const data = await apiFetch(url, { method: "POST" });
                 await fetchSnapshot({ silent: true });
-                showToast(t("probeSingleSuccess"), "success");
+
+                const outcomes = (data && Array.isArray(data.probe_outcomes)) ? data.probe_outcomes : [];
+                const targetOutcome = outcomes.find(function(o) { return o && o.auth_index === authIndex && (!modelGroup || o.model_group === modelGroup); }) ||
+                    outcomes.find(function(o) { return o && o.auth_index === authIndex; }) || null;
+
+                if (targetOutcome && targetOutcome.status !== "success") {
+                    let detail = targetOutcome.error || (currentLang === "zh-CN" ? "探测未成功" : "Probe unsuccessful");
+                    if (targetOutcome.http_status_code && detail.indexOf(String(targetOutcome.http_status_code)) < 0) {
+                        detail += " (HTTP " + targetOutcome.http_status_code + ")";
+                    }
+                    showToast(t("probeSingleFailed") + " · " + detail, "error");
+                } else if (targetOutcome && targetOutcome.status === "success") {
+                    showToast(t("probeSingleSuccess"), "success");
+                } else {
+                    showToast(t("probeSingleNoResult"), "error");
+                }
             } catch (err) {
                 showToast(err.message, "error");
             } finally {

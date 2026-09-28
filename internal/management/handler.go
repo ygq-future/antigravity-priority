@@ -39,6 +39,17 @@ type Runner interface {
 	SetDynamicConfig(ctx context.Context, cfg config.DynamicConfig) error
 	GetSamples(ctx context.Context, authIndex, modelGroup string) ([]state.QuotaSample, error)
 	GetProbeSamples(ctx context.Context, probeRoundID, modelGroup string) ([]state.ProbeSampleRecord, error)
+	LastProbeOutcomes(ctx context.Context) []ProbeOutcome
+}
+
+// ProbeOutcome reports the diagnostic outcome of one credential probe for the management UI.
+type ProbeOutcome struct {
+	AuthIndex      string    `json:"auth_index"`
+	ModelGroup     string    `json:"model_group"`
+	Status         string    `json:"status"` // "success", "failed", "invalid"
+	Error          string    `json:"error,omitempty"`
+	HTTPStatusCode int       `json:"http_status_code,omitempty"`
+	ObservedAt     time.Time `json:"observed_at"`
 }
 
 // RunRequest encapsulates parameters for a manual scheduling run.
@@ -199,6 +210,21 @@ func (h *Handler) handleRun(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
+	if mode == "probe" {
+		type runProbeResponse struct {
+			apply.Result
+			ProbeOutcomes []ProbeOutcome `json:"probe_outcomes"`
+		}
+		outcomes := h.runner.LastProbeOutcomes(r.Context())
+		if outcomes == nil {
+			outcomes = []ProbeOutcome{}
+		}
+		_ = json.NewEncoder(w).Encode(runProbeResponse{
+			Result:        result,
+			ProbeOutcomes: outcomes,
+		})
+		return
+	}
 	_ = json.NewEncoder(w).Encode(result)
 }
 

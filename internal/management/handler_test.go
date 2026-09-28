@@ -24,6 +24,7 @@ type mockRunner struct {
 	diagnosticsFunc func(ctx context.Context) (map[string]any, error)
 	scheduleConfig  state.ScheduleConfig
 	dynamicConfig   state.DynamicConfig
+	probeOutcomes   []management.ProbeOutcome
 }
 
 func (m *mockRunner) Run(ctx context.Context, req management.RunRequest) (apply.Result, error) {
@@ -109,6 +110,10 @@ func (m *mockRunner) GetProbeSamples(ctx context.Context, probeRoundID, modelGro
 	}}, nil
 }
 
+func (m *mockRunner) LastProbeOutcomes(ctx context.Context) []management.ProbeOutcome {
+	return m.probeOutcomes
+}
+
 func TestHandler_Run_Probe_Success(t *testing.T) {
 	called := false
 	runner := &mockRunner{
@@ -125,6 +130,10 @@ func TestHandler_Run_Probe_Success(t *testing.T) {
 				Succeeded: 2,
 			}, nil
 		},
+		probeOutcomes: []management.ProbeOutcome{
+			{AuthIndex: "auth_1", ModelGroup: "claude_gpt", Status: "success", HTTPStatusCode: 200},
+			{AuthIndex: "auth_2", ModelGroup: "claude_gpt", Status: "failed", Error: "retrieve quota summary status 403", HTTPStatusCode: 403},
+		},
 	}
 
 	handler := management.NewHandler(runner)
@@ -140,12 +149,21 @@ func TestHandler_Run_Probe_Success(t *testing.T) {
 		t.Errorf("expected runner.Run to be called")
 	}
 
-	var res apply.Result
+	var res struct {
+		apply.Result
+		ProbeOutcomes []management.ProbeOutcome `json:"probe_outcomes"`
+	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
 		t.Fatalf("decode response failed: %v", err)
 	}
 	if res.Attempted != 2 || res.Succeeded != 2 {
-		t.Errorf("unexpected result: %+v", res)
+		t.Errorf("unexpected result: %+v", res.Result)
+	}
+	if len(res.ProbeOutcomes) != 2 {
+		t.Fatalf("expected 2 probe outcomes, got %d", len(res.ProbeOutcomes))
+	}
+	if res.ProbeOutcomes[1].Status != "failed" || res.ProbeOutcomes[1].HTTPStatusCode != 403 {
+		t.Errorf("unexpected outcome: %+v", res.ProbeOutcomes[1])
 	}
 }
 

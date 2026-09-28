@@ -13,7 +13,9 @@ import (
 
 	"antigravity-priority/internal/apply"
 	"antigravity-priority/internal/config"
+	"antigravity-priority/internal/evidence"
 	"antigravity-priority/internal/management"
+	"antigravity-priority/internal/provider/antigravity"
 	"antigravity-priority/internal/state"
 )
 
@@ -420,6 +422,60 @@ func (r managementRunner) GetSamples(ctx context.Context, authIndex, modelGroup 
 
 func (r managementRunner) GetProbeSamples(ctx context.Context, probeRoundID, modelGroup string) ([]state.ProbeSampleRecord, error) {
 	return r.runtime.GetProbeSamples(ctx, probeRoundID, modelGroup)
+}
+
+func (r managementRunner) LastProbeOutcomes(ctx context.Context) []management.ProbeOutcome {
+	return r.runtime.LastProbeOutcomes(ctx)
+}
+
+func probeOutcomes(probes []evidence.ProbeObservation, byGroup map[config.AntigravityModelGroup]evidence.Result) []management.ProbeOutcome {
+	if len(probes) == 0 {
+		return nil
+	}
+	outcomes := make([]management.ProbeOutcome, 0, len(probes))
+	for _, probe := range probes {
+		res := probe.Result
+		groupConfig, err := config.ParseAntigravityModelGroup(string(res.ModelGroup))
+		if err != nil {
+			continue
+		}
+		status := "failed"
+		errMsg := res.Error
+		if groupResult, ok := byGroup[groupConfig]; ok {
+			for _, obs := range groupResult.Observations {
+				if obs.AuthIndex == res.AuthIndex && obs.ModelGroup == groupConfig {
+					switch obs.Kind {
+					case evidence.ObservationFresh:
+						status = "success"
+						errMsg = ""
+					case evidence.ObservationInvalid:
+						status = "invalid"
+						if errMsg == "" {
+							errMsg = obs.Failure
+						}
+					case evidence.ObservationFailed:
+						status = "failed"
+						if errMsg == "" {
+							errMsg = obs.Failure
+						}
+					}
+					break
+				}
+			}
+		} else if res.Status == antigravity.StatusReady {
+			status = "success"
+			errMsg = ""
+		}
+		outcomes = append(outcomes, management.ProbeOutcome{
+			AuthIndex:      res.AuthIndex,
+			ModelGroup:     string(res.ModelGroup),
+			Status:         status,
+			Error:          errMsg,
+			HTTPStatusCode: res.HTTPStatusCode,
+			ObservedAt:     res.ObservedAt,
+		})
+	}
+	return outcomes
 }
 
 var _ management.Runner = managementRunner{}

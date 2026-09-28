@@ -610,3 +610,209 @@ func TestStatusHTML_CPAThemeAlignmentAndDevServerHelper(t *testing.T) {
 		t.Fatal("syncThemeFromParent must explicitly resolve to dark or light")
 	}
 }
+func TestProbeOutcomeToastAndRenderFailureTruth(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not available; probe outcome behavior is checked in the Node-enabled verification environment")
+	}
+
+	harness := templateScriptOverviewActionsCore + templateScriptOverviewRender + templateScriptProbeSchedule + `
+const toastCalls = [];
+function element(initial) {
+    return Object.assign({
+        hidden: false,
+        textContent: "",
+        innerHTML: "",
+        children: [],
+        attributes: {},
+        style: {},
+        classList: {
+            classes: [],
+            add: function(c) { this.classes.push(c); },
+            remove: function(c) { this.classes = this.classes.filter(x => x !== c); },
+            contains: function(c) { return this.classes.includes(c); }
+        },
+        appendChild: function(child) { this.children.push(child); if (child && child.innerHTML) this.innerHTML += child.innerHTML; },
+        setAttribute: function(k, v) { this.attributes[k] = v; },
+        getAttribute: function(k) { return this.attributes[k] || null; }
+    }, initial || {});
+}
+
+const elements = {
+    toastRoot: element(),
+    modelGroupSelect: element({value: "gemini"}),
+    valLastAudit: element(),
+    valNextProbe: element(),
+    valTotalCreds: element(),
+    valTotalDesc: element(),
+    valBoosted: element(),
+    valDepleted: element(),
+    credentialsContainer: element(),
+    btnProbe: element()
+};
+
+const document = {
+    getElementById: function(id) { return elements[id] || null; },
+    createElement: function(tag) { return element({tagName: tag}); },
+    querySelectorAll: function() { return []; }
+};
+
+function showToast(msg, type) {
+    toastCalls.push({msg: msg, type: type});
+}
+
+const ZH = {
+    statusActive: "正常活跃",
+    statusFailed: "探测失败",
+    statusDisabled: "已禁用",
+    statusWeeklyDepleted: "周额度耗尽",
+    statusCooldown: "⏳ 429 冷却中",
+    statusBoosted: "🚀 动态 Boost",
+    probeSingleSuccess: "已更新该凭证配额",
+    probeSingleFailed: "探测失败",
+    probeSingleNoResult: "未返回该凭证的探测结果",
+    probeBatchFailed: "配额探测完成，存在失败凭证",
+    staleEvidence: "历史数据",
+    shortWindow: "5h 短窗口",
+    longWindow: "7d 周窗口",
+    urgencyLabel: "紧迫度",
+    burnLabel: "燃烧率",
+    actualPriority: "实际",
+    targetPriority: "目标",
+    predictedPriority: "预测",
+    unsetPriority: "[未设置]"
+};
+
+function t(key) { return ZH[key] || key; }
+function escapeHTML(s) { return String(s || ""); }
+function formatCountdown(d) { return "01h 00m"; }
+
+currentLang = "zh-CN";
+dynamicConfig = { auto_apply: false, antigravity_model_group: "gemini" };
+latestDiagnostics = { latest_audit: "test audit" };
+scheduleConfig = null;
+isAuthBlocked = false;
+userSelectedModelGroup = false;
+const RUN_PATH = "/run";
+const SNAPSHOT_PATH = "/snapshot/latest";
+const DIAGNOSTICS_PATH = "/diagnostics";
+
+async function apiFetch(path, options) {
+    if (path.indexOf("mode=probe") >= 0) {
+        return {
+            attempted: 0,
+            succeeded: 0,
+            probe_outcomes: [
+                {
+                    auth_index: "fail-403",
+                    model_group: "gemini",
+                    status: "failed",
+                    error: "retrieve quota summary status 403",
+                    http_status_code: 403
+                }
+            ]
+        };
+    }
+    return {};
+}
+
+async function fetchSnapshot() {}
+async function fetchDiagnostics() {}
+
+(async function() {
+    // 1. Test single probe failure toast
+    const probeBtn = element({textContent: "⚡ 探测"});
+    await probeSingleCredential("fail-403", probeBtn);
+    if (toastCalls.length !== 1) {
+        throw new Error("expected exactly 1 toast, got " + toastCalls.length);
+    }
+    if (toastCalls[0].type !== "error") {
+        throw new Error("expected error toast for failed probe, got: " + toastCalls[0].type);
+    }
+    if (toastCalls[0].msg.indexOf("403") < 0 || toastCalls[0].msg.indexOf("探测失败") < 0) {
+        throw new Error("expected toast to mention 探测失败 and 403, got: " + toastCalls[0].msg);
+    }
+
+    // 2. Test card render: 403 failed card
+    latestSnapshot = {
+        active_model_group: "gemini",
+        groups: {
+            gemini: {
+                items: [
+                    {
+                        auth_index: "fail-403",
+                        email: "test-403@example.com",
+                        reason: "probe failed: retrieve quota summary status 403; historical: fresh remaining positive",
+                        evidence_fresh: false,
+                        current: { priority: 99, disabled: false },
+                        target: { priority: 99, disabled: false },
+                        r5h: 1.0,
+                        r7d: 1.0,
+                        urgency: 0.98,
+                        cycle_burn_rate: 0.16
+                    },
+                    {
+                        auth_index: "cooldown-429",
+                        email: "test-429@example.com",
+                        reason: "probe failed: retrieve quota summary status 429; historical: 429 rate limit cooldown",
+                        evidence_fresh: false,
+                        current: { priority: -1, disabled: false },
+                        target: { priority: -1, disabled: false },
+                        r5h: 0.8,
+                        r7d: 0.9,
+                        urgency: 1.1,
+                        cycle_burn_rate: 0.15
+                    }
+                ]
+            }
+        }
+    };
+
+    renderDashboard();
+
+    const renderedCards = elements.credentialsContainer.children;
+    if (renderedCards.length !== 2) {
+        throw new Error("expected 2 rendered cards, got " + renderedCards.length);
+    }
+
+    // Card 0: 403 failure
+    const card0HTML = renderedCards[0].innerHTML;
+    if (card0HTML.indexOf("badge-danger") < 0 || card0HTML.indexOf("探测失败") < 0) {
+        throw new Error("card 0 should have badge-danger with '探测失败': " + card0HTML);
+    }
+    if (card0HTML.indexOf("余量充足") >= 0) {
+        throw new Error("card 0 must NOT show '余量充足' when probe failed");
+    }
+    if (card0HTML.indexOf("探测失败: retrieve quota summary status 403") < 0) {
+        throw new Error("card 0 should show specific probe failure detail: " + card0HTML);
+    }
+    if (card0HTML.indexOf("meter-container-stale") < 0 || card0HTML.indexOf("历史数据") < 0) {
+        throw new Error("card 0 should show stale tag and class for non-fresh evidence: " + card0HTML);
+    }
+
+    // Card 1: 429 cooldown
+    const card1HTML = renderedCards[1].innerHTML;
+    if (card1HTML.indexOf("429 冷却中") < 0) {
+        throw new Error("card 1 should prioritize '429 冷却中' badge over probe failed: " + card1HTML);
+    }
+    if (card1HTML.indexOf("探测失败: retrieve quota summary status 429") < 0) {
+        throw new Error("card 1 reason line should display failure cause: " + card1HTML);
+    }
+
+    // 3. Test triggerProbe with batch failure
+    elements.btnProbe.querySelector = function() { return element(); };
+    elements.btnProbe.classList = { contains: function() { return false; }, add: function() {}, remove: function() {} };
+    await triggerProbe();
+    clearInterval(probeCooldownTimer);
+    const lastToast = toastCalls[toastCalls.length - 1];
+    if (lastToast.type !== "error" || lastToast.msg.indexOf("配额探测完成，存在失败凭证 (1)") < 0) {
+        throw new Error("expected batch probe failure toast, got: " + JSON.stringify(lastToast));
+    }
+})().catch(function(err) {
+    console.error(err.stack || err.message);
+    process.exit(1);
+});
+`
+
+	runNodeFixture(t, node, "probe-outcome-truth.js", harness)
+}

@@ -51,6 +51,7 @@ func executeAntigravityQuotaRequest(ctx context.Context, doer quotaHTTPDoer, req
 		results := antigravity.ParseAllModelGroups(response.Body, request.ObservedAt.UTC())
 		for group, result := range results {
 			result.AuthIndex = request.AuthIndex
+			result.HTTPStatusCode = response.StatusCode
 			results[group] = result
 		}
 		return results

@@ -98,6 +98,7 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 		if err != nil {
 			return err
 		}
+		r.setLastProbeOutcomes(probeOutcomes(evidence.Probes, evidence.ByGroup))
 	}
 
 	if len(evidence.RateLimited) > 0 {

@@ -11,8 +11,20 @@ const templateScriptProbeSchedule = `        async function triggerProbe() {
                 var groupSelect = document.getElementById("modelGroupSelect");
                 var group = groupSelect ? groupSelect.value : "gemini";
                 var path = RUN_PATH + "?mode=probe&antigravity_model_group=" + encodeURIComponent(group);
-                await apiFetch(path, { method: "POST" });
-                showToast(t("probeSuccess"), "success");
+                var data = await apiFetch(path, { method: "POST" });
+                var outcomes = (data && Array.isArray(data.probe_outcomes)) ? data.probe_outcomes : [];
+                var failedCount = 0;
+                for (var i = 0; i < outcomes.length; i++) {
+                    var o = outcomes[i];
+                    if (o && o.status !== "success" && (!group || o.model_group === group)) {
+                        failedCount++;
+                    }
+                }
+                if (failedCount > 0) {
+                    showToast(t("probeBatchFailed") + " (" + failedCount + ")", "error");
+                } else {
+                    showToast(t("probeSuccess"), "success");
+                }
                 await refreshDashboard();
             } catch (err) {
                 showToast(err.message, "error");

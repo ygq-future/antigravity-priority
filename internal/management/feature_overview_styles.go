@@ -112,6 +112,23 @@ const templateStyleOverviewCards = `        /* Credentials Display (Grid 3 Colum
             width: 100%;
         }
 
+        .meter-container-stale {
+            opacity: 0.75;
+        }
+
+        .meter-stale-tag {
+            display: inline-block;
+            font-size: 10px;
+            font-weight: 500;
+            padding: 0 4px;
+            border-radius: 3px;
+            background: var(--bg-subtle);
+            border: 1px solid var(--border-color);
+            color: var(--text-muted);
+            margin-left: 4px;
+            line-height: 14px;
+            vertical-align: middle;
+        }
         .meter-label-row {
             display: flex;
             align-items: center;
