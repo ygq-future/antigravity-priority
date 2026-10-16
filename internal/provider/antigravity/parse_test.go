@@ -566,3 +566,58 @@ func TestParseAvailableModels_PerModelWithoutExplicitWindows(t *testing.T) {
 		}
 	}
 }
+
+func TestParseAvailableModels_SnakeCaseAndPercentAliases(t *testing.T) {
+	now := time.Date(2026, 10, 16, 4, 0, 0, 0, time.UTC)
+
+	// Test snake_case aliases in groups/buckets: remaining_fraction and reset_time
+	rawGroup := []byte(`{
+		"groups": [
+			{
+				"displayName": "Gemini Models",
+				"buckets": [
+					{
+						"window": "5h",
+						"remaining_fraction": 0.44,
+						"reset_time": "2026-10-16T09:00:00Z"
+					},
+					{
+						"window": "weekly",
+						"remainingFraction": "85%",
+						"resetTime": "2026-10-23T04:00:00Z"
+					}
+				]
+			}
+		]
+	}`)
+	got := ParseAvailableModels(rawGroup, now, ModelGroupGemini)
+	if got.Status != StatusReady {
+		t.Fatalf("expected StatusReady, got %v (err: %v)", got.Status, got.Error)
+	}
+	if got.ShortWindowRemaining == nil || *got.ShortWindowRemaining != 44 {
+		t.Errorf("expected ShortWindowRemaining 44 from remaining_fraction, got %v", got.ShortWindowRemaining)
+	}
+	if got.LongWindowRemaining == nil || *got.LongWindowRemaining != 85 {
+		t.Errorf("expected LongWindowRemaining 85 from 85%% string, got %v", got.LongWindowRemaining)
+	}
+
+	// Test snake_case aliases in per-model quotaInfo
+	rawModel := []byte(`{
+		"models": {
+			"claude-3-5-sonnet": {
+				"modelProvider": "anthropic",
+				"quotaInfo": {
+					"remaining_fraction": 0.72,
+					"reset_time": "2026-10-16T09:00:00Z"
+				}
+			}
+		}
+	}`)
+	gotModel := ParseAvailableModels(rawModel, now, ModelGroupClaudeGPT)
+	if gotModel.Status != StatusReady {
+		t.Fatalf("expected StatusReady for model quota, got %v (err: %v)", gotModel.Status, gotModel.Error)
+	}
+	if gotModel.Remaining == nil || *gotModel.Remaining != 72 {
+		t.Errorf("expected Remaining 72 from model remaining_fraction, got %v", gotModel.Remaining)
+	}
+}

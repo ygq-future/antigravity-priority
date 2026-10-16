@@ -34,10 +34,30 @@ type quotaInfo struct {
 	Windows           []quotaWindow `json:"windows"`
 }
 
+func (q *quotaInfo) UnmarshalJSON(data []byte) error {
+	type alias quotaInfo
+	var raw alias
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*q = quotaInfo(raw)
+	return readQuotaAliases(data, &q.RemainingFraction, &q.ResetTime)
+}
+
 type quotaWindow struct {
 	Name              string `json:"name"`
 	RemainingFraction any    `json:"remainingFraction"`
 	ResetTime         any    `json:"resetTime"`
+}
+
+func (w *quotaWindow) UnmarshalJSON(data []byte) error {
+	type alias quotaWindow
+	var raw alias
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*w = quotaWindow(raw)
+	return readQuotaAliases(data, &w.RemainingFraction, &w.ResetTime)
 }
 
 type quotaBucket struct {
@@ -48,6 +68,33 @@ type quotaBucket struct {
 	Window            string `json:"window"`
 	RemainingFraction any    `json:"remainingFraction"`
 	ResetTime         any    `json:"resetTime"`
+}
+
+func (b *quotaBucket) UnmarshalJSON(data []byte) error {
+	type alias quotaBucket
+	var raw alias
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*b = quotaBucket(raw)
+	return readQuotaAliases(data, &b.RemainingFraction, &b.ResetTime)
+}
+
+func readQuotaAliases(data []byte, remaining, reset *any) error {
+	var alt struct {
+		Remaining any `json:"remaining_fraction"`
+		Reset     any `json:"reset_time"`
+	}
+	if err := json.Unmarshal(data, &alt); err != nil {
+		return err
+	}
+	if *remaining == nil {
+		*remaining = alt.Remaining
+	}
+	if *reset == nil {
+		*reset = alt.Reset
+	}
+	return nil
 }
 
 type candidateWindow struct {
@@ -438,11 +485,20 @@ func toFloat64(raw any) (float64, bool) {
 	switch value := raw.(type) {
 	case float64:
 		return value, true
+	case float32:
+		return float64(value), true
+	case int:
+		return float64(value), true
+	case int64:
+		return float64(value), true
 	case json.Number:
 		parsed, err := value.Float64()
 		return parsed, err == nil
 	case string:
-		parsed, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+		trimmed := strings.TrimSpace(value)
+		trimmed = strings.TrimSuffix(trimmed, "%")
+		trimmed = strings.TrimSpace(trimmed)
+		parsed, err := strconv.ParseFloat(trimmed, 64)
 		return parsed, err == nil
 	default:
 		return 0, false
