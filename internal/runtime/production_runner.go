@@ -326,6 +326,7 @@ func projectCurrentHost(
 		return DualModelGroupProjection{}, err
 	}
 	_ = reconcileAutoDisabledDrift(ctx, store, credentials)
+	credentials = enrichCredentialsPlanTypeFromStore(store, credentials, string(request.Config.AntigravityModelGroup))
 	return ProjectDualModelGroups(ProjectionInput{
 		ControlModelGroup: request.Config.AntigravityModelGroup,
 		Credentials:       credentials,
@@ -538,6 +539,20 @@ func reconcileAutoDisabledDrift(ctx context.Context, store *state.Store, credent
 	}
 	return nil
 }
+func enrichCredentialsPlanTypeFromStore(store *state.Store, credentials []core.Credential, preferredGroup string) []core.Credential {
+	if store == nil {
+		return credentials
+	}
+	for i, cred := range credentials {
+		if cred.PlanType == "" || cred.PlanType == core.PlanTypeUnknown {
+			if pt := store.GetPlanType(cred.AuthIndex, preferredGroup); pt != "" && pt != core.PlanTypeUnknown {
+				credentials[i].PlanType = pt
+			}
+		}
+	}
+	return credentials
+}
+
 
 func buildProjectionEvidence(store *state.Store, credentials []core.Credential) map[config.AntigravityModelGroup]evidence.Result {
 	historical := historicalObservations(store, credentials)

@@ -110,6 +110,12 @@ func TestStatusHTML_CSSTokenCompleteness(t *testing.T) {
 		"--badge-boost-bg",
 		"--badge-boost-border",
 		"--badge-boost-text",
+		"--badge-plan-pro-bg",
+		"--badge-plan-pro-border",
+		"--badge-plan-pro-text",
+		"--badge-plan-free-bg",
+		"--badge-plan-free-border",
+		"--badge-plan-free-text",
 		"--diff-from-bg",
 		"--diff-from-text",
 		"--diff-to-bg",
@@ -173,7 +179,7 @@ func TestStatusHTML_DetailModalUsesContentWidthAndBackdropDismiss(t *testing.T) 
 
 func TestStatusHTML_CredentialMetadataIsInline(t *testing.T) {
 	html := management.StatusHTML
-	if !strings.Contains(html, `"<span class=\"cred-meta\"> · " + escapeHTML(item.plan_type || "Antigravity") + "</span>" +`) {
+	if !strings.Contains(html, `"<span class=\"cred-meta\">" + formatPlanBadge(item.plan_type) + "</span>" +`) {
 		t.Fatal("credential metadata must follow the account email on the same header line")
 	}
 }
@@ -239,6 +245,8 @@ func TestStatusHTML_ContainsRequiredUIElements(t *testing.T) {
 		{"Adaptive C_cycle burn rate", "burnLabel"},
 		{"Weekly urgency index", "urgencyLabel"},
 		{"Boost badge styling", "badge-boost"},
+		{"Plan badge styling", "badge-plan-pro"},
+		{"Free plan badge styling", "badge-plan-free"},
 		{"Model Group dropdown", "modelGroupSelect"},
 		{"Gemini model group option", "gemini"},
 		{"Claude GPT model group option", "claude_gpt"},

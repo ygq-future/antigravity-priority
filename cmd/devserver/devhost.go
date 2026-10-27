@@ -315,7 +315,7 @@ func (d *devHost) HTTPDo(ctx context.Context, request host.HTTPRequest) (host.HT
 	if err := d.saveQuotaStateLocked(); err != nil {
 		return host.HTTPResponse{}, err
 	}
-	body, err := marshalDevQuotaResponse(state)
+	body, err := marshalDevQuotaResponse(state, isDevFreeAuthIndex(request.AuthIndex))
 	if err != nil {
 		return host.HTTPResponse{}, err
 	}
@@ -396,7 +396,7 @@ func consumeDevQuota(value int64, rng *rand.Rand) int64 {
 	return value - delta
 }
 
-func marshalDevQuotaResponse(state devQuotaState) ([]byte, error) {
+func marshalDevQuotaResponse(state devQuotaState, isFree bool) ([]byte, error) {
 	type bucket struct {
 		BucketID          string  `json:"bucketId"`
 		DisplayName       string  `json:"displayName"`
@@ -411,13 +411,15 @@ func marshalDevQuotaResponse(state devQuotaState) ([]byte, error) {
 		Buckets     []bucket `json:"buckets"`
 	}
 	makeGroup := func(id, displayName, description string, quota devQuotaGroupState) group {
+		buckets := make([]bucket, 0, 2)
+		if !isFree {
+			buckets = append(buckets, bucket{BucketID: id + "-5h", DisplayName: "5 hour", Window: "5h", RemainingFraction: float64(quota.Short) / 100, ResetTime: quota.ShortResetAt.UTC().Format(time.RFC3339), Description: "Five-hour quota window"})
+		}
+		buckets = append(buckets, bucket{BucketID: id + "-7d", DisplayName: "Weekly", Window: "7d", RemainingFraction: float64(quota.Long) / 100, ResetTime: quota.LongResetAt.UTC().Format(time.RFC3339), Description: "Weekly quota window"})
 		return group{
 			DisplayName: displayName,
 			Description: description,
-			Buckets: []bucket{
-				{BucketID: id + "-5h", DisplayName: "5 hour", Window: "5h", RemainingFraction: float64(quota.Short) / 100, ResetTime: quota.ShortResetAt.UTC().Format(time.RFC3339), Description: "Five-hour quota window"},
-				{BucketID: id + "-7d", DisplayName: "Weekly", Window: "7d", RemainingFraction: float64(quota.Long) / 100, ResetTime: quota.LongResetAt.UTC().Format(time.RFC3339), Description: "Weekly quota window"},
-			},
+			Buckets:     buckets,
 		}
 	}
 	response := struct {
@@ -462,6 +464,18 @@ func (d *devHost) findAuthPathLocked(identifier string) (string, string, error) 
 
 func authIndexForPath(path string) string {
 	return strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+}
+func isDevFreeAuthIndex(identifier string) bool {
+	lower := strings.ToLower(strings.TrimSpace(identifier))
+	if strings.Contains(lower, "free") {
+		return true
+	}
+	for _, freeIdx := range []string{"dev-auth-008", "dev-auth-009", "dev-auth-010"} {
+		if strings.Contains(lower, freeIdx) {
+			return true
+		}
+	}
+	return false
 }
 
 func firstDevAuthName(email, fallback string) string {

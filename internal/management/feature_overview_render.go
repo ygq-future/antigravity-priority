@@ -140,7 +140,7 @@ const templateScriptOverviewRender = `        function renderDashboard() {
 					"<div class=\"cred-info\">" +
 						"<div class=\"cred-name\">" +
 							"<span class=\"cred-email\">" + escapeHTML(credDisplayName) + "</span>" +
-							"<span class=\"cred-meta\"> · " + escapeHTML(item.plan_type || "Antigravity") + "</span>" +
+							"<span class=\"cred-meta\">" + formatPlanBadge(item.plan_type) + "</span>" +
 						"</div>" +
                         "<div class=\"cred-badge-row\">" +
                             statusBadge +

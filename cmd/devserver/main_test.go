@@ -493,3 +493,61 @@ func TestDevServer_SimulationEndpoints(t *testing.T) {
 		t.Fatalf("priority after success = %d, want %d", curFiles[0].Priority, origPriority)
 	}
 }
+
+func TestDevServer_FreeAccountSimulation(t *testing.T) {
+	now := time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
+	clock := &devTestClock{now: now}
+	dev, err := newDevServer(devServerOptions{
+		AuthDir:        t.TempDir(),
+		QuotaStatePath: filepath.Join(t.TempDir(), "quota.json"),
+		StateCachePath: filepath.Join(t.TempDir(), "cache.json"),
+		AccountCount:   10,
+		Seed:           3,
+		Clock:          clock,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Probe all accounts
+	if err := dev.runtime.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot, err := dev.runtime.LatestSnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	items := snapshot.Groups["gemini"].Items
+	if len(items) != 10 {
+		t.Fatalf("items count = %d, want 10", len(items))
+	}
+
+	freeCount := 0
+	proCount := 0
+	for _, it := range items {
+		switch it.PlanType {
+		case "free":
+			freeCount++
+			if it.ShortWindowRemaining != nil {
+				t.Errorf("free account %s should not have ShortWindowRemaining", it.AuthIndex)
+			}
+			if it.LongWindowRemaining == nil {
+				t.Errorf("free account %s should have LongWindowRemaining", it.AuthIndex)
+			}
+		case "pro":
+			proCount++
+			if it.ShortWindowRemaining == nil || it.LongWindowRemaining == nil {
+				t.Errorf("pro account %s should have both 5h and 7d windows", it.AuthIndex)
+			}
+		}
+	}
+
+	if freeCount != 3 {
+		t.Fatalf("free account count = %d, want 3", freeCount)
+	}
+	if proCount != 7 {
+		t.Fatalf("pro account count = %d, want 7", proCount)
+	}
+}

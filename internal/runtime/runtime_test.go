@@ -730,6 +730,54 @@ func TestRuntime_ProbeAndSyncHostUseTheSameLearnedCycleBurnRate(t *testing.T) {
 		t.Fatalf("manual apply after an unchanged Host sync failed: %v", err)
 	}
 }
+func TestRuntime_SyncHostPreservesPlanType(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	now := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
+
+	mock := newMockHost()
+	mock.files = []host.AuthFile{{
+		Name:      "pro-account",
+		Email:     "pro@example.com",
+		AuthIndex: "pro-auth",
+		Provider:  string(core.ProviderAntigravity),
+		Type:      string(core.CredentialTypeAntigravity),
+		Priority:  100,
+	}}
+	mock.httpResponse.Body = []byte(`{
+		"models": {
+			"gemini-2.5-pro": {"quotaInfo":{"windows":[
+				{"name":"5h","remainingFraction":1.0,"resetTime":"2026-08-23T17:00:00Z"},
+				{"name":"7d","remainingFraction":0.90,"resetTime":"2026-08-24T05:00:00Z"}
+			]}}
+		}
+	}`)
+	r := newTestRuntime(t, runtime.Options{Host: mock, Clock: &testClock{now: now}, Sleeper: testSleeper{}})
+	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "enabled: true\nstate_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Probe establishes Pro plan type
+	if err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
+		t.Fatal(err)
+	}
+	probeSnapshot, err := r.LatestSnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if probeSnapshot.Groups["gemini"].Items[0].PlanType != "pro" {
+		t.Fatalf("probe plan_type = %q; want pro", probeSnapshot.Groups["gemini"].Items[0].PlanType)
+	}
+
+	// 2. SyncHost (which simulates page reload / refresh) preserves Pro plan type
+	syncSnapshot, err := r.SyncHost(context.Background(), config.AntigravityModelGroupGemini)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if syncSnapshot.Groups["gemini"].Items[0].PlanType != "pro" {
+		t.Fatalf("sync plan_type = %q; want pro preserved from state cache", syncSnapshot.Groups["gemini"].Items[0].PlanType)
+	}
+}
+
 
 func TestRuntime_ProductionRunner_FilteredAuthIndexes(t *testing.T) {
 	mock := newMockHost()

@@ -288,6 +288,7 @@ func (r *Runtime) ResetAllPriorities(ctx context.Context) (map[string]any, error
 	if err != nil {
 		return nil, err
 	}
+	credentials = enrichCredentialsPlanTypeFromStore(store, credentials, string(cfg.AntigravityModelGroup))
 	evidenceByGroup := buildProjectionEvidence(store, credentials)
 	now := r.clock.Now().UTC()
 	projection, err := ProjectDualModelGroups(ProjectionInput{
@@ -376,6 +377,7 @@ func (r *Runtime) SyncHost(ctx context.Context, modelGroup config.AntigravityMod
 		return apply.DualGroupSnapshot{}, err
 	}
 	_ = reconcileAutoDisabledDrift(ctx, store, credentials)
+	credentials = enrichCredentialsPlanTypeFromStore(store, credentials, string(cfg.AntigravityModelGroup))
 	evidenceByGroup := buildProjectionEvidence(store, credentials)
 
 	now := r.clock.Now().UTC()

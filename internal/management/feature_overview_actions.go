@@ -35,6 +35,24 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
             if (lower.indexOf("disabled on host") >= 0) return currentLang === "zh-CN" ? "已禁用" : "Disabled";
             return reason;
         }
+        function formatPlanBadge(planType) {
+            var raw = (planType || "").trim().toLowerCase();
+            if (raw === "pro") {
+                return "<span class=\"badge badge-plan badge-plan-pro\">PRO</span>";
+            }
+            if (raw === "free") {
+                return "<span class=\"badge badge-plan badge-plan-free\">FREE</span>";
+            }
+            if (raw === "team") {
+                return "<span class=\"badge badge-plan badge-plan-default\">TEAM</span>";
+            }
+            if (raw === "plus") {
+                return "<span class=\"badge badge-plan badge-plan-default\">PLUS</span>";
+            }
+            var label = planType ? planType.toUpperCase() : "ANTIGRAVITY";
+            return "<span class=\"badge badge-plan badge-plan-default\">" + escapeHTML(label) + "</span>";
+        }
+
 
         async function fetchSnapshot(options) {
             if (isAuthBlocked) return;

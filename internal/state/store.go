@@ -408,6 +408,30 @@ func (s *Store) HasEntry(authIndex, modelGroup string) bool {
 	_, ok := s.entries[entryKey(authIndex, modelGroup)]
 	return ok
 }
+// GetPlanType returns the cached PlanType for authIndex across known model groups.
+// It checks the specific modelGroup if provided, or looks up in known groups.
+func (s *Store) GetPlanType(authIndex, preferredGroup string) core.PlanType {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if preferredGroup != "" {
+		if entry, ok := s.entries[entryKey(authIndex, preferredGroup)]; ok && entry.PlanType != "" && entry.PlanType != core.PlanTypeUnknown {
+			return entry.PlanType
+		}
+	}
+	for _, group := range []string{"gemini", "claude_gpt"} {
+		if group == preferredGroup {
+			continue
+		}
+		if entry, ok := s.entries[entryKey(authIndex, group)]; ok && entry.PlanType != "" && entry.PlanType != core.PlanTypeUnknown {
+			return entry.PlanType
+		}
+	}
+	if entry, ok := s.entries[authIndexKey(authIndex)]; ok && entry.PlanType != "" && entry.PlanType != core.PlanTypeUnknown {
+		return entry.PlanType
+	}
+	return core.PlanTypeUnknown
+}
+
 
 // GetCycleBurnRate returns the learned cycle burn rate for the credential, falling back to 0.15.
 func (s *Store) GetCycleBurnRate(authIndex, modelGroup string) float64 {

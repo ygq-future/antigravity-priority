@@ -244,6 +244,33 @@ const templateStyleControls = `        /* KPI Cards Grid */
             border: 1px solid var(--badge-boost-border);
             color: var(--badge-boost-text);
         }
+        .badge-plan {
+            font-size: 10px;
+            padding: 1px 6px;
+            font-weight: 800;
+            letter-spacing: 0.03em;
+            text-transform: uppercase;
+            border-radius: 4px;
+        }
+
+        .badge-plan-pro {
+            background: var(--badge-plan-pro-bg);
+            border: 1px solid var(--badge-plan-pro-border);
+            color: var(--badge-plan-pro-text);
+        }
+        .badge-plan-free {
+            background: var(--badge-plan-free-bg);
+            border: 1px solid var(--badge-plan-free-border);
+            color: var(--badge-plan-free-text);
+        }
+
+
+        .badge-plan-default {
+            background: var(--bg-subtle);
+            border: 1px solid var(--border-color);
+            color: var(--text-secondary);
+        }
+
 
         .badge-success {
             background: var(--accent-green-subtle);

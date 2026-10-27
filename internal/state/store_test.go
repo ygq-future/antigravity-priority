@@ -694,6 +694,35 @@ func TestStore_GetHistoricalEvidence_And_BuildHistoricalEvidence(t *testing.T) {
 	}
 }
 
+func TestStore_GetPlanType(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	store, _ := state.Load(ctx, filepath.Join(tmpDir, "plan_cache.json"))
+	now := time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)
+
+	// Unknown when empty
+	if pt := store.GetPlanType("acc-none", "gemini"); pt != core.PlanTypeUnknown {
+		t.Fatalf("expected unknown, got %v", pt)
+	}
+
+	// Record success with Pro plan
+	_ = store.MarkProbeSuccess(ctx, state.ProbeSuccess{
+		AuthIndex:   "acc-pro",
+		ModelGroup:  "gemini",
+		ObservedAt:  now,
+		ResetAt:     now.Add(time.Hour),
+		PlanType:    core.PlanTypePro,
+	})
+
+	if pt := store.GetPlanType("acc-pro", "gemini"); pt != core.PlanTypePro {
+		t.Fatalf("expected pro, got %v", pt)
+	}
+	// Falls back to other model groups
+	if pt := store.GetPlanType("acc-pro", "claude_gpt"); pt != core.PlanTypePro {
+		t.Fatalf("expected fallback to pro, got %v", pt)
+	}
+}
+
 func TestStore_AutoDisabled_PersistenceAndOperations(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()

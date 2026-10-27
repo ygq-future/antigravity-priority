@@ -209,7 +209,9 @@ func planItems(credentials []core.Credential, evidence plannerEvidence, options 
 		if hasEvidence {
 			item.EvidenceFresh = evidenceFresh
 			item.hasQuotaEvidence = true
-			item.PlanType = evidence.PlanType
+			if evidence.PlanType != "" && evidence.PlanType != core.PlanTypeUnknown {
+				item.PlanType = evidence.PlanType
+			}
 			item.ResetAt = evidence.ResetAt
 			item.Remaining = evidence.Remaining
 			item.ShortWindowResetAt = evidence.ShortWindowResetAt
