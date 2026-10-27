@@ -24,7 +24,7 @@ A high-performance, single-provider priority scheduler and quota management plug
 
 ## Overview
 
-- **Tailored Antigravity Dual-Window Scheduling**: Dedicated exclusively to Google Antigravity (supporting both `gemini` and `claude_gpt` model groups) with deep awareness of 5-hour burst and 7-day weekly quota windows.
+- **Tailored Antigravity Dual-Window Scheduling**: Dedicated exclusively to Google Antigravity (supporting both `gemini` and `claude_gpt` model groups) with deep awareness of 5-hour burst and 7-day weekly quota windows, including dedicated tracking and visualization for Argon weekly quotas.
 - **Equal Priority Clustering & Load Balancing**: Accounts with close urgency metrics automatically share the same priority integer, enabling CPA native round-robin distribution and eliminating single-account 429 rate limit saturation.
 - **429 Reactive Cooldown Circuit Breaker**: Intercepts 429 errors across live traffic and active probes, demoting affected accounts to the `-1` fallback tier upon consecutive failures, absorbing transient fleet-wide bursts with storm protection, and restoring the previous priority immediately upon a successful same-group request or cooldown expiry.
 - **Dynamic Boost Horizon**: Intelligently computes the required burn horizon to proactively elevate abundant accounts to top priority (`999, 998...`), eliminating end-of-cycle quota waste.
