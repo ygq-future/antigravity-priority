@@ -32,6 +32,7 @@ A high-performance, single-provider priority scheduler and quota management plug
 - **Adaptive Online Learning ($C_{\text{cycle}}$)**: Automatically measures and smooths real consumption velocity without requiring manual coefficient tuning.
 - **Self-Healing Soft Fallback & Hard Disabling**: Soft-depletes 5-hour burst exhaustion for automatic recovery upon reset, and hard-disables exhausted 7-day weekly accounts.
 - **Web UI Dynamic Config Center**: CPA host YAML only requires `enabled: true`. All scheduling intervals, concurrency, model groups, and scoring rules are visually managed with instant zero-restart hot-reloads.
+- **Independent Pro & Free Tier Physical Separation**: Accounts without a 5-hour burst window (Free tier) are automatically isolated into a dedicated fallback tier (default priority 10 downwards) and barred from Boost elevation, guaranteeing Pro accounts strictly take precedence while allowing customizable baseline priority in the Web UI Config Center.
 - **Embedded Dual-Theme Dashboard**: Zero external CDN and strictly CSP-compliant, providing real-time quota meters, instant prediction switching, complete email identity, and write-back diff confirmation controls while keeping tokens, keys, and persisted audits safely redacted.
 
 ---
@@ -46,10 +47,11 @@ Load plugin
        - Concurrently probe 5h and 7d quota windows for selected model group (gemini or claude_gpt)
        - Extract short window remaining ratio R_5h, reset countdown T_5h, weekly remaining ratio R_7d, reset countdown T_7d
        - Evaluate Dynamic Boost Horizon eligibility using learned C_cycle burn rate
-  -> Construct sorting plan via 3-Tier Comparator Hierarchy
-       - Tier 1 (Boosted) : Dynamic boost zone -> Priorities 999, 998... (Weekly Urgency descending)
-       - Tier 2 (Regular) : Healthy accounts  -> Priorities 100, 99... (Weekly Urgency descending, 5h reset tie-break)
-       - Tier 3 (Depleted): Weekly hard-disable > 5h soft-fallback (-1)
+  -> Construct sorting plan via Multi-Tier Hierarchy
+       - Tier 1 (Boosted Pro): Dynamic boost zone -> Priorities 999, 998... (Pro only, Weekly Urgency descending)
+       - Tier 2 (Regular Pro): Healthy Pro accounts -> Priorities 100, 99... (floored above Free start priority)
+       - Tier 3 (Free Active): Free tier fallback -> Priorities 10, 9... (isolated baseline, never boosted)
+       - Tier 4 (Depleted)   : Weekly hard-disable > 5h soft-fallback (-1)
   -> Execute according to run mode
        - apply: replace each credential document once through the unified Host Transition and verify the resulting state (min_change filter)
        - probe / sync: update in-memory state, diagnostics, and management snapshots only

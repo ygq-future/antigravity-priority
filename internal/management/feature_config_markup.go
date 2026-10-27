@@ -213,6 +213,16 @@ const configMarkup = `
                                 <input type="number" id="cfgNormalStartPriority" class="config-num-input" min="1" max="999" value="100">
                             </div>
                         </div>
+
+                        <div class="form-row">
+                            <div class="form-label-box">
+                                <span class="form-title" data-i18n="cfgFreeStart">🎁 Free 账号兜底起始优先级</span>
+                                <span class="form-hint" data-i18n="cfgFreeStartHint">仅有周额度、无 5h 短窗的 Free 账号基准优先级，排在 Pro 之后兜底 (1-999)</span>
+                            </div>
+                            <div class="form-input-group">
+                                <input type="number" id="cfgFreeStartPriority" class="config-num-input" min="1" max="999" value="10">
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>

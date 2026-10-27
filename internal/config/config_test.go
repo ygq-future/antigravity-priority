@@ -238,6 +238,7 @@ func TestDynamicConfig_ValidateAndApplyTo(t *testing.T) {
 			PriorityRules: config.PriorityRulesConfig{
 				BoostStartPriority:  990,
 				NormalStartPriority: 250,
+				FreeStartPriority:   25,
 			},
 			Schedule: config.ScheduleConfig{
 				Paused:        false,
@@ -281,6 +282,9 @@ func TestDynamicConfig_ValidateAndApplyTo(t *testing.T) {
 		}
 		if merged.PriorityRules.NormalStartPriority != 250 {
 			t.Errorf("expected NormalStartPriority=250, got %d", merged.PriorityRules.NormalStartPriority)
+		}
+		if merged.PriorityRules.FreeStartPriority != 25 {
+			t.Errorf("expected FreeStartPriority=25, got %d", merged.PriorityRules.FreeStartPriority)
 		}
 		if !merged.Schedule.WindowEnabled || merged.Schedule.WindowStart != "09:00" || merged.Schedule.WindowEnd != "23:00" {
 			t.Errorf("expected Schedule window enabled with 09:00-23:00, got %+v", merged.Schedule)
@@ -383,6 +387,24 @@ func TestDynamicConfig_ValidateAndApplyTo(t *testing.T) {
 				wantErr: "normal_start_priority must not exceed",
 			},
 			{
+				name:    "free start priority out of range (0)",
+				mutate:  func(dyn *config.DynamicConfig) { dyn.PriorityRules.FreeStartPriority = 0 },
+				wantErr: "free_start_priority must be between",
+			},
+			{
+				name:    "free start priority out of range (> 999)",
+				mutate:  func(dyn *config.DynamicConfig) { dyn.PriorityRules.FreeStartPriority = 1000 },
+				wantErr: "free_start_priority must be between",
+			},
+			{
+				name: "free start priority above normal priority",
+				mutate: func(dyn *config.DynamicConfig) {
+					dyn.PriorityRules.NormalStartPriority = 50
+					dyn.PriorityRules.FreeStartPriority = 51
+				},
+				wantErr: "free_start_priority must not exceed",
+			},
+			{
 				name:    "quota sample capacity out of range (1)",
 				mutate:  func(dyn *config.DynamicConfig) { dyn.QuotaSampleCapacity = 1 },
 				wantErr: "quota_sample_capacity must be between",
@@ -432,10 +454,12 @@ func TestDynamicConfig_ValidateAndApplyTo(t *testing.T) {
 			{"priority minimum", func(d *config.DynamicConfig) {
 				d.PriorityRules.BoostStartPriority = 1
 				d.PriorityRules.NormalStartPriority = 1
+				d.PriorityRules.FreeStartPriority = 1
 			}},
 			{"priority maximum", func(d *config.DynamicConfig) {
 				d.PriorityRules.BoostStartPriority = 999
 				d.PriorityRules.NormalStartPriority = 999
+				d.PriorityRules.FreeStartPriority = 999
 			}},
 		}
 		for _, tt := range validCases {

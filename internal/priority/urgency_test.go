@@ -234,4 +234,33 @@ func TestExtractQuotaMetrics(t *testing.T) {
 			t.Errorf("zero ShortWindowRemaining should be 0")
 		}
 	})
+
+	t.Run("free tier metrics: no 5h window fallback and never boosted", func(t *testing.T) {
+		r7dVal := int64(80)
+		longResetSoon := now.Add(5 * time.Hour) // resets in 5h, normally qualifies for boost
+		ev := QuotaEvidence{
+			AuthIndex:           "auth-free",
+			PlanType:            core.PlanTypeFree,
+			LongWindowRemaining: &r7dVal,
+			LongWindowResetAt:   &longResetSoon,
+			CycleBurnRate:       0.15,
+		}
+
+		metrics := ExtractQuotaMetrics(ev, now)
+		if metrics.R5h != 0 {
+			t.Errorf("Free plan R5h = %v; want 0", metrics.R5h)
+		}
+		if metrics.T5h != 0 {
+			t.Errorf("Free plan T5h = %v; want 0", metrics.T5h)
+		}
+		if metrics.IsBoosted {
+			t.Errorf("Free plan IsBoosted = true; want false (Free tier accounts must never boost)")
+		}
+		if metrics.IsShortDepleted {
+			t.Errorf("Free plan IsShortDepleted = true; want false")
+		}
+		if metrics.Urgency <= 0 {
+			t.Errorf("Free plan Urgency = %v; want > 0", metrics.Urgency)
+		}
+	})
 }

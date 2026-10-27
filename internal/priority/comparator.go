@@ -4,15 +4,27 @@ import (
 	"cmp"
 	"math"
 	"slices"
+
+	"antigravity-priority/internal/core"
 )
 
 const floatEpsilon = 1e-9
 
-// CompareHealthyCandidates compares two healthy active candidates based on the 3-tier rules:
+// CompareHealthyCandidates compares two healthy active candidates based on the scheduling rules:
+// 0. Non-Free (PRO) before Free.
 // 1. Weekly Urgency descending (higher urgency first).
 // 2. 5h reset countdown T_5h ascending (earliest reset first).
 // 3. AuthIndex ascending (lexicographical deterministic tie-breaking).
 func CompareHealthyCandidates(left PlanItem, right PlanItem) int {
+	// 0. Non-Free (PRO) before Free
+	if left.PlanType != right.PlanType {
+		if left.PlanType != core.PlanTypeFree && right.PlanType == core.PlanTypeFree {
+			return -1
+		}
+		if left.PlanType == core.PlanTypeFree && right.PlanType != core.PlanTypeFree {
+			return 1
+		}
+	}
 	// 1. Weekly Urgency descending
 	if math.Abs(left.Urgency-right.Urgency) > floatEpsilon {
 		if left.Urgency > right.Urgency {
@@ -45,6 +57,14 @@ func CompareUniquenessCandidates(left PlanItem, right PlanItem) int {
 		}
 		if !left.IsBoosted && right.IsBoosted {
 			return 1
+		}
+		if left.PlanType != right.PlanType {
+			if left.PlanType != core.PlanTypeFree && right.PlanType == core.PlanTypeFree {
+				return -1
+			}
+			if left.PlanType == core.PlanTypeFree && right.PlanType != core.PlanTypeFree {
+				return 1
+			}
 		}
 		return CompareHealthyCandidates(left, right)
 	case leftFreshPositive:

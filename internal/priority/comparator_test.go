@@ -67,6 +67,26 @@ func TestCompareHealthyCandidates(t *testing.T) {
 			t.Errorf("CompareHealthyCandidates() = %v; want -1 (auth-01 before auth-02)", res)
 		}
 	})
+
+	t.Run("pro candidate takes precedence over free candidate regardless of urgency", func(t *testing.T) {
+		proItem := PlanItem{
+			Credential: core.Credential{AuthIndex: "auth-pro"},
+			PlanType:   core.PlanTypePro,
+			Urgency:    0.5,
+		}
+		freeItem := PlanItem{
+			Credential: core.Credential{AuthIndex: "auth-free"},
+			PlanType:   core.PlanTypeFree,
+			Urgency:    5.0, // higher urgency, but still Free
+		}
+
+		if res := CompareHealthyCandidates(proItem, freeItem); res != -1 {
+			t.Errorf("CompareHealthyCandidates(pro, free) = %v; want -1", res)
+		}
+		if res := CompareHealthyCandidates(freeItem, proItem); res != 1 {
+			t.Errorf("CompareHealthyCandidates(free, pro) = %v; want 1", res)
+		}
+	})
 }
 
 func TestCompareUniquenessCandidates(t *testing.T) {
@@ -108,6 +128,29 @@ func TestCompareUniquenessCandidates(t *testing.T) {
 
 		if res := CompareUniquenessCandidates(boosted, regular); res != -1 {
 			t.Errorf("CompareUniquenessCandidates(boosted, regular) = %v; want -1", res)
+		}
+	})
+	t.Run("pro fresh positive comes before free fresh positive", func(t *testing.T) {
+		proItem := PlanItem{
+			Credential:    core.Credential{AuthIndex: "auth-pro"},
+			PlanType:      core.PlanTypePro,
+			Remaining:     &rem100,
+			Urgency:       0.5,
+			EvidenceFresh: true,
+		}
+		freeItem := PlanItem{
+			Credential:    core.Credential{AuthIndex: "auth-free"},
+			PlanType:      core.PlanTypeFree,
+			Remaining:     &rem100,
+			Urgency:       5.0,
+			EvidenceFresh: true,
+		}
+
+		if res := CompareUniquenessCandidates(proItem, freeItem); res != -1 {
+			t.Errorf("CompareUniquenessCandidates(pro, free) = %v; want -1", res)
+		}
+		if res := CompareUniquenessCandidates(freeItem, proItem); res != 1 {
+			t.Errorf("CompareUniquenessCandidates(free, pro) = %v; want 1", res)
 		}
 	})
 

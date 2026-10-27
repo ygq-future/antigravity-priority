@@ -1882,6 +1882,7 @@ func TestRuntime_GetSetDynamicConfig(t *testing.T) {
 		PriorityRules: state.PriorityRulesConfig{
 			BoostStartPriority:  990,
 			NormalStartPriority: 120,
+			FreeStartPriority:   15,
 		},
 		Schedule: state.ScheduleConfig{
 			Paused:        false,
@@ -1913,6 +1914,9 @@ func TestRuntime_GetSetDynamicConfig(t *testing.T) {
 	}
 	if runtimeCfg.QuotaSampleCapacity != 10 {
 		t.Errorf("expected QuotaSampleCapacity=10, got %d", runtimeCfg.QuotaSampleCapacity)
+	}
+	if runtimeCfg.PriorityRules.FreeStartPriority != 15 {
+		t.Errorf("expected FreeStartPriority=15, got %d", runtimeCfg.PriorityRules.FreeStartPriority)
 	}
 
 	// 4. Verify disk persistence and survival across reloads
@@ -1998,6 +2002,7 @@ func TestRuntime_DynamicConfig_SurvivesReconfigure(t *testing.T) {
 		PriorityRules: state.PriorityRulesConfig{
 			BoostStartPriority:  980,
 			NormalStartPriority: 200,
+			FreeStartPriority:   20,
 		},
 		Schedule: state.ScheduleConfig{
 			Paused: false,
@@ -2018,6 +2023,9 @@ func TestRuntime_DynamicConfig_SurvivesReconfigure(t *testing.T) {
 	cfg, err := r.Config()
 	if err != nil {
 		t.Fatal(err)
+	}
+	if cfg.PriorityRules.FreeStartPriority != 20 {
+		t.Errorf("expected FreeStartPriority=20, got %d", cfg.PriorityRules.FreeStartPriority)
 	}
 	if !cfg.AutoApply {
 		t.Error("expected AutoApply=true to be preserved after Reconfigure")

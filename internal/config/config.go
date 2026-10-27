@@ -48,6 +48,8 @@ const (
 	KeyBoostStartPriority = "boost_start_priority"
 	// KeyNormalStartPriority is the JSON key for normal_start_priority.
 	KeyNormalStartPriority = "normal_start_priority"
+	// KeyFreeStartPriority is the JSON key for free_start_priority.
+	KeyFreeStartPriority = "free_start_priority"
 	// KeySchedule is the JSON key for schedule.
 	KeySchedule = "schedule"
 	// KeyPaused is the JSON key for paused.
@@ -110,12 +112,14 @@ type Config struct {
 type PriorityRules struct {
 	BoostStartPriority  int
 	NormalStartPriority int
+	FreeStartPriority   int
 }
 
 // PriorityRulesConfig holds priority rule settings for DynamicConfig.
 type PriorityRulesConfig struct {
 	BoostStartPriority  int `json:"boost_start_priority"`
 	NormalStartPriority int `json:"normal_start_priority"`
+	FreeStartPriority   int `json:"free_start_priority"`
 }
 
 // UnmarshalJSON migrates legacy priority_rules.enabled documents. Custom
@@ -126,6 +130,7 @@ func (cfg *PriorityRulesConfig) UnmarshalJSON(data []byte) error {
 		Enabled             *bool `json:"enabled"`
 		BoostStartPriority  *int  `json:"boost_start_priority"`
 		NormalStartPriority *int  `json:"normal_start_priority"`
+		FreeStartPriority   *int  `json:"free_start_priority"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
@@ -133,6 +138,7 @@ func (cfg *PriorityRulesConfig) UnmarshalJSON(data []byte) error {
 	defaults := defaultPriorityRules()
 	cfg.BoostStartPriority = defaults.BoostStartPriority
 	cfg.NormalStartPriority = defaults.NormalStartPriority
+	cfg.FreeStartPriority = defaults.FreeStartPriority
 	if raw.Enabled != nil && !*raw.Enabled {
 		return nil
 	}
@@ -142,13 +148,15 @@ func (cfg *PriorityRulesConfig) UnmarshalJSON(data []byte) error {
 	if raw.NormalStartPriority != nil {
 		cfg.NormalStartPriority = *raw.NormalStartPriority
 	}
+	if raw.FreeStartPriority != nil {
+		cfg.FreeStartPriority = *raw.FreeStartPriority
+	}
 	return nil
 }
 
 func defaultPriorityRules() PriorityRules {
-	return PriorityRules{BoostStartPriority: 999, NormalStartPriority: 100}
+	return PriorityRules{BoostStartPriority: 999, NormalStartPriority: 100, FreeStartPriority: 10}
 }
-
 // DynamicConfig contains all runtime-customizable configuration parameters
 // that can be modified via the UI Config Center without restarting the plugin (REQ-09).
 type DynamicConfig struct {
@@ -219,6 +227,7 @@ func (cfg Config) Dynamic() DynamicConfig {
 		PriorityRules: PriorityRulesConfig{
 			BoostStartPriority:  cfg.PriorityRules.BoostStartPriority,
 			NormalStartPriority: cfg.PriorityRules.NormalStartPriority,
+			FreeStartPriority:   cfg.PriorityRules.FreeStartPriority,
 		},
 		Schedule: cfg.Schedule,
 	}
@@ -254,6 +263,12 @@ func (dyn DynamicConfig) Validate() error {
 	if dyn.PriorityRules.NormalStartPriority < MinPriorityValue || dyn.PriorityRules.NormalStartPriority > MaxPriorityValue {
 		return fmt.Errorf("normal_start_priority must be between %d and %d, got %d", MinPriorityValue, MaxPriorityValue, dyn.PriorityRules.NormalStartPriority)
 	}
+	if dyn.PriorityRules.FreeStartPriority < MinPriorityValue || dyn.PriorityRules.FreeStartPriority > MaxPriorityValue {
+		return fmt.Errorf("free_start_priority must be between %d and %d, got %d", MinPriorityValue, MaxPriorityValue, dyn.PriorityRules.FreeStartPriority)
+	}
+	if dyn.PriorityRules.FreeStartPriority > dyn.PriorityRules.NormalStartPriority {
+		return fmt.Errorf("free_start_priority must not exceed normal_start_priority, got %d > %d", dyn.PriorityRules.FreeStartPriority, dyn.PriorityRules.NormalStartPriority)
+	}
 	if dyn.PriorityRules.NormalStartPriority > dyn.PriorityRules.BoostStartPriority {
 		return fmt.Errorf("normal_start_priority must not exceed boost_start_priority, got %d > %d", dyn.PriorityRules.NormalStartPriority, dyn.PriorityRules.BoostStartPriority)
 	}
@@ -286,6 +301,7 @@ func (dyn DynamicConfig) ApplyTo(base Config) (Config, error) {
 	res.QuotaSampleCapacity = dyn.QuotaSampleCapacity
 	res.PriorityRules.BoostStartPriority = dyn.PriorityRules.BoostStartPriority
 	res.PriorityRules.NormalStartPriority = dyn.PriorityRules.NormalStartPriority
+	res.PriorityRules.FreeStartPriority = dyn.PriorityRules.FreeStartPriority
 	res.Schedule = dyn.Schedule
 	return res, nil
 }

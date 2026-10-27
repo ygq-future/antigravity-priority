@@ -3,6 +3,8 @@ package priority
 import (
 	"math"
 	"time"
+
+	"antigravity-priority/internal/core"
 )
 
 // MinUrgencyTimeHorizonHours is the minimum denominator in hours for Weekly Urgency calculation.
@@ -72,12 +74,18 @@ func ExtractQuotaMetrics(evidence QuotaEvidence, now time.Time) QuotaMetrics {
 	}
 
 	tRequired := CalculateTRequired(r7d, cCycle)
-	urgency := CalculateCompositeScore(r7d, t7d, r5h, t5h)
+	var urgency float64
+	if evidence.PlanType == core.PlanTypeFree {
+		pWeekly := CalculateWeeklyPacingRatio(r7d, t7d)
+		clampedR7d := math.Max(0.0, math.Min(1.0, r7d))
+		urgency = 0.60*pWeekly + 0.40*clampedR7d
+	} else {
+		urgency = CalculateCompositeScore(r7d, t7d, r5h, t5h)
+	}
 
 	isWeeklyDepleted := isWeeklyDepletedEvidence(evidence, r7d)
 	isShortDepleted := !isWeeklyDepleted && isShortDepletedEvidence(evidence, r5h)
-	isBoosted := !isWeeklyDepleted && !isShortDepleted && IsBoostEligible(t7d, tRequired, r7d)
-
+	isBoosted := evidence.PlanType != core.PlanTypeFree && !isWeeklyDepleted && !isShortDepleted && IsBoostEligible(t7d, tRequired, r7d)
 	return QuotaMetrics{
 		R7d:              r7d,
 		T7d:              t7d,
@@ -120,6 +128,9 @@ func extractT7d(evidence QuotaEvidence, now time.Time) float64 {
 }
 
 func extractR5h(evidence QuotaEvidence, fallbackR7d float64) float64 {
+	if evidence.PlanType == core.PlanTypeFree {
+		return 0
+	}
 	if evidence.ShortWindowRemaining != nil {
 		if *evidence.ShortWindowRemaining <= 0 {
 			return 0
@@ -136,6 +147,9 @@ func extractR5h(evidence QuotaEvidence, fallbackR7d float64) float64 {
 }
 
 func extractT5h(evidence QuotaEvidence, now time.Time) float64 {
+	if evidence.PlanType == core.PlanTypeFree {
+		return 0
+	}
 	resetAt := evidence.ShortWindowResetAt
 	if resetAt == nil {
 		resetAt = evidence.ResetAt
@@ -157,6 +171,9 @@ func isWeeklyDepletedEvidence(evidence QuotaEvidence, r7d float64) bool {
 }
 
 func isShortDepletedEvidence(evidence QuotaEvidence, r5h float64) bool {
+	if evidence.PlanType == core.PlanTypeFree {
+		return false
+	}
 	if evidence.ShortWindowRemaining != nil && *evidence.ShortWindowRemaining <= 0 {
 		return true
 	}

@@ -28,6 +28,8 @@ const featureConfigTranslations = `        const CONFIG_ZH = {
                 cfgBoostStartHint: "充裕且即将重置的第一梯队凭证起始优先级 (1-999)",
                 cfgNormalStart: "常规健康凭证起始优先级",
                 cfgNormalStartHint: "常规可用梯队凭证的起始基准优先级 (1-999)",
+                cfgFreeStart: "🎁 Free 账号兜底起始优先级",
+                cfgFreeStartHint: "仅有周额度、无 5h 短窗的 Free 账号基准优先级，排在 Pro 之后兜底 (1-999)",
                 btnSaveConfig: "保存并立即生效",
                 btnResetToDefaults: "恢复默认配置",
                 configSaveSuccess: "配置已更新并立即生效",
@@ -47,6 +49,7 @@ const featureConfigTranslations = `        const CONFIG_ZH = {
                 valErrCooldown: "429 冷却时长超出范围，需在 1 到 1440 分钟之间",
                 valErrPriorityRange: "优先级分值超出范围，需在 1 到 999 之间",
                 valErrPriorityOrder: "常规起始优先级不能大于 Boost 起始优先级",
+                valErrFreePriorityOrder: "Free 起始优先级不能大于常规起始优先级",
             }
         };
         const CONFIG_EN = {
@@ -77,6 +80,8 @@ const featureConfigTranslations = `        const CONFIG_ZH = {
                 cfgBoostStartHint: "Base priority for top-tier abundant credentials (1-999)",
                 cfgNormalStart: "Normal Healthy Start Priority",
                 cfgNormalStartHint: "Base priority for regular healthy credentials (1-999)",
+                cfgFreeStart: "🎁 Free Tier Fallback Start Priority",
+                cfgFreeStartHint: "Base priority for Free accounts without 5h window, serving as fallback after Pro (1-999)",
                 btnSaveConfig: "Save & Apply",
                 btnResetToDefaults: "Reset to Defaults",
                 configSaveSuccess: "Configuration updated and applied immediately",
@@ -96,6 +101,7 @@ const featureConfigTranslations = `        const CONFIG_ZH = {
                 valErrCooldown: "429 cooldown minutes out of range (1 - 1440)",
                 valErrPriorityRange: "Priority out of range (1 - 999)",
                 valErrPriorityOrder: "Normal start priority cannot be greater than Boost start priority",
+                valErrFreePriorityOrder: "Free start priority cannot be greater than Normal start priority",
             }
         };
 `

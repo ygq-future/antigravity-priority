@@ -32,6 +32,7 @@ CLIProxyAPI (CPA) 专精型 **Google Antigravity 凭证智能配额调度与自�
 - **自适应动态学习率（Adaptive $C_{\text{cycle}}$）**：基于连续探测增量自动推算每个账号真实的周期消耗能力并平滑收敛，无需用户手动猜测和配置复杂的数学系数。
 - **自愈式软降级与硬禁用**：5 小时短窗耗尽仅软降级优先级至 `-1`（重置后自动静默自愈），7 天周额度耗尽写入宿主硬禁用 `disabled = true`。
 - **UI 动态配置中心（免重启热生效）**：CPA 宿主 YAML 仅需保留 `enabled: true`，所有业务与调度参数统一在 Web UI **`⚙️ 配置中心`** 可视化调节并即时热生效。
+- **Pro 与 Free 凭证独立分层**：无 5 小时短窗的 Free 凭证自动隔离至独立兜底底仓（默认 10 往下分配），严禁进入 Boost 提权抢占流量，确保 Pro 凭证绝对优先调用，且支持在 Web 配置中心按需调整基准分值。
 - **嵌入式双主题仪表盘**：零外部 CDN，严格 CSP 安全，完全自适应 CPA 宿主主题，提供配额监控、双组即时预测切换、完整 email 身份与变动 Diff 确认写回控制；令牌、密钥和持久化审计保持安全脱敏。
 
 ---
@@ -46,10 +47,11 @@ CLIProxyAPI (CPA) 专精型 **Google Antigravity 凭证智能配额调度与自�
        - 按所选模型组 (gemini 或 claude_gpt) 并发探测 5h 与 7d 双窗口剩余配额
        - 提取短窗剩余比例 R_5h、短窗重置倒计时 T_5h、周额度剩余比例 R_7d、周重置倒计时 T_7d
        - 结合自适应 C_cycle 学习率判定是否进入 Dynamic Boost 提权区间
-  -> 依据 3 级比较器构建排序计划
-       - Tier 1 (Boosted) : 提权区间 -> 分配 999, 998... (按周紧迫度降序)
-       - Tier 2 (Regular) : 常规健康 -> 分配 100, 99... (按周紧迫度降序，短窗重置时间平局决胜)
-       - Tier 3 (Depleted): 周耗尽 hard-disable > 短窗耗尽 soft-fallback (-1)
+  -> 依据分层调度模型构建排序计划
+       - Tier 1 (Boosted Pro): 提权区间 -> 分配 999, 998... (Pro 账号按周紧迫度降序)
+       - Tier 2 (Regular Pro): 常规健康 Pro -> 分配 100, 99... (截断于 Free 起始分值之上)
+       - Tier 3 (Free Active): 独立 Free 兜底底仓 -> 分配 10, 9... (无短窗，永不提权)
+       - Tier 4 (Depleted)   : 周耗尽 hard-disable > 短窗耗尽 soft-fallback (-1)
   -> 根据运行模式执行
        - apply：通过统一 Host Transition 对单个凭证执行一次完整文档替换并回读验证 (min_change 过滤微小变动)
        - probe / sync：仅更新内存状态、诊断与管理快照

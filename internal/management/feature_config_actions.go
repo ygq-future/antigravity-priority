@@ -46,10 +46,11 @@ const templateScriptConfig = `        let originalConfigState = null;
             var cooldownMin = (document.getElementById("cfgCooldownMinutes") && document.getElementById("cfgCooldownMinutes").value) || "";
             var boostStart = (document.getElementById("cfgBoostStartPriority") && document.getElementById("cfgBoostStartPriority").value) || "";
             var normalStart = (document.getElementById("cfgNormalStartPriority") && document.getElementById("cfgNormalStartPriority").value) || "";
+            var freeStart = (document.getElementById("cfgFreeStartPriority") && document.getElementById("cfgFreeStartPriority").value) || "";
 
             return JSON.stringify({
                 autoApply, interval, modelGroup, windowEnabled, windowStart, windowEnd,
-                maxConcurrency, minChange, urgencyTol, sampleCapacity, cooldownMin, boostStart, normalStart
+                maxConcurrency, minChange, urgencyTol, sampleCapacity, cooldownMin, boostStart, normalStart, freeStart
             });
         }
 
@@ -130,6 +131,9 @@ const templateScriptConfig = `        let originalConfigState = null;
 
             var normalStart = document.getElementById("cfgNormalStartPriority");
             if (normalStart) normalStart.value = rules.normal_start_priority || 100;
+
+            var freeStart = document.getElementById("cfgFreeStartPriority");
+            if (freeStart) freeStart.value = rules.free_start_priority || 10;
 
             // Sync original snapshot and disable save button
             originalConfigState = getDynamicConfigFormData();
@@ -270,8 +274,9 @@ const templateScriptConfig = `        let originalConfigState = null;
 
 				var boostStart = parseStrictInteger((document.getElementById("cfgBoostStartPriority") && document.getElementById("cfgBoostStartPriority").value) || "999");
 				var normalStart = parseStrictInteger((document.getElementById("cfgNormalStartPriority") && document.getElementById("cfgNormalStartPriority").value) || "100");
+				var freeStart = parseStrictInteger((document.getElementById("cfgFreeStartPriority") && document.getElementById("cfgFreeStartPriority").value) || "10");
 
-                if (isNaN(boostStart) || boostStart < 1 || boostStart > 999 || isNaN(normalStart) || normalStart < 1 || normalStart > 999) {
+                if (isNaN(boostStart) || boostStart < 1 || boostStart > 999 || isNaN(normalStart) || normalStart < 1 || normalStart > 999 || isNaN(freeStart) || freeStart < 1 || freeStart > 999) {
                     showToast(t("valErrPriorityRange"), "error");
                     updateSaveButtonState();
                     return;
@@ -281,7 +286,11 @@ const templateScriptConfig = `        let originalConfigState = null;
                     updateSaveButtonState();
                     return;
                 }
-
+                if (freeStart > normalStart) {
+                    showToast(t("valErrFreePriorityOrder"), "error");
+                    updateSaveButtonState();
+                    return;
+                }
                 var reqBody = {
                     auto_apply: autoApply,
                     interval: interval,
@@ -292,7 +301,8 @@ const templateScriptConfig = `        let originalConfigState = null;
                     quota_sample_capacity: sampleCapacity,
                     priority_rules: {
                         boost_start_priority: boostStart,
-                        normal_start_priority: normalStart
+                        normal_start_priority: normalStart,
+                        free_start_priority: freeStart
                     },
                     schedule: {
                         paused: Boolean(scheduleConfig && scheduleConfig.paused),

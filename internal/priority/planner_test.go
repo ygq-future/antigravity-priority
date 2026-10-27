@@ -912,3 +912,97 @@ func TestNextAvailablePriority(t *testing.T) {
 		t.Errorf("nextAvailablePriority(1 with 1,2 used) = %d; want 3", p3)
 	}
 }
+
+func TestPlanWithEvidence_FreeTierIsolatedBelowPro(t *testing.T) {
+	now := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
+	reset5h := now.Add(4 * time.Hour)
+	reset7dFar := now.Add(100 * time.Hour)
+	reset7dNear := now.Add(5 * time.Hour) // resets in 5h
+
+	creds := []core.Credential{
+		{AuthIndex: "pro-boost", PlanType: core.PlanTypePro, Priority: 50, Disabled: false},
+		{AuthIndex: "pro-regular", PlanType: core.PlanTypePro, Priority: 50, Disabled: false},
+		{AuthIndex: "free-near-reset", PlanType: core.PlanTypeFree, Priority: 50, Disabled: false},
+		{AuthIndex: "free-far-reset", PlanType: core.PlanTypeFree, Priority: 50, Disabled: false},
+	}
+
+	evidence := []QuotaEvidence{
+		{
+			AuthIndex:            "pro-boost",
+			PlanType:             core.PlanTypePro,
+			ShortWindowRemaining: int64Ptr(100),
+			ShortWindowResetAt:   &reset5h,
+			LongWindowRemaining:  int64Ptr(80),
+			LongWindowResetAt:    &reset7dNear, // qualifies for boost
+			CycleBurnRate:        0.15,
+		},
+		{
+			AuthIndex:            "pro-regular",
+			PlanType:             core.PlanTypePro,
+			ShortWindowRemaining: int64Ptr(100),
+			ShortWindowResetAt:   &reset5h,
+			LongWindowRemaining:  int64Ptr(80),
+			LongWindowResetAt:    &reset7dFar, // regular healthy
+			CycleBurnRate:        0.15,
+		},
+		{
+			AuthIndex:           "free-near-reset",
+			PlanType:            core.PlanTypeFree,
+			LongWindowRemaining: int64Ptr(90),
+			LongWindowResetAt:   &reset7dNear, // near reset, but Free plan -> MUST NOT boost!
+			CycleBurnRate:       0.15,
+		},
+		{
+			AuthIndex:           "free-far-reset",
+			PlanType:            core.PlanTypeFree,
+			LongWindowRemaining: int64Ptr(30),
+			LongWindowResetAt:   &reset7dFar,
+			CycleBurnRate:       0.15,
+		},
+	}
+
+	opts := Options{
+		Now:                 now,
+		BoostStartPriority:  999,
+		NormalStartPriority: 100,
+		FreeStartPriority:   10,
+		MinChange:           1,
+	}
+
+	plan := planFreshOnly(creds, evidence, opts)
+	itemMap := make(map[string]PlanItem, len(plan.Items))
+	for _, it := range plan.Items {
+		itemMap[it.Credential.AuthIndex] = it
+	}
+
+	// 1. pro-boost gets Tier 1 (999)
+	proBoost := itemMap["pro-boost"]
+	if proBoost.Priority != 999 || !proBoost.IsBoosted || proBoost.Reason != ReasonFreshBoosted {
+		t.Errorf("pro-boost priority = %d, boosted = %v, reason = %s; want 999, true, %s",
+			proBoost.Priority, proBoost.IsBoosted, proBoost.Reason, ReasonFreshBoosted)
+	}
+
+	// 2. pro-regular gets Tier 2 (100)
+	proReg := itemMap["pro-regular"]
+	if proReg.Priority != 100 || proReg.IsBoosted || proReg.Reason != ReasonFreshRemainingPositive {
+		t.Errorf("pro-regular priority = %d, boosted = %v; want 100, false", proReg.Priority, proReg.IsBoosted)
+	}
+
+	// 3. free-near-reset MUST NOT be boosted, gets Tier 3 (10)
+	freeNear := itemMap["free-near-reset"]
+	if freeNear.Priority != 10 || freeNear.IsBoosted {
+		t.Errorf("free-near-reset priority = %d, boosted = %v; want 10, false", freeNear.Priority, freeNear.IsBoosted)
+	}
+
+	// 4. free-far-reset gets Tier 3 (less urgency than free-near-reset -> 9)
+	freeFar := itemMap["free-far-reset"]
+	if freeFar.Priority > 10 || freeFar.Priority < 1 || freeFar.Priority >= freeNear.Priority {
+		t.Errorf("free-far-reset priority = %d; want < %d and >= 1", freeFar.Priority, freeNear.Priority)
+	}
+
+	// 5. Ensure all PRO priorities are strictly greater than FREE priorities
+	if proReg.Priority <= freeNear.Priority {
+		t.Errorf("pro-regular priority (%d) should be strictly greater than free-near-reset priority (%d)",
+			proReg.Priority, freeNear.Priority)
+	}
+}

@@ -35,10 +35,10 @@ var configTranslationKeys = []string{
 	"cfgScheduleWindow", "cfgScheduleWindowHint", "cfgWindowEnabledLabel", "cfgCardPerfTitle", "cfgMaxConcurrency", "cfgMaxConcurrencyHint",
 	"cfgMinChange", "cfgMinChangeHint", "cfgUrgencyTolerance", "cfgUrgencyToleranceHint", "cfgSampleCapacity", "cfgSampleCapacityHint",
 	"cfgCooldownMinutes", "cfgCooldownMinutesHint", "cfgCardRulesTitle", "cfgBoostStart", "cfgBoostStartHint", "cfgNormalStart",
-	"cfgNormalStartHint", "btnSaveConfig", "btnResetToDefaults", "configSaveSuccess", "confirmResetConfigTitle", "confirmResetConfigMsg",
+	"cfgNormalStartHint", "cfgFreeStart", "cfgFreeStartHint", "btnSaveConfig", "btnResetToDefaults", "configSaveSuccess", "confirmResetConfigTitle", "confirmResetConfigMsg",
 	"optInterval5m", "optInterval15m", "optInterval30m", "optInterval1h", "optIntervalCustom", "valErrInterval", "valErrWindow",
 	"valErrConcurrency", "valErrMinChange", "valErrUrgencyTol", "valErrSampleCapacity", "valErrCooldown", "valErrPriorityRange",
-	"valErrPriorityOrder", "optGemini", "optClaudeGPT",
+	"valErrPriorityOrder", "valErrFreePriorityOrder", "optGemini", "optClaudeGPT",
 }
 
 var helpTranslationKeys = []string{

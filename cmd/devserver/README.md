@@ -37,6 +37,7 @@ data/devserver/refresh-cache.json
 - auth 文件按照 CPA Antigravity 凭证格式生成，Runtime 会通过 `host.auth.list/get/get_runtime/save` 读取和写回。
 - `host.http.do` 在本地直接返回 `retrieveUserQuotaSummary` 兼容 JSON，不发起真实网络请求。
 - 一次凭证探测同时返回 Gemini 和 Claude/GPT 两个模型组的 5h、7d 窗口。
+- 默认账号中 `dev-auth-001` ~ `dev-auth-007` 模拟为 Pro 账号（包含 5h 短窗与 7d 长窗）；`dev-auth-008` ~ `dev-auth-010` 模拟为 Free 账号（无 5h 短窗，仅有 7d 周窗口），用于本地仿真验证 Tier 3（10 ~ 1 分值区间）兜底调度与禁止提权逻辑。
 - 首次探测返回满额；后续探测随机消耗两个模型组的额度。
 - 任一模型组的任一窗口耗尽后，下一次该凭证探测恢复两个模型组的满额。
 - 配额状态、样本历史、优先级写回和调度诊断分别由模拟 Host 与生产 Runtime 持久化。

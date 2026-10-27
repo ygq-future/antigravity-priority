@@ -547,14 +547,22 @@ func TestDevServer_FreeAccountSimulation(t *testing.T) {
 			if it.LongWindowRemaining == nil {
 				t.Errorf("free account %s should have LongWindowRemaining", it.AuthIndex)
 			}
+			if it.IsBoosted {
+				t.Errorf("free account %s must never be boosted", it.AuthIndex)
+			}
+			if it.Target.Priority > 10 {
+				t.Errorf("free account %s target priority = %d; want <= 10 (Tier 3 Free start priority)", it.AuthIndex, it.Target.Priority)
+			}
 		case "pro":
 			proCount++
 			if it.ShortWindowRemaining == nil || it.LongWindowRemaining == nil {
 				t.Errorf("pro account %s should have both 5h and 7d windows", it.AuthIndex)
 			}
+			if it.Target.Priority != -1 && it.Target.Priority <= 10 {
+				t.Errorf("healthy pro account %s target priority = %d; want > 10 (Tier 1/2)", it.AuthIndex, it.Target.Priority)
+			}
 		}
 	}
-
 	if freeCount != 3 {
 		t.Fatalf("free account count = %d, want 3", freeCount)
 	}

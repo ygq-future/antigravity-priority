@@ -5,6 +5,8 @@ const (
 	DefaultBoostStartPriority = 999
 	// DefaultNormalStartPriority is the default starting priority for regular active credentials.
 	DefaultNormalStartPriority = 100
+	// DefaultFreeStartPriority is the default starting priority for free tier credentials.
+	DefaultFreeStartPriority = 10
 	// MaxPriority is the upper bound for any assignable positive priority.
 	MaxPriority = 999
 	// MinPriority is the lower bound for active positive priorities.

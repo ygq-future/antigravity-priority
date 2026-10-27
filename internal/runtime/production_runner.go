@@ -516,6 +516,7 @@ func priorityOptions(cfg config.Config, store *state.Store, now time.Time) prior
 		Now:                     now,
 		BoostStartPriority:      cfg.PriorityRules.BoostStartPriority,
 		NormalStartPriority:     cfg.PriorityRules.NormalStartPriority,
+		FreeStartPriority:       cfg.PriorityRules.FreeStartPriority,
 		MinChange:               cfg.MinChange,
 		UrgencyTolerance:        cfg.UrgencyTolerance,
 		AutoDisabledAuthIndexes: autoDisabled,
