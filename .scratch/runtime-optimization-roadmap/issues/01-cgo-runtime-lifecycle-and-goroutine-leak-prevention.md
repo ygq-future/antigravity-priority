@@ -1,6 +1,6 @@
 # 01 — CGO Runtime Lifecycle and Goroutine Leak Prevention
 
-Status: ready-for-agent
+Status: resolved
 
 ## What to fix
 In `main.go`, `var cpaRuntime = pluginruntime.New(...)` is instantiated eagerly during package initialization (line 82). When the host application (CPA) initializes the shared library through `cliproxy_plugin_init` (lines 87-95), `cpaRuntime` is reassigned to a newly created `pluginruntime.New(...)` instance without shutting down the earlier instance.
@@ -13,7 +13,7 @@ Because `pluginruntime.New` launches a background rate limit worker goroutine (`
 3. Access to `cpaRuntime` across CGO exported functions (`antigravityPriorityPluginCall`, `antigravityPriorityPluginShutdown`) must safely handle uninitialized or shutdown states.
 
 ## Acceptance Criteria
-- [ ] No background worker goroutine is spawned during package load / `init()` time.
-- [ ] `cliproxy_plugin_init` safely initializes or re-initializes `cpaRuntime` without leaking prior worker goroutines.
-- [ ] `antigravityPriorityPluginShutdown` terminates the active runtime instance and frees associated resources.
-- [ ] Single and repeated initialization cycles pass clean without goroutine leaks verified by test/race checks.
+- [x] No background worker goroutine is spawned during package load / `init()` time.
+- [x] `cliproxy_plugin_init` safely initializes or re-initializes `cpaRuntime` without leaking prior worker goroutines.
+- [x] `antigravityPriorityPluginShutdown` terminates the active runtime instance and frees associated resources.
+- [x] Single and repeated initialization cycles pass clean without goroutine leaks verified by test/race checks.

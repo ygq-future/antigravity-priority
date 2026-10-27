@@ -73,13 +73,50 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
+	"time"
 	"unsafe"
 
 	"antigravity-priority/internal/host"
 	pluginruntime "antigravity-priority/internal/runtime"
 )
 
-var cpaRuntime = pluginruntime.New(pluginruntime.Options{Host: hostCallbackAdapter{}})
+var (
+	cpaRuntimeMu sync.RWMutex
+	cpaRuntime   *pluginruntime.Runtime
+)
+
+func initCPARuntimeWithOptions(options pluginruntime.Options) {
+	cpaRuntimeMu.Lock()
+	defer cpaRuntimeMu.Unlock()
+	if cpaRuntime != nil {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = cpaRuntime.Shutdown(shutdownCtx)
+		cancel()
+	}
+	cpaRuntime = pluginruntime.New(options)
+}
+
+func initCPARuntime() {
+	initCPARuntimeWithOptions(pluginruntime.Options{Host: hostCallbackAdapter{}})
+}
+
+func shutdownCPARuntime() {
+	cpaRuntimeMu.Lock()
+	defer cpaRuntimeMu.Unlock()
+	if cpaRuntime != nil {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = cpaRuntime.Shutdown(shutdownCtx)
+		cpaRuntime = nil
+	}
+}
+
+func getCPARuntime() *pluginruntime.Runtime {
+	cpaRuntimeMu.RLock()
+	defer cpaRuntimeMu.RUnlock()
+	return cpaRuntime
+}
 
 func main() {}
 
@@ -89,7 +126,7 @@ func cliproxy_plugin_init(host *C.cliproxy_host_api, plugin *C.cliproxy_plugin_a
 		return -1
 	}
 	C.store_antigravity_priority_host_api(host)
-	cpaRuntime = pluginruntime.New(pluginruntime.Options{Host: hostCallbackAdapter{}})
+	initCPARuntime()
 	C.set_antigravity_priority_plugin_api(plugin)
 	return 0
 }
@@ -107,7 +144,11 @@ func antigravityPriorityPluginCall(method *C.char, request *C.uint8_t, requestLe
 	if !ok {
 		return writeResponse(response, []byte(`{"ok":false,"error":{"code":"invalid_request","message":"request length is invalid","retryable":false}}`))
 	}
-	return writeResponse(response, cpaRuntime.Handle(context.Background(), methodName, requestBytes))
+	rt := getCPARuntime()
+	if rt == nil {
+		return writeResponse(response, []byte(`{"ok":false,"error":{"code":"shutdown","message":"plugin runtime is not initialized or has been shut down","retryable":false}}`))
+	}
+	return writeResponse(response, rt.Handle(context.Background(), methodName, requestBytes))
 }
 
 //export antigravityPriorityPluginFreeBuffer
@@ -118,7 +159,7 @@ func antigravityPriorityPluginFreeBuffer(ptr unsafe.Pointer, length C.size_t) {
 
 //export antigravityPriorityPluginShutdown
 func antigravityPriorityPluginShutdown() {
-	_ = cpaRuntime.Shutdown(context.Background())
+	shutdownCPARuntime()
 }
 
 func copyRequestBytes(request *C.uint8_t, requestLen C.size_t) ([]byte, bool) {

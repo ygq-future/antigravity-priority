@@ -1,12 +1,19 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
+
+	"antigravity-priority/internal/host"
+	pluginruntime "antigravity-priority/internal/runtime"
 )
 
 func TestMain_CGO_ABI_Integration(t *testing.T) {
@@ -95,14 +102,39 @@ func main() {
 		fmt.Fprintf(os.Stderr, "missing antigravityPriorityPluginShutdown: %v\n", err)
 		os.Exit(1)
 	}
+	// 0. Verify call before init returns shutdown / uninitialized envelope safely
+	methodMgmt := append([]byte("management.handle"), 0)
+	reqMgmt := []byte("{\"Method\":\"GET\",\"Path\":\"/v0/management/plugins/antigravity-priority/diagnostics\"}")
+	var respBuf cliproxyBuffer
+	ret, _, _ := callProc.Call(
+		uintptr(unsafe.Pointer(&methodMgmt[0])),
+		uintptr(unsafe.Pointer(&reqMgmt[0])),
+		uintptr(len(reqMgmt)),
+		uintptr(unsafe.Pointer(&respBuf)),
+	)
+	if int32(ret) != 0 || respBuf.ptr == nil || respBuf.len == 0 {
+		fmt.Fprintf(os.Stderr, "uninitialized call failed to return buffer: ret=%d\n", int32(ret))
+		os.Exit(1)
+	}
+	uninitBytes := unsafe.Slice(respBuf.ptr, respBuf.len)
+	var uninitEnvelope struct {
+		OK    bool ` + q + `json:"ok"` + q + `
+		Error struct {
+			Code string ` + q + `json:"code"` + q + `
+		} ` + q + `json:"error"` + q + `
+	}
+	if err := json.Unmarshal(uninitBytes, &uninitEnvelope); err != nil || uninitEnvelope.OK || uninitEnvelope.Error.Code != "shutdown" {
+		fmt.Fprintf(os.Stderr, "expected shutdown error for uninitialized call, got: %s\n", string(uninitBytes))
+		os.Exit(1)
+	}
+	freeProc.Call(uintptr(unsafe.Pointer(respBuf.ptr)), respBuf.len)
 
 	// 1. Verify init with nil
-	ret, _, _ := initProc.Call(0, 0)
+	ret, _, _ = initProc.Call(0, 0)
 	if int32(ret) != -1 {
 		fmt.Fprintf(os.Stderr, "expected -1 on nil init, got %d\n", int32(ret))
 		os.Exit(1)
 	}
-
 	// 2. Verify init with valid pointers
 	var host hostAPI
 	var plugin pluginAPI
@@ -116,7 +148,7 @@ func main() {
 	methodRegister := append([]byte("plugin.register"), 0)
 	reqRegister := []byte("{\"config_yaml\":\"enabled: true\\nantigravity_model_group: gemini\\n\"}")
 
-	var respBuf cliproxyBuffer
+	respBuf = cliproxyBuffer{}
 	ret, _, _ = callProc.Call(
 		uintptr(unsafe.Pointer(&methodRegister[0])),
 		uintptr(unsafe.Pointer(&reqRegister[0])),
@@ -176,7 +208,56 @@ func main() {
 		freeProc.Call(uintptr(unsafe.Pointer(respBuf.ptr)), respBuf.len)
 	}
 
-	// 6. Shutdown
+	// 6. Verify re-initialization (host reload) cleanly terminates earlier instance
+	ret, _, _ = initProc.Call(uintptr(unsafe.Pointer(&host)), uintptr(unsafe.Pointer(&plugin)))
+	if int32(ret) != 0 {
+		fmt.Fprintf(os.Stderr, "re-init failed: ret=%d\n", int32(ret))
+		os.Exit(1)
+	}
+
+	// 7. Verify call succeeds after re-initialization
+	respBuf = cliproxyBuffer{}
+	ret, _, _ = callProc.Call(
+		uintptr(unsafe.Pointer(&methodMgmt[0])),
+		uintptr(unsafe.Pointer(&reqMgmt[0])),
+		uintptr(len(reqMgmt)),
+		uintptr(unsafe.Pointer(&respBuf)),
+	)
+	if int32(ret) != 0 || respBuf.ptr == nil || respBuf.len == 0 {
+		fmt.Fprintf(os.Stderr, "call after re-init failed: ret=%d\n", int32(ret))
+		os.Exit(1)
+	}
+	freeProc.Call(uintptr(unsafe.Pointer(respBuf.ptr)), respBuf.len)
+
+	// 8. Shutdown
+	shutdownProc.Call()
+
+	// 9. Verify call after shutdown returns shutdown error
+	respBuf = cliproxyBuffer{}
+	ret, _, _ = callProc.Call(
+		uintptr(unsafe.Pointer(&methodMgmt[0])),
+		uintptr(unsafe.Pointer(&reqMgmt[0])),
+		uintptr(len(reqMgmt)),
+		uintptr(unsafe.Pointer(&respBuf)),
+	)
+	if int32(ret) != 0 || respBuf.ptr == nil || respBuf.len == 0 {
+		fmt.Fprintf(os.Stderr, "post-shutdown call failed: ret=%d\n", int32(ret))
+		os.Exit(1)
+	}
+	postShutdownBytes := unsafe.Slice(respBuf.ptr, respBuf.len)
+	var shutdownEnvelope struct {
+		OK    bool ` + q + `json:"ok"` + q + `
+		Error struct {
+			Code string ` + q + `json:"code"` + q + `
+		} ` + q + `json:"error"` + q + `
+	}
+	if err := json.Unmarshal(postShutdownBytes, &shutdownEnvelope); err != nil || shutdownEnvelope.OK || shutdownEnvelope.Error.Code != "shutdown" {
+		fmt.Fprintf(os.Stderr, "expected shutdown error for post-shutdown call, got: %s\n", string(postShutdownBytes))
+		os.Exit(1)
+	}
+	freeProc.Call(uintptr(unsafe.Pointer(respBuf.ptr)), respBuf.len)
+
+	// 10. Repeated shutdown (idempotency check)
 	shutdownProc.Call()
 
 	fmt.Println("VERIFY_CGO_ABI_SUCCESS")
@@ -196,5 +277,71 @@ func main() {
 
 	if !strings.Contains(string(verifyOut), "VERIFY_CGO_ABI_SUCCESS") {
 		t.Fatalf("unexpected verifier output: %s", string(verifyOut))
+	}
+}
+
+type stubHostCallbacks struct{}
+
+func (stubHostCallbacks) ListAuthFiles(ctx context.Context) ([]host.AuthFile, error) {
+	return nil, nil
+}
+func (stubHostCallbacks) GetAuth(ctx context.Context, authIndex string) (host.AuthDocument, error) {
+	return host.AuthDocument{}, nil
+}
+func (stubHostCallbacks) GetRuntime(ctx context.Context, authIndex string) (host.RuntimeAuth, error) {
+	return host.RuntimeAuth{}, nil
+}
+func (stubHostCallbacks) SaveAuth(ctx context.Context, name string, doc json.RawMessage) error {
+	return nil
+}
+func (stubHostCallbacks) HTTPDo(ctx context.Context, req host.HTTPRequest) (host.HTTPResponse, error) {
+	return host.HTTPResponse{StatusCode: 200}, nil
+}
+
+func TestMain_PackageLoad_NoBackgroundGoroutines(t *testing.T) {
+	shutdownCPARuntime()
+	if rt := getCPARuntime(); rt != nil {
+		t.Fatalf("expected nil cpaRuntime before init, got non-nil: %v", rt)
+	}
+}
+
+func TestMain_Lifecycle_GoroutineLeakPrevention(t *testing.T) {
+	shutdownCPARuntime()
+	baseline := runtime.NumGoroutine()
+	cacheDir := t.TempDir()
+
+	for i := range 10 {
+		initCPARuntimeWithOptions(pluginruntime.Options{
+			Host:           stubHostCallbacks{},
+			StateCachePath: filepath.Join(cacheDir, fmt.Sprintf("state-%d.json", i)),
+		})
+		current := runtime.NumGoroutine()
+		if current > baseline+4 {
+			t.Fatalf("iteration %d: goroutines leaked during re-init: current=%d, baseline=%d", i, current, baseline)
+		}
+	}
+
+	shutdownCPARuntime()
+
+	clean := false
+	for range 50 {
+		if runtime.NumGoroutine() <= baseline+1 {
+			clean = true
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !clean {
+		t.Fatalf("goroutines did not return to baseline after shutdown: current=%d, baseline=%d", runtime.NumGoroutine(), baseline)
+	}
+}
+
+func TestMain_ShutdownIdempotencyAndUninitializedCall(t *testing.T) {
+	shutdownCPARuntime()
+	shutdownCPARuntime()
+	shutdownCPARuntime()
+
+	if rt := getCPARuntime(); rt != nil {
+		t.Fatalf("expected nil cpaRuntime, got %v", rt)
 	}
 }

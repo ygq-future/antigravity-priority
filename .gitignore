@@ -30,6 +30,7 @@ CLIProxyAPI-Plugins-Store/
 .cline/
 .claude/
 *.png
+omp-session-*.html
 
 # IDE & Editor configurations
 .idea/
