@@ -240,6 +240,8 @@ func quotaEvidenceFromProbe(result antigravity.ProbeResult, group config.Antigra
 		ShortWindowRemaining: cloneInt64(result.ShortWindowRemaining),
 		LongWindowResetAt:    cloneTime(result.LongWindowResetAt),
 		LongWindowRemaining:  cloneInt64(result.LongWindowRemaining),
+		ArgonWindowResetAt:   cloneTime(result.ArgonWindowResetAt),
+		ArgonWindowRemaining: cloneInt64(result.ArgonWindowRemaining),
 		PlanType:             result.PlanType,
 	}, true
 }
@@ -303,6 +305,8 @@ func cloneEvidence(value priority.QuotaEvidence) priority.QuotaEvidence {
 	value.ShortWindowRemaining = cloneInt64(value.ShortWindowRemaining)
 	value.LongWindowResetAt = cloneTime(value.LongWindowResetAt)
 	value.LongWindowRemaining = cloneInt64(value.LongWindowRemaining)
+	value.ArgonWindowResetAt = cloneTime(value.ArgonWindowResetAt)
+	value.ArgonWindowRemaining = cloneInt64(value.ArgonWindowRemaining)
 	return value
 }
 

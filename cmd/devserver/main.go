@@ -162,7 +162,7 @@ func (d *devServer) Handler() http.Handler {
 func main() {
 	defaultAddress := strings.TrimSpace(os.Getenv("ANTIGRAVITY_DEVSERVER_ADDR"))
 	if defaultAddress == "" {
-		defaultAddress = ":8080"
+		defaultAddress = "127.0.0.1:8080"
 	}
 	defaultAccounts := envInt("ANTIGRAVITY_DEVSERVER_ACCOUNTS", defaultDevAccountCount)
 	defaultSeed := envInt64("ANTIGRAVITY_DEVSERVER_SEED", 0)

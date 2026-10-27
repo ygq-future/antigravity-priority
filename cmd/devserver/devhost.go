@@ -57,6 +57,7 @@ type devQuotaState struct {
 type devQuotaGroupState struct {
 	Short        int64     `json:"short_window_remaining"`
 	Long         int64     `json:"long_window_remaining"`
+	ArgonWeekly  int64     `json:"argon_weekly_remaining,omitempty"`
 	ShortResetAt time.Time `json:"short_window_reset_at"`
 	LongResetAt  time.Time `json:"long_window_reset_at"`
 }
@@ -354,6 +355,7 @@ func fullDevQuotaState(now time.Time) devQuotaState {
 		groups[group] = devQuotaGroupState{
 			Short:        100,
 			Long:         100,
+			ArgonWeekly:  100,
 			ShortResetAt: now.Add(5 * time.Hour),
 			LongResetAt:  now.Add(7 * 24 * time.Hour),
 		}
@@ -370,10 +372,14 @@ func (s *devQuotaState) advance(now time.Time, rng *rand.Rand) {
 		}
 		if !now.Before(quota.LongResetAt) {
 			quota.Long = 100
+			quota.ArgonWeekly = 100
 			quota.LongResetAt = now.Add(7 * 24 * time.Hour)
 		}
 		quota.Short = consumeDevQuota(quota.Short, rng)
 		quota.Long = consumeDevQuota(quota.Long, rng)
+		if group == string(antigravity.ModelGroupGemini) {
+			quota.ArgonWeekly = consumeDevQuota(quota.ArgonWeekly, rng)
+		}
 		s.Groups[group] = quota
 	}
 }
@@ -411,11 +417,25 @@ func marshalDevQuotaResponse(state devQuotaState, isFree bool) ([]byte, error) {
 		Buckets     []bucket `json:"buckets"`
 	}
 	makeGroup := func(id, displayName, description string, quota devQuotaGroupState) group {
-		buckets := make([]bucket, 0, 2)
+		buckets := make([]bucket, 0, 3)
 		if !isFree {
 			buckets = append(buckets, bucket{BucketID: id + "-5h", DisplayName: "5 hour", Window: "5h", RemainingFraction: float64(quota.Short) / 100, ResetTime: quota.ShortResetAt.UTC().Format(time.RFC3339), Description: "Five-hour quota window"})
 		}
 		buckets = append(buckets, bucket{BucketID: id + "-7d", DisplayName: "Weekly", Window: "7d", RemainingFraction: float64(quota.Long) / 100, ResetTime: quota.LongResetAt.UTC().Format(time.RFC3339), Description: "Weekly quota window"})
+		if !isFree && id == "gemini" {
+			argonRem := quota.ArgonWeekly
+			if argonRem <= 0 && quota.Long > 0 {
+				argonRem = quota.Long
+			}
+			buckets = append(buckets, bucket{
+				BucketID:          "gemini_argon_weekly",
+				DisplayName:       "Gemini 4 Argon Weekly",
+				Window:            "7d",
+				RemainingFraction: float64(argonRem) / 100,
+				ResetTime:         quota.LongResetAt.UTC().Format(time.RFC3339),
+				Description:       "Dedicated weekly quota for Gemini 4 Argon",
+			})
+		}
 		return group{
 			DisplayName: displayName,
 			Description: description,

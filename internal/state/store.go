@@ -44,6 +44,8 @@ type Entry struct {
 	ShortWindowRemaining     *int64        `json:"short_window_remaining,omitempty"`
 	LongWindowResetAt        time.Time     `json:"long_window_reset_at,omitempty"`
 	LongWindowRemaining      *int64        `json:"long_window_remaining,omitempty"`
+	ArgonWindowResetAt       time.Time     `json:"argon_window_reset_at,omitempty"`
+	ArgonWindowRemaining     *int64        `json:"argon_window_remaining,omitempty"`
 	CycleBurnRate            float64       `json:"cycle_burn_rate"`
 	Samples                  []QuotaSample `json:"samples,omitempty"`
 	LearningBaselineSequence uint64        `json:"learning_baseline_sequence,omitempty"`
@@ -82,6 +84,8 @@ type ProbeSuccess struct {
 	ShortWindowRemaining *int64
 	LongWindowResetAt    time.Time
 	LongWindowRemaining  *int64
+	ArgonWindowResetAt   time.Time
+	ArgonWindowRemaining *int64
 	NextProbeAt          time.Time
 	AuthInvalid          bool
 	PlanType             core.PlanType
@@ -334,6 +338,8 @@ func (s *Store) MarkProbeSuccess(ctx context.Context, success ProbeSuccess) erro
 		ShortWindowRemaining:     cloneInt64Ptr(success.ShortWindowRemaining),
 		LongWindowResetAt:        utcOrZero(success.LongWindowResetAt),
 		LongWindowRemaining:      cloneInt64Ptr(success.LongWindowRemaining),
+		ArgonWindowResetAt:       utcOrZero(success.ArgonWindowResetAt),
+		ArgonWindowRemaining:     cloneInt64Ptr(success.ArgonWindowRemaining),
 		CycleBurnRate:            newRate,
 		Samples:                  newSamples,
 		LearningBaselineSequence: newBaseline,
@@ -689,10 +695,16 @@ func (s *Store) GetHistoricalEvidence(authIndex, modelGroup string) (priority.Qu
 		r := entry.LongWindowResetAt
 		longResetAt = &r
 	}
+	var argonResetAt *time.Time
+	if !entry.ArgonWindowResetAt.IsZero() {
+		r := entry.ArgonWindowResetAt
+		argonResetAt = &r
+	}
 
 	remaining := entry.Remaining
 	shortRemaining := cloneInt64Ptr(entry.ShortWindowRemaining)
 	longRemaining := cloneInt64Ptr(entry.LongWindowRemaining)
+	argonRemaining := cloneInt64Ptr(entry.ArgonWindowRemaining)
 	cycleBurnRate := entry.CycleBurnRate
 	if cycleBurnRate <= 0 {
 		cycleBurnRate = DefaultCycleBurnRate
@@ -709,6 +721,8 @@ func (s *Store) GetHistoricalEvidence(authIndex, modelGroup string) (priority.Qu
 		ShortWindowRemaining: shortRemaining,
 		LongWindowResetAt:    longResetAt,
 		LongWindowRemaining:  longRemaining,
+		ArgonWindowResetAt:   argonResetAt,
+		ArgonWindowRemaining: argonRemaining,
 		PlanType:             entry.PlanType,
 		CycleBurnRate:        cycleBurnRate,
 	}, true

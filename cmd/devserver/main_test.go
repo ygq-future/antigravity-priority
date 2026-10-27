@@ -133,15 +133,26 @@ func TestDevHostReturnsBothModelGroupsAndQuotaLifecycle(t *testing.T) {
 			Groups []struct {
 				DisplayName string `json:"displayName"`
 				Buckets     []struct {
-					Window string `json:"window"`
+					BucketID string `json:"bucketId"`
+					Window   string `json:"window"`
 				} `json:"buckets"`
 			} `json:"groups"`
 		}
 		if err := json.Unmarshal(response.Body, &contract); err != nil {
 			t.Fatalf("decode simulated quota contract: %v", err)
 		}
-		if len(contract.Groups) != 2 || len(contract.Groups[0].Buckets) != 2 || len(contract.Groups[1].Buckets) != 2 {
-			t.Fatalf("simulated quota response must expose two official group/bucket pairs: %+v", contract.Groups)
+		if len(contract.Groups) != 2 || len(contract.Groups[0].Buckets) != 3 || len(contract.Groups[1].Buckets) != 2 {
+			t.Fatalf("simulated quota response must expose Gemini 3 buckets (including Argon) and Claude 2 buckets: %+v", contract.Groups)
+		}
+		hasArgon := false
+		for _, b := range contract.Groups[0].Buckets {
+			if b.BucketID == "gemini_argon_weekly" {
+				hasArgon = true
+				break
+			}
+		}
+		if !hasArgon {
+			t.Fatalf("simulated Gemini group missing gemini_argon_weekly bucket: %+v", contract.Groups[0].Buckets)
 		}
 		return antigravity.ParseAllModelGroups(response.Body, now)
 	}

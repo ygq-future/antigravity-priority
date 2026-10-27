@@ -313,6 +313,8 @@ func recordAntigravityProbeResult(ctx context.Context, store *state.Store, resul
 		ShortWindowRemaining: result.ShortWindowRemaining,
 		LongWindowResetAt:    timeOrZero(result.LongWindowResetAt),
 		LongWindowRemaining:  result.LongWindowRemaining,
+		ArgonWindowResetAt:   timeOrZero(result.ArgonWindowResetAt),
+		ArgonWindowRemaining: result.ArgonWindowRemaining,
 		Source:               state.SourceFreshProbe,
 		PlanType:             result.PlanType,
 		NextProbeAt:          result.ObservedAt.Add(time.Hour),

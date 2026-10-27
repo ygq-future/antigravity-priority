@@ -85,6 +85,11 @@ const templateScriptOverviewRender = `        function renderDashboard() {
                 if (r7dPercent <= 10) fill7dClass = "meter-fill-danger";
                 else if (r7dPercent <= 30) fill7dClass = "meter-fill-warning";
 
+                const hasArgon = item.argon_window_remaining !== undefined && item.argon_window_remaining !== null;
+                const rArgonPercent = hasArgon ? Math.max(0, Math.min(100, Math.round(Number(item.argon_window_remaining)))) : 0;
+                let fillArgonClass = "meter-fill-healthy";
+                if (rArgonPercent <= 10) fillArgonClass = "meter-fill-danger";
+                else if (rArgonPercent <= 30) fillArgonClass = "meter-fill-warning";
                 const urgency = (item.urgency || 0).toFixed(2);
                 const burnRate = (item.cycle_burn_rate || 0).toFixed(2);
 
@@ -178,6 +183,17 @@ const templateScriptOverviewRender = `        function renderDashboard() {
                             "<div class=\"meter-fill " + fill7dClass + "\" style=\"width: " + r7dPercent + "%\"></div>" +
                         "</div>" +
                     "</div>" +
+                    (hasArgon ? (
+                        "<div class=\"" + meterContainerClass + "\">" +
+                            "<div class=\"meter-label-row\">" +
+                                "<span>" + t("argonWindow") + " (" + rArgonPercent + "%)" + staleTag + "</span>" +
+                                "<span class=\"meter-countdown\" data-reset-time=\"" + (item.argon_window_reset_at || item.long_window_reset_at || "") + "\">" + formatCountdown(item.argon_window_reset_at || item.long_window_reset_at) + "</span>" +
+                            "</div>" +
+                            "<div class=\"meter-track\">" +
+                                "<div class=\"meter-fill " + fillArgonClass + "\" style=\"width: " + rArgonPercent + "%\"></div>" +
+                            "</div>" +
+                        "</div>"
+                    ) : "") +
 
                     "<div class=\"cred-priority\">" +
                         "<div class=\"priority-score-box\" style=\"flex-wrap:wrap;\">" +

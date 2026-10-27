@@ -54,6 +54,7 @@ type candidateWindow struct {
 	resetAt   *time.Time
 	remaining int64
 	window    WindowType
+	isArgon   bool
 }
 
 // ParseAvailableModels parses the Antigravity quota summary JSON into target model group ProbeResult.
@@ -108,12 +109,38 @@ func parseGroupFromResponse(response availableModelsResponse, observedAt time.Ti
 		result.ShortWindowResetAt = fiveHour.resetAt
 		result.ShortWindowRemaining = int64Ptr(fiveHour.remaining)
 	}
-	if weekly, ok := conservativeWindow(windows, WindowWeekly); ok {
+
+	// Normal weekly (non-Argon)
+	normalWindows := filterArgonWindows(windows, false)
+	if weekly, ok := conservativeWindow(normalWindows, WindowWeekly); ok {
+		result.LongWindowResetAt = weekly.resetAt
+		result.LongWindowRemaining = int64Ptr(weekly.remaining)
+	} else if weekly, ok := conservativeWindow(windows, WindowWeekly); ok {
 		result.LongWindowResetAt = weekly.resetAt
 		result.LongWindowRemaining = int64Ptr(weekly.remaining)
 	}
 
+	// Argon weekly
+	argonWindows := filterArgonWindows(windows, true)
+	if argon, ok := conservativeWindow(argonWindows, WindowWeekly); ok {
+		result.ArgonWindowResetAt = argon.resetAt
+		result.ArgonWindowRemaining = int64Ptr(argon.remaining)
+	} else if argon, ok := conservativeAnyWindow(argonWindows); ok {
+		result.ArgonWindowResetAt = argon.resetAt
+		result.ArgonWindowRemaining = int64Ptr(argon.remaining)
+	}
+
 	return result
+}
+
+func filterArgonWindows(windows []candidateWindow, isArgon bool) []candidateWindow {
+	res := make([]candidateWindow, 0, len(windows))
+	for _, w := range windows {
+		if w.isArgon == isArgon {
+			res = append(res, w)
+		}
+	}
+	return res
 }
 
 func collectGroupWindows(response availableModelsResponse, group ModelGroup) []candidateWindow {
@@ -127,24 +154,27 @@ func collectGroupWindows(response availableModelsResponse, group ModelGroup) []c
 		if !modelBelongsToGroup(modelID, model.ModelProvider, group) {
 			continue
 		}
+		isArgon := isArgonIdentifier(modelID)
 		if len(model.QuotaInfo.Windows) == 0 {
-			if window, ok := quotaFieldsToWindow(model.QuotaInfo.RemainingFraction, model.QuotaInfo.ResetTime, WindowUnknown); ok {
+			if window, ok := quotaFieldsToWindow(model.QuotaInfo.RemainingFraction, model.QuotaInfo.ResetTime, WindowUnknown, isArgon); ok {
 				windows = append(windows, window)
 			}
 			continue
 		}
 		for _, item := range model.QuotaInfo.Windows {
-			if window, ok := quotaFieldsToWindow(item.RemainingFraction, item.ResetTime, classifyWindow(item.Name)); ok {
+			if window, ok := quotaFieldsToWindow(item.RemainingFraction, item.ResetTime, classifyWindow(item.Name), isArgon); ok {
 				windows = append(windows, window)
 			}
 		}
 	}
 	for _, bucket := range response.Buckets {
-		if !modelBelongsToGroup(bucket.ModelID, "", group) {
+		bucketIdentifier := bucket.ModelID + " " + bucket.BucketID + " " + bucket.DisplayName
+		if !modelBelongsToGroup(bucketIdentifier, "", group) {
 			continue
 		}
+		isArgon := isArgonIdentifier(bucketIdentifier)
 		windowType := classifyWindow(bucket.Window)
-		if window, ok := quotaFieldsToWindow(bucket.RemainingFraction, bucket.ResetTime, windowType); ok {
+		if window, ok := quotaFieldsToWindow(bucket.RemainingFraction, bucket.ResetTime, windowType, isArgon); ok {
 			windows = append(windows, window)
 		}
 	}
@@ -160,7 +190,8 @@ func collectCanonicalGroupWindows(groups []quotaGroup, group ModelGroup) ([]cand
 		}
 		found = true
 		for _, bucket := range quotaGroup.Buckets {
-			if window, ok := quotaFieldsToWindow(bucket.RemainingFraction, bucket.ResetTime, classifyWindow(bucket.Window)); ok {
+			isArgon := isArgonIdentifier(bucket.BucketID + " " + bucket.DisplayName + " " + bucket.Description)
+			if window, ok := quotaFieldsToWindow(bucket.RemainingFraction, bucket.ResetTime, classifyWindow(bucket.Window), isArgon); ok {
 				windows = append(windows, window)
 			}
 		}
@@ -173,7 +204,7 @@ func quotaGroupBelongsToModelGroup(quotaGroup quotaGroup, group ModelGroup) bool
 	if group == ModelGroupClaudeGPT {
 		return strings.Contains(text, "claude") || strings.Contains(text, "gpt")
 	}
-	return strings.Contains(text, "gemini") && !strings.Contains(text, "claude") && !strings.Contains(text, "gpt")
+	return (strings.Contains(text, "gemini") || strings.Contains(text, "argon")) && !strings.Contains(text, "claude") && !strings.Contains(text, "gpt")
 }
 
 func pickEffectiveWindow(windows []candidateWindow) (candidateWindow, bool) {
@@ -230,8 +261,11 @@ func isMoreConservative(candidate candidateWindow, current candidateWindow) bool
 	}
 	return candidate.resetAt != nil && (current.resetAt == nil || candidate.resetAt.After(*current.resetAt))
 }
+func isArgonIdentifier(text string) bool {
+	return strings.Contains(strings.ToLower(text), "argon")
+}
 
-func quotaFieldsToWindow(rawRemaining any, rawReset any, windowType WindowType) (candidateWindow, bool) {
+func quotaFieldsToWindow(rawRemaining any, rawReset any, windowType WindowType, isArgon bool) (candidateWindow, bool) {
 	resetAt, ok := parseAnyTime(rawReset)
 	if !ok {
 		return candidateWindow{}, false
@@ -240,7 +274,7 @@ func quotaFieldsToWindow(rawRemaining any, rawReset any, windowType WindowType) 
 	if !ok {
 		return candidateWindow{}, false
 	}
-	return candidateWindow{resetAt: resetAt, remaining: remaining, window: windowType}, true
+	return candidateWindow{resetAt: resetAt, remaining: remaining, window: windowType, isArgon: isArgon}, true
 }
 
 func modelBelongsToGroup(modelID string, provider string, group ModelGroup) bool {
@@ -248,7 +282,7 @@ func modelBelongsToGroup(modelID string, provider string, group ModelGroup) bool
 	if group == ModelGroupClaudeGPT {
 		return strings.Contains(text, "claude") || strings.Contains(text, "gpt") || strings.Contains(text, "openai")
 	}
-	return strings.Contains(text, "gemini") && !strings.Contains(text, "claude") && !strings.Contains(text, "gpt")
+	return (strings.Contains(text, "gemini") || strings.Contains(text, "argon")) && !strings.Contains(text, "claude") && !strings.Contains(text, "gpt")
 }
 
 // ClassifyWindow identifies the window type from a window name or descriptor.

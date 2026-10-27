@@ -566,3 +566,70 @@ func TestParseAvailableModels_PerModelWithoutExplicitWindows(t *testing.T) {
 		}
 	}
 }
+
+func TestParseAvailableModels_ArgonInGeminiGroup(t *testing.T) {
+	// Test 1: Groups with dedicated Argon bucket under Gemini Models
+	rawWithGroup := []byte(`{
+		"groups": [
+			{
+				"displayName": "Gemini Models",
+				"buckets": [
+					{"bucketId":"gemini-5h","window":"5h","remainingFraction":0.90,"resetTime":"2026-10-27T15:00:00Z"},
+					{"bucketId":"gemini-7d","window":"7d","remainingFraction":0.80,"resetTime":"2026-11-03T00:00:00Z"},
+					{"bucketId":"gemini_argon_weekly","displayName":"Gemini 4 Argon Weekly","window":"7d","remainingFraction":0.40,"resetTime":"2026-11-03T00:00:00Z"}
+				]
+			}
+		]
+	}`)
+	now := time.Date(2026, 10, 27, 10, 0, 0, 0, time.UTC)
+	res := ParseAvailableModels(rawWithGroup, now, ModelGroupGemini)
+	if res.Status != StatusReady {
+		t.Fatalf("expected StatusReady, got %v (err: %v)", res.Status, res.Error)
+	}
+	// 5h short window should be 90%
+	if res.ShortWindowRemaining == nil || *res.ShortWindowRemaining != 90 {
+		t.Fatalf("expected ShortWindowRemaining=90, got %v", res.ShortWindowRemaining)
+	}
+	// Normal weekly window should be 80% (from gemini-7d)
+	if res.LongWindowRemaining == nil || *res.LongWindowRemaining != 80 {
+		t.Fatalf("expected LongWindowRemaining=80, got %v", res.LongWindowRemaining)
+	}
+	// Dedicated Argon window should be 40% (from gemini_argon_weekly)
+	if res.ArgonWindowRemaining == nil || *res.ArgonWindowRemaining != 40 {
+		t.Fatalf("expected ArgonWindowRemaining=40, got %v", res.ArgonWindowRemaining)
+	}
+	// Test 2: Fallback with pure 'argon' standalone model / bucket (without explicit 'gemini' in name)
+	rawFallback := []byte(`{
+		"models": {
+			"argon-preview": {
+				"modelProvider": "google",
+				"quotaInfo": {
+					"windows": [
+						{"name": "5 hour", "remainingFraction": 0.85, "resetTime": "2026-10-27T15:00:00Z"},
+						{"name": "7 day", "remainingFraction": 0.50, "resetTime": "2026-11-03T00:00:00Z"}
+					]
+				}
+			}
+		},
+		"buckets": [
+			{
+				"bucketId": "argon_pool",
+				"displayName": "Argon Capacity",
+				"window": "7d",
+				"remainingFraction": 0.35,
+				"resetTime": "2026-11-03T00:00:00Z"
+			}
+		]
+	}`)
+	resFallback := ParseAvailableModels(rawFallback, now, ModelGroupGemini)
+	if resFallback.Status != StatusReady {
+		t.Fatalf("expected StatusReady for fallback argon, got %v (err: %v)", resFallback.Status, resFallback.Error)
+	}
+	if resFallback.ShortWindowRemaining == nil || *resFallback.ShortWindowRemaining != 85 {
+		t.Fatalf("expected ShortWindowRemaining=85, got %v", resFallback.ShortWindowRemaining)
+	}
+	// Dedicated Argon window should pick 35% from the argon_pool bucket
+	if resFallback.ArgonWindowRemaining == nil || *resFallback.ArgonWindowRemaining != 35 {
+		t.Fatalf("expected ArgonWindowRemaining=35, got %v", resFallback.ArgonWindowRemaining)
+	}
+}

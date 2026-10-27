@@ -21,7 +21,7 @@ data/devserver/refresh-cache.json
 ## 参数
 
 ```text
--addr       HTTP 监听地址，默认 :8080
+-addr       HTTP 监听地址，默认 127.0.0.1:8080
 -accounts   最少生成的账号数量，默认 10
 -auth-dir   CPA auth JSON 目录
 -quota-state 模拟配额状态文件

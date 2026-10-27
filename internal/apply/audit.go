@@ -54,6 +54,8 @@ type SnapshotItem struct {
 	ShortWindowRemaining *int64           `json:"short_window_remaining,omitempty"`
 	LongWindowResetAt    *time.Time       `json:"long_window_reset_at,omitempty"`
 	LongWindowRemaining  *int64           `json:"long_window_remaining,omitempty"`
+	ArgonWindowResetAt   *time.Time       `json:"argon_window_reset_at,omitempty"`
+	ArgonWindowRemaining *int64           `json:"argon_window_remaining,omitempty"`
 }
 
 // SnapshotChange is the audit view of a single candidate change.
@@ -149,6 +151,8 @@ func snapshotItem(item priority.PlanItem) SnapshotItem {
 		ShortWindowRemaining: item.ShortWindowRemaining,
 		LongWindowResetAt:    item.LongWindowResetAt,
 		LongWindowRemaining:  item.LongWindowRemaining,
+		ArgonWindowResetAt:   item.ArgonWindowResetAt,
+		ArgonWindowRemaining: item.ArgonWindowRemaining,
 	}
 }
 

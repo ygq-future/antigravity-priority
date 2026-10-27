@@ -212,9 +212,11 @@ func cloneQuotaEvidence(evidence []priority.QuotaEvidence) []priority.QuotaEvide
 		cloned[index].ResetAt = cloneTimePointer(item.ResetAt)
 		cloned[index].ShortWindowResetAt = cloneTimePointer(item.ShortWindowResetAt)
 		cloned[index].LongWindowResetAt = cloneTimePointer(item.LongWindowResetAt)
+		cloned[index].ArgonWindowResetAt = cloneTimePointer(item.ArgonWindowResetAt)
 		cloned[index].Remaining = cloneInt64Pointer(item.Remaining)
 		cloned[index].ShortWindowRemaining = cloneInt64Pointer(item.ShortWindowRemaining)
 		cloned[index].LongWindowRemaining = cloneInt64Pointer(item.LongWindowRemaining)
+		cloned[index].ArgonWindowRemaining = cloneInt64Pointer(item.ArgonWindowRemaining)
 	}
 	return cloned
 }

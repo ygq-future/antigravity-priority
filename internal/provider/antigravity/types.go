@@ -58,6 +58,8 @@ type ProbeResult struct {
 	ShortWindowRemaining *int64
 	LongWindowResetAt    *time.Time
 	LongWindowRemaining  *int64
+	ArgonWindowResetAt   *time.Time
+	ArgonWindowRemaining *int64
 	Status               Status
 	PlanType             core.PlanType
 	Error                string
