@@ -1,0 +1,9 @@
+# XERJ ignore patterns for antigravity-priority
+data/
+CLIProxyAPI-Plugins-Store/
+*.exe
+*.dll
+*.so
+*.dylib
+refresh-cache.json
+.scratch/
