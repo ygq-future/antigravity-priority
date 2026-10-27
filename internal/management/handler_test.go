@@ -19,7 +19,6 @@ import (
 type mockRunner struct {
 	runFunc         func(ctx context.Context, req management.RunRequest) (apply.Result, error)
 	resetFunc       func(ctx context.Context) (map[string]any, error)
-	statusFunc      func(ctx context.Context) (management.StatusInfo, error)
 	snapshotFunc    func(ctx context.Context) (apply.DualGroupSnapshot, error)
 	diagnosticsFunc func(ctx context.Context) (map[string]any, error)
 	scheduleConfig  state.ScheduleConfig
@@ -41,12 +40,6 @@ func (m *mockRunner) Reset(ctx context.Context) (map[string]any, error) {
 	return map[string]any{"ok": true, "reset_count": 0}, nil
 }
 
-func (m *mockRunner) Status(ctx context.Context) (management.StatusInfo, error) {
-	if m.statusFunc != nil {
-		return m.statusFunc(ctx)
-	}
-	return management.StatusInfo{}, nil
-}
 
 func (m *mockRunner) LatestSnapshot(ctx context.Context) (apply.DualGroupSnapshot, error) {
 	if m.snapshotFunc != nil {

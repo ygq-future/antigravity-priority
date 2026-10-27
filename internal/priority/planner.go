@@ -154,7 +154,6 @@ func planWithEvidence(credentials []core.Credential, evidence plannerEvidence, o
 	items := planItems(credentials, evidence, options)
 	planPositive(items, options)
 	markHistoricalReasons(items)
-	ensureUniquePriorities(items, options)
 	SortPlanItems(items)
 	return Plan{
 		DecidedAt: options.Now.UTC(),
@@ -447,31 +446,6 @@ func planPositive(items []PlanItem, options Options) {
 	}
 }
 
-func ensureUniquePriorities(_ []PlanItem, _ Options) {
-	// The planner does not rewrite an unprobed credential to make room for a
-	// probed peer. Such a rewrite would turn a derived uniqueness adjustment
-	// into a quota-driven Host change without Fresh Evidence.
-}
-
-func nextAvailablePriority(preferred int, used map[int]struct{}) int {
-	if preferred > MaxPriority {
-		preferred = MaxPriority
-	}
-	if preferred < MinPriority {
-		preferred = MinPriority
-	}
-	for p := preferred; p >= MinPriority; p-- {
-		if _, exists := used[p]; !exists {
-			return p
-		}
-	}
-	for p := preferred + 1; p <= MaxPriority; p++ {
-		if _, exists := used[p]; !exists {
-			return p
-		}
-	}
-	return MinPriority
-}
 
 func changes(items []PlanItem, options Options) []Change {
 	result := make([]Change, 0)

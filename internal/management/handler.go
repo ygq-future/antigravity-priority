@@ -15,21 +15,11 @@ import (
 	"antigravity-priority/internal/state"
 )
 
-// StatusInfo represents summary state for UI rendering and status inspection.
-type StatusInfo struct {
-	TotalCredentials int       `json:"total_credentials"`
-	FreshCount       int       `json:"fresh_count"`
-	UnknownCount     int       `json:"unknown_count"`
-	FailedCount      int       `json:"failed_count"`
-	NextProbeAt      time.Time `json:"next_probe_at"`
-	LatestAudit      string    `json:"latest_audit"`
-}
 
 // Runner defines the application layer contract required by the management HTTP API.
 type Runner interface {
 	Run(ctx context.Context, request RunRequest) (apply.Result, error)
 	Reset(ctx context.Context) (map[string]any, error)
-	Status(ctx context.Context) (StatusInfo, error)
 	LatestSnapshot(ctx context.Context) (apply.DualGroupSnapshot, error)
 	SyncHost(ctx context.Context, modelGroup config.AntigravityModelGroup) (apply.DualGroupSnapshot, error)
 	Diagnostics(ctx context.Context) (map[string]any, error)

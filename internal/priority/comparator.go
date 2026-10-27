@@ -45,40 +45,6 @@ func CompareHealthyCandidates(left PlanItem, right PlanItem) int {
 	return cmp.Compare(left.Credential.AuthIndex, right.Credential.AuthIndex)
 }
 
-// CompareUniquenessCandidates orders candidate credentials for non-colliding priority allocation.
-func CompareUniquenessCandidates(left PlanItem, right PlanItem) int {
-	leftFreshPositive := left.EvidenceFresh && isPositiveRemaining(left)
-	rightFreshPositive := right.EvidenceFresh && isPositiveRemaining(right)
-
-	switch {
-	case leftFreshPositive && rightFreshPositive:
-		if left.IsBoosted && !right.IsBoosted {
-			return -1
-		}
-		if !left.IsBoosted && right.IsBoosted {
-			return 1
-		}
-		if left.PlanType != right.PlanType {
-			if left.PlanType != core.PlanTypeFree && right.PlanType == core.PlanTypeFree {
-				return -1
-			}
-			if left.PlanType == core.PlanTypeFree && right.PlanType != core.PlanTypeFree {
-				return 1
-			}
-		}
-		return CompareHealthyCandidates(left, right)
-	case leftFreshPositive:
-		return -1
-	case rightFreshPositive:
-		return 1
-	}
-
-	// Unprobed peers without fresh positive evidence: higher existing priority first, then AuthIndex
-	if left.Priority != right.Priority {
-		return right.Priority - left.Priority
-	}
-	return cmp.Compare(left.Credential.AuthIndex, right.Credential.AuthIndex)
-}
 
 // SortPlanItems orders items deterministically for the final Plan representation.
 func SortPlanItems(items []PlanItem) {
@@ -102,12 +68,3 @@ func SortPlanItems(items []PlanItem) {
 	})
 }
 
-func isPositiveRemaining(item PlanItem) bool {
-	if item.LongWindowRemaining != nil && *item.LongWindowRemaining > 0 {
-		return true
-	}
-	if item.Remaining != nil && *item.Remaining > 0 {
-		return true
-	}
-	return item.R7d > 0
-}

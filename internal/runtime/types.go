@@ -76,16 +76,6 @@ type Sleeper interface {
 	Sleep(ctx context.Context, duration time.Duration) error
 }
 
-// Ticker provides periodic time tick abstraction.
-type Ticker interface {
-	Chan() <-chan time.Time
-	Stop()
-}
-
-// TickerFactory creates Ticker instances.
-type TickerFactory interface {
-	NewTicker(interval time.Duration) Ticker
-}
 
 // RunHistoryEntry records the execution outcome of a scheduling run.
 type RunHistoryEntry struct {
@@ -146,7 +136,6 @@ type Options struct {
 	Host          host.HostCallbacks
 	Clock         Clock
 	Sleeper       Sleeper
-	TickerFactory TickerFactory
 	Runner        TaskRunner
 	// StateCachePath overrides the startup cache path. It is primarily used
 	// to isolate runtime instances in tests; production callers may leave it

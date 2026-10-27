@@ -89,95 +89,6 @@ func TestCompareHealthyCandidates(t *testing.T) {
 	})
 }
 
-func TestCompareUniquenessCandidates(t *testing.T) {
-	rem100 := int64(100)
-	t.Run("fresh positive comes before unprobed peer", func(t *testing.T) {
-		fresh := PlanItem{
-			Credential:    core.Credential{AuthIndex: "auth-fresh", Priority: 50},
-			Remaining:     &rem100,
-			R7d:           1.0,
-			EvidenceFresh: true,
-		}
-		unprobed := PlanItem{
-			Credential: core.Credential{AuthIndex: "auth-unprobed", Priority: 100},
-		}
-
-		if res := CompareUniquenessCandidates(fresh, unprobed); res != -1 {
-			t.Errorf("CompareUniquenessCandidates(fresh, unprobed) = %v; want -1", res)
-		}
-		if res := CompareUniquenessCandidates(unprobed, fresh); res != 1 {
-			t.Errorf("CompareUniquenessCandidates(unprobed, fresh) = %v; want 1", res)
-		}
-	})
-
-	t.Run("boosted fresh comes before regular fresh", func(t *testing.T) {
-		boosted := PlanItem{
-			Credential:    core.Credential{AuthIndex: "auth-boost"},
-			Remaining:     &rem100,
-			IsBoosted:     true,
-			Urgency:       0.5,
-			EvidenceFresh: true,
-		}
-		regular := PlanItem{
-			Credential:    core.Credential{AuthIndex: "auth-reg"},
-			Remaining:     &rem100,
-			IsBoosted:     false,
-			Urgency:       1.5,
-			EvidenceFresh: true,
-		}
-
-		if res := CompareUniquenessCandidates(boosted, regular); res != -1 {
-			t.Errorf("CompareUniquenessCandidates(boosted, regular) = %v; want -1", res)
-		}
-	})
-	t.Run("pro fresh positive comes before free fresh positive", func(t *testing.T) {
-		proItem := PlanItem{
-			Credential:    core.Credential{AuthIndex: "auth-pro"},
-			PlanType:      core.PlanTypePro,
-			Remaining:     &rem100,
-			Urgency:       0.5,
-			EvidenceFresh: true,
-		}
-		freeItem := PlanItem{
-			Credential:    core.Credential{AuthIndex: "auth-free"},
-			PlanType:      core.PlanTypeFree,
-			Remaining:     &rem100,
-			Urgency:       5.0,
-			EvidenceFresh: true,
-		}
-
-		if res := CompareUniquenessCandidates(proItem, freeItem); res != -1 {
-			t.Errorf("CompareUniquenessCandidates(pro, free) = %v; want -1", res)
-		}
-		if res := CompareUniquenessCandidates(freeItem, proItem); res != 1 {
-			t.Errorf("CompareUniquenessCandidates(free, pro) = %v; want 1", res)
-		}
-	})
-
-	t.Run("unprobed peers sort by existing priority then AuthIndex", func(t *testing.T) {
-		peerA := PlanItem{
-			Credential: core.Credential{AuthIndex: "auth-a", Priority: 80},
-			Priority:   80,
-		}
-		peerB := PlanItem{
-			Credential: core.Credential{AuthIndex: "auth-b", Priority: 90},
-			Priority:   90,
-		}
-		peerC := PlanItem{
-			Credential: core.Credential{AuthIndex: "auth-c", Priority: 80},
-			Priority:   80,
-		}
-
-		// peerB (90) > peerA (80) -> CompareUniquenessCandidates(peerA, peerB) > 0
-		if res := CompareUniquenessCandidates(peerA, peerB); res <= 0 {
-			t.Errorf("CompareUniquenessCandidates(peerA, peerB) = %v; want >0", res)
-		}
-		// peerA (80, "auth-a") vs peerC (80, "auth-c") -> -1
-		if res := CompareUniquenessCandidates(peerA, peerC); res != -1 {
-			t.Errorf("CompareUniquenessCandidates(peerA, peerC) = %v; want -1", res)
-		}
-	})
-}
 
 func TestSortPlanItems(t *testing.T) {
 	items := []PlanItem{
@@ -233,23 +144,4 @@ func TestSortPlanItems(t *testing.T) {
 		t.Errorf("item[4] = %s; want unprobed-2", items[4].Credential.AuthIndex)
 	}
 
-	t.Run("isPositiveRemaining helper variants", func(t *testing.T) {
-		rem50 := int64(50)
-		remZero := int64(0)
-		if !isPositiveRemaining(PlanItem{LongWindowRemaining: &rem50}) {
-			t.Errorf("isPositiveRemaining with LongWindowRemaining > 0 should be true")
-		}
-		if isPositiveRemaining(PlanItem{LongWindowRemaining: &remZero}) {
-			t.Errorf("isPositiveRemaining with LongWindowRemaining == 0 should be false")
-		}
-		if !isPositiveRemaining(PlanItem{Remaining: &rem50}) {
-			t.Errorf("isPositiveRemaining with Remaining > 0 should be true")
-		}
-		if !isPositiveRemaining(PlanItem{R7d: 0.5}) {
-			t.Errorf("isPositiveRemaining with R7d > 0 should be true")
-		}
-		if isPositiveRemaining(PlanItem{}) {
-			t.Errorf("isPositiveRemaining with empty PlanItem should be false")
-		}
-	})
 }

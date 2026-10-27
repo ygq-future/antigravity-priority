@@ -143,22 +143,6 @@ func (testSleeper) Sleep(ctx context.Context, d time.Duration) error {
 	return nil
 }
 
-type mockTicker struct {
-	c    chan time.Time
-	stop bool
-}
-
-func (m *mockTicker) Chan() <-chan time.Time {
-	return m.c
-}
-
-func (m *mockTicker) Stop() {
-	m.stop = true
-}
-
-type mockTickerFactory struct {
-	lastTicker *mockTicker
-}
 
 func newTestRuntime(t *testing.T, options runtime.Options) *runtime.Runtime {
 	t.Helper()
@@ -182,11 +166,6 @@ func prepareManualApply(t *testing.T, r *runtime.Runtime, modelGroup config.Anti
 	}
 }
 
-func (m *mockTickerFactory) NewTicker(interval time.Duration) runtime.Ticker {
-	t := &mockTicker{c: make(chan time.Time, 1)}
-	m.lastTicker = t
-	return t
-}
 
 func TestRuntime_Handle_Register(t *testing.T) {
 	r := newTestRuntime(t, runtime.Options{})
@@ -1596,11 +1575,9 @@ func TestRuntime_LastProbeOutcomes_SuccessAndFailure(t *testing.T) {
 }
 
 func TestRuntime_TickerWorker_StartAndStop(t *testing.T) {
-	mockFactory := &mockTickerFactory{}
 	r := newTestRuntime(t, runtime.Options{
-		TickerFactory: mockFactory,
-		Clock:         &testClock{now: time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)},
-		Sleeper:       testSleeper{},
+		Clock:   &testClock{now: time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)},
+		Sleeper: testSleeper{},
 	})
 
 	// Register with auto_apply = true
@@ -1622,16 +1599,8 @@ func TestRuntime_TickerWorker_StartAndStop(t *testing.T) {
 	_ = r.Shutdown(context.Background())
 }
 
-func TestRuntime_Diagnostics_And_Status(t *testing.T) {
+func TestRuntime_Diagnostics(t *testing.T) {
 	r := newTestRuntime(t, runtime.Options{})
-
-	status, err := r.Status(context.Background())
-	if err != nil {
-		t.Fatalf("status failed: %v", err)
-	}
-	if status.LatestAudit == "" {
-		t.Errorf("expected non-empty latest audit")
-	}
 
 	diag, err := r.Diagnostics(context.Background())
 	if err != nil {

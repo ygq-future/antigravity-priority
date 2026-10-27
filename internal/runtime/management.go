@@ -256,10 +256,6 @@ func (r managementRunner) Reset(ctx context.Context) (map[string]any, error) {
 	return r.runtime.ResetAllPriorities(ctx)
 }
 
-func (r managementRunner) Status(ctx context.Context) (management.StatusInfo, error) {
-	return r.runtime.Status(ctx)
-}
-
 func (r managementRunner) LatestSnapshot(ctx context.Context) (apply.DualGroupSnapshot, error) {
 	return r.runtime.LatestSnapshot(ctx)
 }

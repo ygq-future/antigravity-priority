@@ -32,7 +32,6 @@ type quotaPreview struct {
 type Runtime struct {
 	mu                 sync.Mutex
 	runMu              sync.Mutex
-	tickerFactory      TickerFactory
 	runner             TaskRunner
 	rootCtx            context.Context
 	cancel             context.CancelFunc
@@ -63,10 +62,6 @@ type Runtime struct {
 
 // New creates an initialized Runtime instance.
 func New(options Options) *Runtime {
-	factory := options.TickerFactory
-	if factory == nil {
-		factory = timeTickerFactory{}
-	}
 	clock := options.Clock
 	if clock == nil {
 		clock = realRuntimeClock{}
@@ -77,7 +72,6 @@ func New(options Options) *Runtime {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	rt := &Runtime{
-		tickerFactory:   factory,
 		rootCtx:         ctx,
 		cancel:          cancel,
 		cfg:             config.Default(),
@@ -560,25 +554,6 @@ func (r *Runtime) Config() (config.Config, error) {
 	return r.cfg, nil
 }
 
-// Status returns current status summary for UI rendering.
-func (r *Runtime) Status(ctx context.Context) (management.StatusInfo, error) {
-	cfg, err := r.Config()
-	if err != nil {
-		return management.StatusInfo{}, err
-	}
-	latestAudit := "runtime management API ready"
-	if !cfg.Enabled {
-		latestAudit = "runtime management API disabled by config"
-	}
-	_, audit := r.currentRunSnapshot()
-	if audit != "" {
-		latestAudit = audit
-	}
-	return management.StatusInfo{
-		LatestAudit: latestAudit,
-	}, nil
-}
-
 // LatestSnapshot returns the most recently generated dual-group plan snapshot.
 func (r *Runtime) LatestSnapshot(ctx context.Context) (apply.DualGroupSnapshot, error) {
 	if _, err := r.Config(); err != nil {
@@ -737,7 +712,6 @@ func (r *Runtime) newWorker(cfg config.Config) *tickerWorker {
 	}
 	return &tickerWorker{
 		interval: cfg.Interval,
-		ticker:   r.tickerFactory.NewTicker(cfg.Interval),
 		done:     make(chan struct{}),
 	}
 }

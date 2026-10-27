@@ -8,7 +8,6 @@ import (
 
 type tickerWorker struct {
 	interval time.Duration
-	ticker   Ticker
 	cancel   context.CancelFunc
 	done     chan struct{}
 }
@@ -62,9 +61,6 @@ func stopWorker(ctx context.Context, worker *tickerWorker) error {
 	if worker == nil {
 		return nil
 	}
-	if worker.ticker != nil {
-		worker.ticker.Stop()
-	}
 	if worker.cancel != nil {
 		worker.cancel()
 	}
@@ -78,9 +74,6 @@ func stopWorker(ctx context.Context, worker *tickerWorker) error {
 
 func stopNewWorker(worker *tickerWorker, err error) error {
 	if worker != nil {
-		if worker.ticker != nil {
-			worker.ticker.Stop()
-		}
 		if worker.cancel != nil {
 			worker.cancel()
 		}
@@ -88,23 +81,3 @@ func stopNewWorker(worker *tickerWorker, err error) error {
 	return err
 }
 
-type timeTickerFactory struct{}
-
-func (timeTickerFactory) NewTicker(interval time.Duration) Ticker {
-	if interval <= 0 {
-		interval = 15 * time.Minute
-	}
-	return &timeTicker{ticker: time.NewTicker(interval)}
-}
-
-type timeTicker struct {
-	ticker *time.Ticker
-}
-
-func (t *timeTicker) Chan() <-chan time.Time {
-	return t.ticker.C
-}
-
-func (t *timeTicker) Stop() {
-	t.ticker.Stop()
-}

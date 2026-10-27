@@ -890,29 +890,6 @@ func TestPlanFreshOnly_DepletedPriorityUsesExplicitRuntimeState(t *testing.T) {
 	})
 }
 
-func TestNextAvailablePriority(t *testing.T) {
-	used := make(map[int]struct{})
-	// Preferred > MaxPriority
-	p1 := nextAvailablePriority(2000, used)
-	if p1 != MaxPriority {
-		t.Errorf("nextAvailablePriority(2000) = %d; want %d", p1, MaxPriority)
-	}
-
-	// Preferred < MinPriority
-	p2 := nextAvailablePriority(-10, used)
-	if p2 != MinPriority {
-		t.Errorf("nextAvailablePriority(-10) = %d; want %d", p2, MinPriority)
-	}
-
-	// All downward slots full, search upward
-	used[1] = struct{}{}
-	used[2] = struct{}{}
-	p3 := nextAvailablePriority(1, used)
-	if p3 != 3 {
-		t.Errorf("nextAvailablePriority(1 with 1,2 used) = %d; want 3", p3)
-	}
-}
-
 func TestPlanWithEvidence_FreeTierIsolatedBelowPro(t *testing.T) {
 	now := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
 	reset5h := now.Add(4 * time.Hour)
