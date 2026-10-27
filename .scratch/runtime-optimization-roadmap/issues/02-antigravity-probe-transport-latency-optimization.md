@@ -1,6 +1,6 @@
 # 02 — Antigravity Probe Transport Latency Optimization
 
-Status: ready-for-agent
+Status: resolved
 
 ## What to fix
 In `internal/runtime/antigravity_transport.go:68-104`, quota probing currently follows a rigid two-stage fallback:
@@ -16,7 +16,7 @@ This serial fallback doubles the HTTP round-trip time (RTT) for every Gemini quo
 3. Transport retains fallback capability for unexpected upstream API schema shifts without breaking existing response parsing in `internal/provider/antigravity/parse.go`.
 
 ## Acceptance Criteria
-- [ ] Probing Gemini does not unconditionally incur two sequential HTTP requests per account.
-- [ ] Probe latency for Gemini accounts is cut by ~50% in standard execution.
-- [ ] Fallback mechanisms remain intact if a primary endpoint returns non-200 or missing model groups.
-- [ ] Full coverage and contract tests pass in `antigravity_transport_test.go` and `probe_evidence_test.go`.
+- [x] Probing Gemini does not unconditionally incur two sequential HTTP requests per account.
+- [x] Probe latency for Gemini accounts is cut by ~50% in standard execution.
+- [x] Fallback mechanisms remain intact if a primary endpoint returns non-200 or missing model groups.
+- [x] Full coverage and contract tests pass in `antigravity_transport_test.go` and `probe_evidence_test.go`.

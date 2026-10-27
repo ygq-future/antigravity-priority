@@ -29,6 +29,7 @@ type antigravityQuotaRequest struct {
 	AccessToken string
 	ProjectID   string
 	ObservedAt  time.Time
+	TargetGroup antigravity.ModelGroup
 }
 
 type quotaHTTPDoer interface {
@@ -36,11 +37,67 @@ type quotaHTTPDoer interface {
 }
 
 func executeAntigravityQuotaRequest(ctx context.Context, doer quotaHTTPDoer, request antigravityQuotaRequest) map[antigravity.ModelGroup]antigravity.ProbeResult {
+	primaryURLs, fallbackURLs := selectQuotaEndpointURLs(request.TargetGroup)
+
+	results, lastStatus, lastErr := queryQuotaURLs(ctx, doer, primaryURLs, request)
+
+	if !hasRequestedQuota(results, request.TargetGroup) {
+		fallbackResults, fbStatus, fbErr := queryQuotaURLs(ctx, doer, fallbackURLs, request)
+		if fbStatus != 0 {
+			lastStatus = fbStatus
+		}
+		if fbErr != nil && lastErr == nil {
+			lastErr = fbErr
+		}
+		if fallbackResults != nil {
+			if results == nil {
+				results = make(map[antigravity.ModelGroup]antigravity.ProbeResult, len(fallbackResults))
+			}
+			for group, fResult := range fallbackResults {
+				if existing, exists := results[group]; !exists || existing.Status != antigravity.StatusReady {
+					results[group] = fResult
+				}
+			}
+		}
+	}
+
+	if results != nil {
+		return pruneUnrequestedFailedGroups(results, request.TargetGroup)
+	}
+	message := fmt.Sprintf("retrieve quota summary status %d", lastStatus)
+	if lastErr != nil && lastStatus == 0 {
+		message = "host http do failed"
+	}
+	return failedAntigravityQuotaResults(request, message, lastStatus)
+}
+
+func selectQuotaEndpointURLs(target antigravity.ModelGroup) ([]string, []string) {
+	if target == antigravity.ModelGroupGemini {
+		return antigravityAvailableModelsURLs, antigravityQuotaURLs
+	}
+	return antigravityQuotaURLs, antigravityAvailableModelsURLs
+}
+
+func hasRequestedQuota(results map[antigravity.ModelGroup]antigravity.ProbeResult, target antigravity.ModelGroup) bool {
+	if results == nil {
+		return false
+	}
+	switch target {
+	case antigravity.ModelGroupGemini:
+		return results[antigravity.ModelGroupGemini].Status == antigravity.StatusReady
+	case antigravity.ModelGroupClaudeGPT:
+		return results[antigravity.ModelGroupClaudeGPT].Status == antigravity.StatusReady
+	default:
+		return results[antigravity.ModelGroupGemini].Status == antigravity.StatusReady &&
+			results[antigravity.ModelGroupClaudeGPT].Status == antigravity.StatusReady
+	}
+}
+
+func queryQuotaURLs(ctx context.Context, doer quotaHTTPDoer, urls []string, request antigravityQuotaRequest) (map[antigravity.ModelGroup]antigravity.ProbeResult, int, error) {
 	var lastStatus int
 	var lastErr error
-	var results map[antigravity.ModelGroup]antigravity.ProbeResult
 
-	for _, url := range antigravityQuotaURLs {
+	for _, url := range urls {
 		response, err := doer.HTTPDoRaw(ctx, host.HTTPRequest{
 			AuthIndex: request.AuthIndex,
 			Method:    http.MethodPost,
@@ -56,62 +113,45 @@ func executeAntigravityQuotaRequest(ctx context.Context, doer quotaHTTPDoer, req
 		if response.StatusCode != http.StatusOK {
 			continue
 		}
-		results = antigravity.ParseAllModelGroups(response.Body, request.ObservedAt.UTC())
+		results := antigravity.ParseAllModelGroups(response.Body, request.ObservedAt.UTC())
 		for group, result := range results {
 			result.AuthIndex = request.AuthIndex
 			result.HTTPStatusCode = response.StatusCode
 			results[group] = result
 		}
-		break
+		return results, response.StatusCode, nil
 	}
 
-	// Google moved Gemini quotas exclusively to fetchAvailableModels, leaving retrieveUserQuotaSummary
-	// with only Claude/GPT models. Query available models if summary failed or Gemini quota is missing.
-	needsFallback := results == nil || results[antigravity.ModelGroupGemini].Status != antigravity.StatusReady
+	return nil, lastStatus, lastErr
+}
 
-	if needsFallback {
-		for _, url := range antigravityAvailableModelsURLs {
-			response, err := doer.HTTPDoRaw(ctx, host.HTTPRequest{
-				AuthIndex: request.AuthIndex,
-				Method:    http.MethodPost,
-				URL:       url,
-				Headers:   antigravityQuotaHeaders(request.AccessToken),
-				Body:      antigravityQuotaBody(request.ProjectID),
-			})
-			if err != nil {
-				if lastErr == nil {
-					lastErr = err
-				}
-				continue
-			}
-			lastStatus = response.StatusCode
-			if response.StatusCode != http.StatusOK {
-				continue
-			}
-			fallbackResults := antigravity.ParseAllModelGroups(response.Body, request.ObservedAt.UTC())
-			if results == nil {
-				results = make(map[antigravity.ModelGroup]antigravity.ProbeResult, 2)
-			}
-			for group, fResult := range fallbackResults {
-				fResult.AuthIndex = request.AuthIndex
-				fResult.HTTPStatusCode = response.StatusCode
-				if existing, exists := results[group]; !exists || existing.Status != antigravity.StatusReady {
-					results[group] = fResult
-				}
-			}
-			break
-		}
-	}
-
-	if results != nil {
+func pruneUnrequestedFailedGroups(results map[antigravity.ModelGroup]antigravity.ProbeResult, target antigravity.ModelGroup) map[antigravity.ModelGroup]antigravity.ProbeResult {
+	if results == nil || target == "" {
 		return results
 	}
-	message := fmt.Sprintf("retrieve quota summary status %d", lastStatus)
-	if lastErr != nil && lastStatus == 0 {
-		message = "host http do failed"
+	for group, res := range results {
+		if group != target && res.Status != antigravity.StatusReady {
+			delete(results, group)
+		}
 	}
-	return failedAntigravityQuotaResults(request, message, lastStatus)
+	return results
 }
+
+func failedAntigravityQuotaResults(request antigravityQuotaRequest, message string, statusCode int) map[antigravity.ModelGroup]antigravity.ProbeResult {
+	results := make(map[antigravity.ModelGroup]antigravity.ProbeResult, 2)
+	for _, group := range []antigravity.ModelGroup{antigravity.ModelGroupGemini, antigravity.ModelGroupClaudeGPT} {
+		if request.TargetGroup != "" && group != request.TargetGroup {
+			continue
+		}
+		result := antigravity.ParseAvailableModels(nil, request.ObservedAt.UTC(), group)
+		result.AuthIndex = request.AuthIndex
+		result.Error = message
+		result.HTTPStatusCode = statusCode
+		results[group] = result
+	}
+	return results
+}
+
 
 func antigravityQuotaBody(projectID string) []byte {
 	projectID = strings.TrimSpace(projectID)
@@ -137,14 +177,3 @@ func antigravityQuotaHeaders(accessToken string) host.Header {
 	}
 }
 
-func failedAntigravityQuotaResults(request antigravityQuotaRequest, message string, statusCode int) map[antigravity.ModelGroup]antigravity.ProbeResult {
-	results := make(map[antigravity.ModelGroup]antigravity.ProbeResult, 2)
-	for _, group := range []antigravity.ModelGroup{antigravity.ModelGroupGemini, antigravity.ModelGroupClaudeGPT} {
-		result := antigravity.ParseAvailableModels(nil, request.ObservedAt.UTC(), group)
-		result.AuthIndex = request.AuthIndex
-		result.Error = message
-		result.HTTPStatusCode = statusCode
-		results[group] = result
-	}
-	return results
-}

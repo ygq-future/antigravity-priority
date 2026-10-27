@@ -41,6 +41,7 @@ type collectedEvidence struct {
 type probeJob struct {
 	credential   core.Credential
 	authMaterial authMaterial
+	targetGroup  antigravity.ModelGroup
 }
 
 var probeRoundSequence atomic.Uint64
@@ -57,6 +58,7 @@ func collectFreshEvidence(ctx context.Context, input collectInput) (collectedEvi
 			jobs = append(jobs, probeJob{
 				credential:   cred,
 				authMaterial: input.authMaterials[cred.AuthIndex],
+				targetGroup:  antigravity.ModelGroup(input.modelGroup),
 			})
 		}
 	}
@@ -271,8 +273,8 @@ func probeAndRecord(ctx context.Context, client *host.Client, store *state.Store
 		AccessToken: job.authMaterial.accessToken,
 		ProjectID:   job.authMaterial.projectID,
 		ObservedAt:  now,
+		TargetGroup: job.targetGroup,
 	})
-
 	items := make([]antigravity.ProbeResult, 0, 2)
 	for _, group := range []antigravity.ModelGroup{
 		antigravity.ModelGroupGemini,
