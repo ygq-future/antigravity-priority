@@ -1153,10 +1153,6 @@ func (r *Runtime) triggerCooldown(ctx context.Context, authIndex, modelGroup, re
 		AppliedDisabled:         credential.Disabled,
 	}
 	store.SetCooldown(entry)
-	if err := store.SaveAtomic(ctx); err != nil {
-		r.recordCooldownFailure(ctx, store, authIndex, reason, err)
-		return fmt.Errorf("persist cooldown state: %w", err)
-	}
 	r.setActiveCooldown(entry)
 	if r.hostCallbacks == nil {
 		err := errMissingHostCallbacks

@@ -281,9 +281,6 @@ func (r *Runtime) restoreCooldown(ctx context.Context, store *state.Store, entry
 	r.patchSnapshotCooldown(entry.AuthIndex, false, "cooldown recovered", entry.PreviousPriority, entry.PreviousDisabled)
 	result.Snapshot = apply.Snapshot(priority.Plan{DecidedAt: r.clock.Now().UTC(), Items: []priority.PlanItem{{Credential: credential, Priority: entry.PreviousPriority, Disabled: entry.PreviousDisabled, Reason: priority.Reason429Cooldown}}})
 	store.DeleteCooldown(entry.AuthIndex)
-	if err := store.SaveAtomic(ctx); err != nil {
-		return err
-	}
 	r.clearActiveCooldown(entry.AuthIndex)
 	summary := resultSummary("429 cooldown recovery", result)
 	_, err = r.projectRun(ctx, store, result, summary, RunHistoryEntry{Kind: KindCooldownRecovery, Trigger: trigger, Message: summary, Snapshot: &result.Snapshot})

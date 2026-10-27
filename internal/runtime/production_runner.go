@@ -101,23 +101,25 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 		r.setLastProbeOutcomes(probeOutcomes(evidence.Probes, evidence.ByGroup))
 	}
 
-	if len(evidence.RateLimited) > 0 {
-		if err := store.SaveAtomic(ctx); err != nil {
-			return err
-		}
-		for authIndex, modelGroup := range evidence.RateLimited {
-			if err := r.observe429(ctx, authIndex, modelGroup, "429 rate limit detected during quota probe", false); err != nil {
+	if preview == nil {
+		if len(evidence.RateLimited) > 0 {
+			if err := store.SaveAtomic(ctx); err != nil {
+				return err
+			}
+			for authIndex, modelGroup := range evidence.RateLimited {
+				if err := r.observe429(ctx, authIndex, modelGroup, "429 rate limit detected during quota probe", false); err != nil {
+					return err
+				}
+			}
+			store, err = state.Load(ctx, cachePath)
+			if err != nil {
+				return err
+			}
+		} else {
+			if err := store.SaveAtomic(ctx); err != nil {
 				return err
 			}
 		}
-		store, err = state.Load(ctx, cachePath)
-		if err != nil {
-			return err
-		}
-	}
-
-	if err := store.SaveAtomic(ctx); err != nil {
-		return err
 	}
 
 	// Reconcile against the authoritative Host inventory after the potentially
@@ -202,10 +204,12 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 				store.DeleteAutoDisabled(change.Credential.AuthIndex)
 			}
 		}
-		_ = store.SaveAtomic(ctx)
 	}
 	postApplyProjection, err := projectCurrentHost(ctx, client, request, evidence.ByGroup, store, now)
 	if err != nil {
+		if store != nil {
+			_ = store.SaveAtomic(ctx)
+		}
 		return fmt.Errorf("reconcile Host after apply: %w", err)
 	}
 	postApplyProjection.Snapshot.PreviewID = ""

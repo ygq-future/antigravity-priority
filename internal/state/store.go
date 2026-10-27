@@ -154,6 +154,7 @@ type PriorityRulesConfig = config.PriorityRulesConfig
 // Store manages the in-memory and on-disk state cache document.
 type Store struct {
 	mu             sync.RWMutex
+	saveMu         sync.Mutex
 	path           string
 	entries        map[string]Entry
 	latestAudit    string
@@ -238,6 +239,8 @@ func (s *Store) SaveAtomic(ctx context.Context) (err error) {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("save state context: %w", err)
 	}
+	s.saveMu.Lock()
+	defer s.saveMu.Unlock()
 	s.mu.RLock()
 	path := s.path
 	doc := document{
@@ -261,15 +264,23 @@ func (s *Store) SaveAtomic(ctx context.Context) (err error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create state cache dir %s: %w", dir, err)
 	}
-	tmpPath := filepath.Join(dir, filepath.Base(path)+".tmp")
+	tmpFile, err := os.CreateTemp(dir, filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return fmt.Errorf("create state cache temp: %w", err)
+	}
+	tmpPath := tmpFile.Name()
 	defer func() {
 		if err != nil {
 			_ = os.Remove(tmpPath)
 		}
 	}()
 
-	if err = os.WriteFile(tmpPath, data, 0o600); err != nil {
+	if _, err = tmpFile.Write(data); err != nil {
+		_ = tmpFile.Close()
 		return fmt.Errorf("write state cache temp: %w", err)
+	}
+	if err = tmpFile.Close(); err != nil {
+		return fmt.Errorf("close state cache temp: %w", err)
 	}
 	if err = os.Rename(tmpPath, path); err != nil {
 		return fmt.Errorf("rename state cache temp: %w", err)

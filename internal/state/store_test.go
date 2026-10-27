@@ -3,9 +3,11 @@ package state_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -275,6 +277,118 @@ func TestStore_SaveAtomic_And_Reload(t *testing.T) {
 	allEntries := storeReloaded.Entries()
 	if len(allEntries) != 1 {
 		t.Fatalf("expected 1 entry in snapshot, got %d", len(allEntries))
+	}
+}
+
+func TestStore_SaveAtomic_DynamicTempFileSafety(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	cachePath := filepath.Join(tmpDir, "cache.json")
+
+	store, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatalf("load failed: %v", err)
+	}
+
+	// Simulate a colliding static temp file left behind by a previous crash.
+	staticTmp := filepath.Join(tmpDir, "cache.json.tmp")
+	if err := os.WriteFile(staticTmp, []byte("stale collision content"), 0o444); err != nil {
+		t.Fatalf("failed to create static tmp collision file: %v", err)
+	}
+
+	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	if err := store.MarkProbeSuccess(ctx, state.ProbeSuccess{
+		AuthIndex:            "acc-1",
+		ModelGroup:           "gemini",
+		ObservedAt:           now,
+		ResetAt:              now.Add(time.Hour),
+		ShortWindowResetAt:   now.Add(time.Hour),
+		ShortWindowRemaining: int64Ptr(90),
+		LongWindowResetAt:    now.Add(24 * time.Hour),
+		LongWindowRemaining:  int64Ptr(95),
+	}); err != nil {
+		t.Fatalf("mark probe success: %v", err)
+	}
+
+	// SaveAtomic must succeed despite the static .tmp collision
+	if err := store.SaveAtomic(ctx); err != nil {
+		t.Fatalf("SaveAtomic failed with collision file present: %v", err)
+	}
+
+	// Static file should remain untouched
+	staticContent, err := os.ReadFile(staticTmp)
+	if err != nil || string(staticContent) != "stale collision content" {
+		t.Fatalf("static collision file was unexpectedly overwritten: %v", err)
+	}
+
+	// Cache file should be valid and reloadable
+	reloaded, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatalf("reloading cache failed: %v", err)
+	}
+	if _, ok := reloaded.GetEntry("acc-1", "gemini"); !ok {
+		t.Fatal("expected entry to be persisted in reloaded cache")
+	}
+
+	// Check that no lingering dynamic .tmp files exist
+	files, err := os.ReadDir(tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		if strings.HasPrefix(f.Name(), "cache.json.") && strings.HasSuffix(f.Name(), ".tmp") && f.Name() != "cache.json.tmp" {
+			t.Fatalf("unexpected lingering temp file found: %s", f.Name())
+		}
+	}
+}
+
+func TestStore_SaveAtomic_ConcurrentWrites(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	cachePath := filepath.Join(tmpDir, "concurrent_cache.json")
+
+	store, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatalf("load failed: %v", err)
+	}
+
+	const writers = 8
+	var wg sync.WaitGroup
+	errCh := make(chan error, writers)
+
+	for i := range writers {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			now := time.Date(2026, 8, 18, 12, idx, 0, 0, time.UTC)
+			_ = store.MarkProbeSuccess(ctx, state.ProbeSuccess{
+				AuthIndex:            fmt.Sprintf("writer-%d", idx),
+				ModelGroup:           "gemini",
+				ObservedAt:           now,
+				ResetAt:              now.Add(time.Hour),
+				ShortWindowResetAt:   now.Add(time.Hour),
+				ShortWindowRemaining: int64Ptr(int64(idx)),
+			})
+			if err := store.SaveAtomic(ctx); err != nil {
+				errCh <- fmt.Errorf("writer %d failed: %w", idx, err)
+			}
+		}(i)
+	}
+
+	wg.Wait()
+	close(errCh)
+
+	for writeErr := range errCh {
+		t.Fatalf("concurrent save atomic error: %v", writeErr)
+	}
+
+	// Verify reloaded document is healthy
+	reloaded, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatalf("failed to reload after concurrent writes: %v", err)
+	}
+	if len(reloaded.Entries()) == 0 {
+		t.Fatal("expected persisted entries after concurrent writes")
 	}
 }
 

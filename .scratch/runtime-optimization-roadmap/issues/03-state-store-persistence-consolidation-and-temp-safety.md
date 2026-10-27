@@ -1,6 +1,6 @@
 # 03 — State Store Persistence Consolidation and Temp Safety
 
-Status: ready-for-agent
+Status: ready-for-human
 
 ## What to fix
 1. **Redundant Disk I/O Amplification in Production Runner**:
@@ -24,6 +24,6 @@ Status: ready-for-agent
 2. In `runProductionTask`, consolidate in-memory state mutations across probing, rate limiting, and plan execution, reducing disk writes to the minimal necessary persistence points (e.g. post-probe and post-apply).
 
 ## Acceptance Criteria
-- [ ] `SaveAtomic` uses a dynamic, collision-safe temporary file pattern (`os.CreateTemp`) instead of a static `.tmp` filename.
-- [ ] Multiple consecutive `SaveAtomic` calls within `runProductionTask` are consolidated without losing persistence durability or crash consistency.
-- [ ] `store_test.go` and `runtime_test.go` verify atomic persistence, concurrency safety, and recovery across reloads.
+- [x] `SaveAtomic` uses a dynamic, collision-safe temporary file pattern (`os.CreateTemp`) instead of a static `.tmp` filename.
+- [x] Multiple consecutive `SaveAtomic` calls within `runProductionTask` are consolidated without losing persistence durability or crash consistency.
+- [x] `store_test.go` and `runtime_test.go` verify atomic persistence, concurrency safety, and recovery across reloads.

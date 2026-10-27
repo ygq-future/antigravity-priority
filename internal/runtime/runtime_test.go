@@ -2923,3 +2923,120 @@ func TestRuntime_AutoDisabled_LifecycleAndProbeBypass(t *testing.T) {
 		t.Fatal("manual re-enable in host must clear AutoDisabled record")
 	}
 }
+
+func TestRuntime_StatePersistenceConsolidation_DurabilityAndRecovery(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "consolidated_cache.json")
+	authPath := filepath.Join(t.TempDir(), "auth_persist.json")
+	if err := os.WriteFile(authPath, []byte(`{"access_token":"token","project_id":"project","priority":10,"disabled":false}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC)
+	clock := &testClock{now: now}
+	mock := newMockHost()
+	mock.files = []host.AuthFile{{
+		Name:      "test-persist",
+		AuthIndex: "auth_persist",
+		Provider:  string(core.ProviderAntigravity),
+		Type:      string(core.CredentialTypeAntigravity),
+		Priority:  10,
+		Disabled:  false,
+	}}
+	mock.authDocs["auth_persist"] = host.AuthDocument{
+		AuthIndex: "auth_persist",
+		Path:      authPath,
+	}
+	mock.httpResponse = host.HTTPResponse{
+		StatusCode: http.StatusOK,
+		Body:       []byte(`{"groups":[{"displayName":"Gemini Models","buckets":[{"window":"5h","remainingFraction":0.9,"resetTime":"2026-09-10T15:00:00Z"},{"window":"7d","remainingFraction":0.95,"resetTime":"2026-09-17T15:00:00Z"}]}]}`),
+	}
+
+	r := newTestRuntime(t, runtime.Options{
+		Host:    mock,
+		Clock:   clock,
+		Sleeper: testSleeper{},
+	})
+
+	cfgYAML := fmt.Sprintf("state_cache_path: %q\n", filepath.ToSlash(cachePath))
+	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: cfgYAML}); err != nil {
+		t.Fatal(err)
+	}
+	dyn, _ := r.GetDynamicConfig(context.Background())
+	dyn.AutoApply = true
+	if err := r.SetDynamicConfig(context.Background(), dyn); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Run AutoApply: probes, plans, applies, and persists
+	if err := r.AutoApply(context.Background()); err != nil {
+		t.Fatalf("AutoApply failed: %v", err)
+	}
+
+	// 2. Verify state store file on disk is valid and captures all facets
+	store, err := state.Load(context.Background(), cachePath)
+	if err != nil {
+		t.Fatalf("failed to load persisted state: %v", err)
+	}
+	if entry, ok := store.GetEntry("auth_persist", "gemini"); !ok {
+		t.Fatal("expected probe entry to be persisted")
+	} else if entry.ShortWindowRemaining == nil || *entry.ShortWindowRemaining != 90 {
+		t.Fatalf("expected ShortWindowRemaining=90, got %v", entry.ShortWindowRemaining)
+	}
+	audit, resJSON, histJSON := store.GetRuntimeSnapshot()
+	if audit == "" || len(resJSON) == 0 || len(histJSON) == 0 {
+		t.Fatalf("expected complete runtime snapshot in store, got audit=%q, resLen=%d, histLen=%d", audit, len(resJSON), len(histJSON))
+	}
+
+	// 3. Trigger a 429 rate limit cooldown and verify consolidated persistence
+	clock.Advance(5 * time.Minute)
+	eventPayload := []byte(`{"Provider":"antigravity","Model":"gemini-2.5-pro","AuthIndex":"auth_persist","Failed":true,"Failure":{"StatusCode":429,"Body":"rate limit exceeded"}}`)
+	// Two 429s to confirm cooldown
+	_ = r.Handle(context.Background(), runtime.MethodUsageHandle, eventPayload)
+	_ = r.Handle(context.Background(), runtime.MethodUsageHandle, eventPayload)
+
+	storeAfter429, err := state.Load(context.Background(), cachePath)
+	if err != nil {
+		t.Fatalf("failed to load state after 429: %v", err)
+	}
+	cooldowns := storeAfter429.GetActiveCooldowns(clock.Now())
+	if _, inCooldown := cooldowns["auth_persist"]; !inCooldown {
+		t.Fatal("expected auth_persist to be in active cooldown in persisted state")
+	}
+
+	// 4. Send successful request during cooldown to trigger early recovery
+	clock.Advance(1 * time.Minute)
+	successPayload := []byte(`{"Provider":"antigravity","Model":"gemini-2.5-pro","AuthIndex":"auth_persist","Failed":false}`)
+	_ = r.Handle(context.Background(), runtime.MethodUsageHandle, successPayload)
+	// Wait briefly for rate limit worker deadline processing
+	time.Sleep(50 * time.Millisecond)
+
+	storeAfterRecovery, err := state.Load(context.Background(), cachePath)
+	if err != nil {
+		t.Fatalf("failed to load state after recovery: %v", err)
+	}
+	if _, inCooldown := storeAfterRecovery.GetActiveCooldowns(clock.Now())["auth_persist"]; inCooldown {
+		t.Fatal("expected auth_persist cooldown to be removed after recovery")
+	}
+
+	// 5. Test preview apply: probe to generate preview, then manual apply
+	if err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
+		t.Fatalf("Probe failed: %v", err)
+	}
+	snap, err := r.LatestSnapshot(context.Background())
+	if err != nil {
+		t.Fatalf("LatestSnapshot failed: %v", err)
+	}
+	if snap.PreviewID == "" {
+		t.Fatal("expected non-empty preview ID after probe")
+	}
+	if err := r.ManualApplyWithPreview(context.Background(), config.AntigravityModelGroupGemini, nil, snap.PreviewID); err != nil {
+		t.Fatalf("ManualApply with preview failed: %v", err)
+	}
+	storeAfterManual, err := state.Load(context.Background(), cachePath)
+	if err != nil {
+		t.Fatalf("failed to load state after manual apply: %v", err)
+	}
+	if audit, _, _ := storeAfterManual.GetRuntimeSnapshot(); audit == "" {
+		t.Fatal("expected runtime snapshot audit to be non-empty after manual apply")
+	}
+}
