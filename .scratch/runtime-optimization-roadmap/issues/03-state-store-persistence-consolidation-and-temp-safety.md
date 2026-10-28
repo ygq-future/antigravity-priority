@@ -1,6 +1,6 @@
 # 03 — State Store Persistence Consolidation and Temp Safety
 
-Status: ready-for-human
+Status: resolved
 
 ## What to fix
 1. **Redundant Disk I/O Amplification in Production Runner**:
