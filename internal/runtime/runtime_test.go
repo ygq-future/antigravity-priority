@@ -18,6 +18,7 @@ import (
 	"antigravity-priority/internal/core"
 	"antigravity-priority/internal/host"
 	"antigravity-priority/internal/management"
+	"antigravity-priority/internal/provider/antigravity"
 	"antigravity-priority/internal/runtime"
 	"antigravity-priority/internal/state"
 )
@@ -29,6 +30,7 @@ type mockHost struct {
 	authDocs      map[string]host.AuthDocument
 	saveCalls     int
 	httpResponse  host.HTTPResponse
+	httpResponses map[string]host.HTTPResponse
 	httpErr       error
 	httpCalls     []host.HTTPRequest
 	operations    []string
@@ -115,6 +117,9 @@ func (m *mockHost) HTTPDo(ctx context.Context, req host.HTTPRequest) (host.HTTPR
 	defer m.mu.Unlock()
 	if m.httpErr != nil {
 		return host.HTTPResponse{}, m.httpErr
+	}
+	if response, ok := m.httpResponses[req.URL]; ok {
+		return response, nil
 	}
 	return m.httpResponse, nil
 }
@@ -618,6 +623,62 @@ func TestRuntime_ProbeProjectsBothGroupsFromOneQuotaResponse(t *testing.T) {
 	}
 	if mock.saveCalls != 0 {
 		t.Fatalf("Probe wrote Host documents: %d saves", mock.saveCalls)
+	}
+}
+
+func TestRuntime_ProbeKeepsDualWindowCountdownsAndPlanTier(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	mock := newMockHost()
+	mock.files = []host.AuthFile{{
+		Name:      "pro-account",
+		AuthIndex: "pro-auth",
+		Provider:  string(core.ProviderAntigravity),
+		Type:      string(core.CredentialTypeAntigravity),
+		Priority:  100,
+	}}
+	// The quota summary carries named 5h/weekly buckets, which is what the dashboard
+	// needs for reset countdowns and the plan tier. Available models only reports
+	// per-model fractions without window names and must never shadow it.
+	mock.httpResponses = map[string]host.HTTPResponse{
+		antigravity.RetrieveUserQuotaSummaryURL: {
+			StatusCode: http.StatusOK,
+			Body: []byte(`{"groups":[{"displayName":"Gemini Models","buckets":[
+				{"window":"5h","remainingFraction":0.85,"resetTime":"2026-08-22T15:00:00Z"},
+				{"window":"weekly","remainingFraction":0.70,"resetTime":"2026-08-29T00:00:00Z"}
+			]}]}`),
+		},
+		antigravity.FetchAvailableModelsURL: {
+			StatusCode: http.StatusOK,
+			Body:       []byte(`{"models":{"gemini-2.0-flash":{"modelProvider":"google","quotaInfo":{"remainingFraction":0.15,"resetTime":"2026-08-22T11:00:00Z"}}}}`),
+		},
+	}
+	r := newTestRuntime(t, runtime.Options{Host: mock, Clock: &testClock{now: time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)}, Sleeper: testSleeper{}})
+	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := r.LatestSnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mock.httpCalls) != 1 {
+		t.Fatalf("quota HTTP calls = %d, want a single summary request", len(mock.httpCalls))
+	}
+	items := snapshot.Groups[string(config.AntigravityModelGroupGemini)].Items
+	if len(items) != 1 {
+		t.Fatalf("gemini items = %d, want 1", len(items))
+	}
+	item := items[0]
+	if item.ShortWindowResetAt == nil || item.LongWindowResetAt == nil {
+		t.Fatalf("reset countdowns missing: short=%v long=%v", item.ShortWindowResetAt, item.LongWindowResetAt)
+	}
+	if item.PlanType != string(core.PlanTypePro) {
+		t.Fatalf("plan tier = %q, want %q", item.PlanType, core.PlanTypePro)
+	}
+	if item.R5h != 0.85 || item.R7d != 0.70 {
+		t.Fatalf("quota meters = r5h %v r7d %v, want 0.85/0.70", item.R5h, item.R7d)
 	}
 }
 

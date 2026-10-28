@@ -37,12 +37,15 @@ type quotaHTTPDoer interface {
 }
 
 func executeAntigravityQuotaRequest(ctx context.Context, doer quotaHTTPDoer, request antigravityQuotaRequest) map[antigravity.ModelGroup]antigravity.ProbeResult {
-	primaryURLs, fallbackURLs := selectQuotaEndpointURLs(request.TargetGroup)
-
-	results, lastStatus, lastErr := queryQuotaURLs(ctx, doer, primaryURLs, request)
+	// The quota summary is the only endpoint that returns canonical named buckets
+	// (5h / weekly) for every model group, which is the evidence shape that yields
+	// reset countdowns and an inferable plan tier. Available models only carries
+	// per-model quotas without window names, so it may only supplement a group the
+	// summary omits.
+	results, lastStatus, lastErr := queryQuotaURLs(ctx, doer, antigravityQuotaURLs, request)
 
 	if !hasRequestedQuota(results, request.TargetGroup) {
-		fallbackResults, fbStatus, fbErr := queryQuotaURLs(ctx, doer, fallbackURLs, request)
+		fallbackResults, fbStatus, fbErr := queryQuotaURLs(ctx, doer, antigravityAvailableModelsURLs, request)
 		if fbStatus != 0 {
 			lastStatus = fbStatus
 		}
@@ -62,20 +65,13 @@ func executeAntigravityQuotaRequest(ctx context.Context, doer quotaHTTPDoer, req
 	}
 
 	if results != nil {
-		return pruneUnrequestedFailedGroups(results, request.TargetGroup)
+		return results
 	}
 	message := fmt.Sprintf("retrieve quota summary status %d", lastStatus)
 	if lastErr != nil && lastStatus == 0 {
 		message = "host http do failed"
 	}
 	return failedAntigravityQuotaResults(request, message, lastStatus)
-}
-
-func selectQuotaEndpointURLs(target antigravity.ModelGroup) ([]string, []string) {
-	if target == antigravity.ModelGroupGemini {
-		return antigravityAvailableModelsURLs, antigravityQuotaURLs
-	}
-	return antigravityQuotaURLs, antigravityAvailableModelsURLs
 }
 
 func hasRequestedQuota(results map[antigravity.ModelGroup]antigravity.ProbeResult, target antigravity.ModelGroup) bool {
@@ -123,18 +119,6 @@ func queryQuotaURLs(ctx context.Context, doer quotaHTTPDoer, urls []string, requ
 	}
 
 	return nil, lastStatus, lastErr
-}
-
-func pruneUnrequestedFailedGroups(results map[antigravity.ModelGroup]antigravity.ProbeResult, target antigravity.ModelGroup) map[antigravity.ModelGroup]antigravity.ProbeResult {
-	if results == nil || target == "" {
-		return results
-	}
-	for group, res := range results {
-		if group != target && res.Status != antigravity.StatusReady {
-			delete(results, group)
-		}
-	}
-	return results
 }
 
 func failedAntigravityQuotaResults(request antigravityQuotaRequest, message string, statusCode int) map[antigravity.ModelGroup]antigravity.ProbeResult {

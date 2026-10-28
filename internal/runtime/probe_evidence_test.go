@@ -57,21 +57,21 @@ func (m *probeEvidenceMockHost) HTTPDo(ctx context.Context, req host.HTTPRequest
 	return resp, nil
 }
 
-func TestProbeAndRecord_GeminiTargetRoutesDirectlySingleCall(t *testing.T) {
+func TestProbeAndRecord_GeminiTargetKeepsDualWindowEvidence(t *testing.T) {
 	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
 	mock := &probeEvidenceMockHost{
 		httpResponse: host.HTTPResponse{
 			StatusCode: http.StatusOK,
 			Body: []byte(`{
-				"models": {
-					"gemini-2.5-pro": {
-						"modelProvider": "google",
-						"quotaInfo": {
-							"remainingFraction": 0.85,
-							"resetTime": "2026-08-21T17:00:00Z"
-						}
-					}
-				}
+				"groups": [
+					{"displayName": "Gemini Models", "buckets": [
+						{"window": "5h", "remainingFraction": 0.85, "resetTime": "2026-08-21T17:00:00Z"},
+						{"window": "weekly", "remainingFraction": 0.62, "resetTime": "2026-08-28T00:00:00Z"}
+					]},
+					{"displayName": "Claude and GPT models", "buckets": [
+						{"window": "5h", "remainingFraction": 0.4, "resetTime": "2026-08-21T16:00:00Z"}
+					]}
+				]
 			}`),
 		},
 	}
@@ -108,20 +108,32 @@ func TestProbeAndRecord_GeminiTargetRoutesDirectlySingleCall(t *testing.T) {
 	mock.mu.Unlock()
 
 	if calls != 1 {
-		t.Fatalf("HTTP calls = %d; want 1 (Gemini direct routing must not incur serial fallback)", calls)
+		t.Fatalf("HTTP calls = %d; want 1 quota summary request", calls)
 	}
-	if calledURLs[0] != antigravity.FetchAvailableModelsURL {
-		t.Fatalf("expected direct call to %q, got %q", antigravity.FetchAvailableModelsURL, calledURLs[0])
+	if calledURLs[0] != antigravity.RetrieveUserQuotaSummaryURL {
+		t.Fatalf("expected call to %q, got %q", antigravity.RetrieveUserQuotaSummaryURL, calledURLs[0])
 	}
 
-	if len(results) != 1 {
-		t.Fatalf("results len = %d; want 1 (only Gemini result expected)", len(results))
+	if len(results) != 2 {
+		t.Fatalf("results len = %d; want both model groups from one response", len(results))
 	}
-	if results[0].ModelGroup != antigravity.ModelGroupGemini || results[0].Status != antigravity.StatusReady {
-		t.Fatalf("unexpected probe result: %#v", results[0])
+	var gemini antigravity.ProbeResult
+	for _, result := range results {
+		if result.ModelGroup == antigravity.ModelGroupGemini {
+			gemini = result
+		}
 	}
-	if results[0].Remaining == nil || *results[0].Remaining != 85 {
-		t.Fatalf("unexpected remaining: %v", results[0].Remaining)
+	if gemini.Status != antigravity.StatusReady {
+		t.Fatalf("unexpected probe result: %#v", gemini)
+	}
+	if gemini.ShortWindowResetAt == nil || gemini.LongWindowResetAt == nil {
+		t.Fatalf("dual-window evidence lost: short=%v long=%v", gemini.ShortWindowResetAt, gemini.LongWindowResetAt)
+	}
+	if gemini.PlanType != core.PlanTypePro {
+		t.Fatalf("plan type = %q; want %q", gemini.PlanType, core.PlanTypePro)
+	}
+	if gemini.Remaining == nil || *gemini.Remaining != 85 {
+		t.Fatalf("unexpected remaining: %v", gemini.Remaining)
 	}
 
 	// Verify Gemini quota is recorded and fresh in state store
@@ -138,30 +150,23 @@ func TestProbeAndRecord_GeminiTargetRoutesDirectlySingleCall(t *testing.T) {
 	if needsProbe {
 		t.Fatalf("store still needs probe for Gemini after successful probe")
 	}
-
-	// Verify ClaudeGPT was NOT recorded as a false probe failure
-	if entry, exists := store.GetEntry("auth-gemini-1", string(antigravity.ModelGroupClaudeGPT)); exists {
-		if entry.LastError != "" {
-			t.Fatalf("ClaudeGPT has unexpected probe failure recorded: %s", entry.LastError)
-		}
-	}
 }
 
-func TestCollectFreshEvidence_GeminiControlGroupOptimizesLatency(t *testing.T) {
+func TestCollectFreshEvidence_GeminiControlGroupUsesOneSummaryCallPerAccount(t *testing.T) {
 	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
 	mock := &probeEvidenceMockHost{
 		httpResponse: host.HTTPResponse{
 			StatusCode: http.StatusOK,
 			Body: []byte(`{
-				"models": {
-					"gemini-2.5-pro": {
-						"modelProvider": "google",
-						"quotaInfo": {
-							"remainingFraction": 0.9,
-							"resetTime": "2026-08-21T17:00:00Z"
-						}
-					}
-				}
+				"groups": [
+					{"displayName": "Gemini Models", "buckets": [
+						{"window": "5h", "remainingFraction": 0.9, "resetTime": "2026-08-21T17:00:00Z"},
+						{"window": "weekly", "remainingFraction": 0.7, "resetTime": "2026-08-28T00:00:00Z"}
+					]},
+					{"displayName": "Claude and GPT models", "buckets": [
+						{"window": "5h", "remainingFraction": 0.6, "resetTime": "2026-08-21T17:00:00Z"}
+					]}
+				]
 			}`),
 		},
 	}
@@ -201,41 +206,52 @@ func TestCollectFreshEvidence_GeminiControlGroupOptimizesLatency(t *testing.T) {
 	calls := len(mock.httpCalls)
 	mock.mu.Unlock()
 
-	// 2 credentials probed * 1 direct request = 2 calls (instead of 2 * 2 = 4 sequential calls)
+	// 2 credentials probed * 1 quota summary request = 2 calls; the summary already
+	// carries both model groups, so no second endpoint is needed.
 	if calls != 2 {
-		t.Fatalf("total HTTP calls = %d; want 2 (1 call per account, ~50%% latency cut)", calls)
+		t.Fatalf("total HTTP calls = %d; want 2 (1 summary call per account)", calls)
 	}
 
 	geminiResult := collected.ByGroup[config.AntigravityModelGroupGemini]
 	if len(geminiResult.Eligible) != 2 {
 		t.Fatalf("eligible credentials = %d; want 2", len(geminiResult.Eligible))
 	}
+	claudeResult := collected.ByGroup[config.AntigravityModelGroupClaudeGPT]
+	if len(claudeResult.Eligible) != 2 {
+		t.Fatalf("claude/gpt eligible credentials = %d; want 2 from the same response", len(claudeResult.Eligible))
+	}
 	if collected.Probed != 2 {
 		t.Fatalf("probed credentials count = %d; want 2", collected.Probed)
 	}
 
+	// Each account carries one fresh Gemini observation; the peer group arrives in the
+	// same response and is reported separately for the Gemini round.
+	fresh := 0
 	for _, obs := range geminiResult.Observations {
-		if obs.Kind != evidence.ObservationFresh {
-			t.Errorf("observation for %s kind = %v; want ObservationFresh", obs.AuthIndex, obs.Kind)
+		if obs.Kind == evidence.ObservationFresh {
+			fresh++
 		}
+	}
+	if fresh != 2 {
+		t.Fatalf("fresh gemini observations = %d; want 2", fresh)
 	}
 }
 
-func TestCollectFreshEvidence_GeminiFallbackWhenModelsEndpointFails(t *testing.T) {
+func TestCollectFreshEvidence_FallsBackToAvailableModelsWhenSummaryFails(t *testing.T) {
 	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
 	mock := &probeEvidenceMockHost{
 		doFn: func(ctx context.Context, req host.HTTPRequest) (host.HTTPResponse, error) {
 			if strings.Contains(req.URL, "fetchAvailableModels") {
-				return host.HTTPResponse{StatusCode: http.StatusInternalServerError}, nil
+				return host.HTTPResponse{
+					StatusCode: http.StatusOK,
+					Body: []byte(`{
+						"models": {
+							"gemini-2.5-pro": {"modelProvider": "google", "quotaInfo": {"remainingFraction": 0.77, "resetTime": "2026-08-21T17:00:00Z"}}
+						}
+					}`),
+				}, nil
 			}
-			return host.HTTPResponse{
-				StatusCode: http.StatusOK,
-				Body: []byte(`{
-					"groups": [
-						{"displayName": "Gemini Models", "buckets": [{"window": "5h", "remainingFraction": 0.77, "resetTime": "2026-08-21T17:00:00Z"}]}
-					]
-				}`),
-			}, nil
+			return host.HTTPResponse{StatusCode: http.StatusInternalServerError}, nil
 		},
 	}
 
