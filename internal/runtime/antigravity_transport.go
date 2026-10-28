@@ -14,8 +14,8 @@ import (
 
 var antigravityQuotaURLs = []string{
 	antigravity.RetrieveUserQuotaSummaryURL,
-	"https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:retrieveUserQuotaSummary",
-	"https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
+	antigravity.RetrieveUserQuotaSummaryDailyURL,
+	antigravity.RetrieveUserQuotaSummarySandboxURL,
 }
 
 var antigravityAvailableModelsURLs = []string{
@@ -52,16 +52,7 @@ func executeAntigravityQuotaRequest(ctx context.Context, doer quotaHTTPDoer, req
 		if fbErr != nil && lastErr == nil {
 			lastErr = fbErr
 		}
-		if fallbackResults != nil {
-			if results == nil {
-				results = make(map[antigravity.ModelGroup]antigravity.ProbeResult, len(fallbackResults))
-			}
-			for group, fResult := range fallbackResults {
-				if existing, exists := results[group]; !exists || existing.Status != antigravity.StatusReady {
-					results[group] = fResult
-				}
-			}
-		}
+		results = mergeQuotaResults(results, fallbackResults)
 	}
 
 	if results != nil {
@@ -92,15 +83,10 @@ func hasRequestedQuota(results map[antigravity.ModelGroup]antigravity.ProbeResul
 func queryQuotaURLs(ctx context.Context, doer quotaHTTPDoer, urls []string, request antigravityQuotaRequest) (map[antigravity.ModelGroup]antigravity.ProbeResult, int, error) {
 	var lastStatus int
 	var lastErr error
+	var merged map[antigravity.ModelGroup]antigravity.ProbeResult
 
 	for _, url := range urls {
-		response, err := doer.HTTPDoRaw(ctx, host.HTTPRequest{
-			AuthIndex: request.AuthIndex,
-			Method:    http.MethodPost,
-			URL:       url,
-			Headers:   antigravityQuotaHeaders(request.AccessToken),
-			Body:      antigravityQuotaBody(request.ProjectID),
-		})
+		response, err := postAntigravityQuota(ctx, doer, url, request)
 		if err != nil {
 			lastErr = err
 			continue
@@ -115,10 +101,31 @@ func queryQuotaURLs(ctx context.Context, doer quotaHTTPDoer, urls []string, requ
 			result.HTTPStatusCode = response.StatusCode
 			results[group] = result
 		}
-		return results, response.StatusCode, nil
+		merged = mergeQuotaResults(merged, results)
+		// A 200 is not proof of completeness: hosts have answered with only a
+		// subset of the model groups. Keep asking until the requested group is
+		// covered so a partial answer cannot silently hide a group's quota.
+		if hasRequestedQuota(merged, request.TargetGroup) {
+			return merged, response.StatusCode, nil
+		}
 	}
 
-	return nil, lastStatus, lastErr
+	return merged, lastStatus, lastErr
+}
+
+func mergeQuotaResults(merged map[antigravity.ModelGroup]antigravity.ProbeResult, incoming map[antigravity.ModelGroup]antigravity.ProbeResult) map[antigravity.ModelGroup]antigravity.ProbeResult {
+	if incoming == nil {
+		return merged
+	}
+	if merged == nil {
+		merged = make(map[antigravity.ModelGroup]antigravity.ProbeResult, len(incoming))
+	}
+	for group, result := range incoming {
+		if existing, exists := merged[group]; !exists || existing.Status != antigravity.StatusReady {
+			merged[group] = result
+		}
+	}
+	return merged
 }
 
 func failedAntigravityQuotaResults(request antigravityQuotaRequest, message string, statusCode int) map[antigravity.ModelGroup]antigravity.ProbeResult {
@@ -148,7 +155,48 @@ func antigravityQuotaBody(projectID string) []byte {
 	return body
 }
 
+// antigravityHubUserAgent identifies the desktop (hub) client. Google gates the
+// separate Gemini 4 Argon weekly bucket on the client identity: the IDE family and
+// older hub versions receive a summary without it, so the dashboard can never show
+// Argon quota while the probe advertises a legacy identity.
+const antigravityHubUserAgent = "antigravity/hub/2.23.0 darwin/arm64"
+
+// antigravityLegacyHubUserAgent is the previously used identity. It is retried only
+// after the current identity is rejected, so a hard upstream rejection cannot erase
+// the shared Gemini/Claude windows that the legacy identity still serves.
+const antigravityLegacyHubUserAgent = "antigravity/hub/2.9.1 darwin/arm64"
+
+func postAntigravityQuota(ctx context.Context, doer quotaHTTPDoer, url string, request antigravityQuotaRequest) (host.HTTPResponse, error) {
+	response, err := doer.HTTPDoRaw(ctx, host.HTTPRequest{
+		AuthIndex: request.AuthIndex,
+		Method:    http.MethodPost,
+		URL:       url,
+		Headers:   antigravityQuotaHeaders(request.AccessToken),
+		Body:      antigravityQuotaBody(request.ProjectID),
+	})
+	if err != nil || response.StatusCode != http.StatusForbidden {
+		return response, err
+	}
+
+	legacy, legacyErr := doer.HTTPDoRaw(ctx, host.HTTPRequest{
+		AuthIndex: request.AuthIndex,
+		Method:    http.MethodPost,
+		URL:       url,
+		Headers:   antigravityQuotaHeadersForUserAgent(request.AccessToken, antigravityLegacyHubUserAgent),
+		Body:      antigravityQuotaBody(request.ProjectID),
+	})
+	if legacyErr != nil {
+		// Keep the rejection status: the fallback must not mask it with a transport error.
+		return response, nil
+	}
+	return legacy, nil
+}
+
 func antigravityQuotaHeaders(accessToken string) host.Header {
+	return antigravityQuotaHeadersForUserAgent(accessToken, antigravityHubUserAgent)
+}
+
+func antigravityQuotaHeadersForUserAgent(accessToken string, userAgent string) host.Header {
 	token := "$TOKEN$"
 	if trimmed := strings.TrimSpace(accessToken); trimmed != "" {
 		token = trimmed
@@ -157,7 +205,7 @@ func antigravityQuotaHeaders(accessToken string) host.Header {
 		"Accept":        []string{"application/json"},
 		"Authorization": []string{"Bearer " + token},
 		"Content-Type":  []string{"application/json"},
-		"User-Agent":    []string{"antigravity/hub/2.9.1 darwin/arm64"},
+		"User-Agent":    []string{userAgent},
 	}
 }
 

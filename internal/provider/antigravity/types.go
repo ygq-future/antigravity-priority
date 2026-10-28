@@ -18,7 +18,18 @@ const (
 )
 
 // RetrieveUserQuotaSummaryURL is the primary Antigravity quota summary endpoint.
-const RetrieveUserQuotaSummaryURL = "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary"
+//
+// Production must be asked first: the daily host has been observed answering 200
+// with only the Claude/GPT group, which silently hides the shared Gemini windows
+// and the separate Gemini 4 Argon weekly bucket.
+const RetrieveUserQuotaSummaryURL = "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary"
+
+// RetrieveUserQuotaSummaryDailyURL is the daily Antigravity quota summary endpoint,
+// kept as a fallback for when production is unreachable.
+const RetrieveUserQuotaSummaryDailyURL = "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary"
+
+// RetrieveUserQuotaSummarySandboxURL is the sandbox Antigravity quota summary endpoint.
+const RetrieveUserQuotaSummarySandboxURL = "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:retrieveUserQuotaSummary"
 
 // FetchAvailableModelsURL is the fallback Antigravity available models endpoint providing per-model quotas.
 const FetchAvailableModelsURL = "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels"

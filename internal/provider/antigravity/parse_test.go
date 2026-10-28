@@ -633,3 +633,40 @@ func TestParseAvailableModels_ArgonInGeminiGroup(t *testing.T) {
 		t.Fatalf("expected ArgonWindowRemaining=35, got %v", resFallback.ArgonWindowRemaining)
 	}
 }
+
+// The live quota summary reports the Argon weekly limit in its own "Gemini 4 Argon"
+// group (bucket gemini-argon-wtu-weekly, window "weekly"), separate from the shared
+// Gemini pool. It must surface as the dedicated Argon window without displacing the
+// shared 5h/weekly values.
+func TestParseAvailableModels_ArgonSeparateGroup(t *testing.T) {
+	raw := []byte(`{"groups":[
+		{"displayName":"Gemini Models","description":"Shared quota for Gemini models","buckets":[
+			{"bucketId":"gemini-5h","displayName":"Five Hour Limit","window":"5h","remainingFraction":0.99,"resetTime":"2026-10-28T17:00:00Z"},
+			{"bucketId":"gemini-weekly","displayName":"Weekly Limit","window":"weekly","remainingFraction":0.79,"resetTime":"2026-10-31T00:00:00Z"}
+		]},
+		{"displayName":"Gemini 4 Argon","description":"For paid Pro plans, Argon quota is separate. Higher Argon quota (included as part of the larger Gemini quota bucket) is available on Ultra plans.","buckets":[
+			{"bucketId":"gemini-argon-wtu-weekly","displayName":"Gemini 4 Argon Weekly Limit","window":"weekly","remainingFraction":0.71,"resetTime":"2026-10-29T23:24:33Z"}
+		]}
+	]}`)
+	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+
+	res := ParseAvailableModels(raw, now, ModelGroupGemini)
+	if res.Status != StatusReady {
+		t.Fatalf("expected StatusReady, got %v (err: %v)", res.Status, res.Error)
+	}
+	if res.ShortWindowRemaining == nil || *res.ShortWindowRemaining != 99 {
+		t.Fatalf("ShortWindowRemaining = %v; want 99", res.ShortWindowRemaining)
+	}
+	if res.LongWindowRemaining == nil || *res.LongWindowRemaining != 79 {
+		t.Fatalf("LongWindowRemaining = %v; want 79 from the shared Gemini pool", res.LongWindowRemaining)
+	}
+	if res.ArgonWindowRemaining == nil || *res.ArgonWindowRemaining != 71 {
+		t.Fatalf("ArgonWindowRemaining = %v; want 71", res.ArgonWindowRemaining)
+	}
+	if res.ArgonWindowResetAt == nil || res.ArgonWindowResetAt.Format(time.RFC3339) != "2026-10-29T23:24:33Z" {
+		t.Fatalf("ArgonWindowResetAt = %v; want 2026-10-29T23:24:33Z", res.ArgonWindowResetAt)
+	}
+	if res.PlanType != core.PlanTypePro {
+		t.Fatalf("PlanType = %q; want %q", res.PlanType, core.PlanTypePro)
+	}
+}

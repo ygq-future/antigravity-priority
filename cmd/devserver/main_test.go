@@ -141,18 +141,12 @@ func TestDevHostReturnsBothModelGroupsAndQuotaLifecycle(t *testing.T) {
 		if err := json.Unmarshal(response.Body, &contract); err != nil {
 			t.Fatalf("decode simulated quota contract: %v", err)
 		}
-		if len(contract.Groups) != 2 || len(contract.Groups[0].Buckets) != 3 || len(contract.Groups[1].Buckets) != 2 {
-			t.Fatalf("simulated quota response must expose Gemini 3 buckets (including Argon) and Claude 2 buckets: %+v", contract.Groups)
+		if len(contract.Groups) != 3 || len(contract.Groups[0].Buckets) != 2 || len(contract.Groups[1].Buckets) != 1 || len(contract.Groups[2].Buckets) != 2 {
+			t.Fatalf("simulated quota response must expose the Gemini shared pool, the separate Gemini 4 Argon group and the Claude group: %+v", contract.Groups)
 		}
-		hasArgon := false
-		for _, b := range contract.Groups[0].Buckets {
-			if b.BucketID == "gemini_argon_weekly" {
-				hasArgon = true
-				break
-			}
-		}
-		if !hasArgon {
-			t.Fatalf("simulated Gemini group missing gemini_argon_weekly bucket: %+v", contract.Groups[0].Buckets)
+		argon := contract.Groups[1]
+		if contract.Groups[1].DisplayName != "Gemini 4 Argon" || argon.Buckets[0].BucketID != "gemini-argon-wtu-weekly" || argon.Buckets[0].Window != "weekly" {
+			t.Fatalf("simulated Argon group does not mirror the live summary shape: %+v", argon)
 		}
 		return antigravity.ParseAllModelGroups(response.Body, now)
 	}

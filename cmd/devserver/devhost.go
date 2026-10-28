@@ -417,37 +417,49 @@ func marshalDevQuotaResponse(state devQuotaState, isFree bool) ([]byte, error) {
 		Buckets     []bucket `json:"buckets"`
 	}
 	makeGroup := func(id, displayName, description string, quota devQuotaGroupState) group {
-		buckets := make([]bucket, 0, 3)
+		buckets := make([]bucket, 0, 2)
 		if !isFree {
 			buckets = append(buckets, bucket{BucketID: id + "-5h", DisplayName: "5 hour", Window: "5h", RemainingFraction: float64(quota.Short) / 100, ResetTime: quota.ShortResetAt.UTC().Format(time.RFC3339), Description: "Five-hour quota window"})
 		}
 		buckets = append(buckets, bucket{BucketID: id + "-7d", DisplayName: "Weekly", Window: "7d", RemainingFraction: float64(quota.Long) / 100, ResetTime: quota.LongResetAt.UTC().Format(time.RFC3339), Description: "Weekly quota window"})
-		if !isFree && id == "gemini" {
-			argonRem := quota.ArgonWeekly
-			if argonRem <= 0 && quota.Long > 0 {
-				argonRem = quota.Long
-			}
-			buckets = append(buckets, bucket{
-				BucketID:          "gemini_argon_weekly",
-				DisplayName:       "Gemini 4 Argon Weekly",
-				Window:            "7d",
-				RemainingFraction: float64(argonRem) / 100,
-				ResetTime:         quota.LongResetAt.UTC().Format(time.RFC3339),
-				Description:       "Dedicated weekly quota for Gemini 4 Argon",
-			})
-		}
 		return group{
 			DisplayName: displayName,
 			Description: description,
 			Buckets:     buckets,
 		}
 	}
+	// The live summary reports the Argon weekly limit in its own model group, not inside
+	// the shared Gemini pool, so the simulator must mirror that shape.
+	argonGroup := group{
+		DisplayName: "Gemini 4 Argon",
+		Description: "For paid Pro plans, Argon quota is separate.",
+		Buckets:     []bucket{},
+	}
+	geminiQuota := state.Groups[string(antigravity.ModelGroupGemini)]
+	if !isFree {
+		argonRem := geminiQuota.ArgonWeekly
+		if argonRem <= 0 && geminiQuota.Long > 0 {
+			argonRem = geminiQuota.Long
+		}
+		argonGroup.Buckets = append(argonGroup.Buckets, bucket{
+			BucketID:          "gemini-argon-wtu-weekly",
+			DisplayName:       "Gemini 4 Argon Weekly Limit",
+			Window:            "weekly",
+			RemainingFraction: float64(argonRem) / 100,
+			ResetTime:         geminiQuota.LongResetAt.UTC().Format(time.RFC3339),
+			Description:       "Dedicated weekly quota for Gemini 4 Argon",
+		})
+	}
+	groups := []group{
+		makeGroup("gemini", "Gemini Models", "Shared quota for Gemini models", geminiQuota),
+	}
+	if len(argonGroup.Buckets) > 0 {
+		groups = append(groups, argonGroup)
+	}
+	groups = append(groups, makeGroup("claude-gpt", "Claude and GPT Models", "Shared quota for Claude and GPT models", state.Groups[string(antigravity.ModelGroupClaudeGPT)]))
 	response := struct {
 		Groups []group `json:"groups"`
-	}{Groups: []group{
-		makeGroup("gemini", "Gemini Models", "Shared quota for Gemini models", state.Groups[string(antigravity.ModelGroupGemini)]),
-		makeGroup("claude-gpt", "Claude and GPT Models", "Shared quota for Claude and GPT models", state.Groups[string(antigravity.ModelGroupClaudeGPT)]),
-	}}
+	}{Groups: groups}
 	return json.Marshal(response)
 }
 
