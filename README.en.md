@@ -139,7 +139,7 @@ In the **`⚙️ Config Center`** tab of the management dashboard, the following
 | **Boost Start Priority (`boost_start_priority`)** | `999` | `1 ~ 999` | Base priority for tier-1 boosted credentials. |
 | **Normal Healthy Start Priority (`normal_start_priority`)** | `100` | `1 ~ 999`, not above Boost start | Base priority for tier-2 regular healthy credentials. |
 
-> **Persistence Guarantee**: All settings changed in the UI Config Center are atomically saved to the active persistence cache file (defaults to `data/antigravity-priority-cache.json`), surviving CPA container restarts and taking precedence over initial YAML values.
+> **Persistence Guarantee**: All settings changed in the UI Config Center are atomically saved to the active persistence cache file (defaults to `data/antigravity-priority-cache.json`), surviving CPA container restarts and taking precedence over initial YAML values. The completion time of the latest automatic round is persisted as well, so a restart resumes the remaining interval instead of starting the schedule over.
 
 ---
 

@@ -153,29 +153,31 @@ type PriorityRulesConfig = config.PriorityRulesConfig
 
 // Store manages the in-memory and on-disk state cache document.
 type Store struct {
-	mu             sync.RWMutex
-	saveMu         sync.Mutex
-	path           string
-	entries        map[string]Entry
-	latestAudit    string
-	latestResult   []byte
-	runHistory     []byte
-	scheduleConfig *ScheduleConfig
-	dynamicConfig  *DynamicConfig
-	cooldowns      map[string]CooldownEntry
-	autoDisabled   map[string]AutoDisabledEntry
+	mu              sync.RWMutex
+	saveMu          sync.Mutex
+	path            string
+	entries         map[string]Entry
+	latestAudit     string
+	latestResult    []byte
+	runHistory      []byte
+	scheduleConfig  *ScheduleConfig
+	dynamicConfig   *DynamicConfig
+	lastAutoApplyAt time.Time
+	cooldowns       map[string]CooldownEntry
+	autoDisabled    map[string]AutoDisabledEntry
 }
 
 type document struct {
-	SchemaVersion  int                      `json:"schema_version"`
-	Entries        map[string]Entry         `json:"entries"`
-	LatestAudit    string                   `json:"latest_audit,omitempty"`
-	LatestResult   json.RawMessage          `json:"latest_result,omitempty"`
-	RunHistory     json.RawMessage          `json:"run_history,omitempty"`
-	ScheduleConfig *ScheduleConfig          `json:"schedule_config,omitempty"`
-	DynamicConfig  *DynamicConfig           `json:"app_config,omitempty"`
-	Cooldowns      map[string]CooldownEntry      `json:"cooldowns,omitempty"`
-	AutoDisabled   map[string]AutoDisabledEntry  `json:"auto_disabled,omitempty"`
+	SchemaVersion   int                          `json:"schema_version"`
+	Entries         map[string]Entry             `json:"entries"`
+	LatestAudit     string                       `json:"latest_audit,omitempty"`
+	LatestResult    json.RawMessage              `json:"latest_result,omitempty"`
+	RunHistory      json.RawMessage              `json:"run_history,omitempty"`
+	ScheduleConfig  *ScheduleConfig              `json:"schedule_config,omitempty"`
+	DynamicConfig   *DynamicConfig               `json:"app_config,omitempty"`
+	LastAutoApplyAt time.Time                    `json:"last_auto_apply_at,omitempty"`
+	Cooldowns       map[string]CooldownEntry     `json:"cooldowns,omitempty"`
+	AutoDisabled    map[string]AutoDisabledEntry `json:"auto_disabled,omitempty"`
 }
 
 // Load loads the state document from path. If the file does not exist, an empty store is returned.
@@ -225,6 +227,7 @@ func Load(ctx context.Context, path string) (*Store, error) {
 		dc := *doc.DynamicConfig
 		store.dynamicConfig = &dc
 	}
+	store.lastAutoApplyAt = utcOrZero(doc.LastAutoApplyAt)
 	if doc.Cooldowns != nil {
 		store.cooldowns = doc.Cooldowns
 	}
@@ -244,15 +247,16 @@ func (s *Store) SaveAtomic(ctx context.Context) (err error) {
 	s.mu.RLock()
 	path := s.path
 	doc := document{
-		SchemaVersion:  SchemaVersion,
-		Entries:        s.entries,
-		LatestAudit:    s.latestAudit,
-		LatestResult:   s.latestResult,
-		RunHistory:     s.runHistory,
-		ScheduleConfig: s.scheduleConfig,
-		DynamicConfig:  s.dynamicConfig,
-		Cooldowns:      s.cooldowns,
-		AutoDisabled:   s.autoDisabled,
+		SchemaVersion:   SchemaVersion,
+		Entries:         s.entries,
+		LatestAudit:     s.latestAudit,
+		LatestResult:    s.latestResult,
+		RunHistory:      s.runHistory,
+		ScheduleConfig:  s.scheduleConfig,
+		DynamicConfig:   s.dynamicConfig,
+		LastAutoApplyAt: s.lastAutoApplyAt,
+		Cooldowns:       s.cooldowns,
+		AutoDisabled:    s.autoDisabled,
 	}
 	data, err := json.MarshalIndent(doc, "", "  ")
 	s.mu.RUnlock()
@@ -425,6 +429,7 @@ func (s *Store) HasEntry(authIndex, modelGroup string) bool {
 	_, ok := s.entries[entryKey(authIndex, modelGroup)]
 	return ok
 }
+
 // GetPlanType returns the cached PlanType for authIndex across known model groups.
 // It checks the specific modelGroup if provided, or looks up in known groups.
 func (s *Store) GetPlanType(authIndex, preferredGroup string) core.PlanType {
@@ -448,7 +453,6 @@ func (s *Store) GetPlanType(authIndex, preferredGroup string) core.PlanType {
 	}
 	return core.PlanTypeUnknown
 }
-
 
 // GetCycleBurnRate returns the learned cycle burn rate for the credential, falling back to 0.15.
 func (s *Store) GetCycleBurnRate(authIndex, modelGroup string) float64 {
@@ -655,6 +659,23 @@ func (s *Store) SetScheduleConfig(cfg ScheduleConfig) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.scheduleConfig = &cfg
+}
+
+// GetLastAutoApplyAt returns the completion time of the most recent automatic
+// scheduling round. It lets a restarted Runtime honor the remaining interval
+// instead of starting the schedule over.
+func (s *Store) GetLastAutoApplyAt() time.Time {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.lastAutoApplyAt
+}
+
+// SetLastAutoApplyAt records the completion time of the most recent automatic
+// scheduling round.
+func (s *Store) SetLastAutoApplyAt(at time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lastAutoApplyAt = utcOrZero(at)
 }
 
 // GetDynamicConfig returns a copy of the persisted dynamic configuration and true if present.

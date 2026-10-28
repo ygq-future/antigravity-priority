@@ -280,6 +280,37 @@ func TestStore_SaveAtomic_And_Reload(t *testing.T) {
 	}
 }
 
+func TestStore_LastAutoApplyAt_PersistsAcrossReload(t *testing.T) {
+	ctx := context.Background()
+	cachePath := filepath.Join(t.TempDir(), "scheduler-cache.json")
+
+	store, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatalf("load failed: %v", err)
+	}
+	if got := store.GetLastAutoApplyAt(); !got.IsZero() {
+		t.Fatalf("expected zero last auto apply on empty store, got %v", got)
+	}
+
+	zone := time.FixedZone("UTC+8", 8*60*60)
+	appliedAt := time.Date(2026, 8, 18, 20, 30, 0, 0, zone)
+	store.SetLastAutoApplyAt(appliedAt)
+	if err := store.SaveAtomic(ctx); err != nil {
+		t.Fatalf("save atomic failed: %v", err)
+	}
+
+	reloaded, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatalf("reload failed: %v", err)
+	}
+	if got := reloaded.GetLastAutoApplyAt(); !got.Equal(appliedAt) {
+		t.Fatalf("expected reloaded last auto apply %v, got %v", appliedAt, got)
+	}
+	if got := reloaded.GetLastAutoApplyAt(); got.Location() != time.UTC {
+		t.Fatalf("expected reloaded last auto apply in UTC, got %v", got.Location())
+	}
+}
+
 func TestStore_SaveAtomic_DynamicTempFileSafety(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()
@@ -821,11 +852,11 @@ func TestStore_GetPlanType(t *testing.T) {
 
 	// Record success with Pro plan
 	_ = store.MarkProbeSuccess(ctx, state.ProbeSuccess{
-		AuthIndex:   "acc-pro",
-		ModelGroup:  "gemini",
-		ObservedAt:  now,
-		ResetAt:     now.Add(time.Hour),
-		PlanType:    core.PlanTypePro,
+		AuthIndex:  "acc-pro",
+		ModelGroup: "gemini",
+		ObservedAt: now,
+		ResetAt:    now.Add(time.Hour),
+		PlanType:   core.PlanTypePro,
 	})
 
 	if pt := store.GetPlanType("acc-pro", "gemini"); pt != core.PlanTypePro {

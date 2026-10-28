@@ -30,34 +30,34 @@ type quotaPreview struct {
 
 // Runtime manages plugin lifecycle, configuration, ticker worker, and single-flight execution.
 type Runtime struct {
-	mu                 sync.Mutex
-	runMu              sync.Mutex
-	runner             TaskRunner
-	rootCtx            context.Context
-	cancel             context.CancelFunc
-	cfg                config.Config
-	hostCallbacks      host.HostCallbacks
-	clock              Clock
-	sleeper            Sleeper
-	management         *management.Handler
-	latestResult       apply.Result
-	latestAudit        string
-	latestDualSnapshot *apply.DualGroupSnapshot
-	latestQuotaPreview *quotaPreview
-	scheduleConfig     state.ScheduleConfig
-	stateCacheOverride string
+	mu                  sync.Mutex
+	runMu               sync.Mutex
+	runner              TaskRunner
+	rootCtx             context.Context
+	cancel              context.CancelFunc
+	cfg                 config.Config
+	hostCallbacks       host.HostCallbacks
+	clock               Clock
+	sleeper             Sleeper
+	management          *management.Handler
+	latestResult        apply.Result
+	latestAudit         string
+	latestDualSnapshot  *apply.DualGroupSnapshot
+	latestQuotaPreview  *quotaPreview
+	scheduleConfig      state.ScheduleConfig
+	stateCacheOverride  string
 	runHistory          []RunHistoryEntry
 	latestProbeOutcomes []management.ProbeOutcome
 	lastAutoApplyAt     time.Time
-	worker             *tickerWorker
-	shutdown           bool
-	rateLimitMu        sync.Mutex
-	pending429         map[string]pending429
-	stormUntil         time.Time
-	stormAccounts      map[string]bool
-	activeCooldowns    map[string]state.CooldownEntry
-	rateLimitWake      chan struct{}
-	rateLimitDone      chan struct{}
+	worker              *tickerWorker
+	shutdown            bool
+	rateLimitMu         sync.Mutex
+	pending429          map[string]pending429
+	stormUntil          time.Time
+	stormAccounts       map[string]bool
+	activeCooldowns     map[string]state.CooldownEntry
+	rateLimitWake       chan struct{}
+	rateLimitDone       chan struct{}
 }
 
 // New creates an initialized Runtime instance.
@@ -121,6 +121,7 @@ func New(options Options) *Runtime {
 			rt.latestAudit = audit
 		}
 		rt.scheduleConfig = store.GetScheduleConfig()
+		rt.lastAutoApplyAt = store.GetLastAutoApplyAt()
 		if dynCfg, ok := store.GetDynamicConfig(); ok {
 			if merged, err := dynCfg.ApplyTo(rt.cfg); err == nil {
 				rt.cfg = merged
@@ -521,9 +522,32 @@ func (r *Runtime) runAuto(ctx context.Context) error {
 		return fmt.Errorf("run %s: %w", TriggerAutoApply, runErr)
 	}
 
+	completedAt := r.clock.Now().UTC()
 	r.mu.Lock()
-	r.lastAutoApplyAt = r.clock.Now().UTC()
+	r.lastAutoApplyAt = completedAt
 	r.mu.Unlock()
+	if err := r.persistLastAutoApplyAt(taskCtx, cfg, completedAt); err != nil {
+		return err
+	}
+	return nil
+}
+
+// persistLastAutoApplyAt stores the automatic round completion time so a
+// restarted Runtime resumes the remaining interval instead of scheduling a
+// fresh round from scratch.
+func (r *Runtime) persistLastAutoApplyAt(ctx context.Context, cfg config.Config, at time.Time) error {
+	cachePath := cfg.StateCachePath
+	if strings.TrimSpace(cachePath) == "" {
+		cachePath = config.DefaultStateCachePath
+	}
+	store, err := state.Load(ctx, cachePath)
+	if err != nil {
+		return fmt.Errorf("load state for auto apply schedule: %w", err)
+	}
+	store.SetLastAutoApplyAt(at)
+	if err := store.SaveAtomic(ctx); err != nil {
+		return fmt.Errorf("persist auto apply schedule: %w", err)
+	}
 	return nil
 }
 
@@ -538,6 +562,11 @@ func (r *Runtime) nextAutoApplyWait(interval time.Duration) time.Duration {
 		return time.Second
 	}
 	remaining := interval - r.clock.Now().UTC().Sub(last)
+	// A persisted timestamp ahead of the local clock (manual clock correction)
+	// must not postpone scheduling for longer than one interval.
+	if remaining > interval {
+		remaining = interval
+	}
 	if remaining < time.Second {
 		return time.Second
 	}
@@ -854,7 +883,6 @@ func (r *Runtime) LastProbeOutcomes(ctx context.Context) []management.ProbeOutco
 	}
 	return append([]management.ProbeOutcome(nil), r.latestProbeOutcomes...)
 }
-
 
 func cloneQuotaPreview(preview quotaPreview) quotaPreview {
 	cloned := preview

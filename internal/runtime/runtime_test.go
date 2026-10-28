@@ -148,7 +148,6 @@ func (testSleeper) Sleep(ctx context.Context, d time.Duration) error {
 	return nil
 }
 
-
 func newTestRuntime(t *testing.T, options runtime.Options) *runtime.Runtime {
 	t.Helper()
 	if options.StateCachePath == "" {
@@ -170,7 +169,6 @@ func prepareManualApply(t *testing.T, r *runtime.Runtime, modelGroup config.Anti
 		t.Fatal("quota probe before manual apply did not publish a preview id")
 	}
 }
-
 
 func TestRuntime_Handle_Register(t *testing.T) {
 	r := newTestRuntime(t, runtime.Options{})
@@ -530,6 +528,64 @@ func TestRuntime_AutoApply_Cooldown(t *testing.T) {
 	}
 }
 
+func TestRuntime_AutoApply_HonorsPersistedIntervalAfterRestart(t *testing.T) {
+	ctx := context.Background()
+	cachePath := filepath.Join(t.TempDir(), "restart-cache.json")
+	clock := &testClock{now: time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)}
+
+	calls := 0
+	first := newTestRuntime(t, runtime.Options{
+		Clock:          clock,
+		StateCachePath: cachePath,
+		Runner: func(ctx context.Context, request runtime.TaskRequest) error {
+			calls++
+			return nil
+		},
+	})
+	if err := first.AutoApply(ctx); err != nil {
+		t.Fatalf("first auto apply failed: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("expected 1 call before restart, got %d", calls)
+	}
+	if err := first.Shutdown(ctx); err != nil {
+		t.Fatalf("shutdown first runtime failed: %v", err)
+	}
+
+	// Restart 5 minutes into the 15-minute interval: the remaining 10 minutes
+	// must be honored instead of starting the schedule over.
+	clock.Advance(5 * time.Minute)
+	restartedCalls := 0
+	restarted := newTestRuntime(t, runtime.Options{
+		Clock:          clock,
+		StateCachePath: cachePath,
+		Runner: func(ctx context.Context, request runtime.TaskRequest) error {
+			restartedCalls++
+			return nil
+		},
+	})
+	defer func() {
+		if err := restarted.Shutdown(ctx); err != nil {
+			t.Errorf("shutdown restarted runtime failed: %v", err)
+		}
+	}()
+
+	if err := restarted.AutoApply(ctx); err != nil {
+		t.Fatalf("auto apply after restart failed: %v", err)
+	}
+	if restartedCalls != 0 {
+		t.Fatalf("expected restarted runtime to wait out the remaining interval, got %d calls", restartedCalls)
+	}
+
+	clock.Advance(11 * time.Minute)
+	if err := restarted.AutoApply(ctx); err != nil {
+		t.Fatalf("auto apply after interval elapsed failed: %v", err)
+	}
+	if restartedCalls != 1 {
+		t.Fatalf("expected 1 call once the interval elapsed, got %d", restartedCalls)
+	}
+}
+
 func TestRuntime_ProductionRunner_ConcurrentProbes(t *testing.T) {
 	mock := newMockHost()
 	mock.files = []host.AuthFile{
@@ -817,7 +873,6 @@ func TestRuntime_SyncHostPreservesPlanType(t *testing.T) {
 		t.Fatalf("sync plan_type = %q; want pro preserved from state cache", syncSnapshot.Groups["gemini"].Items[0].PlanType)
 	}
 }
-
 
 func TestRuntime_ProductionRunner_FilteredAuthIndexes(t *testing.T) {
 	mock := newMockHost()
