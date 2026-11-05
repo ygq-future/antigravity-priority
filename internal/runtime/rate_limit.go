@@ -3,8 +3,10 @@ package runtime
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
+	"antigravity-priority/internal/config"
 	"antigravity-priority/internal/apply"
 	"antigravity-priority/internal/core"
 	"antigravity-priority/internal/host"
@@ -28,18 +30,23 @@ type pending429 struct {
 
 func (r *Runtime) observe429(ctx context.Context, authIndex, modelGroup, reason string, acquireRunLock bool) error {
 	now := r.clock.Now().UTC()
+	key := state.CooldownKey(authIndex, modelGroup)
 	r.rateLimitMu.Lock()
+	if _, active := r.activeCooldowns[key]; active {
+		r.rateLimitMu.Unlock()
+		return nil
+	}
 	if _, active := r.activeCooldowns[authIndex]; active {
 		r.rateLimitMu.Unlock()
 		return nil
 	}
 	if now.Before(r.stormUntil) {
-		r.stormAccounts[authIndex] = false
+		r.stormAccounts[key] = false
 		r.rateLimitMu.Unlock()
 		return nil
 	}
-	if pending, ok := r.pending429[authIndex]; ok && pending.Count >= 1 {
-		delete(r.pending429, authIndex)
+	if pending, ok := r.pending429[key]; ok && pending.Count >= 1 {
+		delete(r.pending429, key)
 		r.rateLimitMu.Unlock()
 		r.signalRateLimitWorker()
 		if acquireRunLock {
@@ -51,7 +58,7 @@ func (r *Runtime) observe429(ctx context.Context, authIndex, modelGroup, reason 
 		}
 		return err
 	}
-	r.pending429[authIndex] = pending429{AuthIndex: authIndex, ModelGroup: modelGroup, Reason: reason, FirstSeen: now, UpdatedAt: now, Count: 1}
+	r.pending429[key] = pending429{AuthIndex: authIndex, ModelGroup: modelGroup, Reason: reason, FirstSeen: now, UpdatedAt: now, Count: 1}
 	pendingCount := len(r.pending429)
 	r.rateLimitMu.Unlock()
 
@@ -72,10 +79,37 @@ func (r *Runtime) observe429(ctx context.Context, authIndex, modelGroup, reason 
 	return nil
 }
 
-func (r *Runtime) observeUsageSuccess(ctx context.Context, authIndex, modelGroup string) error {
+func (r *Runtime) observeUsageSuccess(ctx context.Context, authIndex, modelGroup string, detail usageDetail) error {
+	now := r.clock.Now().UTC()
+	cfg, err := r.Config()
+	if err == nil {
+		cachePath := cfg.StateCachePath
+		if strings.TrimSpace(cachePath) == "" {
+			cachePath = config.DefaultStateCachePath
+		}
+		if store, loadErr := state.Load(ctx, cachePath); loadErr == nil {
+			weightedTokens := state.CalculateWeightedTurnTokens(
+				detail.InputTokens,
+				detail.OutputTokens,
+				detail.ReasoningTokens,
+				detail.CacheReadTokens,
+				detail.TotalTokens,
+			)
+			if weightedTokens > 0 {
+				store.RecordUsageConsumption(authIndex, modelGroup, weightedTokens, now)
+				_ = store.SaveAtomic(ctx)
+			}
+		}
+	}
+
+	key := state.CooldownKey(authIndex, modelGroup)
 	r.rateLimitMu.Lock()
+	delete(r.pending429, key)
 	delete(r.pending429, authIndex)
-	if !r.stormUntil.IsZero() && r.clock.Now().UTC().Before(r.stormUntil) {
+	if !r.stormUntil.IsZero() && now.Before(r.stormUntil) {
+		if _, participant := r.stormAccounts[key]; participant {
+			r.stormAccounts[key] = true
+		}
 		if _, participant := r.stormAccounts[authIndex]; participant {
 			r.stormAccounts[authIndex] = true
 		}
@@ -92,27 +126,42 @@ func (r *Runtime) observeUsageSuccess(ctx context.Context, authIndex, modelGroup
 	}
 	r.rateLimitMu.Unlock()
 	r.signalRateLimitWorker()
+
 	r.rateLimitMu.Lock()
-	activeEntry, activeCooldown := r.activeCooldowns[authIndex]
+	activeEntry, activeCooldown := r.activeCooldowns[key]
+	if !activeCooldown {
+		activeEntry, activeCooldown = r.activeCooldowns[authIndex]
+	}
 	r.rateLimitMu.Unlock()
-	if !activeCooldown || activeEntry.ModelGroup != modelGroup {
+
+	r.routingMu.Lock()
+	r.recomputeRoutingTablesLocked(now)
+	r.routingMu.Unlock()
+
+	if !activeCooldown || (activeEntry.ModelGroup != "" && activeEntry.ModelGroup != modelGroup) {
 		return nil
 	}
 
-	cfg, err := r.Config()
 	if err != nil {
-		return err
+		c, cErr := r.Config()
+		if cErr != nil {
+			return cErr
+		}
+		cfg = c
 	}
 	store, err := state.Load(ctx, cfg.StateCachePath)
 	if err != nil {
 		return err
 	}
-	entry, active := store.GetCooldowns()[authIndex]
+	entry, active := store.GetCooldowns()[key]
 	if !active {
-		r.clearActiveCooldown(authIndex)
+		entry, active = store.GetCooldowns()[authIndex]
+	}
+	if !active {
+		r.clearActiveCooldown(key)
 		return nil
 	}
-	if !r.clock.Now().UTC().Before(entry.CooldownUntil) || entry.ModelGroup != modelGroup {
+	if !r.clock.Now().UTC().Before(entry.CooldownUntil) || (entry.ModelGroup != "" && entry.ModelGroup != modelGroup) {
 		return nil
 	}
 	r.runMu.Lock()
@@ -234,9 +283,13 @@ func (r *Runtime) processRateLimitDeadlines(ctx context.Context) {
 	}
 	persisted := store.GetCooldowns()
 	for _, scheduled := range dueCooldowns {
-		entry, active := persisted[scheduled.AuthIndex]
+		key := state.CooldownKey(scheduled.AuthIndex, scheduled.ModelGroup)
+		entry, active := persisted[key]
 		if !active {
-			r.clearActiveCooldown(scheduled.AuthIndex)
+			entry, active = persisted[scheduled.AuthIndex]
+		}
+		if !active {
+			r.clearActiveCooldown(key)
 			continue
 		}
 		r.runMu.Lock()
@@ -265,11 +318,15 @@ func (r *Runtime) restoreCooldown(ctx context.Context, store *state.Store, entry
 	}
 	// A manual change supersedes the transaction; never overwrite it.
 	if credential.Priority != priority.DepletedPriority || credential.Disabled != entry.AppliedDisabled {
-		store.DeleteCooldown(entry.AuthIndex)
+		key := state.CooldownKey(entry.AuthIndex, entry.ModelGroup)
+		store.DeleteCooldown(key)
 		err := store.SaveAtomic(ctx)
 		if err == nil {
-			r.clearActiveCooldown(entry.AuthIndex)
+			r.clearActiveCooldown(key)
 		}
+		r.routingMu.Lock()
+		r.recomputeRoutingTablesLocked(r.clock.Now().UTC())
+		r.routingMu.Unlock()
 		return err
 	}
 	client := host.NewClient(r.hostCallbacks)
@@ -280,22 +337,35 @@ func (r *Runtime) restoreCooldown(ctx context.Context, store *state.Store, entry
 	}
 	r.patchSnapshotCooldown(entry.AuthIndex, false, "cooldown recovered", entry.PreviousPriority, entry.PreviousDisabled)
 	result.Snapshot = apply.Snapshot(priority.Plan{DecidedAt: r.clock.Now().UTC(), Items: []priority.PlanItem{{Credential: credential, Priority: entry.PreviousPriority, Disabled: entry.PreviousDisabled, Reason: priority.Reason429Cooldown}}})
-	store.DeleteCooldown(entry.AuthIndex)
-	r.clearActiveCooldown(entry.AuthIndex)
+	key := state.CooldownKey(entry.AuthIndex, entry.ModelGroup)
+	store.DeleteCooldown(key)
+	r.clearActiveCooldown(key)
+	r.routingMu.Lock()
+	r.recomputeRoutingTablesLocked(r.clock.Now().UTC())
+	r.routingMu.Unlock()
 	summary := resultSummary("429 cooldown recovery", result)
 	_, err = r.projectRun(ctx, store, result, summary, RunHistoryEntry{Kind: KindCooldownRecovery, Trigger: trigger, Message: summary, Snapshot: &result.Snapshot})
 	return err
 }
 
-func (r *Runtime) clearActiveCooldown(authIndex string) {
+func (r *Runtime) clearActiveCooldown(key string) {
 	r.rateLimitMu.Lock()
-	delete(r.activeCooldowns, authIndex)
+	delete(r.activeCooldowns, key)
+	if !strings.Contains(key, "::") {
+		prefix := key + "::"
+		for k := range r.activeCooldowns {
+			if strings.HasPrefix(k, prefix) {
+				delete(r.activeCooldowns, k)
+			}
+		}
+	}
 	r.rateLimitMu.Unlock()
 }
 
 func (r *Runtime) setActiveCooldown(entry state.CooldownEntry) {
 	r.rateLimitMu.Lock()
-	r.activeCooldowns[entry.AuthIndex] = entry
+	key := state.CooldownKey(entry.AuthIndex, entry.ModelGroup)
+	r.activeCooldowns[key] = entry
 	r.rateLimitMu.Unlock()
 }
 

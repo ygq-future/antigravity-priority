@@ -57,6 +57,10 @@ func (m *probeEvidenceMockHost) HTTPDo(ctx context.Context, req host.HTTPRequest
 	return resp, nil
 }
 
+func (m *probeEvidenceMockHost) ListAuthModels(ctx context.Context) ([]host.AuthModelsEntry, error) {
+	return nil, nil
+}
+
 func TestProbeAndRecord_GeminiTargetKeepsDualWindowEvidence(t *testing.T) {
 	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
 	mock := &probeEvidenceMockHost{

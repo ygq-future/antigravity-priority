@@ -235,7 +235,14 @@ func Load(ctx context.Context, path string) (*Store, error) {
 	}
 	store.lastAutoApplyAt = utcOrZero(doc.LastAutoApplyAt)
 	if doc.Cooldowns != nil {
-		store.cooldowns = doc.Cooldowns
+		store.cooldowns = make(map[string]CooldownEntry, len(doc.Cooldowns))
+		for k, v := range doc.Cooldowns {
+			key := k
+			if !strings.Contains(k, "::") && v.ModelGroup != "" {
+				key = CooldownKey(v.AuthIndex, v.ModelGroup)
+			}
+			store.cooldowns[key] = v
+		}
 	}
 	if doc.AutoDisabled != nil {
 		store.autoDisabled = doc.AutoDisabled
@@ -769,6 +776,21 @@ func (s *Store) SetDynamicConfig(cfg DynamicConfig) {
 	s.dynamicConfig = &cfg
 }
 
+// GetKnownAuthIndexes returns all unique auth indexes tracked in the store entries.
+func (s *Store) GetKnownAuthIndexes() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	seen := make(map[string]bool)
+	var indexes []string
+	for _, entry := range s.entries {
+		if entry.AuthIndex != "" && !seen[entry.AuthIndex] {
+			seen[entry.AuthIndex] = true
+			indexes = append(indexes, entry.AuthIndex)
+		}
+	}
+	return indexes
+}
+
 // GetHistoricalEvidence constructs a historical quota observation from the
 // persisted state entry. Loading a successful cache entry never grants Fresh
 // Evidence; the Evidence authority decides that only from current probe
@@ -777,18 +799,23 @@ func (s *Store) GetHistoricalEvidence(authIndex, modelGroup string) (priority.Qu
 	s.mu.RLock()
 	entry, ok := s.entries[entryKey(authIndex, modelGroup)]
 	s.mu.RUnlock()
-
 	if !ok || entry.SchemaVersion != SchemaVersion {
 		return priority.QuotaEvidence{}, false
 	}
 
-	if entry.ObservedAt.IsZero() || entry.ResetAt.IsZero() {
+	if entry.ObservedAt.IsZero() || (entry.ResetAt.IsZero() && entry.ShortWindowResetAt.IsZero() && entry.LongWindowResetAt.IsZero()) {
 		return priority.QuotaEvidence{}, false
 	}
 
 	var resetAt *time.Time
 	if !entry.ResetAt.IsZero() {
 		r := entry.ResetAt
+		resetAt = &r
+	} else if !entry.ShortWindowResetAt.IsZero() {
+		r := entry.ShortWindowResetAt
+		resetAt = &r
+	} else if !entry.LongWindowResetAt.IsZero() {
+		r := entry.LongWindowResetAt
 		resetAt = &r
 	}
 	var shortResetAt *time.Time
@@ -874,6 +901,34 @@ func (s *Store) BuildHistoricalEvidence(credentials []core.Credential, modelGrou
 	return evidence
 }
 
+// CooldownKey formats the map key for pool-scoped cooldown tracking.
+func CooldownKey(authIndex, modelGroup string) string {
+	group := strings.ToLower(strings.TrimSpace(modelGroup))
+	if group == "" {
+		return authIndex
+	}
+	return authIndex + "::" + group
+}
+
+// GetActiveCooldownsForGroup returns a map of auth_index -> CooldownUntil for unexpired
+// 429 rate limit cooldowns affecting the specified model group.
+func (s *Store) GetActiveCooldownsForGroup(now time.Time, modelGroup string) map[string]time.Time {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	normGroup := strings.ToLower(strings.TrimSpace(modelGroup))
+	active := make(map[string]time.Time)
+	for _, v := range s.cooldowns {
+		if !now.Before(v.CooldownUntil) {
+			continue
+		}
+		entryGroup := strings.ToLower(strings.TrimSpace(v.ModelGroup))
+		if entryGroup == "" || entryGroup == normGroup {
+			active[v.AuthIndex] = v.CooldownUntil
+		}
+	}
+	return active
+}
+
 // GetActiveCooldowns returns a map of auth_index -> CooldownUntil for unexpired 429 rate limit cooldowns.
 // Expired entries remain available until Runtime has restored the Host state.
 func (s *Store) GetActiveCooldowns(now time.Time) map[string]time.Time {
@@ -883,16 +938,27 @@ func (s *Store) GetActiveCooldowns(now time.Time) map[string]time.Time {
 	for k, v := range s.cooldowns {
 		if now.Before(v.CooldownUntil) {
 			active[k] = v.CooldownUntil
+			if v.AuthIndex != "" {
+				active[v.AuthIndex] = v.CooldownUntil
+			}
 		}
 	}
 	return active
 }
 
 // DeleteCooldown removes a completed or superseded cooldown transaction.
-func (s *Store) DeleteCooldown(authIndex string) {
+func (s *Store) DeleteCooldown(key string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.cooldowns, authIndex)
+	delete(s.cooldowns, key)
+	if !strings.Contains(key, "::") {
+		prefix := key + "::"
+		for k := range s.cooldowns {
+			if strings.HasPrefix(k, prefix) {
+				delete(s.cooldowns, k)
+			}
+		}
+	}
 }
 
 // GetCooldowns returns a copy of all current cooldown entries.
@@ -913,7 +979,8 @@ func (s *Store) SetCooldown(entry CooldownEntry) {
 	if s.cooldowns == nil {
 		s.cooldowns = make(map[string]CooldownEntry)
 	}
-	s.cooldowns[entry.AuthIndex] = entry
+	key := CooldownKey(entry.AuthIndex, entry.ModelGroup)
+	s.cooldowns[key] = entry
 }
 
 // ClearExpiredCooldowns removes cooldowns whose CooldownUntil time has passed.

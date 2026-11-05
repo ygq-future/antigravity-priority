@@ -27,6 +27,7 @@ const (
 	MethodManagementRegister = "management.register"
 	MethodManagementHandle   = "management.handle"
 	MethodUsageHandle        = "usage.handle"
+	MethodSchedulerPick      = "scheduler.pick"
 	MethodFilterResponse     = "filter.response"
 	MethodFilterComplete     = "filter.complete"
 	MethodFilterError        = "filter.error"
@@ -121,6 +122,42 @@ type ConfigField struct {
 	DefaultValue any      `json:"DefaultValue"`
 }
 
+
+// SchedulerPickRequest represents the JSON-RPC request for scheduler.pick.
+type SchedulerPickRequest struct {
+	Provider   string                   `json:"Provider"`
+	Providers  []string                 `json:"Providers"`
+	Model      string                   `json:"Model"`
+	Stream     bool                     `json:"Stream"`
+	Options    SchedulerOptions         `json:"Options"`
+	Candidates []SchedulerAuthCandidate `json:"Candidates"`
+}
+
+// SchedulerOptions represents the options passed to scheduler.pick.
+type SchedulerOptions struct {
+	Headers  map[string][]string `json:"Headers"`
+	Metadata map[string]any      `json:"Metadata"` // includes "canonical_session_id"
+}
+
+// SchedulerAuthCandidate represents a candidate credential evaluated by scheduler.pick.
+type SchedulerAuthCandidate struct {
+	ID         string            `json:"ID"`
+	Provider   string            `json:"Provider"`
+	Priority   int               `json:"Priority"`
+	Status     string            `json:"Status"`
+	Attributes map[string]string `json:"Attributes"`
+	Metadata   map[string]any    `json:"Metadata,omitempty"`
+}
+
+// SchedulerPickResponse represents the response payload for scheduler.pick.
+type SchedulerPickResponse struct {
+	AuthID          string `json:"auth_id,omitempty"`
+	DelegateBuiltin string `json:"delegate_builtin,omitempty"`
+	Handled         bool   `json:"handled"`
+	Reject          bool   `json:"reject,omitempty"`
+	RejectReason    string `json:"reject_reason,omitempty"`
+	RejectCode      string `json:"reject_code,omitempty"`
+}
 // Metadata describes non-sensitive plugin information displayed in CPA.
 type Metadata struct {
 	Name             string        `json:"Name"`

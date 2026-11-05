@@ -128,6 +128,18 @@ func (c *Client) HTTPDoRaw(ctx context.Context, req HTTPRequest) (HTTPResponse, 
 	return resp, nil
 }
 
+// ListAuthModels lists callable models for credentials via host.auth.models.
+func (c *Client) ListAuthModels(ctx context.Context) ([]AuthModelsEntry, error) {
+	if c == nil || c.callbacks == nil {
+		return nil, nil
+	}
+	models, err := c.callbacks.ListAuthModels(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("host.auth.models: %w", err)
+	}
+	return models, nil
+}
+
 func stableName(name string) (string, error) {
 	trimmed := strings.TrimSpace(name)
 	if trimmed == "" {

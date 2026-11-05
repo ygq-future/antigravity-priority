@@ -1,6 +1,6 @@
 # 02: CPA `scheduler.pick` Dynamic Dispatch, Model Catalog & Pool-Scoped 429 Cooldown
 
-Status: `ready-for-agent`
+Status: `closed`
 Type: `task`
 Blocked by: 01
 
@@ -111,12 +111,12 @@ Integrate CPA's `Capabilities.Scheduler` (`scheduler.pick`) and `SchedulerAcross
   3. Immediately recompute the in-memory `PoolRoutingTable` (`plansByPool`) and `latestDualSnapshot` so both `scheduler.pick` and the Web UI reflect the real-time quota deduction immediately after every conversation turn!
 ## Acceptance Criteria
 
-- [ ] `plugin.register` and `plugin.reconfigure` return `"scheduler": true` and `"scheduler_across_priorities": true`.
-- [ ] Calling `scheduler.pick` with `model: "gemini-3.8-flash-high"`, `model: "gemini-4-argon-high"`, and `model: "claude-sonnet-5-5-high"` dynamically selects different credentials according to each credential's `gemini`, `argon`, and `claude_gpt` quota plans respectively.
-- [ ] Equal-priority credentials in the winning tier rotate via Round-Robin when no session ID is present, and stick to the bound credential when `Options.Metadata["canonical_session_id"]` is present and the bound credential remains in the winning tier.
-- [ ] A 429 rate-limit event on `claude-sonnet-5-5-high` places the credential into cooldown for `claude_gpt` only; `scheduler.pick` continues to select that credential for `gemini-3.8-flash-high` and `gemini-4-argon-high`.
-- [ ] Non-Antigravity `scheduler.pick` requests return `{"ok":true,"result":{"handled":false}}`.
-- [ ] When all Antigravity candidates are depleted/cooling (`bestScore < 0`) in a mixed-provider route (`len(otherCandidates) > 0`), `scheduler.pick` cleanly fails over to the highest-priority non-Antigravity candidate without routing traffic to depleted Antigravity accounts; in an Antigravity-only route, it returns `{"handled": false}`.
-- [ ] `scheduler.pick` uses the precomputed in-memory `PoolRoutingTable` in O(1) time without running full planner sorting on every request, while lazily refreshing the table when `now >= NextTransitionAt` (e.g., 5h reset or cooldown expiry).
-- [ ] Every successful `usage.handle` event with token details immediately deducts estimated quota for the credential's active pool and updates the in-memory `PoolRoutingTable` and UI snapshot without waiting for the next HTTP probe.
-- [ ] `scheduler.pick` performs zero `host.*` C ABI callbacks during execution.
+- [x] `plugin.register` and `plugin.reconfigure` return `"scheduler": true` and `"scheduler_across_priorities": true`.
+- [x] Calling `scheduler.pick` with `model: "gemini-3.8-flash-high"`, `model: "gemini-4-argon-high"`, and `model: "claude-sonnet-5-5-high"` dynamically selects different credentials according to each credential's `gemini`, `argon`, and `claude_gpt` quota plans respectively.
+- [x] Equal-priority credentials in the winning tier rotate via Round-Robin when no session ID is present, and stick to the bound credential when `Options.Metadata["canonical_session_id"]` is present and the bound credential remains in the winning tier.
+- [x] A 429 rate-limit event on `claude-sonnet-5-5-high` places the credential into cooldown for `claude_gpt` only; `scheduler.pick` continues to select that credential for `gemini-3.8-flash-high` and `gemini-4-argon-high`.
+- [x] Non-Antigravity `scheduler.pick` requests return `{"ok":true,"result":{"handled":false}}`.
+- [x] When all Antigravity candidates are depleted/cooling (`bestScore < 0`) in a mixed-provider route (`len(otherCandidates) > 0`), `scheduler.pick` cleanly fails over to the highest-priority non-Antigravity candidate without routing traffic to depleted Antigravity accounts; in an Antigravity-only route, it returns `{"handled": false}`.
+- [x] `scheduler.pick` uses the precomputed in-memory `PoolRoutingTable` in O(1) time without running full planner sorting on every request, while lazily refreshing the table when `now >= NextTransitionAt` (e.g., 5h reset or cooldown expiry).
+- [x] Every successful `usage.handle` event with token details immediately deducts estimated quota for the credential's active pool and updates the in-memory `PoolRoutingTable` and UI snapshot without waiting for the next HTTP probe.
+- [x] `scheduler.pick` performs zero `host.*` C ABI callbacks during execution.

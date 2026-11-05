@@ -18,6 +18,7 @@ type mockHostCallbacks struct {
 	getRuntimeFunc    func(ctx context.Context, authIndex string) (host.RuntimeAuth, error)
 	saveAuthFunc      func(ctx context.Context, name string, doc json.RawMessage) error
 	httpDoFunc        func(ctx context.Context, req host.HTTPRequest) (host.HTTPResponse, error)
+	listAuthModelsFunc func(ctx context.Context) ([]host.AuthModelsEntry, error)
 }
 
 func (m *mockHostCallbacks) ListAuthFiles(ctx context.Context) ([]host.AuthFile, error) {
@@ -53,6 +54,13 @@ func (m *mockHostCallbacks) HTTPDo(ctx context.Context, req host.HTTPRequest) (h
 		return m.httpDoFunc(ctx, req)
 	}
 	return host.HTTPResponse{}, nil
+}
+
+func (m *mockHostCallbacks) ListAuthModels(ctx context.Context) ([]host.AuthModelsEntry, error) {
+	if m.listAuthModelsFunc != nil {
+		return m.listAuthModelsFunc(ctx)
+	}
+	return nil, nil
 }
 
 func TestClient_ReadAndSave(t *testing.T) {
@@ -172,5 +180,30 @@ func TestClient_HTTPDo(t *testing.T) {
 	_, err := client.HTTPDo(context.Background(), host.HTTPRequest{Method: "GET", URL: "https://example.com/error"})
 	if err == nil || strings.Contains(err.Error(), "secret") || !strings.Contains(err.Error(), "429") {
 		t.Fatalf("unexpected redacted HTTP error: %v", err)
+	}
+}
+
+func TestClient_ListAuthModels(t *testing.T) {
+	ctx := context.Background()
+	expected := []host.AuthModelsEntry{
+		{
+			ID:        "auth-1",
+			AuthIndex: "idx-1",
+			Provider:  "antigravity",
+			Models:    []string{"gemini-3.8-flash-high", "claude-sonnet-5-5-high"},
+		},
+	}
+	callbacks := &mockHostCallbacks{
+		listAuthModelsFunc: func(ctx context.Context) ([]host.AuthModelsEntry, error) {
+			return expected, nil
+		},
+	}
+	client := host.NewClient(callbacks)
+	models, err := client.ListAuthModels(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(models) != 1 || models[0].ID != "auth-1" || len(models[0].Models) != 2 {
+		t.Fatalf("unexpected models returned: %+v", models)
 	}
 }

@@ -33,6 +33,7 @@ type mockHost struct {
 	httpResponses map[string]host.HTTPResponse
 	httpErr       error
 	httpCalls     []host.HTTPRequest
+	modelsEntries []host.AuthModelsEntry
 	operations    []string
 	afterHTTP     func(*mockHost)
 }
@@ -122,6 +123,24 @@ func (m *mockHost) HTTPDo(ctx context.Context, req host.HTTPRequest) (host.HTTPR
 		return response, nil
 	}
 	return m.httpResponse, nil
+}
+
+func (m *mockHost) ListAuthModels(ctx context.Context) ([]host.AuthModelsEntry, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.modelsEntries) > 0 {
+		return append([]host.AuthModelsEntry(nil), m.modelsEntries...), nil
+	}
+	entries := make([]host.AuthModelsEntry, 0, len(m.files))
+	for _, f := range m.files {
+		entries = append(entries, host.AuthModelsEntry{
+			ID:        f.Name,
+			AuthIndex: f.AuthIndex,
+			Provider:  f.Provider,
+			Models:    []string{"gemini-3.8-flash-high", "gemini-4-argon-high", "claude-sonnet-5-5-high"},
+		})
+	}
+	return entries, nil
 }
 
 type testClock struct {

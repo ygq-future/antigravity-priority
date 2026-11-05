@@ -234,6 +234,14 @@ func (hostCallbackAdapter) HTTPDo(ctx context.Context, request host.HTTPRequest)
 	return response, nil
 }
 
+func (hostCallbackAdapter) ListAuthModels(ctx context.Context) ([]host.AuthModelsEntry, error) {
+	var response host.AuthModelsResponse
+	if err := callHost(ctx, host.MethodAuthModels, map[string]any{}, &response); err != nil {
+		return nil, nil
+	}
+	return response.Credentials, nil
+}
+
 func callHost(ctx context.Context, method string, payload any, target any) error {
 	if err := ctx.Err(); err != nil {
 		return err

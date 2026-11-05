@@ -54,10 +54,12 @@ func ProjectDualModelGroups(input ProjectionInput) (DualModelGroupProjection, er
 
 	for _, group := range config.AllAntigravityModelGroups {
 		grpEvidence := cloneEvidence(input.EvidenceByGroup[group])
+		grpOptions := clonePlanningOptions(options)
+		grpOptions.CooldownAuthIndexes = filterCooldownsForGroup(options.CooldownAuthIndexes, group)
 		plan := priority.PlanWithEvidence(
 			cloneCredentials(input.Credentials),
 			grpEvidence,
-			options,
+			grpOptions,
 		)
 		annotatePlanObservations(&plan, grpEvidence.Observations)
 		plansByGroup[group] = plan
@@ -101,6 +103,25 @@ func ProjectDualModelGroups(input ProjectionInput) (DualModelGroupProjection, er
 			Groups:           groups,
 		},
 	}, nil
+}
+
+func filterCooldownsForGroup(cooldowns map[string]time.Time, group config.AntigravityModelGroup) map[string]time.Time {
+	if len(cooldowns) == 0 {
+		return nil
+	}
+	normGroup := strings.ToLower(string(group))
+	filtered := make(map[string]time.Time)
+	for k, v := range cooldowns {
+		if idx := strings.Index(k, "::"); idx != -1 {
+			entryGroup := strings.ToLower(strings.TrimSpace(k[idx+2:]))
+			if entryGroup == normGroup {
+				filtered[k[:idx]] = v
+			}
+		} else {
+			filtered[k] = v
+		}
+	}
+	return filtered
 }
 
 func buildAllQuotaWindows(snapshots map[config.AntigravityModelGroup]apply.PlanSnapshot) map[string]apply.AllQuotaWindows {

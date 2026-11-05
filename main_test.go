@@ -297,6 +297,9 @@ func (stubHostCallbacks) SaveAuth(ctx context.Context, name string, doc json.Raw
 func (stubHostCallbacks) HTTPDo(ctx context.Context, req host.HTTPRequest) (host.HTTPResponse, error) {
 	return host.HTTPResponse{StatusCode: 200}, nil
 }
+func (stubHostCallbacks) ListAuthModels(ctx context.Context) ([]host.AuthModelsEntry, error) {
+	return nil, nil
+}
 
 func TestMain_PackageLoad_NoBackgroundGoroutines(t *testing.T) {
 	shutdownCPARuntime()

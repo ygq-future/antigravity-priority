@@ -43,6 +43,10 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 	if err != nil {
 		return err
 	}
+	authModels, _ := client.ListAuthModels(ctx)
+	r.routingMu.Lock()
+	r.updateModelInventoryLocked(files, authModels)
+	r.routingMu.Unlock()
 
 	allCredentials := credentialsFromAuthFiles(files)
 	allCredentials, allAuthMaterials, err := enrichCredentialsFromAuthDocuments(ctx, client, allCredentials)
@@ -232,6 +236,9 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 		Message:      summary,
 		Snapshot:     &primarySnapshot,
 	})
+	r.routingMu.Lock()
+	r.recomputeRoutingTablesLocked(now)
+	r.routingMu.Unlock()
 	return projectErr
 }
 

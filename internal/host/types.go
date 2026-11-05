@@ -21,6 +21,7 @@ const (
 	MethodAuthGetRuntime = "host.auth.get_runtime"
 	MethodAuthSave       = "host.auth.save"
 	MethodHTTPDo         = "host.http.do"
+	MethodAuthModels     = "host.auth.models"
 
 	// Auth JSON Top-Level Field Names
 	FieldPriority       = "priority"
@@ -60,6 +61,8 @@ func (h Header) Get(key string) string {
 
 // AuthFile represents a minimal credential record returned by host.auth.list.
 type AuthFile struct {
+	ID              string          `json:"id,omitempty"`
+	Path            string          `json:"path,omitempty"`
 	Name            string          `json:"name"`
 	AuthIndex       string          `json:"auth_index"`
 	Type            string          `json:"type,omitempty"`
@@ -99,6 +102,19 @@ type RuntimeAuth struct {
 	Provider  string          `json:"provider,omitempty"`
 	Disabled  bool            `json:"disabled"`
 	Metadata  json.RawMessage `json:"metadata,omitempty"`
+}
+
+// AuthModelsEntry represents callable models for a credential returned by host.auth.models.
+type AuthModelsEntry struct {
+	ID        string   `json:"id"`
+	AuthIndex string   `json:"auth_index"`
+	Provider  string   `json:"provider"`
+	Models    []string `json:"models"`
+}
+
+// AuthModelsResponse represents the payload returned by host.auth.models.
+type AuthModelsResponse struct {
+	Credentials []AuthModelsEntry `json:"credentials"`
 }
 
 // AuthDocument represents the physical auth JSON document returned by host.auth.get.
@@ -202,6 +218,7 @@ type HostCallbacks interface {
 	GetRuntime(ctx context.Context, authIndex string) (RuntimeAuth, error)
 	SaveAuth(ctx context.Context, name string, doc json.RawMessage) error
 	HTTPDo(ctx context.Context, req HTTPRequest) (HTTPResponse, error)
+	ListAuthModels(ctx context.Context) ([]AuthModelsEntry, error)
 }
 
 // API defines the stable host adapter interface.
@@ -212,4 +229,5 @@ type API interface {
 	SaveAuth(ctx context.Context, name string, doc json.RawMessage) error
 	ReplaceAuth(ctx context.Context, document AuthDocument, doc json.RawMessage) error
 	HTTPDo(ctx context.Context, req HTTPRequest) (HTTPResponse, error)
+	ListAuthModels(ctx context.Context) ([]AuthModelsEntry, error)
 }

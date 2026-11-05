@@ -58,6 +58,13 @@ type Runtime struct {
 	activeCooldowns     map[string]state.CooldownEntry
 	rateLimitWake       chan struct{}
 	rateLimitDone       chan struct{}
+	routingMu             sync.RWMutex
+	plansByPool           map[config.AntigravityModelGroup]PoolRoutingTable
+	authIDToIndex         map[string]string
+	supportedModelsByAuth map[string]map[string]struct{}
+	modelCatalog          []ModelCatalogItem
+	rrCursorByPool        map[config.AntigravityModelGroup]string
+	sessionAffinity       map[string]sessionBinding
 }
 
 // New creates an initialized Runtime instance.
@@ -82,7 +89,13 @@ func New(options Options) *Runtime {
 		stormAccounts:   make(map[string]bool),
 		activeCooldowns: make(map[string]state.CooldownEntry),
 		rateLimitWake:   make(chan struct{}, 1),
-		rateLimitDone:   make(chan struct{}),
+		rateLimitDone:         make(chan struct{}),
+		plansByPool:           make(map[config.AntigravityModelGroup]PoolRoutingTable),
+		authIDToIndex:         make(map[string]string),
+		supportedModelsByAuth: make(map[string]map[string]struct{}),
+		modelCatalog:          append([]ModelCatalogItem(nil), builtInAntigravityModels...),
+		rrCursorByPool:        make(map[config.AntigravityModelGroup]string),
+		sessionAffinity:       make(map[string]sessionBinding),
 	}
 	if strings.TrimSpace(options.StateCachePath) != "" {
 		rt.cfg.StateCachePath = options.StateCachePath
@@ -161,6 +174,8 @@ func (r *Runtime) Handle(ctx context.Context, method string, request []byte) []b
 		return r.handleManagement(ctx, request)
 	case MethodUsageHandle:
 		return r.handleUsageEvent(ctx, request)
+	case MethodSchedulerPick:
+		return r.handleSchedulerPick(ctx, request)
 	case MethodFilterResponse, MethodFilterComplete, MethodFilterError, MethodFilterOutbound, MethodFilterInbound:
 		return r.handleFilterEvent(ctx, request)
 	default:
@@ -393,6 +408,11 @@ func (r *Runtime) SyncHost(ctx context.Context, modelGroup config.AntigravityMod
 		projection.Snapshot.PreviewID = preview.ID
 	}
 	r.setDualSnapshot(projection.Snapshot)
+	authModels, _ := client.ListAuthModels(ctx)
+	r.routingMu.Lock()
+	r.updateModelInventoryLocked(files, authModels)
+	r.recomputeRoutingTablesLocked(now)
+	r.routingMu.Unlock()
 	return cloneDualGroupSnapshot(projection.Snapshot), nil
 }
 
@@ -1038,9 +1058,11 @@ func registrationResult() RegisterResult {
 		SchemaVersion: 1,
 		Metadata:      buildMetadata(),
 		Capabilities: map[string]bool{
-			"management_api": true,
-			"management":     true,
-			"usage_plugin":   true,
+			"management_api":              true,
+			"management":                  true,
+			"usage_plugin":                true,
+			"scheduler":                   true,
+			"scheduler_across_priorities": true,
 		},
 	}
 }
@@ -1050,6 +1072,16 @@ type usageFailure struct {
 	Body       string `json:"Body"`
 }
 
+type usageDetail struct {
+	InputTokens         int64 `json:"InputTokens"`
+	OutputTokens        int64 `json:"OutputTokens"`
+	ReasoningTokens     int64 `json:"ReasoningTokens"`
+	CachedTokens        int64 `json:"CachedTokens"`
+	CacheReadTokens     int64 `json:"CacheReadTokens"`
+	CacheCreationTokens int64 `json:"CacheCreationTokens"`
+	TotalTokens         int64 `json:"TotalTokens"`
+}
+
 type usageEvent struct {
 	Provider  string       `json:"Provider"`
 	Model     string       `json:"Model"`
@@ -1057,6 +1089,7 @@ type usageEvent struct {
 	AuthIndex string       `json:"AuthIndex"`
 	Failed    bool         `json:"Failed"`
 	Failure   usageFailure `json:"Failure"`
+	Detail    usageDetail  `json:"Detail"`
 }
 
 func (r *Runtime) handleUsageEvent(ctx context.Context, raw []byte) []byte {
@@ -1073,7 +1106,7 @@ func (r *Runtime) handleUsageEvent(ctx context.Context, raw []byte) []byte {
 	}
 
 	if !payload.Failed {
-		if err := r.observeUsageSuccess(ctx, authIndex, modelGroupForUsage(payload.Model)); err != nil {
+		if err := r.observeUsageSuccess(ctx, authIndex, modelGroupForUsage(payload.Model), payload.Detail); err != nil {
 			return failure(err)
 		}
 		return mustMarshal(Envelope{OK: true})
@@ -1089,10 +1122,7 @@ func (r *Runtime) handleUsageEvent(ctx context.Context, raw []byte) []byte {
 }
 
 func modelGroupForUsage(model string) string {
-	if strings.Contains(strings.ToLower(model), "gemini") {
-		return string(config.AntigravityModelGroupGemini)
-	}
-	return string(config.AntigravityModelGroupClaudeGPT)
+	return string(config.ClassifyModelQuotaPool(model))
 }
 
 func isAntigravityUsageProvider(provider string) bool {
@@ -1217,6 +1247,9 @@ func (r *Runtime) triggerCooldown(ctx context.Context, authIndex, modelGroup, re
 	if projectErr != nil {
 		return projectErr
 	}
+	r.routingMu.Lock()
+	r.recomputeRoutingTablesLocked(now)
+	r.routingMu.Unlock()
 	r.signalRateLimitWorker()
 	if result.Transitions.Totals.Failed > 0 || result.Transitions.Totals.Conflicts > 0 || result.Transitions.Totals.Uncertain > 0 {
 		return errors.New("429 cooldown host mutation failed")

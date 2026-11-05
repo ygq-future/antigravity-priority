@@ -57,6 +57,7 @@ func (f *documentFixture) SaveAuth(context.Context, string, json.RawMessage) err
 func (f *documentFixture) HTTPDo(context.Context, host.HTTPRequest) (host.HTTPResponse, error) {
 	return host.HTTPResponse{}, nil
 }
+func (f *documentFixture) ListAuthModels(context.Context) ([]host.AuthModelsEntry, error) { return nil, nil }
 
 type missingIdentityStore struct{ host.API }
 

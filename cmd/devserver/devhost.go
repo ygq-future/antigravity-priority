@@ -327,6 +327,30 @@ func (d *devHost) HTTPDo(ctx context.Context, request host.HTTPRequest) (host.HT
 	}, nil
 }
 
+func (d *devHost) ListAuthModels(ctx context.Context) ([]host.AuthModelsEntry, error) {
+	files, err := d.ListAuthFiles(ctx)
+	if err != nil {
+		return nil, err
+	}
+	entries := make([]host.AuthModelsEntry, 0, len(files))
+	for _, file := range files {
+		entries = append(entries, host.AuthModelsEntry{
+			ID:        file.Name,
+			AuthIndex: file.AuthIndex,
+			Provider:  file.Provider,
+			Models: []string{
+				"gemini-3.8-flash-high",
+				"gemini-3-flash",
+				"gemini-4-argon-high",
+				"claude-sonnet-5-5-high",
+				"claude-opus-5-5-high",
+				"gpt-oss-120b-medium",
+			},
+		})
+	}
+	return entries, nil
+}
+
 func (s devQuotaState) hasAllGroups() bool {
 	if s.Groups == nil {
 		return false

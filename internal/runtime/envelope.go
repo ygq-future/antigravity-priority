@@ -68,6 +68,11 @@ func envelopeRegister(result RegisterResult, err error) []byte {
 	return mustMarshal(Envelope{OK: true, Result: encoded})
 }
 
+func envelopeSchedulerPick(resp SchedulerPickResponse) []byte {
+	encoded, _ := json.Marshal(resp)
+	return mustMarshal(Envelope{OK: true, Result: encoded})
+}
+
 func envelopeStatus(err error) []byte {
 	if err != nil {
 		return failure(err)
