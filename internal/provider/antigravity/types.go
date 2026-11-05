@@ -13,6 +13,8 @@ type ModelGroup = config.AntigravityModelGroup
 const (
 	// ModelGroupGemini represents the Gemini model group.
 	ModelGroupGemini = config.AntigravityModelGroupGemini
+	// ModelGroupArgon represents the Gemini 4 Argon quota pool.
+	ModelGroupArgon = config.AntigravityModelGroupArgon
 	// ModelGroupClaudeGPT represents the Claude and GPT model group.
 	ModelGroupClaudeGPT = config.AntigravityModelGroupClaudeGPT
 )

@@ -3,6 +3,7 @@ package runtime_test
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"antigravity-priority/internal/core"
 	"antigravity-priority/internal/evidence"
 	"antigravity-priority/internal/priority"
+	"antigravity-priority/internal/provider/antigravity"
 	"antigravity-priority/internal/runtime"
 )
 
@@ -31,6 +33,9 @@ func TestProjectDualModelGroups_ControlDirectionsAndIndependentEvidence(t *testi
 	groupEvidence := map[config.AntigravityModelGroup]evidence.Result{
 		config.AntigravityModelGroupGemini: {Eligible: []priority.QuotaEvidence{
 			readyEvidence("auth-1", core.PlanTypePro, 92, now.Add(3*time.Hour)),
+		}},
+		config.AntigravityModelGroupArgon: {Eligible: []priority.QuotaEvidence{
+			readyEvidence("auth-1", core.PlanTypePro, 75, now.Add(5*time.Hour)),
 		}},
 		config.AntigravityModelGroupClaudeGPT: {Eligible: []priority.QuotaEvidence{
 			readyEvidence("auth-1", core.PlanTypeFree, 61, now.Add(4*time.Hour)),
@@ -70,23 +75,37 @@ func TestProjectDualModelGroups_ControlDirectionsAndIndependentEvidence(t *testi
 			if !projection.Snapshot.ObservedAt.Equal(now) {
 				t.Fatalf("observed_at = %s, want %s", projection.Snapshot.ObservedAt, now)
 			}
-			if len(projection.Snapshot.Groups) != 2 {
-				t.Fatalf("groups = %#v, want both canonical groups", projection.Snapshot.Groups)
+			if len(projection.Snapshot.Groups) != 3 {
+				t.Fatalf("groups count = %d, want 3 active canonical groups", len(projection.Snapshot.Groups))
 			}
 
 			control := projection.Snapshot.Groups[string(tt.control)]
-			predicted := projection.Snapshot.Groups[string(tt.other)]
+			other := projection.Snapshot.Groups[string(tt.other)]
+			argon := projection.Snapshot.Groups[string(config.AntigravityModelGroupArgon)]
+
 			if len(control.Items) != 1 || control.Items[0].IsPredicted {
 				t.Fatalf("control items = %#v, want one non-predicted item", control.Items)
 			}
-			if len(predicted.Items) != 1 || !predicted.Items[0].IsPredicted {
-				t.Fatalf("predicted items = %#v, want one predicted item", predicted.Items)
+			if len(other.Items) != 1 || other.Items[0].IsPredicted {
+				t.Fatalf("other items = %#v, want one non-predicted item", other.Items)
 			}
-			if control.Items[0].PlanType == predicted.Items[0].PlanType {
-				t.Fatalf("group evidence was copied: control=%q predicted=%q", control.Items[0].PlanType, predicted.Items[0].PlanType)
+			if len(argon.Items) != 1 || argon.Items[0].IsPredicted {
+				t.Fatalf("argon items = %#v, want one non-predicted item", argon.Items)
 			}
-			if len(predicted.Changes) == 0 || predicted.Changes[0].Reason[:len("predicted: ")] != "predicted: " {
-				t.Fatalf("predicted changes = %#v, want predicted reason", predicted.Changes)
+
+			// Verify AllQuotaWindows is populated on every item
+			qw := control.Items[0].QuotaWindows
+			if qw.Gemini5h.Remaining == nil || *qw.Gemini5h.Remaining != 92 {
+				t.Errorf("control QuotaWindows Gemini5h = %v, want 92", qw.Gemini5h.Remaining)
+			}
+			if qw.Claude7d.Remaining == nil || *qw.Claude7d.Remaining != 61 {
+				t.Errorf("control QuotaWindows Claude7d = %v, want 61", qw.Claude7d.Remaining)
+			}
+			if qw.Claude5h.Remaining != nil {
+				t.Errorf("control QuotaWindows Claude5h = %v, want nil on Free tier", qw.Claude5h.Remaining)
+			}
+			if qw.Argon7d.Remaining == nil || *qw.Argon7d.Remaining != 75 {
+				t.Errorf("control QuotaWindows Argon7d = %v, want 75", qw.Argon7d.Remaining)
 			}
 		})
 	}
@@ -115,8 +134,8 @@ func TestProjectDualModelGroups_MissingGroupRemainsStableAndUnknown(t *testing.T
 		t.Fatal(err)
 	}
 	missing := projection.Snapshot.Groups[string(config.AntigravityModelGroupClaudeGPT)]
-	if len(missing.Items) != 1 || !missing.Items[0].IsPredicted {
-		t.Fatalf("missing group = %#v, want stable predicted item", missing)
+	if len(missing.Items) != 1 {
+		t.Fatalf("missing group = %#v, want 1 item", missing)
 	}
 	if missing.Items[0].PlanType != "unknown" || missing.Items[0].Target.Priority != 42 {
 		t.Fatalf("missing group borrowed or invented data: %#v", missing.Items[0])
@@ -212,8 +231,8 @@ func TestRuntime_LatestSnapshotFallbackIsStableAndComplete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Groups) != 2 || len(first.Groups["gemini"].Items) != 0 || len(first.Groups["claude_gpt"].Items) != 0 {
-		t.Fatalf("fallback = %#v, want two stable empty groups", first)
+	if len(first.Groups) != 3 || len(first.Groups["gemini"].Items) != 0 || len(first.Groups["claude_gpt"].Items) != 0 || len(first.Groups["argon"].Items) != 0 {
+		t.Fatalf("fallback = %#v, want three stable empty groups", first)
 	}
 	first.Groups["gemini"] = apply.GroupSnapshot{Items: []apply.SnapshotItem{{AuthIndex: "mutated"}}}
 
@@ -226,6 +245,101 @@ func TestRuntime_LatestSnapshotFallbackIsStableAndComplete(t *testing.T) {
 	}
 	if len(second.Groups["gemini"].Items) != 0 {
 		t.Fatalf("stored fallback was exposed for mutation: %#v", second.Groups["gemini"])
+	}
+}
+
+func TestProjectDualModelGroups_ThreePoolIndependentPlansAndQuotaWindows(t *testing.T) {
+	raw := []byte(`{"groups":[
+		{"displayName":"Gemini Models","description":"Shared quota for Gemini models","buckets":[
+			{"bucketId":"gemini-5h","displayName":"Five Hour Limit","window":"5h","remainingFraction":0.99,"resetTime":"2026-10-28T17:00:00Z"},
+			{"bucketId":"gemini-weekly","displayName":"Weekly Limit","window":"weekly","remainingFraction":0.79,"resetTime":"2026-10-31T00:00:00Z"}
+		]},
+		{"displayName":"Gemini 4 Argon","description":"For paid Pro plans, Argon quota is separate.","buckets":[
+			{"bucketId":"gemini-argon-wtu-weekly","displayName":"Gemini 4 Argon Weekly Limit","window":"weekly","remainingFraction":0.71,"resetTime":"2026-10-29T23:24:33Z"}
+		]},
+		{"displayName":"Claude and GPT Models","description":"Shared quota for Claude and GPT models","buckets":[
+			{"bucketId":"claude-5h","displayName":"Five Hour Limit","window":"5h","remainingFraction":0.80,"resetTime":"2026-10-28T17:00:00Z"},
+			{"bucketId":"claude-weekly","displayName":"Weekly Limit","window":"weekly","remainingFraction":0.45,"resetTime":"2026-10-31T00:00:00Z"}
+		]}
+	]}`)
+	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+
+	parsed := antigravity.ParseAllModelGroups(raw, now)
+	credentials := []core.Credential{{
+		Name:      "pro-account",
+		AuthIndex: "auth-pro",
+		Provider:  core.ProviderAntigravity,
+		Type:      core.CredentialTypeAntigravity,
+		Priority:  100,
+	}}
+
+	evidenceByGroup := make(map[config.AntigravityModelGroup]evidence.Result)
+	for group, res := range parsed {
+		evidenceByGroup[group] = evidence.Result{
+			Eligible: []priority.QuotaEvidence{{
+				AuthIndex:            "auth-pro",
+				Provider:             core.ProviderAntigravity,
+				ModelGroup:           group,
+				ObservedAt:           now,
+				ResetAt:              res.ResetAt,
+				Remaining:            res.Remaining,
+				ShortWindowResetAt:   res.ShortWindowResetAt,
+				ShortWindowRemaining: res.ShortWindowRemaining,
+				LongWindowResetAt:    res.LongWindowResetAt,
+				LongWindowRemaining:  res.LongWindowRemaining,
+				ArgonWindowResetAt:   res.ArgonWindowResetAt,
+				ArgonWindowRemaining: res.ArgonWindowRemaining,
+				PlanType:             res.PlanType,
+			}},
+		}
+	}
+
+	projection, err := runtime.ProjectDualModelGroups(runtime.ProjectionInput{
+		ControlModelGroup: config.AntigravityModelGroupGemini,
+		Credentials:       credentials,
+		EvidenceByGroup:   evidenceByGroup,
+		PlanningOptions:   priority.Options{NormalStartPriority: 100},
+		ProjectionTime:    now,
+	})
+	if err != nil {
+		t.Fatalf("ProjectDualModelGroups failed: %v", err)
+	}
+
+	// Verify independent plans
+	geminiItem := projection.Snapshot.Groups["gemini"].Items[0]
+	if math.Abs(geminiItem.R5h-0.99) > 1e-4 || math.Abs(geminiItem.R7d-0.79) > 1e-4 {
+		t.Fatalf("gemini plan R5h=%v R7d=%v, want R5h=0.99 R7d=0.79", geminiItem.R5h, geminiItem.R7d)
+	}
+
+	argonItem := projection.Snapshot.Groups["argon"].Items[0]
+	if math.Abs(argonItem.R5h-0.99) > 1e-4 || math.Abs(argonItem.R7d-0.71) > 1e-4 {
+		t.Fatalf("argon plan R5h=%v R7d=%v, want R5h=0.99 R7d=0.71", argonItem.R5h, argonItem.R7d)
+	}
+
+	claudeItem := projection.Snapshot.Groups["claude_gpt"].Items[0]
+	if math.Abs(claudeItem.R5h-0.80) > 1e-4 || math.Abs(claudeItem.R7d-0.45) > 1e-4 {
+		t.Fatalf("claude plan R5h=%v R7d=%v, want R5h=0.80 R7d=0.45", claudeItem.R5h, claudeItem.R7d)
+	}
+
+	// Verify populated 5-bar QuotaWindows across all 3 groups
+	for _, group := range []string{"gemini", "argon", "claude_gpt"} {
+		item := projection.Snapshot.Groups[group].Items[0]
+		qw := item.QuotaWindows
+		if qw.Gemini5h.Remaining == nil || *qw.Gemini5h.Remaining != 99 {
+			t.Errorf("[%s] QuotaWindows Gemini5h = %v, want 99", group, qw.Gemini5h.Remaining)
+		}
+		if qw.Gemini7d.Remaining == nil || *qw.Gemini7d.Remaining != 79 {
+			t.Errorf("[%s] QuotaWindows Gemini7d = %v, want 79", group, qw.Gemini7d.Remaining)
+		}
+		if qw.Claude5h.Remaining == nil || *qw.Claude5h.Remaining != 80 {
+			t.Errorf("[%s] QuotaWindows Claude5h = %v, want 80", group, qw.Claude5h.Remaining)
+		}
+		if qw.Claude7d.Remaining == nil || *qw.Claude7d.Remaining != 45 {
+			t.Errorf("[%s] QuotaWindows Claude7d = %v, want 45", group, qw.Claude7d.Remaining)
+		}
+		if qw.Argon7d.Remaining == nil || *qw.Argon7d.Remaining != 71 {
+			t.Errorf("[%s] QuotaWindows Argon7d = %v, want 71", group, qw.Argon7d.Remaining)
+		}
 	}
 }
 

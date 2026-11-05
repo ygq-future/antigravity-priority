@@ -70,7 +70,7 @@ func ParseAvailableModels(raw []byte, observedAt time.Time, group ModelGroup) Pr
 
 // ParseAllModelGroups parses the Antigravity quota summary JSON into ProbeResults
 // for all known model groups from a single decode pass. A single HTTP response
-// contains quota for all models; this extracts both gemini and claude_gpt groups.
+// contains quota for all models; this extracts gemini, argon, and claude_gpt groups.
 func ParseAllModelGroups(raw []byte, observedAt time.Time) map[ModelGroup]ProbeResult {
 	var response availableModelsResponse
 	decoder := json.NewDecoder(bytes.NewReader(raw))
@@ -78,17 +78,27 @@ func ParseAllModelGroups(raw []byte, observedAt time.Time) map[ModelGroup]ProbeR
 	if err := decoder.Decode(&response); err != nil {
 		return map[ModelGroup]ProbeResult{
 			ModelGroupGemini:    failedResult(observedAt, ModelGroupGemini, "parse antigravity quota failed"),
+			ModelGroupArgon:     failedResult(observedAt, ModelGroupArgon, "parse antigravity quota failed"),
 			ModelGroupClaudeGPT: failedResult(observedAt, ModelGroupClaudeGPT, "parse antigravity quota failed"),
 		}
 	}
 	return map[ModelGroup]ProbeResult{
 		ModelGroupGemini:    parseGroupFromResponse(response, observedAt, ModelGroupGemini),
+		ModelGroupArgon:     parseGroupFromResponse(response, observedAt, ModelGroupArgon),
 		ModelGroupClaudeGPT: parseGroupFromResponse(response, observedAt, ModelGroupClaudeGPT),
 	}
 }
 
 func parseGroupFromResponse(response availableModelsResponse, observedAt time.Time, group ModelGroup) ProbeResult {
 	windows := collectGroupWindows(response, group)
+	if len(windows) == 0 {
+		return failedResult(observedAt, group, "target model group quota unavailable")
+	}
+
+	if group == ModelGroupArgon {
+		return parseArgonGroup(windows, observedAt)
+	}
+
 	selected, ok := pickEffectiveWindow(windows)
 	if !ok {
 		return failedResult(observedAt, group, "target model group quota unavailable")
@@ -130,6 +140,74 @@ func parseGroupFromResponse(response availableModelsResponse, observedAt time.Ti
 		result.ArgonWindowRemaining = int64Ptr(argon.remaining)
 	}
 
+	return result
+}
+
+func parseArgonGroup(windows []candidateWindow, observedAt time.Time) ProbeResult {
+	result := ProbeResult{
+		Provider:   core.ProviderAntigravity,
+		ModelGroup: ModelGroupArgon,
+		ObservedAt: observedAt.UTC(),
+		Status:     StatusReady,
+		PlanType:   inferPlanType(windows),
+	}
+
+	// 1. Short window: shared Gemini 5h burst window
+	fiveHour, hasFiveHour := conservativeWindow(windows, WindowFiveHour)
+	if hasFiveHour {
+		result.ShortWindowResetAt = fiveHour.resetAt
+		result.ShortWindowRemaining = int64Ptr(fiveHour.remaining)
+	}
+
+	// 2. Long window: dedicated Argon 7d window, with fallback to shared Gemini 7d (Ultra/Free plans)
+	argonWindows := filterArgonWindows(windows, true)
+	argonLong, hasArgonLong := conservativeWindow(argonWindows, WindowWeekly)
+	if !hasArgonLong {
+		argonLong, hasArgonLong = conservativeAnyWindow(argonWindows)
+	}
+	if !hasArgonLong {
+		normalWindows := filterArgonWindows(windows, false)
+		argonLong, hasArgonLong = conservativeWindow(normalWindows, WindowWeekly)
+	}
+	if !hasArgonLong {
+		argonLong, hasArgonLong = conservativeWindow(windows, WindowWeekly)
+	}
+	if hasArgonLong {
+		result.LongWindowResetAt = argonLong.resetAt
+		result.LongWindowRemaining = int64Ptr(argonLong.remaining)
+		result.ArgonWindowResetAt = argonLong.resetAt
+		result.ArgonWindowRemaining = int64Ptr(argonLong.remaining)
+	}
+
+	// 3. Effective window selection for Argon
+	var selected candidateWindow
+	var hasSelected bool
+	if hasArgonLong && hasFiveHour {
+		if argonLong.remaining <= 0 {
+			selected = argonLong
+		} else if fiveHour.remaining <= 0 {
+			selected = fiveHour
+		} else {
+			selected = fiveHour
+		}
+		hasSelected = true
+	} else if hasArgonLong {
+		selected = argonLong
+		hasSelected = true
+	} else if hasFiveHour {
+		selected = fiveHour
+		hasSelected = true
+	} else {
+		selected, hasSelected = conservativeAnyWindow(windows)
+	}
+
+	if !hasSelected {
+		return failedResult(observedAt, ModelGroupArgon, "target model group quota unavailable")
+	}
+
+	result.ResetAt = selected.resetAt
+	result.Remaining = int64Ptr(selected.remaining)
+	result.Window = selected.window
 	return result
 }
 

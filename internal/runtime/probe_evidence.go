@@ -75,15 +75,12 @@ func collectFreshEvidence(ctx context.Context, input collectInput) (collectedEvi
 	historical := historicalObservations(input.store, input.credentials)
 	result := collectedEvidence{
 		RoundID:      roundID,
-		ByGroup:      make(map[config.AntigravityModelGroup]evidence.Result, 2),
+		ByGroup:      make(map[config.AntigravityModelGroup]evidence.Result, len(config.AllAntigravityModelGroups)),
 		Observations: make([]evidence.Observation, 0),
 		Probed:       uniqueProbeCredentials(probes),
 		RateLimited:  rateLimitedCredentials(probes),
 	}
-	for _, group := range []config.AntigravityModelGroup{
-		config.AntigravityModelGroupGemini,
-		config.AntigravityModelGroupClaudeGPT,
-	} {
+	for _, group := range config.AllAntigravityModelGroups {
 		classified := evidence.Classify(evidence.Input{
 			Round:       evidence.Round{ID: roundID, ModelGroup: group},
 			Credentials: input.credentials,
@@ -275,12 +272,9 @@ func probeAndRecord(ctx context.Context, client *host.Client, store *state.Store
 		ObservedAt:  now,
 		TargetGroup: job.targetGroup,
 	})
-	items := make([]antigravity.ProbeResult, 0, 2)
-	for _, group := range []antigravity.ModelGroup{
-		antigravity.ModelGroupGemini,
-		antigravity.ModelGroupClaudeGPT,
-	} {
-		result, ok := results[group]
+	items := make([]antigravity.ProbeResult, 0, len(config.AllAntigravityModelGroups))
+	for _, group := range config.AllAntigravityModelGroups {
+		result, ok := results[antigravity.ModelGroup(group)]
 		if !ok {
 			continue
 		}
@@ -331,10 +325,7 @@ func historicalObservations(store *state.Store, credentials []core.Credential) [
 	}
 	result := make([]evidence.HistoricalObservation, 0, len(credentials)*2)
 	for _, credential := range credentials {
-		for _, group := range []config.AntigravityModelGroup{
-			config.AntigravityModelGroupGemini,
-			config.AntigravityModelGroupClaudeGPT,
-		} {
+		for _, group := range config.AllAntigravityModelGroups {
 			entry, ok := store.GetEntry(credential.AuthIndex, string(group))
 			if !ok {
 				continue

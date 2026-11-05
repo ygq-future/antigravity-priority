@@ -63,9 +63,9 @@ func CalculateCompositeScore(r7d float64, t7d float64, r5h float64, t5h float64)
 
 // ExtractQuotaMetrics extracts normalized fractions and computes pacing metrics from probe evidence.
 func ExtractQuotaMetrics(evidence QuotaEvidence, now time.Time) QuotaMetrics {
-	r7d := extractR7d(evidence)
+	r7d := extractR7d(evidence, now)
 	t7d := extractT7d(evidence, now)
-	r5h := extractR5h(evidence, r7d)
+	r5h := extractR5h(evidence, r7d, now)
 	t5h := extractT5h(evidence, now)
 
 	cCycle := evidence.CycleBurnRate
@@ -83,8 +83,8 @@ func ExtractQuotaMetrics(evidence QuotaEvidence, now time.Time) QuotaMetrics {
 		urgency = CalculateCompositeScore(r7d, t7d, r5h, t5h)
 	}
 
-	isWeeklyDepleted := isWeeklyDepletedEvidence(evidence, r7d)
-	isShortDepleted := !isWeeklyDepleted && isShortDepletedEvidence(evidence, r5h)
+	isWeeklyDepleted := isWeeklyDepletedEvidence(evidence, r7d, now)
+	isShortDepleted := !isWeeklyDepleted && isShortDepletedEvidence(evidence, r5h, now)
 	isBoosted := evidence.PlanType != core.PlanTypeFree && !isWeeklyDepleted && !isShortDepleted && IsBoostEligible(t7d, tRequired, r7d)
 	return QuotaMetrics{
 		R7d:              r7d,
@@ -100,15 +100,21 @@ func ExtractQuotaMetrics(evidence QuotaEvidence, now time.Time) QuotaMetrics {
 	}
 }
 
-func extractR7d(evidence QuotaEvidence) float64 {
+func extractR7d(evidence QuotaEvidence, now time.Time) float64 {
 	if evidence.LongWindowRemaining != nil {
 		if *evidence.LongWindowRemaining <= 0 {
+			if evidence.LongWindowResetAt != nil && !evidence.LongWindowResetAt.IsZero() && !evidence.LongWindowResetAt.After(now) {
+				return 1.0
+			}
 			return 0
 		}
 		return float64(*evidence.LongWindowRemaining) / 100.0
 	}
 	if evidence.Remaining != nil {
 		if *evidence.Remaining <= 0 {
+			if evidence.ResetAt != nil && !evidence.ResetAt.IsZero() && !evidence.ResetAt.After(now) {
+				return 1.0
+			}
 			return 0
 		}
 		return float64(*evidence.Remaining) / 100.0
@@ -127,18 +133,24 @@ func extractT7d(evidence QuotaEvidence, now time.Time) float64 {
 	return resetAt.Sub(now).Hours()
 }
 
-func extractR5h(evidence QuotaEvidence, fallbackR7d float64) float64 {
+func extractR5h(evidence QuotaEvidence, fallbackR7d float64, now time.Time) float64 {
 	if evidence.PlanType == core.PlanTypeFree {
 		return 0
 	}
 	if evidence.ShortWindowRemaining != nil {
 		if *evidence.ShortWindowRemaining <= 0 {
+			if evidence.ShortWindowResetAt != nil && !evidence.ShortWindowResetAt.IsZero() && !evidence.ShortWindowResetAt.After(now) {
+				return 1.0
+			}
 			return 0
 		}
 		return float64(*evidence.ShortWindowRemaining) / 100.0
 	}
 	if evidence.Remaining != nil {
 		if *evidence.Remaining <= 0 {
+			if evidence.ResetAt != nil && !evidence.ResetAt.IsZero() && !evidence.ResetAt.After(now) {
+				return 1.0
+			}
 			return 0
 		}
 		return float64(*evidence.Remaining) / 100.0
@@ -160,7 +172,13 @@ func extractT5h(evidence QuotaEvidence, now time.Time) float64 {
 	return resetAt.Sub(now).Hours()
 }
 
-func isWeeklyDepletedEvidence(evidence QuotaEvidence, r7d float64) bool {
+func isWeeklyDepletedEvidence(evidence QuotaEvidence, r7d float64, now time.Time) bool {
+	if evidence.LongWindowResetAt != nil && !evidence.LongWindowResetAt.IsZero() && !evidence.LongWindowResetAt.After(now) {
+		return false
+	}
+	if evidence.LongWindowResetAt == nil && evidence.ResetAt != nil && !evidence.ResetAt.IsZero() && !evidence.ResetAt.After(now) {
+		return false
+	}
 	if evidence.LongWindowRemaining != nil && *evidence.LongWindowRemaining <= 0 {
 		return true
 	}
@@ -170,8 +188,11 @@ func isWeeklyDepletedEvidence(evidence QuotaEvidence, r7d float64) bool {
 	return r7d <= 0 && (evidence.LongWindowRemaining != nil || evidence.Remaining != nil)
 }
 
-func isShortDepletedEvidence(evidence QuotaEvidence, r5h float64) bool {
+func isShortDepletedEvidence(evidence QuotaEvidence, r5h float64, now time.Time) bool {
 	if evidence.PlanType == core.PlanTypeFree {
+		return false
+	}
+	if evidence.ShortWindowResetAt != nil && !evidence.ShortWindowResetAt.IsZero() && !evidence.ShortWindowResetAt.After(now) {
 		return false
 	}
 	if evidence.ShortWindowRemaining != nil && *evidence.ShortWindowRemaining <= 0 {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -49,6 +50,11 @@ type Entry struct {
 	CycleBurnRate            float64       `json:"cycle_burn_rate"`
 	Samples                  []QuotaSample `json:"samples,omitempty"`
 	LearningBaselineSequence uint64        `json:"learning_baseline_sequence,omitempty"`
+	PendingWeightedTokens    float64       `json:"pending_weighted_tokens,omitempty"`
+	EstimatedShortBurnPct    float64       `json:"estimated_short_burn_pct,omitempty"`
+	EstimatedLongBurnPct     float64       `json:"estimated_long_burn_pct,omitempty"`
+	TokensPerShortPct        float64       `json:"tokens_per_short_pct,omitempty"`
+	LastUsageAt              time.Time     `json:"last_usage_at,omitempty"`
 	LastError                string        `json:"last_error,omitempty"`
 	LastFailureAt            time.Time     `json:"last_failure_at,omitempty"`
 	NextProbeAt              time.Time     `json:"next_probe_at,omitempty"`
@@ -340,6 +346,22 @@ func (s *Store) MarkProbeSuccess(ctx context.Context, success ProbeSuccess) erro
 	if sampleAppended(prev.Samples, newSamples) && strings.TrimSpace(success.ProbeRoundID) != "" && len(newSamples) > 0 {
 		newSamples[len(newSamples)-1].ProbeRoundID = strings.TrimSpace(success.ProbeRoundID)
 	}
+	// Probe calibration for real-time usage estimator
+	tokensPerShortPct := prev.TokensPerShortPct
+	if prev.PendingWeightedTokens > 0 && prev.ShortWindowRemaining != nil && success.ShortWindowRemaining != nil {
+		if !prev.ShortWindowResetAt.IsZero() && !success.ShortWindowResetAt.IsZero() && prev.ShortWindowResetAt.Equal(success.ShortWindowResetAt) {
+			deltaShort := *prev.ShortWindowRemaining - *success.ShortWindowRemaining
+			if deltaShort >= 2 {
+				kObs := prev.PendingWeightedTokens / float64(deltaShort)
+				prevK := prev.TokensPerShortPct
+				if prevK <= 0 {
+					prevK = defaultTokensPerShortPct(success.ModelGroup)
+				}
+				newK := 0.3*kObs + 0.7*prevK
+				tokensPerShortPct = clamp(newK, MinTokensPerShortPct, MaxTokensPerShortPct)
+			}
+		}
+	}
 
 	entry := Entry{
 		SchemaVersion:            SchemaVersion,
@@ -358,6 +380,11 @@ func (s *Store) MarkProbeSuccess(ctx context.Context, success ProbeSuccess) erro
 		CycleBurnRate:            newRate,
 		Samples:                  newSamples,
 		LearningBaselineSequence: newBaseline,
+		PendingWeightedTokens:    0,
+		EstimatedShortBurnPct:    0,
+		EstimatedLongBurnPct:     0,
+		TokensPerShortPct:        tokensPerShortPct,
+		LastUsageAt:              time.Time{},
 		LastError:                "",
 		LastFailureAt:            time.Time{},
 		NextProbeAt:              utcOrZero(success.NextProbeAt),
@@ -365,7 +392,6 @@ func (s *Store) MarkProbeSuccess(ctx context.Context, success ProbeSuccess) erro
 		PlanType:                 success.PlanType,
 		Source:                   success.Source,
 	}
-
 	s.entries[key] = entry
 	return nil
 }
@@ -412,6 +438,54 @@ func (s *Store) MarkProbeScheduled(ctx context.Context, schedule ProbeSchedule) 
 
 	s.entries[key] = entry
 	return nil
+}
+
+// RecordUsageConsumption records estimated token consumption for real-time quota deduction.
+func (s *Store) RecordUsageConsumption(authIndex, modelGroup string, weightedTokens float64, now time.Time) {
+	if weightedTokens <= 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	applyConsumption := func(group string) float64 {
+		key := entryKey(authIndex, group)
+		entry, ok := s.entries[key]
+		if !ok {
+			return 0
+		}
+		entry.PendingWeightedTokens += weightedTokens
+		entry.LastUsageAt = now.UTC()
+		k5h := effectiveTokensPerShortPct(entry)
+		cCycle := effectiveCycleBurnRate(entry)
+		entry.EstimatedShortBurnPct = entry.PendingWeightedTokens / k5h
+		entry.EstimatedLongBurnPct = entry.EstimatedShortBurnPct * cCycle
+		s.entries[key] = entry
+		return entry.EstimatedShortBurnPct
+	}
+
+	shortBurnPct := applyConsumption(modelGroup)
+
+	syncSiblingShortBurn := func(siblingGroup string, shortPct float64) {
+		key := entryKey(authIndex, siblingGroup)
+		entry, ok := s.entries[key]
+		if !ok {
+			return
+		}
+		entry.EstimatedShortBurnPct = shortPct
+		entry.EstimatedLongBurnPct = shortPct * effectiveCycleBurnRate(entry)
+		entry.LastUsageAt = now.UTC()
+		s.entries[key] = entry
+	}
+
+	// Because gemini and argon share the 5h short window, when modelGroup == "gemini",
+	// also update EstimatedShortBurnPct on "argon" (and vice versa).
+	normGroup := strings.ToLower(strings.TrimSpace(modelGroup))
+	if normGroup == string(config.AntigravityModelGroupGemini) {
+		syncSiblingShortBurn(string(config.AntigravityModelGroupArgon), shortBurnPct)
+	} else if normGroup == string(config.AntigravityModelGroupArgon) {
+		syncSiblingShortBurn(string(config.AntigravityModelGroupGemini), shortBurnPct)
+	}
 }
 
 // GetEntry retrieves a copy of the cached entry for authIndex and modelGroup.
@@ -737,6 +811,34 @@ func (s *Store) GetHistoricalEvidence(authIndex, modelGroup string) (priority.Qu
 	shortRemaining := cloneInt64Ptr(entry.ShortWindowRemaining)
 	longRemaining := cloneInt64Ptr(entry.LongWindowRemaining)
 	argonRemaining := cloneInt64Ptr(entry.ArgonWindowRemaining)
+
+	if entry.EstimatedShortBurnPct > 0 && shortRemaining != nil {
+		deducted := *shortRemaining - int64(math.Round(entry.EstimatedShortBurnPct))
+		if deducted < 0 {
+			deducted = 0
+		}
+		shortRemaining = &deducted
+	}
+	if entry.EstimatedLongBurnPct > 0 && longRemaining != nil {
+		deducted := *longRemaining - int64(math.Round(entry.EstimatedLongBurnPct))
+		if deducted < 0 {
+			deducted = 0
+		}
+		longRemaining = &deducted
+	}
+	if entry.EstimatedLongBurnPct > 0 && argonRemaining != nil {
+		deducted := *argonRemaining - int64(math.Round(entry.EstimatedLongBurnPct))
+		if deducted < 0 {
+			deducted = 0
+		}
+		argonRemaining = &deducted
+	}
+	if shortRemaining != nil && remaining > *shortRemaining {
+		remaining = *shortRemaining
+	}
+	if longRemaining != nil && remaining > *longRemaining {
+		remaining = *longRemaining
+	}
 	cycleBurnRate := entry.CycleBurnRate
 	if cycleBurnRate <= 0 {
 		cycleBurnRate = DefaultCycleBurnRate

@@ -25,6 +25,22 @@ func Snapshot(plan priority.Plan) PlanSnapshot {
 	return newPlanSnapshot(plan)
 }
 
+// QuotaWindowBar represents the visual progress bar state for a single quota window.
+type QuotaWindowBar struct {
+	Remaining *int64     `json:"remaining,omitempty"`
+	ResetAt   *time.Time `json:"reset_at,omitempty"`
+	Stale     bool       `json:"stale,omitempty"`
+}
+
+// AllQuotaWindows aggregates the 5 quota progress bars for display across all views.
+type AllQuotaWindows struct {
+	Gemini5h QuotaWindowBar `json:"gemini_5h"`
+	Gemini7d QuotaWindowBar `json:"gemini_7d"`
+	Claude5h QuotaWindowBar `json:"claude_5h"`
+	Claude7d QuotaWindowBar `json:"claude_7d"`
+	Argon7d  QuotaWindowBar `json:"argon_7d"`
+}
+
 // SnapshotItem is the audit view of a single planned item.
 type SnapshotItem struct {
 	Identity             SnapshotIdentity `json:"-"`
@@ -56,6 +72,9 @@ type SnapshotItem struct {
 	LongWindowRemaining  *int64           `json:"long_window_remaining,omitempty"`
 	ArgonWindowResetAt   *time.Time       `json:"argon_window_reset_at,omitempty"`
 	ArgonWindowRemaining *int64           `json:"argon_window_remaining,omitempty"`
+	QuotaWindows         AllQuotaWindows  `json:"quota_windows"`
+	EstimatedShortBurnPct float64         `json:"estimated_short_burn_pct,omitempty"`
+	EstimatedLongBurnPct  float64         `json:"estimated_long_burn_pct,omitempty"`
 }
 
 // SnapshotChange is the audit view of a single candidate change.

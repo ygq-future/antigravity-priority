@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -45,27 +46,51 @@ func ProjectDualModelGroups(input ProjectionInput) (DualModelGroupProjection, er
 	}
 
 	projectionTime := input.ProjectionTime.UTC()
-	alternateGroup := alternateProjectionGroup(controlGroup)
 	options := clonePlanningOptions(input.PlanningOptions)
 	options.Now = projectionTime
 
-	controlEvidence := cloneEvidence(input.EvidenceByGroup[controlGroup])
-	controlPlan := priority.PlanWithEvidence(
-		cloneCredentials(input.Credentials),
-		controlEvidence,
-		options,
-	)
-	alternateEvidence := cloneEvidence(input.EvidenceByGroup[alternateGroup])
-	predictedPlan := priority.PlanWithEvidence(
-		cloneCredentials(input.Credentials),
-		alternateEvidence,
-		options,
-	)
-	annotatePlanObservations(&controlPlan, controlEvidence.Observations)
-	annotatePlanObservations(&predictedPlan, alternateEvidence.Observations)
+	plansByGroup := make(map[config.AntigravityModelGroup]priority.Plan, len(config.AllAntigravityModelGroups))
+	snapshotsByGroup := make(map[config.AntigravityModelGroup]apply.PlanSnapshot, len(config.AllAntigravityModelGroups))
 
-	controlSnapshot := snapshotForProjectionRole(controlPlan, false)
-	predictedSnapshot := snapshotForProjectionRole(predictedPlan, true)
+	for _, group := range config.AllAntigravityModelGroups {
+		grpEvidence := cloneEvidence(input.EvidenceByGroup[group])
+		plan := priority.PlanWithEvidence(
+			cloneCredentials(input.Credentials),
+			grpEvidence,
+			options,
+		)
+		annotatePlanObservations(&plan, grpEvidence.Observations)
+		plansByGroup[group] = plan
+
+		// All three pools are live, active scheduling authorities; IsPredicted is always false
+		snapshot := snapshotForProjectionRole(plan, false)
+		snapshotsByGroup[group] = snapshot
+	}
+
+	// Cross-reference 5 quota windows across all groups for every credential
+	quotaWindowsByAuth := buildAllQuotaWindows(snapshotsByGroup)
+	for _, group := range config.AllAntigravityModelGroups {
+		snap := snapshotsByGroup[group]
+		for index := range snap.Items {
+			authIndex := snap.Items[index].AuthIndex
+			if qw, ok := quotaWindowsByAuth[authIndex]; ok {
+				snap.Items[index].QuotaWindows = qw
+			}
+		}
+		snapshotsByGroup[group] = snap
+	}
+
+	controlPlan := plansByGroup[controlGroup]
+	controlSnapshot := snapshotsByGroup[controlGroup]
+
+	groups := make(map[string]apply.GroupSnapshot, len(config.AllAntigravityModelGroups))
+	for _, group := range config.AllAntigravityModelGroups {
+		snap := snapshotsByGroup[group]
+		groups[string(group)] = apply.GroupSnapshot{
+			Items:   snap.Items,
+			Changes: snap.Changes,
+		}
+	}
 
 	return DualModelGroupProjection{
 		ControlPlan:     controlPlan,
@@ -73,18 +98,93 @@ func ProjectDualModelGroups(input ProjectionInput) (DualModelGroupProjection, er
 		Snapshot: apply.DualGroupSnapshot{
 			ActiveModelGroup: string(controlGroup),
 			ObservedAt:       projectionTime,
-			Groups: map[string]apply.GroupSnapshot{
-				string(controlGroup): {
-					Items:   controlSnapshot.Items,
-					Changes: controlSnapshot.Changes,
-				},
-				string(alternateGroup): {
-					Items:   predictedSnapshot.Items,
-					Changes: predictedSnapshot.Changes,
-				},
-			},
+			Groups:           groups,
 		},
 	}, nil
+}
+
+func buildAllQuotaWindows(snapshots map[config.AntigravityModelGroup]apply.PlanSnapshot) map[string]apply.AllQuotaWindows {
+	result := make(map[string]apply.AllQuotaWindows)
+
+	geminiSnap := snapshots[config.AntigravityModelGroupGemini]
+	for _, item := range geminiSnap.Items {
+		qw := result[item.AuthIndex]
+		qw.Gemini5h = itemShortWindowBar(item)
+		qw.Gemini7d = itemLongWindowBar(item)
+		result[item.AuthIndex] = qw
+	}
+
+	claudeSnap := snapshots[config.AntigravityModelGroupClaudeGPT]
+	for _, item := range claudeSnap.Items {
+		qw := result[item.AuthIndex]
+		qw.Claude5h = itemShortWindowBar(item)
+		qw.Claude7d = itemLongWindowBar(item)
+		result[item.AuthIndex] = qw
+	}
+
+	argonSnap := snapshots[config.AntigravityModelGroupArgon]
+	for _, item := range argonSnap.Items {
+		qw := result[item.AuthIndex]
+		qw.Argon7d = itemArgonWindowBar(item)
+		result[item.AuthIndex] = qw
+	}
+
+	return result
+}
+
+func itemShortWindowBar(item apply.SnapshotItem) apply.QuotaWindowBar {
+	rem := item.ShortWindowRemaining
+	resetAt := item.ShortWindowResetAt
+	if rem == nil && item.EvidenceFresh && item.R5h > 0 {
+		val := int64(math.Round(item.R5h * 100.0))
+		rem = &val
+	}
+	if resetAt == nil && item.EvidenceFresh {
+		resetAt = item.ResetAt
+	}
+	return apply.QuotaWindowBar{
+		Remaining: cloneInt64Pointer(rem),
+		ResetAt:   cloneTimePointer(resetAt),
+		Stale:     !item.EvidenceFresh && rem == nil,
+	}
+}
+
+func itemLongWindowBar(item apply.SnapshotItem) apply.QuotaWindowBar {
+	rem := item.LongWindowRemaining
+	resetAt := item.LongWindowResetAt
+	if rem == nil && item.EvidenceFresh && item.R7d > 0 {
+		val := int64(math.Round(item.R7d * 100.0))
+		rem = &val
+	}
+	if resetAt == nil && item.EvidenceFresh {
+		resetAt = item.ResetAt
+	}
+	return apply.QuotaWindowBar{
+		Remaining: cloneInt64Pointer(rem),
+		ResetAt:   cloneTimePointer(resetAt),
+		Stale:     !item.EvidenceFresh && rem == nil,
+	}
+}
+
+func itemArgonWindowBar(item apply.SnapshotItem) apply.QuotaWindowBar {
+	rem := item.LongWindowRemaining
+	resetAt := item.LongWindowResetAt
+	if rem == nil {
+		rem = item.ArgonWindowRemaining
+		resetAt = item.ArgonWindowResetAt
+	}
+	if rem == nil && item.EvidenceFresh && item.R7d > 0 {
+		val := int64(math.Round(item.R7d * 100.0))
+		rem = &val
+	}
+	if resetAt == nil && item.EvidenceFresh {
+		resetAt = item.ResetAt
+	}
+	return apply.QuotaWindowBar{
+		Remaining: cloneInt64Pointer(rem),
+		ResetAt:   cloneTimePointer(resetAt),
+		Stale:     !item.EvidenceFresh && rem == nil,
+	}
 }
 
 func annotatePlanObservations(plan *priority.Plan, observations []evidence.Observation) {
@@ -119,12 +219,6 @@ func canonicalModelGroup(group config.AntigravityModelGroup) (config.Antigravity
 	return parsed, nil
 }
 
-func alternateProjectionGroup(group config.AntigravityModelGroup) config.AntigravityModelGroup {
-	if group == config.AntigravityModelGroupClaudeGPT {
-		return config.AntigravityModelGroupGemini
-	}
-	return config.AntigravityModelGroupClaudeGPT
-}
 
 func snapshotForProjectionRole(plan priority.Plan, predicted bool) apply.PlanSnapshot {
 	return snapshotForProjectionRoleSnapshot(apply.Snapshot(plan), predicted)
@@ -248,8 +342,20 @@ func cloneDualGroupSnapshot(snapshot apply.DualGroupSnapshot) apply.DualGroupSna
 			items[index].ResetAt = cloneTimePointer(item.ResetAt)
 			items[index].ShortWindowResetAt = cloneTimePointer(item.ShortWindowResetAt)
 			items[index].LongWindowResetAt = cloneTimePointer(item.LongWindowResetAt)
+			items[index].ArgonWindowResetAt = cloneTimePointer(item.ArgonWindowResetAt)
 			items[index].ShortWindowRemaining = cloneInt64Pointer(item.ShortWindowRemaining)
 			items[index].LongWindowRemaining = cloneInt64Pointer(item.LongWindowRemaining)
+			items[index].ArgonWindowRemaining = cloneInt64Pointer(item.ArgonWindowRemaining)
+			items[index].QuotaWindows.Gemini5h.Remaining = cloneInt64Pointer(item.QuotaWindows.Gemini5h.Remaining)
+			items[index].QuotaWindows.Gemini5h.ResetAt = cloneTimePointer(item.QuotaWindows.Gemini5h.ResetAt)
+			items[index].QuotaWindows.Gemini7d.Remaining = cloneInt64Pointer(item.QuotaWindows.Gemini7d.Remaining)
+			items[index].QuotaWindows.Gemini7d.ResetAt = cloneTimePointer(item.QuotaWindows.Gemini7d.ResetAt)
+			items[index].QuotaWindows.Claude5h.Remaining = cloneInt64Pointer(item.QuotaWindows.Claude5h.Remaining)
+			items[index].QuotaWindows.Claude5h.ResetAt = cloneTimePointer(item.QuotaWindows.Claude5h.ResetAt)
+			items[index].QuotaWindows.Claude7d.Remaining = cloneInt64Pointer(item.QuotaWindows.Claude7d.Remaining)
+			items[index].QuotaWindows.Claude7d.ResetAt = cloneTimePointer(item.QuotaWindows.Claude7d.ResetAt)
+			items[index].QuotaWindows.Argon7d.Remaining = cloneInt64Pointer(item.QuotaWindows.Argon7d.Remaining)
+			items[index].QuotaWindows.Argon7d.ResetAt = cloneTimePointer(item.QuotaWindows.Argon7d.ResetAt)
 		}
 		clonedGroup.Items = items
 		clonedGroup.Changes = make([]apply.SnapshotChange, len(groupSnapshot.Changes))

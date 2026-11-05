@@ -674,8 +674,8 @@ func TestRuntime_ProbeProjectsBothGroupsFromOneQuotaResponse(t *testing.T) {
 	if len(gemini.Items) != 1 || !gemini.Items[0].EvidenceFresh || gemini.Items[0].R7d != 0.7 {
 		t.Fatalf("gemini projection = %#v, want fresh quota data", gemini)
 	}
-	if len(claudeGPT.Items) != 1 || !claudeGPT.Items[0].EvidenceFresh || claudeGPT.Items[0].R7d != 0.6 || !claudeGPT.Items[0].IsPredicted {
-		t.Fatalf("claude/gpt projection = %#v, want fresh predicted quota data", claudeGPT)
+	if len(claudeGPT.Items) != 1 || !claudeGPT.Items[0].EvidenceFresh || claudeGPT.Items[0].R7d != 0.6 || claudeGPT.Items[0].IsPredicted {
+		t.Fatalf("claude/gpt projection = %#v, want fresh live quota data", claudeGPT)
 	}
 	if mock.saveCalls != 0 {
 		t.Fatalf("Probe wrote Host documents: %d saves", mock.saveCalls)
@@ -1644,8 +1644,8 @@ func TestRuntime_LastProbeOutcomes_SuccessAndFailure(t *testing.T) {
 		t.Fatalf("probe failed: %v", err)
 	}
 	successOutcomes := r.LastProbeOutcomes(context.Background())
-	if len(successOutcomes) != 2 {
-		t.Fatalf("expected 2 success probe outcomes, got %d", len(successOutcomes))
+	if len(successOutcomes) != 3 {
+		t.Fatalf("expected 3 success probe outcomes, got %d", len(successOutcomes))
 	}
 	for _, o := range successOutcomes {
 		if o.AuthIndex == "auth_success" {

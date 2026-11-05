@@ -196,6 +196,8 @@ func TestParseAntigravityModelGroup(t *testing.T) {
 		"":               config.AntigravityModelGroupGemini,
 		"gemini":         config.AntigravityModelGroupGemini,
 		"GEMINI":         config.AntigravityModelGroupGemini,
+		"argon":          config.AntigravityModelGroupArgon,
+		"ARGON":          config.AntigravityModelGroupArgon,
 		"claude_gpt":     config.AntigravityModelGroupClaudeGPT,
 		"claude-gpt":     config.AntigravityModelGroupClaudeGPT,
 		"claudegpt":      config.AntigravityModelGroupClaudeGPT,

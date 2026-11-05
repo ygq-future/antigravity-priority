@@ -670,3 +670,61 @@ func TestParseAvailableModels_ArgonSeparateGroup(t *testing.T) {
 		t.Fatalf("PlanType = %q; want %q", res.PlanType, core.PlanTypePro)
 	}
 }
+
+func TestParseAllModelGroups_ThreePools(t *testing.T) {
+	raw := []byte(`{"groups":[
+		{"displayName":"Gemini Models","description":"Shared quota for Gemini models","buckets":[
+			{"bucketId":"gemini-5h","displayName":"Five Hour Limit","window":"5h","remainingFraction":0.99,"resetTime":"2026-10-28T17:00:00Z"},
+			{"bucketId":"gemini-weekly","displayName":"Weekly Limit","window":"weekly","remainingFraction":0.79,"resetTime":"2026-10-31T00:00:00Z"}
+		]},
+		{"displayName":"Gemini 4 Argon","description":"For paid Pro plans, Argon quota is separate.","buckets":[
+			{"bucketId":"gemini-argon-wtu-weekly","displayName":"Gemini 4 Argon Weekly Limit","window":"weekly","remainingFraction":0.71,"resetTime":"2026-10-29T23:24:33Z"}
+		]},
+		{"displayName":"Claude and GPT Models","description":"Shared quota for Claude and GPT models","buckets":[
+			{"bucketId":"claude-5h","displayName":"Five Hour Limit","window":"5h","remainingFraction":0.80,"resetTime":"2026-10-28T17:00:00Z"},
+			{"bucketId":"claude-weekly","displayName":"Weekly Limit","window":"weekly","remainingFraction":0.45,"resetTime":"2026-10-31T00:00:00Z"}
+		]}
+	]}`)
+	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+
+	results := ParseAllModelGroups(raw, now)
+	if len(results) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(results))
+	}
+
+	gemini, ok := results[ModelGroupGemini]
+	if !ok || gemini.Status != StatusReady {
+		t.Fatalf("gemini not ready: %+v", gemini)
+	}
+	if gemini.ShortWindowRemaining == nil || *gemini.ShortWindowRemaining != 99 {
+		t.Errorf("gemini short window = %v, want 99", gemini.ShortWindowRemaining)
+	}
+	if gemini.LongWindowRemaining == nil || *gemini.LongWindowRemaining != 79 {
+		t.Errorf("gemini long window = %v, want 79", gemini.LongWindowRemaining)
+	}
+	if gemini.ArgonWindowRemaining == nil || *gemini.ArgonWindowRemaining != 71 {
+		t.Errorf("gemini argon window = %v, want 71", gemini.ArgonWindowRemaining)
+	}
+
+	argon, ok := results[ModelGroupArgon]
+	if !ok || argon.Status != StatusReady {
+		t.Fatalf("argon not ready: %+v", argon)
+	}
+	if argon.ShortWindowRemaining == nil || *argon.ShortWindowRemaining != 99 {
+		t.Errorf("argon short window = %v, want 99 (shared from Gemini)", argon.ShortWindowRemaining)
+	}
+	if argon.LongWindowRemaining == nil || *argon.LongWindowRemaining != 71 {
+		t.Errorf("argon long window = %v, want 71", argon.LongWindowRemaining)
+	}
+
+	claude, ok := results[ModelGroupClaudeGPT]
+	if !ok || claude.Status != StatusReady {
+		t.Fatalf("claude not ready: %+v", claude)
+	}
+	if claude.ShortWindowRemaining == nil || *claude.ShortWindowRemaining != 80 {
+		t.Errorf("claude short window = %v, want 80", claude.ShortWindowRemaining)
+	}
+	if claude.LongWindowRemaining == nil || *claude.LongWindowRemaining != 45 {
+		t.Errorf("claude long window = %v, want 45", claude.LongWindowRemaining)
+	}
+}

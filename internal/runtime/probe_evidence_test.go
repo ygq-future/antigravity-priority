@@ -114,8 +114,8 @@ func TestProbeAndRecord_GeminiTargetKeepsDualWindowEvidence(t *testing.T) {
 		t.Fatalf("expected call to %q, got %q", antigravity.RetrieveUserQuotaSummaryURL, calledURLs[0])
 	}
 
-	if len(results) != 2 {
-		t.Fatalf("results len = %d; want both model groups from one response", len(results))
+	if len(results) != 3 {
+		t.Fatalf("results len = %d; want 3 model groups from one response", len(results))
 	}
 	var gemini antigravity.ProbeResult
 	for _, result := range results {

@@ -263,4 +263,52 @@ func TestExtractQuotaMetrics(t *testing.T) {
 			t.Errorf("Free plan Urgency = %v; want > 0", metrics.Urgency)
 		}
 	})
+
+	t.Run("elapsed reset-time auto-recovery clears short depletion", func(t *testing.T) {
+		rZero := int64(0)
+		rWeekly := int64(60)
+		pastReset := now.Add(-5 * time.Minute) // 5h reset already passed
+		futureWeekly := now.Add(48 * time.Hour)
+
+		ev := QuotaEvidence{
+			AuthIndex:            "auth-auto-rec",
+			PlanType:             core.PlanTypePro,
+			ShortWindowRemaining: &rZero,
+			ShortWindowResetAt:   &pastReset,
+			LongWindowRemaining:  &rWeekly,
+			LongWindowResetAt:    &futureWeekly,
+		}
+
+		metrics := ExtractQuotaMetrics(ev, now)
+		if metrics.IsShortDepleted {
+			t.Errorf("expected IsShortDepleted=false when reset time has passed, got true")
+		}
+		if metrics.R5h != 1.0 {
+			t.Errorf("expected R5h=1.0 when reset time has passed, got %v", metrics.R5h)
+		}
+	})
+
+	t.Run("elapsed weekly reset-time auto-recovery clears weekly depletion", func(t *testing.T) {
+		rZero := int64(0)
+		rShort := int64(90)
+		pastWeeklyReset := now.Add(-10 * time.Minute)
+		futureShort := now.Add(2 * time.Hour)
+
+		ev := QuotaEvidence{
+			AuthIndex:            "auth-rec-weekly",
+			PlanType:             core.PlanTypePro,
+			ShortWindowRemaining: &rShort,
+			ShortWindowResetAt:   &futureShort,
+			LongWindowRemaining:  &rZero,
+			LongWindowResetAt:    &pastWeeklyReset,
+		}
+
+		metrics := ExtractQuotaMetrics(ev, now)
+		if metrics.IsWeeklyDepleted {
+			t.Errorf("expected IsWeeklyDepleted=false when weekly reset time has passed, got true")
+		}
+		if metrics.R7d != 1.0 {
+			t.Errorf("expected R7d=1.0 when weekly reset time has passed, got %v", metrics.R7d)
+		}
+	})
 }

@@ -1,6 +1,7 @@
 package state
 
 import (
+	"strings"
 	"time"
 )
 
@@ -23,7 +24,53 @@ const (
 	MinQuotaSampleCapacity = 2
 	// MaxQuotaSampleCapacity is the maximum allowed sample capacity.
 	MaxQuotaSampleCapacity = 30
+
+	// DefaultTokensPerShortPctGemini is default weighted tokens per 1% 5h quota for Gemini.
+	DefaultTokensPerShortPctGemini = 80000.0
+	// DefaultTokensPerShortPctClaudeArgon is default weighted tokens per 1% 5h quota for Claude & Argon.
+	DefaultTokensPerShortPctClaudeArgon = 40000.0
+	// MinTokensPerShortPct is the minimum clamp bound for learned token sensitivity.
+	MinTokensPerShortPct = 5000.0
+	// MaxTokensPerShortPct is the maximum clamp bound for learned token sensitivity.
+	MaxTokensPerShortPct = 500000.0
 )
+
+// CalculateWeightedTurnTokens computes weighted equivalent tokens for a single request turn.
+func CalculateWeightedTurnTokens(inputTokens, outputTokens, reasoningTokens, cacheReadTokens, totalTokens int64) float64 {
+	uncachedInput := inputTokens - cacheReadTokens
+	if uncachedInput < 0 {
+		uncachedInput = 0
+	}
+	weighted := float64(uncachedInput) + 0.1*float64(cacheReadTokens) + 4.0*float64(outputTokens+reasoningTokens)
+	if weighted <= 0 {
+		if totalTokens > 2000 {
+			return float64(totalTokens)
+		}
+		return 2000.0
+	}
+	return weighted
+}
+
+func defaultTokensPerShortPct(group string) float64 {
+	if strings.Contains(strings.ToLower(group), "gemini") {
+		return DefaultTokensPerShortPctGemini
+	}
+	return DefaultTokensPerShortPctClaudeArgon
+}
+
+func effectiveTokensPerShortPct(entry Entry) float64 {
+	if entry.TokensPerShortPct > 0 {
+		return entry.TokensPerShortPct
+	}
+	return defaultTokensPerShortPct(entry.ModelGroup)
+}
+
+func effectiveCycleBurnRate(entry Entry) float64 {
+	if entry.CycleBurnRate > 0 {
+		return entry.CycleBurnRate
+	}
+	return DefaultCycleBurnRate
+}
 
 // QuotaSample represents a single point-in-time quota observation.
 type QuotaSample struct {
