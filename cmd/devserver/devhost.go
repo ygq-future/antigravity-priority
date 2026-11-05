@@ -334,18 +334,29 @@ func (d *devHost) ListAuthModels(ctx context.Context) ([]host.AuthModelsEntry, e
 	}
 	entries := make([]host.AuthModelsEntry, 0, len(files))
 	for _, file := range files {
+		isFree := isDevFreeAuthIndex(file.AuthIndex)
+		models := []string{
+			"gemini-3.8-flash-high",
+			"gemini-3-flash",
+			"gemini-3.5-flash-lite",
+			"gemini-3.1-flash-lite",
+			"gemini-3.1-flash-image",
+		}
+		if !isFree {
+			models = append(models,
+				"gemini-4-argon-high",
+				"claude-sonnet-5-5-high",
+				"claude-opus-5-5-high",
+				"claude-sonnet-4-6",
+				"claude-opus-4-6-thinking",
+				"gpt-oss-120b-medium",
+			)
+		}
 		entries = append(entries, host.AuthModelsEntry{
 			ID:        file.Name,
 			AuthIndex: file.AuthIndex,
 			Provider:  file.Provider,
-			Models: []string{
-				"gemini-3.8-flash-high",
-				"gemini-3-flash",
-				"gemini-4-argon-high",
-				"claude-sonnet-5-5-high",
-				"claude-opus-5-5-high",
-				"gpt-oss-120b-medium",
-			},
+			Models:    models,
 		})
 	}
 	return entries, nil
@@ -480,7 +491,9 @@ func marshalDevQuotaResponse(state devQuotaState, isFree bool) ([]byte, error) {
 	if len(argonGroup.Buckets) > 0 {
 		groups = append(groups, argonGroup)
 	}
-	groups = append(groups, makeGroup("claude-gpt", "Claude and GPT Models", "Shared quota for Claude and GPT models", state.Groups[string(antigravity.ModelGroupClaudeGPT)]))
+	if !isFree {
+		groups = append(groups, makeGroup("claude-gpt", "Claude and GPT Models", "Shared quota for Claude and GPT models", state.Groups[string(antigravity.ModelGroupClaudeGPT)]))
+	}
 	response := struct {
 		Groups []group `json:"groups"`
 	}{Groups: groups}

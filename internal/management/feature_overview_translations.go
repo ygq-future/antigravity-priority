@@ -68,6 +68,18 @@ const featureOverviewTranslations = `        const OVERVIEW_ZH = {
                 probeSingleNoResult: "未返回该凭证的探测结果",
                 probeBatchFailed: "配额探测完成，存在失败凭证",
                 staleEvidence: "历史数据",
+                poolGemini: "Gemini 额度池",
+                poolArgon: "Argon 额度池",
+                poolClaudeGPT: "Claude & GPT 额度池",
+                badgeGemini: "Gemini",
+                badgeArgon: "Argon",
+                badgeClaudeGPT: "Claude/GPT",
+                statusUnsupported: "⛔ 不支持该模型",
+                statusBypassedCooldown: "⏳ 冷却避让",
+                statusBypassedDepleted: "🚫 耗尽避让",
+                dynamicPriority: "动态优先级",
+                estimatedBurn: "预估",
+                tierPrefix: "Tier #",
             }
         };
         const OVERVIEW_EN = {
@@ -138,6 +150,18 @@ const featureOverviewTranslations = `        const OVERVIEW_ZH = {
                 probeSingleNoResult: "No probe result for credential",
                 probeBatchFailed: "Quota probe finished with failures",
                 staleEvidence: "Historical",
+                poolGemini: "Gemini Quota Pool",
+                poolArgon: "Argon Quota Pool",
+                poolClaudeGPT: "Claude & GPT Quota Pool",
+                badgeGemini: "Gemini",
+                badgeArgon: "Argon",
+                badgeClaudeGPT: "Claude/GPT",
+                statusUnsupported: "⛔ Unsupported",
+                statusBypassedCooldown: "⏳ Cooldown",
+                statusBypassedDepleted: "🚫 Depleted",
+                dynamicPriority: "Dynamic Priority",
+                estimatedBurn: "est.",
+                tierPrefix: "Tier #",
             }
         };
 `

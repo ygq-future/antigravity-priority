@@ -165,11 +165,11 @@ func parseArgonGroup(windows []candidateWindow, observedAt time.Time) ProbeResul
 	if !hasArgonLong {
 		argonLong, hasArgonLong = conservativeAnyWindow(argonWindows)
 	}
-	if !hasArgonLong {
+	if !hasArgonLong && result.PlanType != core.PlanTypeFree {
 		normalWindows := filterArgonWindows(windows, false)
 		argonLong, hasArgonLong = conservativeWindow(normalWindows, WindowWeekly)
 	}
-	if !hasArgonLong {
+	if !hasArgonLong && result.PlanType != core.PlanTypeFree {
 		argonLong, hasArgonLong = conservativeWindow(windows, WindowWeekly)
 	}
 	if hasArgonLong {

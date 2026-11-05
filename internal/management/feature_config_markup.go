@@ -77,37 +77,6 @@ const configMarkup = `
 
                         <div class="form-row">
                             <div class="form-label-box">
-                                <span class="form-title" data-i18n="cfgModelGroup">配额主控模型组</span>
-                                <span class="form-hint" data-i18n="cfgModelGroupHint">作为主要写回依据的模型组</span>
-                            </div>
-                            <div class="form-input-group">
-                                <select id="cfgModelGroup" hidden>
-                                    <option value="gemini" data-i18n="optGemini">Gemini 模型</option>
-                                    <option value="claude_gpt" data-i18n="optClaudeGPT">Claude 与 GPT 模型</option>
-                                </select>
-                                <div id="customCfgModelGroupSelect" class="custom-select-wrapper" style="min-width:160px;">
-                                    <button type="button" class="custom-select-trigger" onclick="toggleCustomCfgModelSelect(event)" aria-haspopup="listbox" aria-expanded="false">
-                                        <span id="customCfgModelLabel">Gemini 模型</span>
-                                        <span class="custom-select-arrow">
-                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"></path></svg>
-                                        </span>
-                                    </button>
-                                    <div id="customCfgModelMenu" class="custom-select-options" hidden role="listbox">
-                                        <div class="custom-select-option selected" data-value="gemini" onclick="selectCfgModelOption('gemini', event)">
-                                            <span data-i18n="optGemini">Gemini 模型</span>
-                                            <span class="custom-select-check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg></span>
-                                        </div>
-                                        <div class="custom-select-option" data-value="claude_gpt" onclick="selectCfgModelOption('claude_gpt', event)">
-                                            <span data-i18n="optClaudeGPT">Claude 与 GPT 模型</span>
-                                            <span class="custom-select-check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg></span>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="form-row">
-                            <div class="form-label-box">
                                 <span class="form-title" data-i18n="cfgScheduleWindow">生效时间区间</span>
                                 <span class="form-hint" data-i18n="cfgScheduleWindowHint">仅在每日指定时段运行 (支持跨午夜)</span>
                             </div>
@@ -141,16 +110,6 @@ const configMarkup = `
                             </div>
                             <div class="form-input-group">
                                 <input type="number" id="cfgMaxConcurrency" class="config-num-input" min="1" max="32" value="6">
-                            </div>
-                        </div>
-
-                        <div class="form-row">
-                            <div class="form-label-box">
-                                <span class="form-title" data-i18n="cfgMinChange">优先级变动写入阈值</span>
-                                <span class="form-hint" data-i18n="cfgMinChangeHint">优先级变化绝对值达到该阈值才写入宿主 (0-100)</span>
-                            </div>
-                            <div class="form-input-group">
-                                <input type="number" id="cfgMinChange" class="config-num-input" min="0" max="100" value="1">
                             </div>
                         </div>
 

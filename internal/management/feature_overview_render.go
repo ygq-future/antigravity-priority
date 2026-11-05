@@ -1,6 +1,58 @@
 package management
 
-const templateScriptOverviewRender = `        function renderDashboard() {
+const templateScriptOverviewRender = `        function resolveModelPool(modelId) {
+            if (!modelId) return "gemini";
+            const m = String(modelId).toLowerCase();
+            if (m.indexOf("argon") >= 0) return "argon";
+            if (m.indexOf("claude") >= 0 || m.indexOf("opus") >= 0 || m.indexOf("sonnet") >= 0 ||
+                m.indexOf("haiku") >= 0 || m.indexOf("fable") >= 0 || m.indexOf("gpt") >= 0 ||
+                m.indexOf("o1") >= 0 || m.indexOf("o3") >= 0 || m.indexOf("o4") >= 0 || m.indexOf("openai") >= 0) {
+                return "claude_gpt";
+            }
+            return "gemini";
+        }
+
+        function isModelEligible(item, selectedModel, pool) {
+            if (item && item.current && item.current.disabled) {
+                return { eligible: false, reason: "disabled" };
+            }
+            if (item && Array.isArray(item.supported_models) && item.supported_models.length > 0) {
+                const needle = String(selectedModel || "").toLowerCase().trim();
+                const found = item.supported_models.some(function(m) {
+                    return String(m || "").toLowerCase().trim() === needle;
+                });
+                if (!found) {
+                    return { eligible: false, reason: "unsupported_model" };
+                }
+            }
+            if (pool === "claude_gpt" && item) {
+                const qw = item.quota_windows || {};
+                const c5h = qw.claude_5h || {};
+                const c7d = qw.claude_7d || {};
+                const g5h = qw.gemini_5h || {};
+                const g7d = qw.gemini_7d || {};
+                const hasGemini = (g5h.remaining !== null && g5h.remaining !== undefined) ||
+                                  (g7d.remaining !== null && g7d.remaining !== undefined);
+                const hasClaude = (c5h.remaining !== null && c5h.remaining !== undefined) ||
+                                  (c7d.remaining !== null && c7d.remaining !== undefined);
+                if (!hasClaude && hasGemini) {
+                    return { eligible: false, reason: "unsupported_model" };
+                }
+            }
+            if (pool === "argon" && item) {
+                const qw = item.quota_windows || {};
+                const a7d = qw.argon_7d || {};
+                const g7d = qw.gemini_7d || {};
+                const hasGemini = (g7d.remaining !== null && g7d.remaining !== undefined);
+                const hasArgon = (a7d.remaining !== null && a7d.remaining !== undefined);
+                if (!hasArgon && hasGemini) {
+                    return { eligible: false, reason: "unsupported_model" };
+                }
+            }
+            return { eligible: true, reason: "" };
+        }
+
+        function renderDashboard() {
             if (latestDiagnostics) {
                 var auditEl = document.getElementById("valLastAudit");
                 if (auditEl) auditEl.textContent = latestDiagnostics.latest_audit || "-";
@@ -40,56 +92,143 @@ const templateScriptOverviewRender = `        function renderDashboard() {
             const container = document.getElementById("credentialsContainer");
             if (!container || !latestSnapshot) return;
 
-            const groupSelect = document.getElementById("modelGroupSelect");
-            const selectedGroup = groupSelect ? groupSelect.value : "gemini";
-            const activeGroup = (latestSnapshot && latestSnapshot.active_model_group) || "gemini";
-            const isPredictedView = selectedGroup !== activeGroup;
-            const groupData = (latestSnapshot && latestSnapshot.groups && latestSnapshot.groups[selectedGroup]) || {};
-            const items = groupData.items || [];
-            const pendingAuthIndexes = new Set((groupData.changes || []).map(change => change.auth_index));
-            let boostedCount = 0;
-            let depletedCount = 0;
-            let activeCount = 0;
+            const modelInput = document.getElementById("modelSelect");
+            let selectedModel = (modelInput && modelInput.value) || "gemini-3.8-flash-high";
+            let pool = resolveModelPool(selectedModel);
 
-            items.forEach(item => {
-                if (item.is_boosted) boostedCount++;
+            const groupSelect = document.getElementById("modelGroupSelect");
+            if ((!modelInput || !modelInput.value) && groupSelect && groupSelect.value) {
+                pool = groupSelect.value;
+                if (pool === "claude_gpt") selectedModel = "claude-sonnet-5-5-high";
+                else if (pool === "argon") selectedModel = "gemini-4-argon-high";
+                else selectedModel = "gemini-3.8-flash-high";
+            }
+
+            const activeGroup = (latestSnapshot && latestSnapshot.active_model_group) || "gemini";
+            const isPredictedView = pool !== activeGroup;
+            const groups = (latestSnapshot && latestSnapshot.groups) || {};
+            const groupData = groups[pool] || groups[activeGroup] || groups["gemini"] || {};
+            const rawItems = groupData.items || [];
+            const pendingAuthIndexes = new Set((groupData.changes || []).map(change => change.auth_index));
+
+            const activeItems = [];
+            const bypassedItems = [];
+
+            rawItems.forEach(function(item) {
+                const eligibility = isModelEligible(item, selectedModel, pool);
+                const isCooldown = Boolean(item.reason && (item.reason.indexOf("rate limit cooldown") >= 0 || item.reason.indexOf("cooldown") >= 0));
+                const targetP = (item.target && item.target.priority !== undefined) ? item.target.priority : (item.priority !== undefined ? item.priority : 0);
                 const isManuallyDisabled = item.reason && item.reason.indexOf("disabled on host") >= 0;
-                if (item.target && item.target.disabled && !isManuallyDisabled) depletedCount++;
-                if (item.target && !item.target.disabled) activeCount++;
+                const isWeeklyDepleted = (item.target && item.target.disabled && !isManuallyDisabled) || targetP <= -2;
+                const isSoftDepleted = targetP === -1;
+
+                if (!eligibility.eligible) {
+                    bypassedItems.push({
+                        item: item,
+                        reason: eligibility.reason,
+                        sortGroup: eligibility.reason === "unsupported_model" ? 3 : 4
+                    });
+                } else if (isCooldown) {
+                    bypassedItems.push({
+                        item: item,
+                        reason: "cooldown",
+                        sortGroup: 1
+                    });
+                } else if (isSoftDepleted || isWeeklyDepleted) {
+                    bypassedItems.push({
+                        item: item,
+                        reason: isWeeklyDepleted ? "weekly_depleted" : "soft_depleted",
+                        sortGroup: 2
+                    });
+                } else {
+                    activeItems.push(item);
+                }
             });
 
-            document.getElementById("valTotalCreds").textContent = items.length;
-            document.getElementById("valTotalDesc").textContent = activeCount + " " + (currentLang === "zh-CN" ? "活跃可用" : "active");
-            document.getElementById("valBoosted").textContent = boostedCount;
-            document.getElementById("valDepleted").textContent = depletedCount;
+            activeItems.sort(function(a, b) {
+                const pa = (a.target && a.target.priority !== undefined) ? a.target.priority : (a.priority || 0);
+                const pb = (b.target && b.target.priority !== undefined) ? b.target.priority : (b.priority || 0);
+                if (pa !== pb) return pb - pa;
+
+                const ua = a.urgency || 0;
+                const ub = b.urgency || 0;
+                if (Math.abs(ua - ub) > 1e-4) return ub - ua;
+
+                const ta = a.t5h || (a.short_window_reset_at ? Date.parse(a.short_window_reset_at) : 0);
+                const tb = b.t5h || (b.short_window_reset_at ? Date.parse(b.short_window_reset_at) : 0);
+                if (ta !== tb) return ta - tb;
+
+                return String(a.auth_index || "").localeCompare(String(b.auth_index || ""));
+            });
+
+            let currentTier = 0;
+            let lastPriority = null;
+            const tieredActive = activeItems.map(function(item) {
+                const p = (item.target && item.target.priority !== undefined) ? item.target.priority : (item.priority || 0);
+                if (lastPriority === null || p !== lastPriority) {
+                    currentTier++;
+                    lastPriority = p;
+                }
+                return { item: item, tier: currentTier, isBypassed: false, reason: "" };
+            });
+
+            bypassedItems.sort(function(a, b) {
+                if (a.sortGroup !== b.sortGroup) return a.sortGroup - b.sortGroup;
+                return String(a.item.auth_index || "").localeCompare(String(b.item.auth_index || ""));
+            });
+            const tieredBypassed = bypassedItems.map(function(b) {
+                return { item: b.item, tier: 0, isBypassed: true, reason: b.reason };
+            });
+
+            let renderItems;
+            if (!modelInput) {
+                renderItems = rawItems.map(function(item, idx) {
+                    const isCooldown = Boolean(item.reason && (item.reason.indexOf("rate limit cooldown") >= 0 || item.reason.indexOf("cooldown") >= 0));
+                    const targetP = (item.target && item.target.priority !== undefined) ? item.target.priority : (item.priority !== undefined ? item.priority : 0);
+                    const isWeeklyDepleted = (item.target && item.target.disabled) || targetP <= -2;
+                    const isSoftDepleted = targetP === -1;
+                    let reason = "";
+                    if (isCooldown) reason = "cooldown";
+                    else if (isWeeklyDepleted) reason = "weekly_depleted";
+                    else if (isSoftDepleted) reason = "soft_depleted";
+                    return { item: item, tier: idx + 1, isBypassed: (isCooldown || isWeeklyDepleted || isSoftDepleted), reason: reason };
+                });
+            } else {
+                renderItems = tieredActive.concat(tieredBypassed);
+            }
+
+            let boostedCount = 0;
+            activeItems.forEach(function(item) {
+                if (item.is_boosted) boostedCount++;
+            });
+            const activeCount = activeItems.length;
+            const depletedCount = bypassedItems.length;
+
+            const elTotal = document.getElementById("valTotalCreds");
+            if (elTotal) elTotal.textContent = rawItems.length;
+            const elDesc = document.getElementById("valTotalDesc");
+            if (elDesc) elDesc.textContent = activeCount + " " + (currentLang === "zh-CN" ? "活跃可用" : "active");
+            const elBoosted = document.getElementById("valBoosted");
+            if (elBoosted) elBoosted.textContent = boostedCount;
+            const elDepleted = document.getElementById("valDepleted");
+            if (elDepleted) elDepleted.textContent = depletedCount;
 
             container.innerHTML = "";
-            if (items.length === 0) {
+            if (renderItems.length === 0) {
                 container.innerHTML = "<div class=\"empty-state\">" + t("noCreds") + "</div>";
                 return;
             }
 
-            items.forEach(item => {
+            renderItems.forEach(function(entry) {
+                const item = entry.item;
+                const isBypassed = entry.isBypassed;
+                const bypassedReason = entry.reason;
+                const tier = entry.tier;
+
                 const card = document.createElement("div");
                 card.className = "cred-card";
 
-                const isBoosted = item.is_boosted;
-                const r5hPercent = Math.max(0, Math.min(100, Math.round((item.r5h || 0) * 100)));
-                const r7dPercent = Math.max(0, Math.min(100, Math.round((item.r7d || 0) * 100)));
-
-                let fill5hClass = "meter-fill-healthy";
-                if (r5hPercent <= 10) fill5hClass = "meter-fill-danger";
-                else if (r5hPercent <= 30) fill5hClass = "meter-fill-warning";
-
-                let fill7dClass = "meter-fill-healthy";
-                if (r7dPercent <= 10) fill7dClass = "meter-fill-danger";
-                else if (r7dPercent <= 30) fill7dClass = "meter-fill-warning";
-
-                const hasArgon = item.argon_window_remaining !== undefined && item.argon_window_remaining !== null;
-                const rArgonPercent = hasArgon ? Math.max(0, Math.min(100, Math.round(Number(item.argon_window_remaining)))) : 0;
-                let fillArgonClass = "meter-fill-healthy";
-                if (rArgonPercent <= 10) fillArgonClass = "meter-fill-danger";
-                else if (rArgonPercent <= 30) fillArgonClass = "meter-fill-warning";
+                const isBoosted = Boolean(item.is_boosted);
                 const urgency = (item.urgency || 0).toFixed(2);
                 const burnRate = (item.cycle_burn_rate || 0).toFixed(2);
 
@@ -122,6 +261,20 @@ const templateScriptOverviewRender = `        function renderDashboard() {
                     tagBadge = "<span class=\"badge badge-warning\">" + t("targetChanged") + "</span>";
                 }
 
+                let callOrderBadge = "";
+                if (!isBypassed) {
+                    const tierText = isBoosted ? (currentLang === "zh-CN" ? "🚀 Tier #" + tier + " · Boost" : "🚀 Tier #" + tier + " · Boost") : ("Tier #" + tier);
+                    callOrderBadge = "<span class=\"badge " + (isBoosted ? "badge-boost" : "badge-tier") + "\">" + escapeHTML(tierText) + "</span>";
+                } else if (bypassedReason === "cooldown") {
+                    callOrderBadge = "<span class=\"badge badge-warning\">" + (currentLang === "zh-CN" ? "⏳ 冷却避让" : "⏳ Cooldown") + "</span>";
+                } else if (bypassedReason === "unsupported_model") {
+                    callOrderBadge = "<span class=\"badge badge-secondary\">" + (currentLang === "zh-CN" ? "⛔ 不支持该模型" : "⛔ Unsupported") + "</span>";
+                } else if (bypassedReason === "disabled") {
+                    callOrderBadge = "<span class=\"badge badge-secondary\">" + t("statusDisabled") + "</span>";
+                } else {
+                    callOrderBadge = "<span class=\"badge badge-danger\">" + (currentLang === "zh-CN" ? "🚫 耗尽避让" : "🚫 Depleted") + "</span>";
+                }
+
                 const isCooldown = Boolean(item.reason && (item.reason.indexOf("rate limit cooldown") >= 0 || item.reason.indexOf("cooldown") >= 0));
                 const probeFailed = item.reason && (item.reason.indexOf("probe failed") >= 0 || item.reason.indexOf("probe invalid") >= 0);
                 const isManuallyDisabled = item.reason && item.reason.indexOf("disabled on host") >= 0;
@@ -141,72 +294,85 @@ const templateScriptOverviewRender = `        function renderDashboard() {
                 const authIdx = item.auth_index || "";
                 const credDisplayName = item.email || "Credential";
 
-                card.innerHTML =
-					"<div class=\"cred-info\">" +
-						"<div class=\"cred-name\">" +
-							"<span class=\"cred-email\">" + escapeHTML(credDisplayName) + "</span>" +
-							"<span class=\"cred-meta\">" + formatPlanBadge(item.plan_type) + "</span>" +
-						"</div>" +
-                        "<div class=\"cred-badge-row\">" +
-                            statusBadge +
-                            "<div class=\"metric-pill metric-pill-urgency\">" + t("urgencyLabel") + "<strong>" + urgency + "</strong></div>" +
-                            "<div class=\"metric-pill metric-pill-burn\">" + t("burnLabel") + "<strong>" + burnRate + "</strong></div>" +
-                            "<div style=\"margin-left:auto; display:flex; gap:4px;\">" +
-                                "<button type=\"button\" class=\"btn-secondary\" style=\"min-height:20px; height:20px; padding:0 6px; font-size:11px; border-radius:4px;\" onclick=\"probeSingleCredential('" + escapeHTML(authIdx) + "', this)\">⚡ " + t("btnProbeSingle") + "</button>" +
-                                "<button type=\"button\" class=\"btn-secondary\" style=\"min-height:20px; height:20px; padding:0 6px; font-size:11px; border-radius:4px;\" onclick=\"openSamplesModal('" + escapeHTML(authIdx) + "', '" + escapeHTML(credDisplayName) + "')\">📊 " + t("btnSamples") + "</button>" +
-                            "</div>" +
-                        "</div>" +
-                    "</div>";
-
-                const hasQuotaObservation = Boolean(item.short_window_reset_at || item.long_window_reset_at || item.reset_at);
-                const isStale = Boolean(probeFailed || (!item.evidence_fresh && !hasQuotaObservation));
-                const staleTag = isStale ? " <span class=\"meter-stale-tag\">" + t("staleEvidence") + "</span>" : "";
-                const meterContainerClass = "meter-container" + (isStale ? " meter-container-stale" : "");
-
-                card.innerHTML +=
-                    "<div class=\"" + meterContainerClass + "\">" +
-                        "<div class=\"meter-label-row\">" +
-                            "<span>" + t("shortWindow") + " (" + r5hPercent + "%)" + staleTag + "</span>" +
-                            "<span class=\"meter-countdown\" data-reset-time=\"" + (item.short_window_reset_at || "") + "\">" + formatCountdown(item.short_window_reset_at) + "</span>" +
-                        "</div>" +
-                        "<div class=\"meter-track\">" +
-                            "<div class=\"meter-fill " + fill5hClass + "\" style=\"width: " + r5hPercent + "%\"></div>" +
+                let cardHtml = "<div class=\"cred-info\">" +
+                    "<div class=\"cred-name\">" +
+                        callOrderBadge +
+                        "<span class=\"cred-email\">" + escapeHTML(credDisplayName) + "</span>" +
+                        "<span class=\"cred-meta\">" + formatPlanBadge(item.plan_type) + "</span>" +
+                    "</div>" +
+                    "<div class=\"cred-badge-row\">" +
+                        statusBadge +
+                        "<div class=\"metric-pill metric-pill-priority\">" + (currentLang === "zh-CN" ? "动态优先级: " : "Priority: ") + "<strong>" + targetP + "</strong></div>" +
+                        "<div class=\"metric-pill metric-pill-urgency\">" + t("urgencyLabel") + "<strong>" + urgency + "</strong></div>" +
+                        "<div class=\"metric-pill metric-pill-burn\">" + t("burnLabel") + "<strong>" + burnRate + "</strong></div>" +
+                        "<div style=\"margin-left:auto; display:flex; gap:4px;\">" +
+                            "<button type=\"button\" class=\"btn-secondary\" style=\"min-height:20px; height:20px; padding:0 6px; font-size:11px; border-radius:4px;\" onclick=\"probeSingleCredential('" + escapeHTML(authIdx) + "', this)\">⚡ " + t("btnProbeSingle") + "</button>" +
+                            "<button type=\"button\" class=\"btn-secondary\" style=\"min-height:20px; height:20px; padding:0 6px; font-size:11px; border-radius:4px;\" onclick=\"openSamplesModal('" + escapeHTML(authIdx) + "', '" + escapeHTML(credDisplayName) + "')\">📊 " + t("btnSamples") + "</button>" +
                         "</div>" +
                     "</div>" +
+                "</div>";
 
-                    "<div class=\"" + meterContainerClass + "\">" +
+                // 5 Quota Progress Bars
+                const qw = item.quota_windows || {};
+                const bars = [
+                    { id: "gemini_5h", label: "Gemini 5h", windowType: t("shortWindow"), data: qw.gemini_5h || { remaining: item.short_window_remaining, reset_at: item.short_window_reset_at }, isActive: (pool === "gemini" || pool === "argon") },
+                    { id: "gemini_7d", label: "Gemini 7d", windowType: t("longWindow"), data: qw.gemini_7d || { remaining: item.long_window_remaining, reset_at: item.long_window_reset_at }, isActive: (pool === "gemini") },
+                    { id: "claude_5h", label: "Claude 5h", windowType: t("shortWindow"), data: qw.claude_5h, isActive: (pool === "claude_gpt") },
+                    { id: "claude_7d", label: "Claude 7d", windowType: t("longWindow"), data: qw.claude_7d, isActive: (pool === "claude_gpt") },
+                    { id: "argon_7d", label: "Argon 7d", windowType: t("argonWindow"), data: qw.argon_7d || { remaining: item.argon_window_remaining, reset_at: item.argon_window_reset_at }, isActive: (pool === "argon") }
+                ];
+
+                cardHtml += "<div class=\"quota-bars-grid\">";
+                bars.forEach(function(b) {
+                    const d = b.data || {};
+                    const hasVal = d.remaining !== null && d.remaining !== undefined;
+                    const pct = hasVal ? Math.max(0, Math.min(100, Math.round(Number(d.remaining)))) : 0;
+                    let fillClass = "meter-fill-healthy";
+                    if (pct <= 10) fillClass = "meter-fill-danger";
+                    else if (pct <= 30) fillClass = "meter-fill-warning";
+
+                    const isStale = Boolean(probeFailed || d.stale);
+                    const staleTag = isStale ? " <span class=\"meter-stale-tag\">" + t("staleEvidence") + "</span>" : "";
+                    const resetTime = d.reset_at || "";
+                    const resetStr = resetTime ? formatCountdown(resetTime) : "-";
+
+                    let estBurnTag = "";
+                    if (b.isActive) {
+                        const isShort = b.id.indexOf("5h") >= 0;
+                        const estVal = isShort ? (item.estimated_short_burn_pct || 0) : (item.estimated_long_burn_pct || 0);
+                        if (estVal > 0) {
+                            estBurnTag = " <span class=\"meter-est-burn\">(" + (currentLang === "zh-CN" ? "预估 -" : "est. -") + Math.round(estVal) + "%)</span>";
+                        }
+                    }
+
+                    const activeClass = b.isActive ? " active-pool-meter" : " inactive-pool-meter";
+                    const containerClass = "meter-container" + activeClass + (isStale ? " meter-container-stale" : "");
+
+                    cardHtml += "<div class=\"" + containerClass + "\">" +
                         "<div class=\"meter-label-row\">" +
-                            "<span>" + t("longWindow") + " (" + r7dPercent + "%)" + staleTag + "</span>" +
-                            "<span class=\"meter-countdown\" data-reset-time=\"" + (item.long_window_reset_at || "") + "\">" + formatCountdown(item.long_window_reset_at) + "</span>" +
+                            "<span class=\"meter-name\" title=\"" + escapeHTML(b.windowType) + "\">" + escapeHTML(b.label) + (hasVal ? " (" + pct + "%)" : " (N/A)") + estBurnTag + staleTag + "</span>" +
+                            "<span class=\"meter-countdown\" data-reset-time=\"" + escapeHTML(resetTime) + "\">" + resetStr + "</span>" +
                         "</div>" +
                         "<div class=\"meter-track\">" +
-                            "<div class=\"meter-fill " + fill7dClass + "\" style=\"width: " + r7dPercent + "%\"></div>" +
+                            "<div class=\"meter-fill " + (hasVal ? fillClass : "") + "\" style=\"width: " + (hasVal ? pct : 0) + "%\"></div>" +
                         "</div>" +
-                    "</div>" +
-                    (hasArgon ? (
-                        "<div class=\"" + meterContainerClass + "\">" +
-                            "<div class=\"meter-label-row\">" +
-                                "<span>" + t("argonWindow") + " (" + rArgonPercent + "%)" + staleTag + "</span>" +
-                                "<span class=\"meter-countdown\" data-reset-time=\"" + (item.argon_window_reset_at || item.long_window_reset_at || "") + "\">" + formatCountdown(item.argon_window_reset_at || item.long_window_reset_at) + "</span>" +
-                            "</div>" +
-                            "<div class=\"meter-track\">" +
-                                "<div class=\"meter-fill " + fillArgonClass + "\" style=\"width: " + rArgonPercent + "%\"></div>" +
-                            "</div>" +
-                        "</div>"
-                    ) : "") +
-
-                    "<div class=\"cred-priority\">" +
-                        "<div class=\"priority-score-box\" style=\"flex-wrap:wrap;\">" +
-                            "<span style=\"font-size:11.5px; color:var(--text-muted); font-weight:600;\">" + t("actualPriority") + ":</span>" +
-                            "<span style=\"font-size:12.5px; font-weight:700; color:var(--text-secondary); font-family:SFMono-Regular, Consolas, Menlo, monospace;\">" + actualP + "</span>" +
-                            "<span style=\"color:var(--border-color); margin:0 1px;\">|</span>" +
-                            "<span style=\"font-size:11.5px; color:var(--text-muted); font-weight:600;\">" + (isPredictedView ? t("predictedPriority") : t("targetPriority")) + ":</span>" +
-                            "<span class=\"priority-score" + (isPredictedView ? " priority-predicted" : "") + "\">" + targetP + "</span>" +
-                            tagBadge +
-                        "</div>" +
-                        "<div style=\"font-size:11px; color:var(--text-secondary);\">" + escapeHTML(formattedReason) + "</div>" +
                     "</div>";
+                });
+                cardHtml += "</div>";
 
+                cardHtml += "<div class=\"cred-priority\">" +
+                    "<div class=\"priority-score-box\" style=\"flex-wrap:wrap;\">" +
+                        "<span style=\"font-size:11.5px; color:var(--text-muted); font-weight:600;\">" + t("actualPriority") + ":</span>" +
+                        "<span style=\"font-size:12.5px; font-weight:700; color:var(--text-secondary); font-family:SFMono-Regular, Consolas, Menlo, monospace;\">" + actualP + "</span>" +
+                        "<span style=\"color:var(--border-color); margin:0 1px;\">|</span>" +
+                        "<span style=\"font-size:11.5px; color:var(--text-muted); font-weight:600;\">" + (isPredictedView ? t("predictedPriority") : t("targetPriority")) + ":</span>" +
+                        "<span class=\"priority-score" + (isPredictedView ? " priority-predicted" : "") + "\">" + targetP + "</span>" +
+                        tagBadge +
+                    "</div>" +
+                    "<div style=\"font-size:11px; color:var(--text-secondary);\">" + escapeHTML(formattedReason) + "</div>" +
+                "</div>";
+
+                card.innerHTML = cardHtml;
                 container.appendChild(card);
             });
         }

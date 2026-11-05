@@ -188,6 +188,13 @@ func itemLongWindowBar(item apply.SnapshotItem) apply.QuotaWindowBar {
 }
 
 func itemArgonWindowBar(item apply.SnapshotItem) apply.QuotaWindowBar {
+	if item.PlanType == string(core.PlanTypeFree) {
+		return apply.QuotaWindowBar{
+			Remaining: nil,
+			ResetAt:   nil,
+			Stale:     false,
+		}
+	}
 	rem := item.LongWindowRemaining
 	resetAt := item.LongWindowResetAt
 	if rem == nil {
@@ -354,6 +361,10 @@ func cloneInt64Pointer(value *int64) *int64 {
 
 func cloneDualGroupSnapshot(snapshot apply.DualGroupSnapshot) apply.DualGroupSnapshot {
 	cloned := snapshot
+	if snapshot.Models != nil {
+		cloned.Models = make([]apply.ModelOption, len(snapshot.Models))
+		copy(cloned.Models, snapshot.Models)
+	}
 	cloned.Groups = make(map[string]apply.GroupSnapshot, len(snapshot.Groups))
 	for group, groupSnapshot := range snapshot.Groups {
 		clonedGroup := groupSnapshot
@@ -377,6 +388,10 @@ func cloneDualGroupSnapshot(snapshot apply.DualGroupSnapshot) apply.DualGroupSna
 			items[index].QuotaWindows.Claude7d.ResetAt = cloneTimePointer(item.QuotaWindows.Claude7d.ResetAt)
 			items[index].QuotaWindows.Argon7d.Remaining = cloneInt64Pointer(item.QuotaWindows.Argon7d.Remaining)
 			items[index].QuotaWindows.Argon7d.ResetAt = cloneTimePointer(item.QuotaWindows.Argon7d.ResetAt)
+			if item.SupportedModels != nil {
+				items[index].SupportedModels = make([]string, len(item.SupportedModels))
+				copy(items[index].SupportedModels, item.SupportedModels)
+			}
 		}
 		clonedGroup.Items = items
 		clonedGroup.Changes = make([]apply.SnapshotChange, len(groupSnapshot.Changes))

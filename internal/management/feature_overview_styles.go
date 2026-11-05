@@ -230,4 +230,127 @@ const templateStyleOverviewCards = `        /* Credentials Display (Grid 3 Colum
             border-bottom: 1px solid var(--border-color);
         }
 
+        /* 5-Bar Quota Progress Grid */
+        .quota-bars-grid {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            width: 100%;
+        }
+
+        .meter-container.active-pool-meter {
+            background: var(--bg-subtle);
+            border-left: 2px solid var(--accent-blue);
+            padding-left: 6px;
+            border-radius: 4px;
+            padding-top: 2px;
+            padding-bottom: 2px;
+        }
+
+        .meter-container.inactive-pool-meter {
+            opacity: 0.85;
+        }
+
+        .meter-est-burn {
+            font-size: 10px;
+            font-weight: 700;
+            color: var(--accent-yellow-text);
+            margin-left: 3px;
+        }
+
+        .badge-tier {
+            background: var(--bg-subtle);
+            border: 1px solid var(--border-color);
+            color: var(--text-primary);
+            font-weight: 700;
+            font-family: SFMono-Regular, Consolas, Menlo, monospace;
+        }
+
+        /* Model Selector Dropdown & Badges */
+        .model-select-menu {
+            max-height: 380px;
+            overflow-y: auto;
+            min-width: 260px;
+        }
+
+        .model-select-group-header {
+            font-size: 10.5px;
+            font-weight: 700;
+            color: var(--text-muted);
+            padding: 6px 10px 4px;
+            background: var(--bg-subtle);
+            border-top: 1px solid var(--border-subtle);
+            border-bottom: 1px solid var(--border-subtle);
+            user-select: none;
+            pointer-events: none;
+        }
+
+        .model-select-group-header:first-child {
+            border-top: none;
+        }
+
+        .model-pool-badge {
+            display: inline-flex;
+            align-items: center;
+            font-size: 10px;
+            font-weight: 700;
+            padding: 1px 5px;
+            border-radius: 4px;
+            line-height: 14px;
+            flex-shrink: 0;
+            margin-right: 6px;
+        }
+
+        .badge-gemini {
+            background: rgba(37, 99, 235, 0.12);
+            color: var(--accent-blue-text, #2563eb);
+            border: 1px solid rgba(37, 99, 235, 0.25);
+        }
+
+        .badge-argon {
+            background: rgba(147, 51, 234, 0.12);
+            color: var(--accent-purple-text, #9333ea);
+            border: 1px solid rgba(147, 51, 234, 0.25);
+        }
+
+        .badge-claude {
+            background: rgba(217, 119, 6, 0.12);
+            color: var(--accent-yellow-text, #d97706);
+            border: 1px solid rgba(217, 119, 6, 0.25);
+        }
+
+        .model-option-name {
+            font-family: SFMono-Regular, Consolas, Menlo, monospace;
+            font-size: 12px;
+        }
+
+        .metric-pill-priority {
+            background: var(--bg-subtle);
+            border: 1px solid var(--border-color);
+        }
+
+        /* Samples Modal Pool Switcher */
+        .samples-pool-switcher {
+            display: flex;
+            gap: 6px;
+            margin: 8px 0;
+        }
+
+        .btn-pool-pill {
+            padding: 3px 10px;
+            font-size: 12px;
+            font-weight: 600;
+            border-radius: 999px;
+            border: 1px solid var(--border-color);
+            background: var(--bg-subtle);
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .btn-pool-pill.active {
+            background: var(--accent-blue);
+            color: #ffffff;
+            border-color: var(--accent-blue);
+        }
 `

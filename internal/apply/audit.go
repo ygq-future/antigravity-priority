@@ -75,6 +75,7 @@ type SnapshotItem struct {
 	QuotaWindows         AllQuotaWindows  `json:"quota_windows"`
 	EstimatedShortBurnPct float64         `json:"estimated_short_burn_pct,omitempty"`
 	EstimatedLongBurnPct  float64         `json:"estimated_long_burn_pct,omitempty"`
+	SupportedModels       []string        `json:"supported_models,omitempty"`
 }
 
 // SnapshotChange is the audit view of a single candidate change.
@@ -247,10 +248,18 @@ type GroupSnapshot struct {
 	Changes []SnapshotChange `json:"changes"`
 }
 
+// ModelOption represents an available Antigravity model option for routing.
+type ModelOption struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"display_name"`
+	QuotaPool   string `json:"quota_pool"`
+}
+
 // DualGroupSnapshot wraps snapshots for both model groups, enabling instant client-side switching.
 type DualGroupSnapshot struct {
 	ActiveModelGroup string                   `json:"active_model_group"`
 	ObservedAt       time.Time                `json:"observed_at,omitempty"`
 	PreviewID        string                   `json:"preview_id,omitempty"`
 	Groups           map[string]GroupSnapshot `json:"groups"`
+	Models           []ModelOption            `json:"models,omitempty"`
 }

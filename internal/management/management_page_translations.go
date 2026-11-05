@@ -14,6 +14,8 @@ var overviewTranslationKeys = []string{
 	"scheduleActive", "schedulePaused", "scheduleSleeping", "scheduleDisabled", "predictedBadge", "predictedNote",
 	"probeSuccess", "probeCooldown", "viewDetails", "statusCooldown", "statusDisabled", "btnProbeSingle", "probeSingleSuccess",
 	"probeSingleFailed", "probeSingleNoResult", "probeBatchFailed", "staleEvidence",
+	"poolGemini", "poolArgon", "poolClaudeGPT", "badgeGemini", "badgeArgon", "badgeClaudeGPT",
+	"statusUnsupported", "statusBypassedCooldown", "statusBypassedDepleted", "dynamicPriority", "estimatedBurn", "tierPrefix",
 }
 
 var historyTranslationKeys = []string{

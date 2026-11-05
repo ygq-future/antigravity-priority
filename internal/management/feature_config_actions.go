@@ -35,12 +35,10 @@ const templateScriptConfig = `        let originalConfigState = null;
             if (intervalSelect) {
                 interval = intervalSelect.value === "custom" ? ((intervalCustom && intervalCustom.value.trim()) || "") : intervalSelect.value;
             }
-            var modelGroup = (document.getElementById("cfgModelGroup") && document.getElementById("cfgModelGroup").value) || "gemini";
             var windowEnabled = Boolean(document.getElementById("cfgWindowEnabled") && document.getElementById("cfgWindowEnabled").checked);
             var windowStart = (document.getElementById("cfgWindowStart") && document.getElementById("cfgWindowStart").value.trim()) || "";
             var windowEnd = (document.getElementById("cfgWindowEnd") && document.getElementById("cfgWindowEnd").value.trim()) || "";
             var maxConcurrency = (document.getElementById("cfgMaxConcurrency") && document.getElementById("cfgMaxConcurrency").value) || "";
-            var minChange = (document.getElementById("cfgMinChange") && document.getElementById("cfgMinChange").value) || "";
             var urgencyTol = (document.getElementById("cfgUrgencyTolerance") && document.getElementById("cfgUrgencyTolerance").value) || "";
             var sampleCapacity = (document.getElementById("cfgSampleCapacity") && document.getElementById("cfgSampleCapacity").value) || "";
             var cooldownMin = (document.getElementById("cfgCooldownMinutes") && document.getElementById("cfgCooldownMinutes").value) || "";
@@ -49,8 +47,8 @@ const templateScriptConfig = `        let originalConfigState = null;
             var freeStart = (document.getElementById("cfgFreeStartPriority") && document.getElementById("cfgFreeStartPriority").value) || "";
 
             return JSON.stringify({
-                autoApply, interval, modelGroup, windowEnabled, windowStart, windowEnd,
-                maxConcurrency, minChange, urgencyTol, sampleCapacity, cooldownMin, boostStart, normalStart, freeStart
+                autoApply, interval, windowEnabled, windowStart, windowEnd,
+                maxConcurrency, urgencyTol, sampleCapacity, cooldownMin, boostStart, normalStart, freeStart
             });
         }
 
@@ -92,11 +90,6 @@ const templateScriptConfig = `        let originalConfigState = null;
                 updateCustomIntervalDisplay();
             }
 
-            var modelGroup = document.getElementById("cfgModelGroup");
-            if (modelGroup) {
-                modelGroup.value = cfg.antigravity_model_group || "gemini";
-                updateCustomCfgModelDisplay();
-            }
 
             var windowEnabled = document.getElementById("cfgWindowEnabled");
             var windowInputs = document.getElementById("cfgWindowInputs");
@@ -112,9 +105,6 @@ const templateScriptConfig = `        let originalConfigState = null;
 
             var maxConcurrency = document.getElementById("cfgMaxConcurrency");
             if (maxConcurrency) maxConcurrency.value = cfg.max_concurrency || 6;
-
-            var minChange = document.getElementById("cfgMinChange");
-            if (minChange) minChange.value = cfg.min_change !== undefined ? cfg.min_change : 1;
 
             var urgencyTol = document.getElementById("cfgUrgencyTolerance");
             if (urgencyTol) urgencyTol.value = cfg.urgency_tolerance !== undefined ? cfg.urgency_tolerance : 0.05;
@@ -243,12 +233,6 @@ const templateScriptConfig = `        let originalConfigState = null;
                     return;
                 }
 
-				var minChange = parseStrictInteger((document.getElementById("cfgMinChange") && document.getElementById("cfgMinChange").value) || "1");
-                if (isNaN(minChange) || minChange < 0 || minChange > 100) {
-                    showToast(t("valErrMinChange"), "error");
-                    updateSaveButtonState();
-                    return;
-                }
 
                 var urgencyTolRaw = (document.getElementById("cfgUrgencyTolerance") && document.getElementById("cfgUrgencyTolerance").value) || "0.05";
 				var urgencyTol = Number(urgencyTolRaw);
@@ -295,7 +279,7 @@ const templateScriptConfig = `        let originalConfigState = null;
                     auto_apply: autoApply,
                     interval: interval,
                     max_concurrency: maxConcurrency,
-                    min_change: minChange,
+                    min_change: (dynamicConfig && dynamicConfig.min_change !== undefined) ? dynamicConfig.min_change : 1,
                     urgency_tolerance: urgencyTol,
                     rate_limit_cooldown_minutes: cooldownMin,
                     quota_sample_capacity: sampleCapacity,

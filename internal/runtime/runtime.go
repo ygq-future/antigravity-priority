@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -407,13 +408,13 @@ func (r *Runtime) SyncHost(ctx context.Context, modelGroup config.AntigravityMod
 	if preview := r.currentQuotaPreview(); preview != nil {
 		projection.Snapshot.PreviewID = preview.ID
 	}
-	r.setDualSnapshot(projection.Snapshot)
 	authModels, _ := client.ListAuthModels(ctx)
 	r.routingMu.Lock()
 	r.updateModelInventoryLocked(files, authModels)
 	r.recomputeRoutingTablesLocked(now)
 	r.routingMu.Unlock()
-	return cloneDualGroupSnapshot(projection.Snapshot), nil
+	r.setDualSnapshot(projection.Snapshot)
+	return r.LatestSnapshot(ctx)
 }
 
 // GetSamples returns the historical quota samples for a specific credential and model group.
@@ -610,11 +611,13 @@ func (r *Runtime) LatestSnapshot(ctx context.Context) (apply.DualGroupSnapshot, 
 	}
 	r.mu.Lock()
 	snap := r.latestDualSnapshot
-	r.mu.Unlock()
 	if snap != nil {
-		return cloneDualGroupSnapshot(*snap), nil
+		r.enrichSnapshotWithModelsLocked(snap)
+		cloned := cloneDualGroupSnapshot(*snap)
+		r.mu.Unlock()
+		return cloned, nil
 	}
-	// Startup fallback: generate the stable empty shape through the same
+	r.mu.Unlock()
 	// projection seam until a shared projection is available.
 	cfg, _ := r.Config()
 	now := r.clock.Now().UTC()
@@ -809,10 +812,56 @@ func (r *Runtime) snapshotLatestResult(result apply.Result, audit string) {
 	r.latestAudit = audit
 }
 
+func (r *Runtime) enrichSnapshotWithModelsLocked(snap *apply.DualGroupSnapshot) {
+	if snap == nil {
+		return
+	}
+	r.routingMu.RLock()
+	catalog := r.modelCatalog
+	if len(catalog) == 0 {
+		catalog = builtInAntigravityModels
+	}
+	models := make([]apply.ModelOption, len(catalog))
+	for i, item := range catalog {
+		models[i] = apply.ModelOption{
+			ID:          item.ID,
+			DisplayName: item.DisplayName,
+			QuotaPool:   string(item.QuotaPool),
+		}
+	}
+	supportedMap := make(map[string][]string, len(r.supportedModelsByAuth))
+	for authIdx, set := range r.supportedModelsByAuth {
+		if len(set) > 0 {
+			supported := make([]string, 0, len(set))
+			for m := range set {
+				supported = append(supported, m)
+			}
+			sort.Strings(supported)
+			supportedMap[authIdx] = supported
+		}
+	}
+	r.routingMu.RUnlock()
+
+	snap.Models = models
+	for groupKey, group := range snap.Groups {
+		for i, item := range group.Items {
+			authIdx := item.AuthIndex
+			if authIdx == "" {
+				authIdx = item.Identity.AuthIndex
+			}
+			if supported, ok := supportedMap[authIdx]; ok && len(supported) > 0 {
+				group.Items[i].SupportedModels = supported
+			}
+		}
+		snap.Groups[groupKey] = group
+	}
+}
+
 func (r *Runtime) setDualSnapshot(snap apply.DualGroupSnapshot) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	cloned := cloneDualGroupSnapshot(snap)
+	r.enrichSnapshotWithModelsLocked(&cloned)
 	r.latestDualSnapshot = &cloned
 }
 

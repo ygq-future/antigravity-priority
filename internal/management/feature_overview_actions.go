@@ -60,19 +60,8 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
             try {
                 const data = await apiFetch(SNAPSHOT_PATH);
                 latestSnapshot = data;
-                if (!userSelectedModelGroup && data && data.active_model_group) {
-                    const select = document.getElementById("modelGroupSelect");
-                    if (select && select.value !== data.active_model_group) {
-                        select.value = data.active_model_group;
-                        updateCustomSelectDisplay();
-                        const menu = document.getElementById("customSelectMenu");
-                        if (menu) {
-                            menu.querySelectorAll(".custom-select-option").forEach(opt => {
-                                const isSelected = opt.getAttribute("data-value") === data.active_model_group;
-                                opt.classList.toggle("selected", isSelected);
-                            });
-                        }
-                    }
+                if (data && Array.isArray(data.models)) {
+                    updateModelDropdownFromSnapshot(data.models);
                 }
                 renderDashboard();
             } catch (err) {
@@ -101,7 +90,9 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
             try {
 				const data = await apiFetch(SYNC_PATH, { method: "POST" });
                 latestSnapshot = data;
-                renderDashboard();
+                if (data && Array.isArray(data.models)) {
+                    updateModelDropdownFromSnapshot(data.models);
+                }
                 if (settings.notifySync) showToast(t("syncSuccess"), "success");
             } catch (err) {
                 if (isAuthBlocked) throw err;

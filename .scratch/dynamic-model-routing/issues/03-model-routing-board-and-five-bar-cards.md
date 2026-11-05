@@ -1,6 +1,6 @@
 # 03: Model-Centric Routing Board UI & Unified 5-Bar Credential Cards
 
-Status: `ready-for-agent`
+Status: `closed`
 Type: `task`
 Blocked by: 01, 02
 
@@ -74,8 +74,8 @@ Redesign the embedded Web Management UI (`internal/management/feature_overview_*
 
 ## Acceptance Criteria
 
-- [ ] Top dropdown in Overview displays concrete models grouped under `Gemini`, `Argon`, and `Claude & GPT`, using custom styled dropdown primitives (zero raw `<select>`).
-- [ ] Selecting `gemini-3.8-flash-high`, `gemini-4-argon-high`, or `claude-sonnet-5-5-high` immediately re-sorts the credential cards by that model's exact call order (`Tier #1`, `Tier #2`, ...) and updates KPI counters.
-- [ ] Every credential card displays all 5 quota progress bars (`Gemini 5h`, `Gemini 7d`, `Claude 5h`, `Claude 7d`, `Argon 7d`) with accurate percentages and reset countdowns, visually highlighting the bars governing the selected model.
-- [ ] Both `zh-CN` and `en-US` translations are complete and aligned across all modified UI components.
-- [ ] All management handler and template tests in `internal/management` pass.
+- [x] Top dropdown in Overview displays concrete models grouped under `Gemini`, `Argon`, and `Claude & GPT`, using custom styled dropdown primitives (zero raw `<select>`).
+- [x] Selecting `gemini-3.8-flash-high`, `gemini-4-argon-high`, or `claude-sonnet-5-5-high` immediately re-sorts the credential cards by that model's exact call order (`Tier #1`, `Tier #2`, ...) and updates KPI counters.
+- [x] Every credential card displays all 5 quota progress bars (`Gemini 5h`, `Gemini 7d`, `Claude 5h`, `Claude 7d`, `Argon 7d`) with accurate percentages and reset countdowns, visually highlighting the bars governing the selected model.
+- [x] Both `zh-CN` and `en-US` translations are complete and aligned across all modified UI components.
+- [x] All management handler and template tests in `internal/management` pass.

@@ -435,24 +435,41 @@ func (h *Handler) handleGetSamples(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	modelGroup := strings.TrimSpace(r.URL.Query().Get("model_group"))
+	if modelGroup == "" {
+		if model := strings.TrimSpace(r.URL.Query().Get("model")); model != "" {
+			modelGroup = string(config.ClassifyModelQuotaPool(model))
+		}
+	}
+
 	geminiSamples, _ := h.runner.GetSamples(r.Context(), authIndex, "gemini")
+	argonSamples, _ := h.runner.GetSamples(r.Context(), authIndex, "argon")
 	claudeSamples, _ := h.runner.GetSamples(r.Context(), authIndex, "claude_gpt")
 
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	resp := map[string]any{
 		"auth_index": authIndex,
 		"groups": map[string]any{
 			"gemini": map[string]any{
 				"name":    "Gemini 模型",
 				"samples": geminiSamples,
 			},
+			"argon": map[string]any{
+				"name":    "Argon 模型",
+				"samples": argonSamples,
+			},
 			"claude_gpt": map[string]any{
 				"name":    "Claude & GPT 模型",
 				"samples": claudeSamples,
 			},
 		},
-	})
+	}
+	if modelGroup != "" {
+		resp["selected_group"] = modelGroup
+	}
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 func (h *Handler) handleGetProbeSamples(w http.ResponseWriter, r *http.Request, probeRoundID string) {
