@@ -1,6 +1,6 @@
 # 04: Domain Docs, Bilingual READMEs, XERJ Sync & Quality Gates
 
-Status: `ready-for-agent`
+Status: `closed`
 Type: `task`
 Blocked by: 01, 02, 03
 
@@ -37,7 +37,7 @@ Align domain documentation (`CONTEXT.md`, `AGENTS.md`, `README.md`, `README.en.m
 
 ## Acceptance Criteria
 
-- [ ] `CONTEXT.md`, `README.md`, and `README.en.md` accurately describe the 3-pool dynamic `scheduler.pick` architecture and 5-bar model routing board.
-- [ ] `cmd/devserver` smoke test confirms interactive model switching, call-order tier sorting, and 5-bar rendering.
-- [ ] `xerj autoindex . --prefix agp --no-graph --code-analyzer code --yes` exits cleanly with `code_files_indexed > 0`.
-- [ ] `golangci-lint run --timeout=5m`, `go build ./...`, `go vet ./...`, `go test ./...`, and `go test -race ./...` pass with zero warnings and zero data races.
+- [x] `CONTEXT.md`, `README.md`, and `README.en.md` accurately describe the 3-pool dynamic `scheduler.pick` architecture and 5-bar model routing board.
+- [x] `cmd/devserver` smoke test confirms interactive model switching, call-order tier sorting, and 5-bar rendering.
+- [x] `xerj autoindex . --prefix agp --no-graph --code-analyzer code --yes` exits cleanly with `code_files_indexed > 0`.
+- [x] `golangci-lint run --timeout=5m`, `go build ./...`, `go vet ./...`, `go test ./...`, and `go test -race ./...` pass with zero warnings and zero data races.

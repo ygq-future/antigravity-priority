@@ -1,6 +1,6 @@
 # Spec: Dynamic Model-Scoped Quota Scheduler & Routing Board
 
-Status: `ready-for-agent`
+Status: `closed`
 
 ## Problem Statement
 

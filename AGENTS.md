@@ -3,10 +3,10 @@
 `antigravity-priority` 是专为 CLIProxyAPI (CPA) 打造的高能效、专精型 **Google Antigravity 凭证配额调度与智能提权插件**。
 
 ### 核心设计原则
-1. **单提供商专精化**：彻底剥离通用启发式与非 Antigravity 逻辑（如 Codex / xAI），只针对 Antigravity 的双时间窗口（5h 短窗 + 7d 周长窗）进行极致优化；
+1. **单提供商专精化**：彻底剥离通用启发式与非 Antigravity 逻辑（如 Codex / xAI），针对 Antigravity 的三大配额池（Gemini 5h/7d、Argon 7d、Claude & GPT 5h/7d）与 CPA `scheduler.pick` 动态调度进行极致优化；
 2. **自适应燃尽学习**：基于连续探测增量（$\Delta R_{\text{5h}} \ge 5\%, \Delta R_{\text{7d}} > 0$）自适应推算周期消耗能力 $C_{\text{cycle}}$ 并通过 EMA 平滑，杜绝用户手动配置负担；
-3. **全局最优调度**：引入**配额燃尽紧迫度（Weekly Urgency）**与**动态提前提权（Dynamic Boost Horizon）**，彻底消除“最后 24 小时大额度账号撑死溢出”的痛点；
-4. **自愈式软降级**：5 小时短窗耗尽仅软降级（`priority = -1, disabled = false`），无需人工干预即可在短窗刷新后自动恢复；周额度耗尽执行硬禁用（`priority = -1, disabled = true`）；
+3. **全局最优调度**：引入**配额燃尽紧迫度（Weekly Urgency）**与**动态提前提权（Dynamic Boost Horizon）**，配合 CPA `scheduler.pick` 纯内存会话粘性轮转分流，彻底消除“最后 24 小时大额度账号撑死溢出”的痛点；
+4. **自愈式软降级与池级隔离**：5 小时短窗耗尽仅软降级（`priority = -1, disabled = false`），短窗刷新后自动恢复；周额度耗尽执行硬禁用（`priority = -1, disabled = true`）；429 限流精准隔离至受影响配额池，不影响同账号其他模型正常服务；
 5. **CPA 深度融合**：嵌入式 Web 管理页纯原生自包含（零外部 CDN），深度适配 CPA 宿主暗色/明亮主题体系。
 
 ---
