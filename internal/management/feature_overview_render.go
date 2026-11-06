@@ -295,12 +295,17 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
 
                 // 5 Quota Progress Bars
                 const qw = item.quota_windows || {};
+                const argonData = (qw.argon_7d && qw.argon_7d.remaining !== null && qw.argon_7d.remaining !== undefined)
+                    ? qw.argon_7d
+                    : ((item.argon_window_remaining !== null && item.argon_window_remaining !== undefined)
+                        ? { remaining: item.argon_window_remaining, reset_at: item.argon_window_reset_at }
+                        : qw.argon_7d);
                 const bars = [
                     { id: "gemini_5h", label: "Gemini 5h", windowType: t("shortWindow"), data: qw.gemini_5h || { remaining: item.short_window_remaining, reset_at: item.short_window_reset_at }, isActive: (pool === "gemini" || pool === "argon") },
                     { id: "gemini_7d", label: "Gemini 7d", windowType: t("longWindow"), data: qw.gemini_7d || { remaining: item.long_window_remaining, reset_at: item.long_window_reset_at }, isActive: (pool === "gemini") },
                     { id: "claude_5h", label: "Claude 5h", windowType: t("shortWindow"), data: qw.claude_5h, isActive: (pool === "claude_gpt") },
                     { id: "claude_7d", label: "Claude 7d", windowType: t("longWindow"), data: qw.claude_7d, isActive: (pool === "claude_gpt") },
-                    { id: "argon_7d", label: "Argon 7d", windowType: t("argonWindow"), data: qw.argon_7d || { remaining: item.argon_window_remaining, reset_at: item.argon_window_reset_at }, isActive: (pool === "argon") }
+                    { id: "argon_7d", label: "Argon 7d", windowType: t("argonWindow"), data: argonData, isActive: (pool === "argon") }
                 ];
 
                 cardHtml += "<div class=\"quota-bars-grid\">";

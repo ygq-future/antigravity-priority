@@ -132,6 +132,13 @@ func buildAllQuotaWindows(snapshots map[config.AntigravityModelGroup]apply.PlanS
 		qw := result[item.AuthIndex]
 		qw.Gemini5h = itemShortWindowBar(item)
 		qw.Gemini7d = itemLongWindowBar(item)
+		if item.ArgonWindowRemaining != nil && item.PlanType != string(core.PlanTypeFree) {
+			qw.Argon7d = apply.QuotaWindowBar{
+				Remaining: cloneInt64Pointer(item.ArgonWindowRemaining),
+				ResetAt:   cloneTimePointer(item.ArgonWindowResetAt),
+				Stale:     !item.EvidenceFresh && item.ArgonWindowRemaining == nil,
+			}
+		}
 		result[item.AuthIndex] = qw
 	}
 
@@ -146,7 +153,10 @@ func buildAllQuotaWindows(snapshots map[config.AntigravityModelGroup]apply.PlanS
 	argonSnap := snapshots[config.AntigravityModelGroupArgon]
 	for _, item := range argonSnap.Items {
 		qw := result[item.AuthIndex]
-		qw.Argon7d = itemArgonWindowBar(item)
+		argonBar := itemArgonWindowBar(item)
+		if argonBar.Remaining != nil || qw.Argon7d.Remaining == nil {
+			qw.Argon7d = argonBar
+		}
 		result[item.AuthIndex] = qw
 	}
 

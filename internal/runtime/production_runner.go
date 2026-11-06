@@ -453,8 +453,9 @@ func projectionEffectiveEvidence(
 		return fresh
 	}
 	base := buildProjectionEvidence(store, credentials)
-	merged := make(map[config.AntigravityModelGroup]evidence.Result, len(base))
-	for group, baseRes := range base {
+	merged := make(map[config.AntigravityModelGroup]evidence.Result, len(config.AllAntigravityModelGroups))
+	for _, group := range config.AllAntigravityModelGroups {
+		baseRes := base[group]
 		freshRes, hasFresh := fresh[group]
 		if !hasFresh {
 			merged[group] = baseRes
@@ -583,11 +584,8 @@ func enrichCredentialsPlanTypeFromStore(store *state.Store, credentials []core.C
 
 func buildProjectionEvidence(store *state.Store, credentials []core.Credential) map[config.AntigravityModelGroup]evidence.Result {
 	historical := historicalObservations(store, credentials)
-	result := make(map[config.AntigravityModelGroup]evidence.Result, 2)
-	for _, group := range []config.AntigravityModelGroup{
-		config.AntigravityModelGroupGemini,
-		config.AntigravityModelGroupClaudeGPT,
-	} {
+	result := make(map[config.AntigravityModelGroup]evidence.Result, len(config.AllAntigravityModelGroups))
+	for _, group := range config.AllAntigravityModelGroups {
 		classified := evidence.Classify(evidence.Input{
 			Round:       evidence.Round{ID: "historical", ModelGroup: group},
 			Credentials: credentials,
