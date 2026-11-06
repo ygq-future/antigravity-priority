@@ -24,6 +24,7 @@ type mockRunner struct {
 	scheduleConfig  state.ScheduleConfig
 	dynamicConfig   state.DynamicConfig
 	probeOutcomes   []management.ProbeOutcome
+	requestHistory  []state.RequestHistoryEntry
 }
 
 func (m *mockRunner) Run(ctx context.Context, req management.RunRequest) (apply.Result, error) {
@@ -105,6 +106,15 @@ func (m *mockRunner) GetProbeSamples(ctx context.Context, probeRoundID, modelGro
 
 func (m *mockRunner) LastProbeOutcomes(ctx context.Context) []management.ProbeOutcome {
 	return m.probeOutcomes
+}
+
+func (m *mockRunner) GetRequestHistory(ctx context.Context) ([]state.RequestHistoryEntry, error) {
+	return m.requestHistory, nil
+}
+
+func (m *mockRunner) ClearRequestHistory(ctx context.Context) error {
+	m.requestHistory = nil
+	return nil
 }
 
 func TestHandler_Run_Probe_Success(t *testing.T) {
@@ -750,5 +760,64 @@ func TestHandler_GetProbeSamples_Success(t *testing.T) {
 	record, _ := records[0].(map[string]any)
 	if record["email"] != "probe@example.com" {
 		t.Fatalf("probe sample email=%v, want full CPA Host email", record["email"])
+	}
+}
+
+func TestHandler_RequestHistory_Endpoints(t *testing.T) {
+	runner := &mockRunner{
+		requestHistory: []state.RequestHistoryEntry{
+			{
+				ID:           "req-1",
+				Model:        "claude-opus-4-6-thinking",
+				ModelPool:    "claude_gpt",
+				AuthIndex:    "auth-1",
+				Email:        "user@example.com",
+				InputTokens:  1000,
+				OutputTokens: 200,
+				TotalTokens:  1200,
+				StatusCode:   200,
+			},
+		},
+	}
+	handler := management.NewHandler(runner)
+
+	// 1. GET /request-history
+	req := httptest.NewRequest(http.MethodGet, "/request-history", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var res struct {
+		OK      bool                       `json:"ok"`
+		Total   int                        `json:"total"`
+		Records []state.RequestHistoryEntry `json:"records"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil || !res.OK {
+		t.Fatalf("decode failed: %v, body=%s", err, rec.Body.String())
+	}
+	if res.Total != 1 || len(res.Records) != 1 || res.Records[0].Model != "claude-opus-4-6-thinking" {
+		t.Fatalf("unexpected records: %+v", res)
+	}
+
+	// 2. POST /request-history/clear
+	clearReq := httptest.NewRequest(http.MethodPost, "/request-history/clear", nil)
+	clearRec := httptest.NewRecorder()
+	handler.ServeHTTP(clearRec, clearReq)
+	if clearRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 on clear, got %d", clearRec.Code)
+	}
+
+	// 3. Verify history is empty
+	req2 := httptest.NewRequest(http.MethodGet, "/request-history", nil)
+	rec2 := httptest.NewRecorder()
+	handler.ServeHTTP(rec2, req2)
+	var res2 struct {
+		Total   int                        `json:"total"`
+		Records []state.RequestHistoryEntry `json:"records"`
+	}
+	_ = json.Unmarshal(rec2.Body.Bytes(), &res2)
+	if res2.Total != 0 || len(res2.Records) != 0 {
+		t.Fatalf("expected 0 records after clear, got %d", res2.Total)
 	}
 }

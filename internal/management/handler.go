@@ -30,6 +30,8 @@ type Runner interface {
 	GetSamples(ctx context.Context, authIndex, modelGroup string) ([]state.QuotaSample, error)
 	GetProbeSamples(ctx context.Context, probeRoundID, modelGroup string) ([]state.ProbeSampleRecord, error)
 	LastProbeOutcomes(ctx context.Context) []ProbeOutcome
+	GetRequestHistory(ctx context.Context) ([]state.RequestHistoryEntry, error)
+	ClearRequestHistory(ctx context.Context) error
 }
 
 // ProbeOutcome reports the diagnostic outcome of one credential probe for the management UI.
@@ -83,6 +85,8 @@ const (
 	PathScheduleConfig = "/schedule/config"
 	PathRuntimeConfig  = "/runtime-config"
 	PathSamples        = "/samples"
+	PathRequestHistory      = "/request-history"
+	PathRequestHistoryClear = "/request-history/clear"
 
 	// URL Prefixes
 	PrefixResourcePlugin   = "/v0/resource/plugins/" + config.PluginID
@@ -127,6 +131,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleSetConfig(w, r)
 	case (path == PathSamples || path == PrefixManagementPlugin+PathSamples) && method == http.MethodGet:
 		h.handleGetSamples(w, r)
+	case (path == PathRequestHistory || path == PrefixManagementPlugin+PathRequestHistory) && method == http.MethodGet:
+		h.handleGetRequestHistory(w, r)
+	case (path == PathRequestHistoryClear || path == PrefixManagementPlugin+PathRequestHistoryClear) && method == http.MethodPost:
+		h.handleClearRequestHistory(w, r)
 	default:
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(http.StatusNotFound)
@@ -583,4 +591,27 @@ func isSensitiveKey(key string) bool {
 		strings.Contains(k, "api_key") ||
 		strings.Contains(k, "apikey") ||
 		strings.Contains(k, "secret")
+}
+
+func (h *Handler) handleGetRequestHistory(w http.ResponseWriter, r *http.Request) {
+	records, err := h.runner.GetRequestHistory(r.Context())
+	if err != nil {
+		h.writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ok":      true,
+		"total":   len(records),
+		"records": records,
+	})
+}
+
+func (h *Handler) handleClearRequestHistory(w http.ResponseWriter, r *http.Request) {
+	if err := h.runner.ClearRequestHistory(r.Context()); err != nil {
+		h.writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 }

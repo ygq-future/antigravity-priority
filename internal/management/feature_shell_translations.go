@@ -4,7 +4,7 @@ const featureShellTranslations = `        const SHELL_ZH = {
             "zh-CN": {
                 title: "Antigravity 优先级管理",
                 tabOverview: "概览与仪表盘",
-                tabHistory: "执行历史",
+                tabHistory: "请求历史",
                 tabDiagnostics: "系统诊断",
                 tabConfig: "⚙️ 配置中心",
                 tabHelp: "使用帮助",
@@ -25,7 +25,7 @@ const featureShellTranslations = `        const SHELL_ZH = {
             "en-US": {
                 title: "Antigravity Priority",
                 tabOverview: "Overview & Meters",
-                tabHistory: "Run History",
+                tabHistory: "Request History",
                 tabDiagnostics: "Diagnostics",
                 tabConfig: "⚙️ Config Center",
                 tabHelp: "Help & Features",

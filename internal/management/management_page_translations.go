@@ -19,7 +19,9 @@ var overviewTranslationKeys = []string{
 }
 
 var historyTranslationKeys = []string{
-	"historyTitle", "noHistory", "btnRefresh",
+	"historyTitle", "noHistory", "btnRefresh", "btnClearHistory",
+	"thTime", "thModel", "thCredential", "thTokens", "thStatus",
+	"statusRateLimited", "statusError",
 }
 
 var diagnosticsTranslationKeys = []string{

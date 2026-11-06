@@ -11,5 +11,6 @@ const templateScriptPrelude = `
         const SCHEDULE_CONFIG_PATH = BASE_PATH + "/schedule/config";
         const CONFIG_PATH = BASE_PATH + "/runtime-config";
         const SAMPLES_PATH = BASE_PATH + "/samples";
+        const REQUEST_HISTORY_CLEAR_PATH = BASE_PATH + "/request-history/clear";
 
 `

@@ -1,6 +1,17 @@
 package management
 
-const templateScriptHistoryDetails = `        function showHistoryDetails(index) {
+const templateScriptHistoryDetails = `        function formatHistoryKind(entry) {
+            var kind = entry && entry.kind ? entry.kind : "";
+            var trigger = entry && entry.trigger ? entry.trigger : "";
+            var k = kind.toLowerCase();
+            if (k === "auto_apply" || trigger.toLowerCase() === "auto_apply") return currentLang === "zh-CN" ? "自动调度" : "AUTO SCHEDULE";
+            if (k === "apply" || k === "manual_apply") return currentLang === "zh-CN" ? "立即写回" : "APPLY";
+            if (k === "probe") return currentLang === "zh-CN" ? "配额探测" : "PROBE";
+            if (k === "reset") return currentLang === "zh-CN" ? "重置优先级" : "RESET";
+            return (kind || "RUN").toUpperCase();
+        }
+
+        function showHistoryDetails(index) {
             if (!latestDiagnostics || !latestDiagnostics.run_history) return;
             var entry = latestDiagnostics.run_history[index];
             if (!entry) return;

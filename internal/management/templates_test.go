@@ -355,3 +355,24 @@ func extractCSSTokens(t *testing.T, css string, blockStart string, blockEnd stri
 	}
 	return tokens
 }
+
+func TestStatusHTML_RequestHistoryUIElements(t *testing.T) {
+	html := management.StatusHTML
+	expectedSubstrings := []string{
+		"request-history-table",
+		"historyList",
+		"requestHistoryCountBadge",
+		"clearRequestHistoryAction",
+		"thTime",
+		"thModel",
+		"thCredential",
+		"thTokens",
+		"thStatus",
+		"btnClearHistory",
+	}
+	for _, s := range expectedSubstrings {
+		if !strings.Contains(html, s) {
+			t.Errorf("StatusHTML missing expected request history element or key: %q", s)
+		}
+	}
+}

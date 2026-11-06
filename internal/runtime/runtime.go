@@ -48,6 +48,7 @@ type Runtime struct {
 	scheduleConfig      state.ScheduleConfig
 	stateCacheOverride  string
 	runHistory          []RunHistoryEntry
+	requestHistory      []state.RequestHistoryEntry
 	latestProbeOutcomes []management.ProbeOutcome
 	lastAutoApplyAt     time.Time
 	worker              *tickerWorker
@@ -130,6 +131,9 @@ func New(options Options) *Runtime {
 			if err := json.Unmarshal(histJSON, &hist); err == nil {
 				rt.runHistory = hist
 			}
+		}
+		if reqHist := store.GetRequestHistory(); len(reqHist) > 0 {
+			rt.requestHistory = reqHist
 		}
 		if audit != "" {
 			rt.latestAudit = audit
@@ -692,6 +696,7 @@ func (r *Runtime) Diagnostics(ctx context.Context) (map[string]any, error) {
 		"last_result":      result,
 		"latest_apply":     r.latestApplyEntry(),
 		"run_history":      r.currentRunHistory(),
+		"request_history":  r.currentRequestHistory(),
 	}, nil
 }
 
@@ -1153,6 +1158,35 @@ func (r *Runtime) handleUsageEvent(ctx context.Context, raw []byte) []byte {
 	if authIndex == "" {
 		return mustMarshal(Envelope{OK: true})
 	}
+	resolvedIndex := r.resolveAuthIndex(authIndex, nil)
+	email := r.resolveAuthEmail(resolvedIndex)
+	pool := config.ClassifyModelQuotaPool(payload.Model)
+	totalTokens := payload.Detail.TotalTokens
+	if totalTokens == 0 {
+		totalTokens = payload.Detail.InputTokens + payload.Detail.OutputTokens
+	}
+	statusCode := 200
+	if payload.Failed {
+		if payload.Failure.StatusCode != 0 {
+			statusCode = payload.Failure.StatusCode
+		} else {
+			statusCode = 500
+		}
+	}
+	r.appendRequestHistory(state.RequestHistoryEntry{
+		ID:           fmt.Sprintf("req-%d", r.clock.Now().UTC().UnixNano()),
+		At:           r.clock.Now().UTC(),
+		Model:        payload.Model,
+		ModelPool:    string(pool),
+		AuthIndex:    resolvedIndex,
+		Email:        email,
+		InputTokens:  payload.Detail.InputTokens,
+		OutputTokens: payload.Detail.OutputTokens,
+		TotalTokens:  totalTokens,
+		Failed:       payload.Failed,
+		StatusCode:   statusCode,
+		ErrorMessage: payload.Failure.Body,
+	})
 
 	if !payload.Failed {
 		if err := r.observeUsageSuccess(ctx, authIndex, modelGroupForUsage(payload.Model), payload.Detail); err != nil {

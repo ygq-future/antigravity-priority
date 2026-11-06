@@ -1,56 +1,87 @@
 package management
 
-const templateScriptHistory = `        function formatHistoryKind(entry) {
-			var kind = entry && entry.kind ? entry.kind : "";
-			var trigger = entry && entry.trigger ? entry.trigger : "";
-			var k = kind.toLowerCase();
-			if (k === "auto_apply" || trigger.toLowerCase() === "auto_apply") return currentLang === "zh-CN" ? "自动调度" : "AUTO SCHEDULE";
-			if (k === "apply" || k === "manual_apply") return currentLang === "zh-CN" ? "立即写回" : "APPLY";
-            if (k === "probe") return currentLang === "zh-CN" ? "配额探测" : "PROBE";
-            if (k === "reset") return currentLang === "zh-CN" ? "重置优先级" : "RESET";
-            return (kind || "RUN").toUpperCase();
-        }
-
-        function renderHistory() {
+const templateScriptHistory = `        function renderHistory() {
             const list = document.getElementById("historyList");
             if (!list) return;
 
-            const entries = (latestDiagnostics && latestDiagnostics.run_history) || [];
-            list.innerHTML = "";
-            if (entries.length === 0) {
+            const records = (latestDiagnostics && latestDiagnostics.request_history) || [];
+            const badge = document.getElementById("requestHistoryCountBadge");
+            if (badge) {
+                badge.textContent = records.length + (currentLang === "zh-CN" ? " 条记录" : " records");
+            }
+
+            if (records.length === 0) {
                 list.innerHTML = "<div class=\"empty-state\">" + t("noHistory") + "</div>";
                 return;
             }
 
-            entries.forEach(function(entry, idx) {
-                const item = document.createElement("div");
-                item.className = "history-item";
-                const dateStr = entry.at ? new Date(entry.at).toLocaleString(currentLang === "zh-CN" ? "zh-CN" : "en-US") : "-";
-				const kindText = formatHistoryKind(entry);
-                const msg = entry.message || "";
-				const isAutoSchedule = entry.kind === "auto_apply" || entry.trigger === "auto_apply";
-				const hasSnapshot = entry.kind === "probe" ? Boolean(entry.probe_round_id) : (isAutoSchedule ? Boolean(entry.probe_round_id || (entry.snapshot && (entry.snapshot.items || entry.snapshot.changes))) : (entry.snapshot && (entry.snapshot.items || entry.snapshot.changes)));
+            let html = "<table class=\"request-history-table\">" +
+                "<thead>" +
+                    "<tr>" +
+                        "<th>" + t("thTime") + "</th>" +
+                        "<th>" + t("thModel") + "</th>" +
+                        "<th>" + t("thCredential") + "</th>" +
+                        "<th>" + t("thTokens") + "</th>" +
+                        "<th>" + t("thStatus") + "</th>" +
+                    "</tr>" +
+                "</thead>" +
+                "<tbody>";
 
-                const succText = (currentLang === "zh-CN" ? "成功: " : "Succeeded: ") + (entry.succeeded || 0);
-                const failText = (currentLang === "zh-CN" ? "失败: " : "Failed: ") + (entry.failed || 0);
-                const skipText = (currentLang === "zh-CN" ? "跳过: " : "Skipped: ") + (entry.skipped || 0);
+            records.forEach(function(r) {
+                const date = r.at ? new Date(r.at) : new Date();
+                const timeStr = date.toLocaleTimeString(currentLang === "zh-CN" ? "zh-CN" : "en-US", { hour12: false }) + "." + String(date.getMilliseconds()).padStart(3, "0");
+                const fullDateStr = date.toLocaleString(currentLang === "zh-CN" ? "zh-CN" : "en-US");
 
-                item.innerHTML =
-                    "<div class=\"history-head\">" +
-                        "<div style=\"display:flex; align-items:center; gap:8px;\">" +
-                            "<span class=\"badge badge-subtle\">" + escapeHTML(kindText) + "</span>" +
-                            "<span style=\"font-size:13px; font-weight:600;\">" + escapeHTML(dateStr) + "</span>" +
-                        "</div>" +
-                        "<div class=\"history-stats\">" +
-                            "<span class=\"badge badge-success\">" + succText + "</span>" +
-                            "<span class=\"badge badge-danger\">" + failText + "</span>" +
-                            "<span class=\"badge badge-subtle\">" + skipText + "</span>" +
-                            (hasSnapshot ? "<button type=\"button\" class=\"btn-secondary\" style=\"min-height:24px; height:24px; padding:0 8px; font-size:11px;\" onclick=\"showHistoryDetails(" + idx + ")\">" + t("viewDetails") + "</button>" : "") +
-                        "</div>" +
-                    "</div>" +
-                    (msg ? "<div style=\"font-size:11.5px; color:var(--text-muted); font-family:monospace; line-height:1.3;\">" + escapeHTML(msg) + "</div>" : "");
-                list.appendChild(item);
+                const pool = r.model_pool || "";
+                let modelClass = "req-model-gemini";
+                let poolLabel = "Gemini";
+                if (pool === "argon") {
+                    modelClass = "req-model-argon";
+                    poolLabel = "Argon";
+                } else if (pool === "claude_gpt") {
+                    modelClass = "req-model-claude";
+                    poolLabel = "Claude";
+                }
+
+                const inTok = (r.input_tokens || 0).toLocaleString();
+                const outTok = (r.output_tokens || 0).toLocaleString();
+                const totalTok = (r.total_tokens || 0).toLocaleString();
+
+                let statusBadge = "<span class=\"req-status-ok\">● 200 OK</span>";
+                if (r.failed) {
+                    if (r.status_code === 429) {
+                        statusBadge = "<span class=\"req-status-429\" title=\"" + escapeHTML(r.error_message || "") + "\">● 429 " + t("statusRateLimited") + "</span>";
+                    } else {
+                        statusBadge = "<span class=\"req-status-fail\" title=\"" + escapeHTML(r.error_message || "") + "\">● " + (r.status_code || 500) + " " + t("statusError") + "</span>";
+                    }
+                }
+
+                html += "<tr>" +
+                    "<td class=\"req-time\" title=\"" + escapeHTML(fullDateStr) + "\">" + escapeHTML(timeStr) + "</td>" +
+                    "<td><span class=\"req-model-badge " + modelClass + "\">[" + poolLabel + "] " + escapeHTML(r.model || "-") + "</span></td>" +
+                    "<td class=\"req-cred\">" + escapeHTML(r.email || r.auth_index || "-") + "</td>" +
+                    "<td class=\"req-tokens\">" + inTok + " in / " + outTok + " out <span class=\"req-tokens-total\">(" + totalTok + ")</span></td>" +
+                    "<td>" + statusBadge + "</td>" +
+                "</tr>";
             });
+
+            html += "</tbody></table>";
+            list.innerHTML = html;
         }
 
+        async function clearRequestHistoryAction() {
+            if (!confirm(currentLang === "zh-CN" ? "确认清空所有已记录的请求历史吗？" : "Clear all recorded request history?")) {
+                return;
+            }
+            try {
+                await apiFetch(REQUEST_HISTORY_CLEAR_PATH, { method: "POST" });
+                showToast(currentLang === "zh-CN" ? "已清空请求历史" : "Request history cleared");
+                if (latestDiagnostics) {
+                    latestDiagnostics.request_history = [];
+                }
+                renderHistory();
+            } catch (err) {
+                showToast(err.message || (currentLang === "zh-CN" ? "清空失败" : "Failed to clear"), "error");
+            }
+        }
 `

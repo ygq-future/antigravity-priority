@@ -79,6 +79,68 @@ func newDevServer(options devServerOptions) (*devServer, error) {
 			})
 			_ = store.SaveAtomic(context.Background())
 		}
+		if len(store.GetRequestHistory()) == 0 {
+			nowTime := time.Now().UTC()
+			if options.Clock != nil {
+				nowTime = options.Clock.Now().UTC()
+			}
+			store.SetRequestHistory([]state.RequestHistoryEntry{
+				{
+					ID:           "req-seed-001",
+					At:           nowTime.Add(-12 * time.Second),
+					Model:        "claude-opus-4-6-thinking",
+					ModelPool:    "claude_gpt",
+					AuthIndex:    "dev-auth-001",
+					Email:        "dev-account-001@gmail.com",
+					InputTokens:  1850,
+					OutputTokens: 620,
+					TotalTokens:  2470,
+					Failed:       false,
+					StatusCode:   200,
+				},
+				{
+					ID:           "req-seed-002",
+					At:           nowTime.Add(-48 * time.Second),
+					Model:        "gemini-3.8-flash-high",
+					ModelPool:    "gemini",
+					AuthIndex:    "dev-auth-002",
+					Email:        "dev-account-002@gmail.com",
+					InputTokens:  420,
+					OutputTokens: 180,
+					TotalTokens:  600,
+					Failed:       false,
+					StatusCode:   200,
+				},
+				{
+					ID:           "req-seed-003",
+					At:           nowTime.Add(-2 * time.Minute),
+					Model:        "gemini-4-argon-high",
+					ModelPool:    "argon",
+					AuthIndex:    "dev-auth-003",
+					Email:        "dev-account-003@gmail.com",
+					InputTokens:  2100,
+					OutputTokens: 980,
+					TotalTokens:  3080,
+					Failed:       false,
+					StatusCode:   200,
+				},
+				{
+					ID:           "req-seed-004",
+					At:           nowTime.Add(-5 * time.Minute),
+					Model:        "gemini-3.8-flash-high",
+					ModelPool:    "gemini",
+					AuthIndex:    "dev-auth-005",
+					Email:        "dev-account-005@gmail.com",
+					InputTokens:  120,
+					OutputTokens: 0,
+					TotalTokens:  120,
+					Failed:       true,
+					StatusCode:   429,
+					ErrorMessage: "RESOURCE_EXHAUSTED: rate limit exceeded",
+				},
+			})
+			_ = store.SaveAtomic(context.Background())
+		}
 	}
 	rt := runtime.New(runtime.Options{
 		Host:           fakeHost,

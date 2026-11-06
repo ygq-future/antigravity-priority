@@ -26,7 +26,7 @@ const managementPageShellMarkup = `
 
         <nav class="tabs" aria-label="Dashboard Navigation">
             <button type="button" class="tab active" data-tab="overview" onclick="switchTab('overview')" data-i18n="tabOverview">概览与仪表盘</button>
-            <button type="button" class="tab" data-tab="history" onclick="switchTab('history')" data-i18n="tabHistory">执行历史</button>
+            <button type="button" class="tab" data-tab="history" onclick="switchTab('history')" data-i18n="tabHistory">请求历史</button>
             <button type="button" class="tab" data-tab="diagnostics" onclick="switchTab('diagnostics')" data-i18n="tabDiagnostics">系统诊断</button>
             <button type="button" class="tab" data-tab="config" onclick="switchTab('config')" data-i18n="tabConfig">⚙️ 配置中心</button>
             <button type="button" class="tab" data-tab="help" onclick="switchTab('help')" data-i18n="tabHelp">使用帮助</button>

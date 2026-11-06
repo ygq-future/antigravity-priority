@@ -69,6 +69,8 @@ func (r *Runtime) registerManagement() []byte {
 			{Method: http.MethodGet, Path: management.PrefixLegacyPlugin + management.PathRuntimeConfig},
 			{Method: http.MethodPost, Path: management.PrefixLegacyPlugin + management.PathRuntimeConfig},
 			{Method: http.MethodGet, Path: management.PrefixLegacyPlugin + management.PathSamples},
+			{Method: http.MethodGet, Path: management.PrefixLegacyPlugin + management.PathRequestHistory},
+			{Method: http.MethodPost, Path: management.PrefixLegacyPlugin + management.PathRequestHistoryClear},
 		},
 		Resources: []managementResource{
 			{Path: management.PathStatus, Menu: "Antigravity Priority", Description: "Shows Antigravity priority status and audit summary."},
@@ -422,6 +424,14 @@ func (r managementRunner) GetProbeSamples(ctx context.Context, probeRoundID, mod
 
 func (r managementRunner) LastProbeOutcomes(ctx context.Context) []management.ProbeOutcome {
 	return r.runtime.LastProbeOutcomes(ctx)
+}
+
+func (r managementRunner) GetRequestHistory(ctx context.Context) ([]state.RequestHistoryEntry, error) {
+	return r.runtime.GetRequestHistory(ctx)
+}
+
+func (r managementRunner) ClearRequestHistory(ctx context.Context) error {
+	return r.runtime.ClearRequestHistory(ctx)
 }
 
 func probeOutcomes(probes []evidence.ProbeObservation, byGroup map[config.AntigravityModelGroup]evidence.Result) []management.ProbeOutcome {

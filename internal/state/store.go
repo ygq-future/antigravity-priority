@@ -171,6 +171,7 @@ type Store struct {
 	lastAutoApplyAt time.Time
 	cooldowns       map[string]CooldownEntry
 	autoDisabled    map[string]AutoDisabledEntry
+	requestHistory  []RequestHistoryEntry
 }
 
 type document struct {
@@ -184,6 +185,7 @@ type document struct {
 	LastAutoApplyAt time.Time                    `json:"last_auto_apply_at,omitempty"`
 	Cooldowns       map[string]CooldownEntry     `json:"cooldowns,omitempty"`
 	AutoDisabled    map[string]AutoDisabledEntry `json:"auto_disabled,omitempty"`
+	RequestHistory  []RequestHistoryEntry        `json:"request_history,omitempty"`
 }
 
 // Load loads the state document from path. If the file does not exist, an empty store is returned.
@@ -224,6 +226,9 @@ func Load(ctx context.Context, path string) (*Store, error) {
 	}
 	if len(doc.RunHistory) > 0 {
 		store.runHistory = append([]byte(nil), doc.RunHistory...)
+	}
+	if len(doc.RequestHistory) > 0 {
+		store.requestHistory = append([]RequestHistoryEntry(nil), doc.RequestHistory...)
 	}
 	if doc.ScheduleConfig != nil {
 		sc := *doc.ScheduleConfig
@@ -270,6 +275,7 @@ func (s *Store) SaveAtomic(ctx context.Context) (err error) {
 		LastAutoApplyAt: s.lastAutoApplyAt,
 		Cooldowns:       s.cooldowns,
 		AutoDisabled:    s.autoDisabled,
+		RequestHistory:  s.requestHistory,
 	}
 	data, err := json.MarshalIndent(doc, "", "  ")
 	s.mu.RUnlock()
@@ -319,6 +325,22 @@ func (s *Store) GetRuntimeSnapshot() (audit string, resultJSON []byte, historyJS
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.latestAudit, append([]byte(nil), s.latestResult...), append([]byte(nil), s.runHistory...)
+}
+
+// GetRequestHistory returns a copy of the recorded request history entries.
+func (s *Store) GetRequestHistory() []RequestHistoryEntry {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]RequestHistoryEntry, len(s.requestHistory))
+	copy(out, s.requestHistory)
+	return out
+}
+
+// SetRequestHistory sets the persistent request history entries.
+func (s *Store) SetRequestHistory(entries []RequestHistoryEntry) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.requestHistory = append([]RequestHistoryEntry(nil), entries...)
 }
 
 // MarkProbeSuccess records a successful probe, adaptively updates cycle burn rate, and resets errors.
