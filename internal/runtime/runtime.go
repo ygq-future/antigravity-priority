@@ -1161,9 +1161,19 @@ func (r *Runtime) handleUsageEvent(ctx context.Context, raw []byte) []byte {
 	resolvedIndex := r.resolveAuthIndex(authIndex, nil)
 	email := r.resolveAuthEmail(resolvedIndex)
 	pool := config.ClassifyModelQuotaPool(payload.Model)
+	reasoningTokens := payload.Detail.ReasoningTokens
+	cacheTokens := payload.Detail.CacheReadTokens
+	if cacheTokens == 0 {
+		cacheTokens = payload.Detail.CachedTokens
+	}
 	totalTokens := payload.Detail.TotalTokens
 	if totalTokens == 0 {
-		totalTokens = payload.Detail.InputTokens + payload.Detail.OutputTokens
+		totalTokens = payload.Detail.InputTokens + payload.Detail.OutputTokens + reasoningTokens + cacheTokens
+	} else if reasoningTokens == 0 && cacheTokens == 0 {
+		diff := totalTokens - (payload.Detail.InputTokens + payload.Detail.OutputTokens)
+		if diff > 0 {
+			reasoningTokens = diff
+		}
 	}
 	statusCode := 200
 	if payload.Failed {
@@ -1174,18 +1184,22 @@ func (r *Runtime) handleUsageEvent(ctx context.Context, raw []byte) []byte {
 		}
 	}
 	r.appendRequestHistory(state.RequestHistoryEntry{
-		ID:           fmt.Sprintf("req-%d", r.clock.Now().UTC().UnixNano()),
-		At:           r.clock.Now().UTC(),
-		Model:        payload.Model,
-		ModelPool:    string(pool),
-		AuthIndex:    resolvedIndex,
-		Email:        email,
-		InputTokens:  payload.Detail.InputTokens,
-		OutputTokens: payload.Detail.OutputTokens,
-		TotalTokens:  totalTokens,
-		Failed:       payload.Failed,
-		StatusCode:   statusCode,
-		ErrorMessage: payload.Failure.Body,
+		ID:                  fmt.Sprintf("req-%d", r.clock.Now().UTC().UnixNano()),
+		At:                  r.clock.Now().UTC(),
+		Model:               payload.Model,
+		ModelPool:           string(pool),
+		AuthIndex:           resolvedIndex,
+		Email:               email,
+		InputTokens:         payload.Detail.InputTokens,
+		OutputTokens:        payload.Detail.OutputTokens,
+		ReasoningTokens:     reasoningTokens,
+		CachedTokens:        payload.Detail.CachedTokens,
+		CacheReadTokens:     payload.Detail.CacheReadTokens,
+		CacheCreationTokens: payload.Detail.CacheCreationTokens,
+		TotalTokens:         totalTokens,
+		Failed:              payload.Failed,
+		StatusCode:          statusCode,
+		ErrorMessage:        payload.Failure.Body,
 	})
 
 	if !payload.Failed {

@@ -46,6 +46,16 @@ const templateScriptHistory = `        function renderHistory() {
                 const inTok = (r.input_tokens || 0).toLocaleString();
                 const outTok = (r.output_tokens || 0).toLocaleString();
                 const totalTok = (r.total_tokens || 0).toLocaleString();
+                const reasonTok = (r.reasoning_tokens || 0).toLocaleString();
+                const cacheTok = (r.cache_read_tokens || r.cached_tokens || 0).toLocaleString();
+
+                let tokenBreakdown = inTok + " in / " + outTok + " out";
+                if (r.reasoning_tokens > 0) {
+                    tokenBreakdown += " / " + reasonTok + (currentLang === "zh-CN" ? " 思考" : " think");
+                }
+                if (r.cache_read_tokens > 0 || r.cached_tokens > 0) {
+                    tokenBreakdown += " / " + cacheTok + (currentLang === "zh-CN" ? " 缓存" : " cache");
+                }
 
                 let statusBadge = "<span class=\"req-status-ok\">● 200 OK</span>";
                 if (r.failed) {
@@ -60,7 +70,7 @@ const templateScriptHistory = `        function renderHistory() {
                     "<td class=\"req-time\" title=\"" + escapeHTML(fullDateStr) + "\">" + escapeHTML(timeStr) + "</td>" +
                     "<td><span class=\"req-model-badge " + modelClass + "\">[" + poolLabel + "] " + escapeHTML(r.model || "-") + "</span></td>" +
                     "<td class=\"req-cred\">" + escapeHTML(r.email || r.auth_index || "-") + "</td>" +
-                    "<td class=\"req-tokens\">" + inTok + " in / " + outTok + " out <span class=\"req-tokens-total\">(" + totalTok + ")</span></td>" +
+                    "<td class=\"req-tokens\">" + tokenBreakdown + " <span class=\"req-tokens-total\">(" + totalTok + ")</span></td>" +
                     "<td>" + statusBadge + "</td>" +
                 "</tr>";
             });

@@ -195,3 +195,56 @@ func TestRuntime_RequestHistory_ConcurrentSafety(t *testing.T) {
 		t.Errorf("expected at most 100 records, got %d", len(records))
 	}
 }
+
+func TestRuntime_RequestHistory_CapturesReasoningAndCachedTokens(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	clock := &testClock{now: time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)}
+	r := newTestRuntime(t, runtime.Options{
+		Clock:   clock,
+		Sleeper: testSleeper{},
+	})
+	if _, err := r.Register(context.Background(), runtime.RegisterRequest{
+		ConfigYAML: "enabled: true\nstate_cache_path: " + filepath.ToSlash(cachePath) + "\n",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = r.Shutdown(context.Background()) }()
+
+	// 1. Explicit reasoning tokens
+	p1 := `{"Provider":"antigravity","Model":"gemini-3.8-flash-high","AuthIndex":"auth-1","Failed":false,"Detail":{"InputTokens":259,"OutputTokens":445,"ReasoningTokens":938,"TotalTokens":1642}}`
+	_ = r.Handle(context.Background(), runtime.MethodUsageHandle, []byte(p1))
+
+	// 2. Inferred reasoning tokens from total gap (when ReasoningTokens=0)
+	p2 := `{"Provider":"antigravity","Model":"gemini-3.8-flash-high","AuthIndex":"auth-1","Failed":false,"Detail":{"InputTokens":259,"OutputTokens":445,"TotalTokens":1642}}`
+	_ = r.Handle(context.Background(), runtime.MethodUsageHandle, []byte(p2))
+
+	// 3. Cached tokens
+	p3 := `{"Provider":"antigravity","Model":"claude-sonnet-5-5-high","AuthIndex":"auth-1","Failed":false,"Detail":{"InputTokens":1000,"OutputTokens":200,"CacheReadTokens":800,"TotalTokens":1200}}`
+	_ = r.Handle(context.Background(), runtime.MethodUsageHandle, []byte(p3))
+
+	records, err := r.GetRequestHistory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 3 {
+		t.Fatalf("expected 3 records, got %d", len(records))
+	}
+
+	// Record 0 (p3 - newest)
+	if records[0].CacheReadTokens != 800 {
+		t.Errorf("expected 800 cache read tokens, got %d", records[0].CacheReadTokens)
+	}
+
+	// Record 1 (p2 - inferred reasoning)
+	if records[1].ReasoningTokens != 938 {
+		t.Errorf("expected 938 inferred reasoning tokens, got %d", records[1].ReasoningTokens)
+	}
+	if records[1].TotalTokens != 1642 {
+		t.Errorf("expected 1642 total tokens, got %d", records[1].TotalTokens)
+	}
+
+	// Record 2 (p1 - explicit reasoning)
+	if records[2].ReasoningTokens != 938 {
+		t.Errorf("expected 938 explicit reasoning tokens, got %d", records[2].ReasoningTokens)
+	}
+}

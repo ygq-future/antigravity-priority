@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -105,9 +106,10 @@ func newDevServer(options devServerOptions) (*devServer, error) {
 					ModelPool:    "gemini",
 					AuthIndex:    "dev-auth-002",
 					Email:        "arno***",
-					InputTokens:  420,
-					OutputTokens: 180,
-					TotalTokens:  600,
+					InputTokens:     259,
+					OutputTokens:    445,
+					ReasoningTokens: 938,
+					TotalTokens:     1642,
 					Failed:       false,
 					StatusCode:   200,
 				},
@@ -231,6 +233,20 @@ func (d *devServer) Handler() http.Handler {
 		}
 		payload := fmt.Sprintf(`{"Provider":"antigravity","Model":"gemini-3.7-flash","AuthIndex":%q,"Failed":false}`, authIndex)
 		resp := d.runtime.Handle(r.Context(), runtime.MethodUsageHandle, []byte(payload))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(resp)
+	})
+	mux.HandleFunc("/dev/simulate-usage", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		resp := d.runtime.Handle(r.Context(), runtime.MethodUsageHandle, raw)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(resp)
 	})

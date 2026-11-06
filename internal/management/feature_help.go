@@ -46,6 +46,8 @@ const helpStyles = `        .help-panel {
             line-height: 1.6;
             font-size: 13px;
             color: var(--text-secondary);
+            padding: 16px 18px !important;
+            box-sizing: border-box;
         }
 
         .help-header {
