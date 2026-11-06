@@ -167,7 +167,6 @@ const templateScriptControls = `        let userSelectedModel = false;
         function closeAllCustomSelects(exceptId) {
             const list = [
                 { wrap: "customModelSelect", menu: "customModelSelectMenu" },
-                { wrap: "customModelGroupSelect", menu: "customSelectMenu" },
                 { wrap: "customIntervalSelect", menu: "customIntervalMenu" },
             ];
             list.forEach(item => {

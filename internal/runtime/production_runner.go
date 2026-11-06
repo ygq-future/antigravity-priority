@@ -236,18 +236,9 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 	r.setDualSnapshot(postApplyProjection.Snapshot)
 
 	summary := resultSummary("apply", result)
-	kind := KindApply
-	probeRoundID := ""
-	if request.Trigger == TriggerAutoApply {
-		kind = KindAutoApply
-		probeRoundID = evidence.RoundID
-		summary = fmt.Sprintf("auto schedule probed=%d; %s", evidence.Probed, summary)
-	}
-
 	_, projectErr := r.projectRun(ctx, store, result, summary, RunHistoryEntry{
-		Kind:         kind,
+		Kind:         KindApply,
 		Trigger:      string(request.Trigger),
-		ProbeRoundID: probeRoundID,
 		Message:      summary,
 		Snapshot:     &primarySnapshot,
 	})

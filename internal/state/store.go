@@ -477,43 +477,39 @@ func (s *Store) RecordUsageConsumption(authIndex, modelGroup string, weightedTok
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	applyConsumption := func(group string) float64 {
-		key := entryKey(authIndex, group)
-		entry, ok := s.entries[key]
-		if !ok {
-			return 0
-		}
-		entry.PendingWeightedTokens += weightedTokens
-		entry.LastUsageAt = now.UTC()
-		k5h := effectiveTokensPerShortPct(entry)
-		cCycle := effectiveCycleBurnRate(entry)
-		entry.EstimatedShortBurnPct = entry.PendingWeightedTokens / k5h
-		entry.EstimatedLongBurnPct = entry.EstimatedShortBurnPct * cCycle
-		s.entries[key] = entry
-		return entry.EstimatedShortBurnPct
+	key := entryKey(authIndex, modelGroup)
+	entry, ok := s.entries[key]
+	if !ok {
+		return
 	}
 
-	shortBurnPct := applyConsumption(modelGroup)
+	entry.PendingWeightedTokens += weightedTokens
+	entry.LastUsageAt = now.UTC()
+	k5h := effectiveTokensPerShortPct(entry)
+	deltaShortPct := weightedTokens / k5h
+	cCycle := effectiveCycleBurnRate(entry)
 
-	syncSiblingShortBurn := func(siblingGroup string, shortPct float64) {
-		key := entryKey(authIndex, siblingGroup)
-		entry, ok := s.entries[key]
-		if !ok {
-			return
-		}
-		entry.EstimatedShortBurnPct = shortPct
-		entry.EstimatedLongBurnPct = shortPct * effectiveCycleBurnRate(entry)
-		entry.LastUsageAt = now.UTC()
-		s.entries[key] = entry
-	}
+	entry.EstimatedShortBurnPct += deltaShortPct
+	entry.EstimatedLongBurnPct += deltaShortPct * cCycle
+	s.entries[key] = entry
 
-	// Because gemini and argon share the 5h short window, when modelGroup == "gemini",
-	// also update EstimatedShortBurnPct on "argon" (and vice versa).
+	// Gemini and Argon share the physical 5h short window while retaining independent 7d weekly pools.
+	// Accumulate the exact short burn percentage onto the sibling group without mutating its EstimatedLongBurnPct.
 	normGroup := strings.ToLower(strings.TrimSpace(modelGroup))
+	var siblingGroup string
 	if normGroup == string(config.AntigravityModelGroupGemini) {
-		syncSiblingShortBurn(string(config.AntigravityModelGroupArgon), shortBurnPct)
+		siblingGroup = string(config.AntigravityModelGroupArgon)
 	} else if normGroup == string(config.AntigravityModelGroupArgon) {
-		syncSiblingShortBurn(string(config.AntigravityModelGroupGemini), shortBurnPct)
+		siblingGroup = string(config.AntigravityModelGroupGemini)
+	}
+
+	if siblingGroup != "" {
+		sibKey := entryKey(authIndex, siblingGroup)
+		if sibEntry, sibOk := s.entries[sibKey]; sibOk {
+			sibEntry.EstimatedShortBurnPct += deltaShortPct
+			sibEntry.LastUsageAt = now.UTC()
+			s.entries[sibKey] = sibEntry
+		}
 	}
 }
 
@@ -543,11 +539,12 @@ func (s *Store) GetPlanType(authIndex, preferredGroup string) core.PlanType {
 			return entry.PlanType
 		}
 	}
-	for _, group := range []string{"gemini", "claude_gpt"} {
-		if group == preferredGroup {
+	for _, group := range config.AllAntigravityModelGroups {
+		groupStr := string(group)
+		if groupStr == preferredGroup {
 			continue
 		}
-		if entry, ok := s.entries[entryKey(authIndex, group)]; ok && entry.PlanType != "" && entry.PlanType != core.PlanTypeUnknown {
+		if entry, ok := s.entries[entryKey(authIndex, groupStr)]; ok && entry.PlanType != "" && entry.PlanType != core.PlanTypeUnknown {
 			return entry.PlanType
 		}
 	}

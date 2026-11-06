@@ -6,20 +6,6 @@ const templateScriptConfig = `        let originalConfigState = null;
             if (isAuthBlocked) return;
             try {
                 dynamicConfig = await apiFetch(CONFIG_PATH);
-                if (!userSelectedModelGroup && dynamicConfig && dynamicConfig.antigravity_model_group) {
-                    const select = document.getElementById("modelGroupSelect");
-                    if (select && select.value !== dynamicConfig.antigravity_model_group) {
-                        select.value = dynamicConfig.antigravity_model_group;
-                        updateCustomSelectDisplay();
-                        const menu = document.getElementById("customSelectMenu");
-                        if (menu) {
-                            menu.querySelectorAll(".custom-select-option").forEach(opt => {
-                                const isSelected = opt.getAttribute("data-value") === dynamicConfig.antigravity_model_group;
-                                opt.classList.toggle("selected", isSelected);
-                            });
-                        }
-                    }
-                }
                 renderDynamicConfigForm(dynamicConfig);
                 renderScheduleStatus();
             } catch (err) {

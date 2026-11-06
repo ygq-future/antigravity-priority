@@ -28,6 +28,8 @@ A high-performance, single-provider priority scheduler and quota management plug
 - **Native CPA `scheduler.pick` Pure Memory Dispatch**: Hooks into CPA via `scheduler: true` and `scheduler_across_priorities: true` to resolve inbound model requests dynamically and route traffic to optimal credentials in memory with **zero disk writes and zero static priority conflicts**.
 - **Model-Centric Routing Board & 5-Bar Quota Cards**: Replaces legacy two-group toggles with an intuitive **Model Routing Board**; each credential card displays all five quota progress bars (`Gemini 5h/7d`, `Claude 5h/7d`, `Argon 7d`) with active route highlighting and call-order tier badges.
 - **Session-Sticky Affinity & Equal-Priority Clustering**: Accounts with close urgency metrics share the same priority integer tier, enabling CPA native round-robin distribution with `canonical_session_id` session affinity within the top cluster to eliminate 429 single-point saturation.
+- **Custom Tier Overrides & Round-Robin Load Balancing**: Allows freely assigning explicit target tiers (Tier #1, Tier #2...) on overview cards; custom tiers take absolute precedence, and candidates sharing the same custom tier receive identical priority scores for round-robin load distribution.
+- **Real-Time End-to-End Request History**: Intercepts and logs every inbound request with its model, target quota pool, token breakdown (input, output, reasoning, cache), and status code in a high-density table with one-click clear.
 - **Pool-Scoped 429 Cooldown Circuit Breaker**: Isolates 429 rate limit demotions to the affected quota pool without disabling sibling pools on the same account (e.g. 429 on Claude does not affect Gemini or Argon traffic), absorbing transient fleet-wide bursts with storm protection and restoring priority upon cooldown expiry or successful requests.
 - **Closed-Loop Real-Time Estimation & Probe Auto-Calibration**: Predicts token consumption per turn via `usage.handle` to update routing tiers in real-time, smoothing EMA token sensitivity $K_{\text{5h}}$ and burn rate $C_{\text{cycle}}$ on periodic Google probes.
 - **Dynamic Boost Horizon**: Intelligently computes the required burn horizon to proactively elevate abundant accounts to top priority (`999, 998...`), eliminating end-of-cycle quota waste.
@@ -131,16 +133,16 @@ In the **`⚙️ Config Center`** tab of the management dashboard, the following
 
 | Setting | Default | Range/Options | Description |
 | :--- | :--- | :--- | :--- |
-| **Background Quota Calibration (`auto_apply`)** | `true` | On / Off | When true, scheduled background runs periodically probe Google API to calibrate real-time usage estimators. |
+| **Background Quota Calibration (`auto_apply`)** | `false` | On / Off | When true, scheduled background runs periodically probe Google API to calibrate real-time usage estimators. |
 | **Calibration Interval (`interval`)** | `15m` | `5m`, `15m`, `30m`, `1h`, custom | Background quota probe and calibration interval. Changes take effect immediately without restarting. |
 | **Active Schedule Window (`schedule_window`)** | `All day` | `HH:MM` to `HH:MM` | Daily active time window (e.g. `09:00-23:00`, supports cross-midnight like `22:00-06:00`). Sleeps outside window. |
 | **Max Probe Concurrency (`max_concurrency`)** | `6` | `1 ~ 32` | Maximum concurrent goroutines for quota probe requests to Google API. |
 | **Urgency Bucket Tolerance (`urgency_tolerance`)** | `0.05` | `0.00 ~ 0.50` | Accounts within this tolerance share the same priority for round-robin balancing. |
 | **Adaptive Sample Capacity (`quota_sample_capacity`)** | `6` | `2 ~ 30` | FIFO history retained for both consumption-trend inspection and burn-rate learning. |
-| **429 Cooldown Duration (`rate_limit_cooldown_minutes`)** | `5` | `1 ~ 1440` min | Cooldown duration demoting account to `-1` fallback tier on 429 errors. |
+| **429 Cooldown Duration (`rate_limit_cooldown_minutes`)** | `5` | `1 ~ 1440` min | Cooldown duration isolating rate-limited quota pool into fallback tier on 429 errors. |
 | **Boost Start Priority (`boost_start_priority`)** | `999` | `1 ~ 999` | Base priority for tier-1 boosted credentials. |
 | **Normal Healthy Start Priority (`normal_start_priority`)** | `100` | `1 ~ 999`, not above Boost start | Base priority for tier-2 regular healthy credentials. |
-> **Persistence Guarantee**: All settings changed in the UI Config Center are atomically saved to the active persistence cache file (defaults to `data/antigravity-priority-cache.json`), surviving CPA container restarts and taking precedence over initial YAML values. The completion time of the latest automatic round is persisted as well, so a restart resumes the remaining interval instead of starting the schedule over.
+| **Free Tier Fallback Start Priority (`free_start_priority`)** | `10` | `1 ~ 999`, not above Normal start | Base priority for Free accounts without 5h window, serving as fallback after Pro. |
 
 ---
 
@@ -155,8 +157,8 @@ The plugin registers **resources** (static management dashboard) and **routes** 
   - **Key Features**:
     - **Model-Centric Routing Board**: Dropdown to select concrete models (Gemini pool, Argon pool, Claude & GPT pool), instantly rendering call order tiers (Tier #1 · 999 Boost, Tier #2 · 100 Clustered Round-Robin, etc.) and active eligibility.
     - **Panoramic 5-Bar Quota Cards**: Every card displays all 5 quota bars (Gemini 5h/7d, Claude 5h/7d, Argon 7d), highlighting the active route bars for the selected model with adaptive countdown timers and learned $C_{\text{cycle}}$.
-    - **Two-Stage Control**: `🔄 Sync Host`, `📡 Fetch Quota (10s cooldown)`, `🧹 Reset Static Priorities`, `🔄 Reset to Default`.
-    - **Execution History**: Last 10 runs with `🔍 View Details` modal to inspect Apply write-back or Probe snapshots.
+    - **Scheduling & Synchronization Control**: Provides `🔄 Sync Host`, `📡 Fetch Quota (10s cooldown)`, and `🔄 Reset Static Priorities`.
+    - **Real-Time Request History**: Retains up to 100 recent request logs with model, target quota pool, token breakdown, and response status with one-click clear.
     - **Samples Modal**: Seamlessly toggle between Gemini, Argon, and Claude & GPT sample histories.
     - **System Diagnostics**: Scheduler engine lifecycle, active window states, 429 rate limit circuit breaking monitor, full email identity, and last apply health metrics with one-click JSON Copy.
     - **⚙️ Config Center**: Online management of all scheduling and algorithm parameters with instant hot reload.
@@ -178,13 +180,21 @@ The plugin registers **resources** (static management dashboard) and **routes** 
 - `GET /v0/management/plugins/antigravity-priority/diagnostics`
   - Exports scheduler diagnostic metrics, active 429 cooldowns, background worker state, and run history; account identity uses full email while tokens, keys, and persisted audit fields remain redacted.
 - `POST /v0/management/plugins/antigravity-priority/sync`
-  - Actively re-syncs latest credential files from CPA host and regenerates dual-group snapshots immediately.
+  - Actively re-syncs latest credential files from CPA host and regenerates three-pool snapshots immediately.
 - `GET /v0/management/plugins/antigravity-priority/samples?auth_index=xxx`
   - Retrieves multi-sample sliding window time-series quota observations for a specific credential.
 - `GET /v0/management/plugins/antigravity-priority/samples?probe_round_id=xxx&model_group=gemini|argon|claude_gpt`
   - Retrieves quota samples actually appended for the specified probe round and model group; credentials with unchanged quota are absent from the result.
 - `GET /v0/management/plugins/antigravity-priority/snapshot/latest`
-  - Returns the latest dual-group decision planning snapshot (`DualGroupSnapshot`) with full CPA email and technical `auth_index` for API correlation; the management page uses email as the account name while sensitive tokens and audit fields remain redacted.
+  - Returns the latest three-pool decision planning snapshot (`DualGroupSnapshot`) with full CPA email and technical `auth_index` for API correlation; the management page uses email as the account name while sensitive tokens and audit fields remain redacted.
+- `GET /v0/management/plugins/antigravity-priority/request-history`
+  - Retrieves up to 100 recent real-time inbound request execution logs.
+- `POST /v0/management/plugins/antigravity-priority/request-history/clear`
+  - Clears all recorded inbound request history entries.
+- `GET /v0/management/plugins/antigravity-priority/custom-tier`
+  - Retrieves the dictionary of configured credential custom tier overrides.
+- `POST /v0/management/plugins/antigravity-priority/custom-tier`
+  - Configures or clears custom priority tier overrides for a specific credential (e.g. Tier #1, Tier #2...; pass 0 to restore automatic tiering).
 
 ---
 

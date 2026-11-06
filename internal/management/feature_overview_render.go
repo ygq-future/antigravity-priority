@@ -2,7 +2,11 @@ package management
 
 const templateScriptOverviewRender = `        function resolveModelPool(modelId) {
             if (!modelId) return "gemini";
-            const m = String(modelId).toLowerCase();
+            let m = String(modelId).toLowerCase().trim();
+            const slashIdx = m.lastIndexOf("/");
+            if (slashIdx >= 0) m = m.substring(slashIdx + 1);
+            const parenIdx = m.indexOf("(");
+            if (parenIdx >= 0) m = m.substring(0, parenIdx).trim();
             if (m.indexOf("argon") >= 0) return "argon";
             if (m.indexOf("claude") >= 0 || m.indexOf("opus") >= 0 || m.indexOf("sonnet") >= 0 ||
                 m.indexOf("haiku") >= 0 || m.indexOf("fable") >= 0 || m.indexOf("gpt") >= 0 ||
@@ -105,7 +109,6 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
             }
 
             const activeGroup = (latestSnapshot && latestSnapshot.active_model_group) || "gemini";
-            const isPredictedView = pool !== activeGroup;
             const groups = (latestSnapshot && latestSnapshot.groups) || {};
             const groupData = groups[pool] || groups[activeGroup] || groups["gemini"] || {};
             const rawItems = groupData.items || [];

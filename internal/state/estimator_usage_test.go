@@ -91,7 +91,7 @@ func TestRecordUsageConsumption_AndProbeCalibration(t *testing.T) {
 		t.Errorf("expected ShortWindowRemaining=78 (80 - 2), got %v", evGemini.ShortWindowRemaining)
 	}
 
-	// Verify Argon entry also inherited the shared 5h short burn deduction
+	// Verify Argon entry inherited the shared 5h short burn deduction but kept 7d weekly intact
 	evArgon, ok := store.GetHistoricalEvidence("auth-1", "argon")
 	if !ok {
 		t.Fatalf("expected historical evidence for argon")
@@ -99,7 +99,19 @@ func TestRecordUsageConsumption_AndProbeCalibration(t *testing.T) {
 	if evArgon.ShortWindowRemaining == nil || *evArgon.ShortWindowRemaining != 78 {
 		t.Errorf("expected Argon ShortWindowRemaining=78 (shared from Gemini), got %v", *evArgon.ShortWindowRemaining)
 	}
+	if evArgon.LongWindowRemaining == nil || *evArgon.LongWindowRemaining != 85 {
+		t.Errorf("expected Argon LongWindowRemaining=85 (unaffected by Gemini 7d), got %v", *evArgon.LongWindowRemaining)
+	}
 
+	// Record usage on Argon: 40,000 weighted tokens -> 1% short burn on shared 5h window
+	store.RecordUsageConsumption("auth-1", "argon", 40000, now.Add(10*time.Minute))
+	evGeminiAfterArgon, _ := store.GetHistoricalEvidence("auth-1", "gemini")
+	if evGeminiAfterArgon.ShortWindowRemaining == nil || *evGeminiAfterArgon.ShortWindowRemaining != 77 {
+		t.Errorf("expected Gemini ShortWindowRemaining=77 (shared 5h synced from Argon), got %v", *evGeminiAfterArgon.ShortWindowRemaining)
+	}
+	if evGeminiAfterArgon.LongWindowRemaining == nil || *evGeminiAfterArgon.LongWindowRemaining != 90 {
+		t.Errorf("expected Gemini LongWindowRemaining=90 (unaffected by Argon 7d), got %v", *evGeminiAfterArgon.LongWindowRemaining)
+	}
 	// 3. Subsequent probe arrives with actual server drop of 4% (from 80 to 76)
 	// Pending tokens were 160,000. Actual drop = 4%.
 	// Observed sensitivity kObs = 160,000 / 4 = 40,000.

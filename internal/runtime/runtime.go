@@ -342,6 +342,10 @@ func (r *Runtime) ResetAllPriorities(ctx context.Context) (map[string]any, error
 		}, projectErr
 	}
 
+	r.routingMu.Lock()
+	r.recomputeRoutingTablesLocked(now, credentials)
+	r.routingMu.Unlock()
+
 	return map[string]any{
 		"ok":          true,
 		"message":     summary,
@@ -1276,7 +1280,7 @@ func (r *Runtime) handleUsageEvent(ctx context.Context, raw []byte) []byte {
 	})
 
 	if !payload.Failed {
-		if err := r.observeUsageSuccess(ctx, authIndex, modelGroupForUsage(payload.Model), payload.Detail); err != nil {
+		if err := r.observeUsageSuccess(ctx, resolvedIndex, string(pool), payload.Detail); err != nil {
 			return failure(err)
 		}
 		return mustMarshal(Envelope{OK: true})
@@ -1284,15 +1288,11 @@ func (r *Runtime) handleUsageEvent(ctx context.Context, raw []byte) []byte {
 	if !is429UsageFailure(payload.Failure) {
 		return mustMarshal(Envelope{OK: true})
 	}
-	err := r.observe429(ctx, authIndex, modelGroupForUsage(payload.Model), "429 rate limit detected", true)
+	err := r.observe429(ctx, resolvedIndex, string(pool), "429 rate limit detected", true)
 	if err != nil {
 		return failure(err)
 	}
 	return mustMarshal(Envelope{OK: true})
-}
-
-func modelGroupForUsage(model string) string {
-	return string(config.ClassifyModelQuotaPool(model))
 }
 
 func isAntigravityUsageProvider(provider string) bool {
@@ -1321,13 +1321,14 @@ func (r *Runtime) handleFilterEvent(ctx context.Context, raw []byte) []byte {
 	if authIndex == "" {
 		return mustMarshal(Envelope{OK: true})
 	}
+	resolvedIndex := r.resolveAuthIndex(authIndex, nil)
 
 	is429 := payload.StatusCode == 429 || strings.Contains(strings.ToLower(payload.Error), "429") ||
 		strings.Contains(strings.ToUpper(payload.Error), "RESOURCE_EXHAUSTED") ||
 		strings.Contains(strings.ToUpper(payload.Error), "RATE_LIMIT")
 
 	if is429 {
-		err := r.observe429(ctx, authIndex, payload.ModelGroup, "429 rate limit detected", true)
+		err := r.observe429(ctx, resolvedIndex, payload.ModelGroup, "429 rate limit detected", true)
 		if err != nil {
 			return failure(err)
 		}

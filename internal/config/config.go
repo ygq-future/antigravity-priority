@@ -165,7 +165,7 @@ func defaultPriorityRules() PriorityRules {
 type DynamicConfig struct {
 	AutoApply                bool                `json:"auto_apply"`
 	Interval                 string              `json:"interval"`                // e.g. "15m", "30m"
-	AntigravityModelGroup    string              `json:"antigravity_model_group"` // "gemini" or "claude_gpt"
+	AntigravityModelGroup    string              `json:"antigravity_model_group"` // "gemini", "argon", or "claude_gpt"
 	MaxConcurrency           int                 `json:"max_concurrency"`
 	MinChange                int                 `json:"min_change"`
 	UrgencyTolerance         float64             `json:"urgency_tolerance"`           // e.g. 0.05

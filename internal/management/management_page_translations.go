@@ -36,14 +36,14 @@ var diagnosticsTranslationKeys = []string{
 }
 
 var configTranslationKeys = []string{
-	"cfgCardScheduleTitle", "cfgAutoApply", "cfgAutoApplyHint", "cfgInterval", "cfgIntervalHint", "cfgModelGroup", "cfgModelGroupHint",
+	"cfgCardScheduleTitle", "cfgAutoApply", "cfgAutoApplyHint", "cfgInterval", "cfgIntervalHint",
 	"cfgScheduleWindow", "cfgScheduleWindowHint", "cfgWindowEnabledLabel", "cfgCardPerfTitle", "cfgMaxConcurrency", "cfgMaxConcurrencyHint",
-	"cfgMinChange", "cfgMinChangeHint", "cfgUrgencyTolerance", "cfgUrgencyToleranceHint", "cfgSampleCapacity", "cfgSampleCapacityHint",
+	"cfgUrgencyTolerance", "cfgUrgencyToleranceHint", "cfgSampleCapacity", "cfgSampleCapacityHint",
 	"cfgCooldownMinutes", "cfgCooldownMinutesHint", "cfgCardRulesTitle", "cfgBoostStart", "cfgBoostStartHint", "cfgNormalStart",
 	"cfgNormalStartHint", "cfgFreeStart", "cfgFreeStartHint", "btnSaveConfig", "btnResetToDefaults", "configSaveSuccess", "confirmResetConfigTitle", "confirmResetConfigMsg",
 	"optInterval5m", "optInterval15m", "optInterval30m", "optInterval1h", "optIntervalCustom", "valErrInterval", "valErrWindow",
-	"valErrConcurrency", "valErrMinChange", "valErrUrgencyTol", "valErrSampleCapacity", "valErrCooldown", "valErrPriorityRange",
-	"valErrPriorityOrder", "valErrFreePriorityOrder", "optGemini", "optClaudeGPT",
+	"valErrConcurrency", "valErrUrgencyTol", "valErrSampleCapacity", "valErrCooldown", "valErrPriorityRange",
+	"valErrPriorityOrder", "valErrFreePriorityOrder",
 }
 
 var helpTranslationKeys = []string{

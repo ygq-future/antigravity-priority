@@ -34,8 +34,8 @@ const helpMarkup = `
                         <div data-i18n="helpBoostDesc">对双窗口余量充裕且周重置临近的凭证自动赋予第一梯队超高优先级（900-999），彻底消除大额度账号撑死溢出与浪费痛点。</div>
                     </div>
                     <div class="help-feature-item">
-                        <div class="help-feature-title" data-i18n="help429Title">⏳ 429 熔断冷却与自动自愈</div>
-                        <div data-i18n="help429Desc">遭遇 Google 429 速率限制时自动临时降级为 -1，冷却期结束后在下次调度中自动探测自愈，无需人工介入。</div>
+                        <div class="help-feature-title" data-i18n="help429Title">⏳ 429 池级熔断与自动自愈</div>
+                        <div data-i18n="help429Desc">遭遇 Google 429 速率限制时自动将受限配额池隔离进入冷却避让队列，同账号其他配额池不受影响继续服务；冷却期结束后自动恢复，无需人工介入。</div>
                     </div>
                 </div>
             </div>

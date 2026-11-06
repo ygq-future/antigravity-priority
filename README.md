@@ -28,6 +28,8 @@ CLIProxyAPI (CPA) 专精型 **Google Antigravity 凭证智能配额调度与自�
 - **CPA 原生 `scheduler.pick` 纯内存动态调度**：通过注册 `scheduler: true` 与 `scheduler_across_priorities: true`，在收到请求时毫秒级解析目标模型并调度至最优凭证，实现**零磁盘写入、纯内存无冲突调度**。
 - **模型驱动路由看板与五进度条卡片**：彻底取代旧版双组下拉框，提供直观的**具体模型路由看板**；每个凭证卡片同时渲染全部 5 根配额进度条（Gemini 5h/7d、Claude 5h/7d、Argon 7d），并高亮当前选中模型的生效配额与调用次序分档。
 - **会话粘性与同分平级分档**：相近紧迫度账号自动分配相同优先级整数，顶层平级集群内支持 `canonical_session_id` 会话粘性绑定与平滑轮询分流，杜绝单点打穿 429。
+- **自定义梯队覆盖与轮询负载均衡 (Custom Tier Overrides)**：支持在概览卡片上为凭证自由设定目标梯队（Tier #1、Tier #2 等），自定义梯队具备最高优先级，同梯队凭证自动获得相同优先级分值并通过 Round-Robin 算法均衡分流。
+- **全链路实时请求调用历史 (Real-Time Request History)**：实时监控记录每次请求的模型、匹配配额池、Token 消耗（输入、输出、思考、缓存）以及返回状态，提供高密度仪表盘与一键清空。
 - **池级隔离 429 熔断与自愈**：429 限流精准隔离至受限配额池（例如 Claude 池遭遇 429 不影响 Gemini 与 Argon 调用），瞬时多账号异常由风暴保护吸收，冷却期满或同池请求成功后立即恢复。
 - **闭环实时用量推算与探针自动校准**：通过 `usage.handle` 实时估算各凭证 token 消耗带来的额度变化，并在周期性后台探测时平滑自校准 EMA 灵敏度 $K_{\text{5h}}$ 与周期燃尽率 $C_{\text{cycle}}$。
 - **动态提前提权（Dynamic Boost Horizon）**：根据账号剩余周额度与物理消耗速率，自动在最佳时间窗口触发 `999, 998...` 梯次提权，彻底解决大额度账号到期撑死溢出的痛点。
@@ -131,16 +133,16 @@ plugins:
 
 | 配置项 | 默认值 | 范围/选项 | 说明 |
 | :--- | :--- | :--- | :--- |
-| **后台定时配额校准 (`auto_apply`)** | `true` | 开 / 关 | 是否由后台定时器周期性向 Google 发起权威配额探测，自动校准实时消耗估算器。 |
+| **后台定时配额校准 (`auto_apply`)** | `false` | 开 / 关 | 是否由后台定时器周期性向 Google 发起权威配额探测，自动校准实时消耗估算器。 |
 | **配额校准执行周期 (`interval`)** | `15m` | `5m`, `15m`, `30m`, `1h`, 自定义 | 自动探测与校准的运行周期。修改后立即重设定时器生效。 |
 | **生效时间区间 (`schedule_window`)** | `全天` | `HH:MM` 至 `HH:MM` | 每日生效时段（如 `09:00-23:00`，支持跨午夜如 `22:00-06:00`），非时段内自动休眠。 |
 | **最大探测并发数 (`max_concurrency`)** | `6` | `1 ~ 32` | 向 Google 配额接口发起并发探测的最大协程数。 |
 | **紧迫度分档容差 (`urgency_tolerance`)** | `0.05` | `0.00 ~ 0.50` | 紧迫度差距在此容差内的账号分配相同优先级整数进行平级轮询。 |
 | **自适应时序样本容量 (`quota_sample_capacity`)** | `6` | `2 ~ 30` | FIFO 保留的历史探测样本数，同时用于消耗趋势查看与燃尽率学习。 |
-| **429 熔断冷却时长 (`rate_limit_cooldown_minutes`)** | `5` | `1 ~ 1440` 分钟 | 遭遇 429 限流时临时降级至 `-1` 兜底队列的冷却期，到期自动自愈。 |
+| **429 熔断冷却时长 (`rate_limit_cooldown_minutes`)** | `5` | `1 ~ 1440` 分钟 | 遭遇 429 限流时将受限配额池临时置入冷却队列避让，到期自动自愈。 |
 | **动态提权起始优先级 (`boost_start_priority`)** | `999` | `1 ~ 999` | 触发提权状态的第一梯队基准起始优先级。 |
 | **常规健康起始优先级 (`normal_start_priority`)** | `100` | `1 ~ 999`，且不高于 Boost 起始值 | 常规可用健康梯队的基准起始优先级。 |
-> **持久化保障**：所有通过 UI 配置中心修改的选项会自动原子保存至当前持久化缓存文件（默认 `data/antigravity-priority-cache.json`），重启 CPA 容器数据不丢失，且优先级高于 YAML 初始值。最近一次自动调度的完成时间同样持久化，重启后按剩余周期继续计时，不会从零重新开始调度。
+| **Free 账号兜底起始优先级 (`free_start_priority`)** | `10` | `1 ~ 999`，且不高于常规起始值 | 仅有周额度、无 5h 短窗的 Free 账号基准优先级，排在 Pro 之后兜底。 |
 
 ---
 
@@ -155,8 +157,8 @@ plugins:
   - **核心功能**：
     - **模型驱动路由看板**：支持下拉选择具体模型（Gemini 池、Argon 池、Claude & GPT 池），即时展示对应模型的完整凭证调用次序（Tier #1 · 999 提权、Tier #2 · 100 平级轮询等）与生效状态。
     - **全景五进度条卡片**：每个凭证卡片同时渲染全部 5 根配额进度条（Gemini 5h/7d、Claude 5h/7d、Argon 7d），并高亮当前选中模型的生效配额；秒级自适应倒计时与自适应消耗速率 $C_{\text{cycle}}$。
-    - **两阶段控制**：提供 `🔄 刷新同步 (Sync Host)`、`📡 刷新配额 (10s冷却)`、`🧹 清除静态优先级`、`🔄 重置默认`。
-    - **执行历史**：最近 10 次执行记录，支持点击 `🔍 查看明细` 弹窗查看 Apply 实际写回或 Probe 探测快照明细。
+    - **调度与同步控制**：提供 `🔄 刷新同步 (Sync Host)`、`📡 刷新配额 (10s冷却)`、`🔄 重置静态优先级 (Reset Priorities)`。
+    - **实时请求历史**：实时追踪捕获最近 100 条请求记录，记录请求 Model、目标配额池、Token 消耗细分与状态码，支持一键清空。
     - **采样历史**：支持自由切换 Gemini、Argon 与 Claude & GPT 三大配额池时序样本。
     - **系统诊断**：调度引擎生命周期、时段状态、429 熔断与冷却监控看板、完整 email 身份、最近写入健康度与脱敏审计流，支持一键复制诊断 JSON。
     - **⚙️ 配置中心**：在线修改所有调度与算法参数，0 秒热生效与一键恢复默认。
@@ -178,13 +180,21 @@ plugins:
 - `GET /v0/management/plugins/antigravity-priority/diagnostics`
   - 导出调度器运行诊断数据、429 活跃熔断记录、后台 Ticker 状态、最近写入体征与近期执行记录；账号身份使用完整 email，令牌、密钥及持久化审计字段保持脱敏。
 - `POST /v0/management/plugins/antigravity-priority/sync`
-  - 主动从 CPA 宿主同步最新凭证文件列表并即时重新生成双组快照。
+  - 主动从 CPA 宿主同步最新凭证文件列表并即时重新生成三大配额池快照。
 - `GET /v0/management/plugins/antigravity-priority/samples?auth_index=xxx`
   - 获取指定凭证在各模型组下的历史滑动窗口时序采样数据。
 - `GET /v0/management/plugins/antigravity-priority/samples?probe_round_id=xxx&model_group=gemini|argon|claude_gpt`
   - 获取指定探测轮次和模型组内实际新增的额度样本；额度未变化的凭证不会出现在结果中。
 - `GET /v0/management/plugins/antigravity-priority/snapshot/latest`
-  - 获取最近一次双模型组决策规划快照（`DualGroupSnapshot`）；响应保留完整 CPA email 和供 API 关联使用的技术 `auth_index`，管理页仅以 email 作为账号名称，敏感令牌与审计字段保持脱敏。
+  - 获取最近一次三大配额池决策规划快照（`DualGroupSnapshot`）；响应保留完整 CPA email 和供 API 关联使用的技术 `auth_index`，管理页仅以 email 作为账号名称，敏感令牌与审计字段保持脱敏。
+- `GET /v0/management/plugins/antigravity-priority/request-history`
+  - 获取最近 100 条实时请求调用历史列表。
+- `POST /v0/management/plugins/antigravity-priority/request-history/clear`
+  - 清空当前保存的请求调用历史。
+- `GET /v0/management/plugins/antigravity-priority/custom-tier`
+  - 获取已配置的凭证自定义梯队覆盖字典。
+- `POST /v0/management/plugins/antigravity-priority/custom-tier`
+  - 配置或清除指定凭证的自定义梯队（Tier #1, Tier #2...，设置为 0 表示恢复自动规划）。
 
 ---
 
