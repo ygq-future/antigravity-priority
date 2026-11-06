@@ -166,6 +166,29 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 			Message:      audit,
 			Snapshot:     &snap,
 		})
+		r.routingMu.Lock()
+		r.recomputeRoutingTablesLocked(now, allCredentials)
+		r.routingMu.Unlock()
+		return projectErr
+	}
+
+	// AutoApply: background quota probe and calibration only. Never writes back priorities to host files.
+	if request.Trigger == TriggerAutoApply {
+		projection.Snapshot.PreviewID = ""
+		r.clearQuotaPreview()
+		r.setDualSnapshot(projection.Snapshot)
+		result := apply.Result{Snapshot: primarySnapshot}
+		summary := fmt.Sprintf("auto schedule probed=%d; in-memory routing tables calibrated", evidence.Probed)
+		_, projectErr := r.projectRun(ctx, store, result, summary, RunHistoryEntry{
+			Kind:         KindAutoApply,
+			Trigger:      string(request.Trigger),
+			ProbeRoundID: evidence.RoundID,
+			Message:      summary,
+			Snapshot:     &primarySnapshot,
+		})
+		r.routingMu.Lock()
+		r.recomputeRoutingTablesLocked(now, allCredentials)
+		r.routingMu.Unlock()
 		return projectErr
 	}
 
@@ -175,18 +198,10 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 		r.setDualSnapshot(projection.Snapshot)
 		result := apply.Result{Snapshot: primarySnapshot}
 		summary := fmt.Sprintf("all %d credentials in sync, no changes required", len(primarySnapshot.Items))
-		if request.Trigger != TriggerAutoApply {
-			_, projectErr := r.projectSnapshot(ctx, store, result, summary)
-			return projectErr
-		}
-		summary = fmt.Sprintf("auto schedule probed=%d; %s", evidence.Probed, summary)
-		_, projectErr := r.projectRun(ctx, store, result, summary, RunHistoryEntry{
-			Kind:         KindAutoApply,
-			Trigger:      string(request.Trigger),
-			ProbeRoundID: evidence.RoundID,
-			Message:      summary,
-			Snapshot:     &primarySnapshot,
-		})
+		_, projectErr := r.projectSnapshot(ctx, store, result, summary)
+		r.routingMu.Lock()
+		r.recomputeRoutingTablesLocked(now, allCredentials)
+		r.routingMu.Unlock()
 		return projectErr
 	}
 
@@ -237,7 +252,7 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 		Snapshot:     &primarySnapshot,
 	})
 	r.routingMu.Lock()
-	r.recomputeRoutingTablesLocked(now)
+		r.recomputeRoutingTablesLocked(now, allCredentials)
 	r.routingMu.Unlock()
 	return projectErr
 }

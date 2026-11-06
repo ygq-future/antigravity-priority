@@ -147,14 +147,14 @@ func TestStatusHTML_CSSTokenCompleteness(t *testing.T) {
 
 func TestStatusHTML_ProbeDetailsCoverBothModelGroups(t *testing.T) {
 	html := management.StatusHTML
-	if !strings.Contains(html, `const probeModelGroups = ["gemini", "claude_gpt"];`) {
-		t.Fatal("probe details must request both Antigravity model groups")
+	if !strings.Contains(html, `const probeModelGroups = ["gemini", "argon", "claude_gpt"];`) {
+		t.Fatal("probe details must request all three Antigravity model groups")
 	}
 	if !strings.Contains(html, "groups: groups") {
 		t.Fatal("probe details must pass grouped records to the modal")
 	}
-	if !strings.Contains(html, "history-comparison-table") || !strings.Contains(html, "本次探测 Gemini 额度") || !strings.Contains(html, "本次探测 Claude/GPT 额度") {
-		t.Fatal("probe details modal must render one account comparison table with both model-group columns")
+	if !strings.Contains(html, "history-comparison-table") || !strings.Contains(html, "本次探测 Gemini 额度") || !strings.Contains(html, "本次探测 Argon 额度") || !strings.Contains(html, "本次探测 Claude/GPT 额度") {
+		t.Fatal("probe details modal must render one account comparison table with all three model-group columns")
 	}
 }
 
@@ -251,7 +251,7 @@ func TestStatusHTML_ContainsRequiredUIElements(t *testing.T) {
 		{"Gemini model group option", "gemini"},
 		{"Claude GPT model group option", "claude_gpt"},
 		{"Probe action button", "btnProbe"},
-		{"Apply action button", "btnApply"},
+		{"Reset priority button", "btnReset"},
 		{"Diff modal container", "diffModal"},
 		{"System font stack", "-apple-system"},
 		{"Confirm modal container", "confirmModal"},
@@ -308,12 +308,6 @@ func TestStatusHTML_ContainsRequiredUIElements(t *testing.T) {
 	if !strings.Contains(html, `await refreshDashboard({ silent: true });`) {
 		t.Error("automatic Overview refresh must suppress notifications")
 	}
-	if !strings.Contains(html, "latestSnapshot.preview_id") || !strings.Contains(html, "preview_id=\" + encodeURIComponent(previewID)") {
-		t.Error("manual apply must submit the latest quota preview id")
-	}
-	if !strings.Contains(html, `const pendingAuthIndexes = new Set((groupData.changes || []).map(change => change.auth_index));`) {
-		t.Error("pending badges must be sourced from write-qualified changes")
-	}
 	if !strings.Contains(html, `const name = c.email || "Credential";`) {
 		t.Error("apply/history details must display the full email identity")
 	}
@@ -322,16 +316,6 @@ func TestStatusHTML_ContainsRequiredUIElements(t *testing.T) {
 	}
 	if !strings.Contains(html, `showModal("probe-history"`) || !strings.Contains(html, "probe_round_id") {
 		t.Error("probe history details must load samples by probe round")
-	}
-	if strings.Contains(html, `else if (String(actualP) !== String(targetP)) {
-                    tagBadge = "<span class=\"badge badge-pending\">"`) {
-		t.Error("Current/Target projection drift alone must not be labeled pending")
-	}
-	if strings.Contains(html, `if (changes.length === 0) {
-                showToast(t("noChangesToApply"), "info");
-                return;
-            }`) {
-		t.Error("manual apply must remain available when the cached projection has no write-qualified changes")
 	}
 	if !strings.Contains(html, "latestDiagnostics.latest_apply") || !strings.Contains(html, "No Apply write recorded yet") {
 		t.Error("diagnostics write-health UI must use latest_apply and expose the no-Apply state")

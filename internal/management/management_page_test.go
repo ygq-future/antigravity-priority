@@ -1,7 +1,6 @@
 package management
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -143,10 +142,6 @@ func TestStatusHTML_OperationalWorkflowContract(t *testing.T) {
 	workflowSnippets := []string{
 		"function triggerProbe()",
 		"RUN_PATH + \"?mode=probe",
-		"function triggerApplyWithConfirm()",
-		"showModal(\"apply-confirm\"",
-		"function executeDirectApply()",
-		"RUN_PATH + \"?mode=apply",
 		"function triggerReset()",
 		"RESET_PATH",
 		"function fetchDynamicConfig()",
@@ -159,12 +154,6 @@ func TestStatusHTML_OperationalWorkflowContract(t *testing.T) {
 		if !strings.Contains(StatusHTML, snippet) {
 			t.Errorf("assembled page is missing workflow contract %q", snippet)
 		}
-	}
-
-	applyConfirm := strings.Index(StatusHTML, `showModal("apply-confirm"`)
-	directApply := strings.Index(StatusHTML, `RUN_PATH + "?mode=apply`)
-	if applyConfirm == -1 || directApply == -1 || applyConfirm >= directApply {
-		t.Fatal("assembled apply workflow does not expose confirmation before direct apply")
 	}
 }
 
@@ -184,100 +173,6 @@ func TestStatusHTML_JavaScriptSyntax(t *testing.T) {
 	}
 }
 
-func TestApplyPreviewWorkflow(t *testing.T) {
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Skip("node is not available; apply preview behavior is checked in the Node-enabled verification environment")
-	}
-
-	testCases := []struct {
-		name       string
-		changes    string
-		items      string
-		wantModal  bool
-		wantMode   string
-		wantCount  int
-		wantToasts int
-	}{
-		{
-			name:      "projected target change is previewed",
-			changes:   `[]`,
-			items:     `[{auth_index:"credential-1",name:"Credential 1",current:{priority:99,priority_missing:false,disabled:false},target:{priority:98,priority_missing:false,disabled:false}}]`,
-			wantModal: true,
-			wantMode:  "projected",
-			wantCount: 1,
-		},
-		{
-			name:       "synchronized state reports optimal",
-			changes:    `[]`,
-			items:      `[{auth_index:"credential-1",name:"Credential 1",current:{priority:99,priority_missing:false,disabled:false},target:{priority:99,priority_missing:false,disabled:false}}]`,
-			wantToasts: 1,
-		},
-		{
-			name:      "write qualified changes retain pending preview",
-			changes:   `[{auth_index:"credential-1",name:"Credential 1",current:{priority:99,priority_missing:false,disabled:false},target:{priority:98,priority_missing:false,disabled:false}}]`,
-			items:     `[{auth_index:"credential-1",name:"Credential 1",current:{priority:99,priority_missing:false,disabled:false},target:{priority:98,priority_missing:false,disabled:false}}]`,
-			wantModal: true,
-			wantMode:  "pending",
-			wantCount: 1,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			harness := templateScriptOverviewActionsCore + templateScriptModals + `
-const toastCalls = [];
-function element(initial) {
-    return Object.assign({hidden:false,textContent:"",innerHTML:"",children:[],appendChild:function(child){this.children.push(child);}}, initial || {});
-}
-const elements = {
-    modelGroupSelect: element({value:"gemini"}),
-    diffModal: element({hidden:true}),
-    modalTitle: element(),
-    modalSummary: element(),
-    modalDiffList: element(),
-    btnModalApply: element()
-};
-const document = {
-    getElementById: function(id) {
-        return elements[id] || null;
-    },
-    createElement: function() { return element(); }
-};
-function showToast(message, kind) { toastCalls.push({message, kind}); }
-function t(key) { return key; }
-function escapeHTML(value) { return String(value); }
-let currentLang = "zh-CN";
-dynamicConfig = { antigravity_model_group: "gemini" };
-latestSnapshot = { active_model_group: "gemini", groups: { gemini: { changes: ` + tc.changes + `, items: ` + tc.items + ` } } };
-
-(async function() {
-    await triggerApplyWithConfirm();
-    const expected = ` + applyPreviewExpectationJSON(tc.wantModal, tc.wantMode, tc.wantCount, tc.wantToasts) + `;
-    if (elements.diffModal.hidden === expected.modal) {
-        throw new Error("unexpected modal visibility: " + elements.diffModal.hidden);
-    }
-    if (toastCalls.length !== expected.toasts) {
-        throw new Error("unexpected toast count: " + toastCalls.length);
-    }
-    if (expected.modal) {
-        const expectedSummaryKey = expected.mode === "projected" ? "projectedApplyPreview" : "pendingApplyPreview";
-        if (elements.modalSummary.textContent.indexOf(expectedSummaryKey) !== 0) {
-            throw new Error("unexpected preview summary: " + elements.modalSummary.textContent);
-        }
-        if (elements.modalDiffList.children.length !== expected.count) {
-            throw new Error("unexpected rendered preview count: " + elements.modalDiffList.children.length);
-        }
-    }
-})().catch(function(err) {
-    console.error(err.stack || err.message);
-    process.exit(1);
-});
-`
-			runNodeFixture(t, node, "apply-preview.js", harness)
-		})
-	}
-}
 
 func TestSamplesModalUsesSelectedModelGroupOnly(t *testing.T) {
 	node, err := exec.LookPath("node")
@@ -361,20 +256,24 @@ function apiFetch(path) {
     if (path.indexOf("model_group=gemini") >= 0) {
         return Promise.resolve({records:[{email:"gemini@example.com",sample:{observed_at:"2026-08-23T02:00:00Z",short_window_rem:0,long_window_rem:25}}]});
     }
+    if (path.indexOf("model_group=argon") >= 0) {
+        return Promise.resolve({records:[{email:"argon@example.com",sample:{observed_at:"2026-08-23T02:00:30Z",long_window_rem:80}}]});
+    }
     return Promise.resolve({records:[{email:"claude@example.com",sample:{observed_at:"2026-08-23T02:01:00Z",short_window_rem:75,long_window_rem:0}}]});
 }
 function t(key) { return key; }
 (async function() {
     showHistoryDetails(0);
     await new Promise(function(resolve) { setTimeout(resolve, 0); });
-    if (calls.length !== 2) throw new Error("probe history did not request both model groups");
+    if (calls.length !== 3) throw new Error("probe history did not request all three model groups, got " + calls.length);
     if (!calls.some(function(path) { return path.indexOf("model_group=gemini") >= 0; })) throw new Error("Gemini probe samples were not requested");
+    if (!calls.some(function(path) { return path.indexOf("model_group=argon") >= 0; })) throw new Error("Argon probe samples were not requested");
     if (!calls.some(function(path) { return path.indexOf("model_group=claude_gpt") >= 0; })) throw new Error("Claude/GPT probe samples were not requested");
     if (elements.modalDiffList.innerHTML.indexOf("history-comparison-table") < 0) throw new Error("probe history comparison table is missing");
     if (elements.modalDiffList.innerHTML.indexOf("history-comparison-quota-only") < 0) throw new Error("probe history must use the quota-only table layout");
-    if (elements.modalDiffList.innerHTML.indexOf("本次探测 Gemini 额度") < 0 || elements.modalDiffList.innerHTML.indexOf("本次探测 Claude/GPT 额度") < 0) throw new Error("probe history model-group columns are missing");
+    if (elements.modalDiffList.innerHTML.indexOf("本次探测 Gemini 额度") < 0 || elements.modalDiffList.innerHTML.indexOf("本次探测 Argon 额度") < 0 || elements.modalDiffList.innerHTML.indexOf("本次探测 Claude/GPT 额度") < 0) throw new Error("probe history model-group columns are missing");
     if (elements.modalDiffList.innerHTML.indexOf("优先级变化") >= 0) throw new Error("probe history must not render a priority column");
-    if (elements.modalDiffList.innerHTML.indexOf("gemini@example.com") < 0 || elements.modalDiffList.innerHTML.indexOf("claude@example.com") < 0) throw new Error("probe history accounts are missing");
+    if (elements.modalDiffList.innerHTML.indexOf("gemini@example.com") < 0 || elements.modalDiffList.innerHTML.indexOf("argon@example.com") < 0 || elements.modalDiffList.innerHTML.indexOf("claude@example.com") < 0) throw new Error("probe history accounts are missing");
 })().catch(function(err) {
     console.error(err.stack || err.message);
     process.exit(1);
@@ -546,11 +445,6 @@ global.fetch = async function(path) {
 `
 	runNodeFixture(t, node, "auth-circuit-breaker.js", harness)
 }
-
-func applyPreviewExpectationJSON(wantModal bool, wantMode string, wantCount, wantToasts int) string {
-	return fmt.Sprintf(`{modal:%t,mode:%q,count:%d,toasts:%d}`, wantModal, wantMode, wantCount, wantToasts)
-}
-
 func runNodeFixture(t *testing.T, node, filename, script string) {
 	t.Helper()
 	scriptPath := filepath.Join(t.TempDir(), filename)
@@ -791,8 +685,8 @@ async function fetchDiagnostics() {}
 
     // Card 0: 403 failure
     const card0HTML = renderedCards[0].innerHTML;
-    if (card0HTML.indexOf("badge-danger") < 0 || card0HTML.indexOf("探测失败") < 0) {
-        throw new Error("card 0 should have badge-danger with '探测失败': " + card0HTML);
+    if (card0HTML.indexOf("cred-reason-danger") < 0 || card0HTML.indexOf("探测失败") < 0) {
+        throw new Error("card 0 should have cred-reason-danger with '探测失败': " + card0HTML);
     }
     if (card0HTML.indexOf("余量充足") >= 0) {
         throw new Error("card 0 must NOT show '余量充足' when probe failed");
@@ -806,8 +700,8 @@ async function fetchDiagnostics() {}
 
     // Card 1: 429 cooldown
     const card1HTML = renderedCards[1].innerHTML;
-    if (card1HTML.indexOf("429 冷却中") < 0) {
-        throw new Error("card 1 should prioritize '429 冷却中' badge over probe failed: " + card1HTML);
+    if (card1HTML.indexOf("429 冷却") < 0) {
+        throw new Error("card 1 should prioritize '429 冷却' badge over probe failed: " + card1HTML);
     }
     if (card1HTML.indexOf("探测失败: retrieve quota summary status 429") < 0) {
         throw new Error("card 1 reason line should display failure cause: " + card1HTML);

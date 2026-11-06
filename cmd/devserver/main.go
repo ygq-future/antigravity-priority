@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"antigravity-priority/internal/runtime"
+	"antigravity-priority/internal/state"
 )
 
 type devServerOptions struct {
@@ -61,6 +62,23 @@ func newDevServer(options devServerOptions) (*devServer, error) {
 	})
 	if err != nil {
 		return nil, err
+	}
+	if store, err := state.Load(context.Background(), options.StateCachePath); err == nil {
+		cooldowns := store.GetCooldowns()
+		if len(cooldowns) == 0 {
+			nowTime := time.Now().UTC()
+			if options.Clock != nil {
+				nowTime = options.Clock.Now().UTC()
+			}
+			store.SetCooldown(state.CooldownEntry{
+				AuthIndex:     "dev-auth-005",
+				ModelGroup:    "gemini",
+				TriggeredAt:   nowTime,
+				CooldownUntil: nowTime.Add(30 * time.Minute),
+				Reason:        "429 rate limit cooldown",
+			})
+			_ = store.SaveAtomic(context.Background())
+		}
 	}
 	rt := runtime.New(runtime.Options{
 		Host:           fakeHost,

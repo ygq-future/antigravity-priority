@@ -22,6 +22,11 @@ const templateStyleOverviewCards = `        /* Credentials Display (Grid 3 Colum
             align-self: start !important;
         }
 
+        .cred-card-disabled {
+            opacity: 0.72;
+            filter: grayscale(0.25);
+        }
+
         .cred-badge-row {
             display: flex;
             align-items: center;
@@ -29,11 +34,61 @@ const templateStyleOverviewCards = `        /* Credentials Display (Grid 3 Colum
             flex-wrap: wrap;
         }
 
-        .cred-priority {
+        .cred-footer {
             display: flex;
             align-items: center;
             justify-content: space-between;
             gap: 8px;
+            margin-top: 2px;
+            padding-top: 4px;
+            border-top: 1px solid var(--border-color);
+        }
+
+        .cred-reason {
+            font-size: 11px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            min-width: 0;
+            flex: 1 1 auto;
+        }
+
+        .cred-reason-normal {
+            color: var(--text-secondary);
+        }
+
+        .cred-reason-boost {
+            color: var(--accent-purple-text);
+            font-weight: 650;
+        }
+
+        .cred-reason-warning {
+            color: var(--accent-yellow-text);
+            font-weight: 650;
+        }
+
+        .cred-reason-danger {
+            color: var(--accent-red-text);
+            font-weight: 650;
+        }
+
+        .cred-reason-muted {
+            color: var(--text-muted);
+            font-weight: 600;
+        }
+        .cred-actions {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            flex: 0 0 auto;
+        }
+
+        .btn-card-action {
+            min-height: 20px;
+            height: 20px;
+            padding: 0 6px;
+            font-size: 11px;
+            border-radius: 4px;
         }
 
         .cred-info {
@@ -110,6 +165,11 @@ const templateStyleOverviewCards = `        /* Credentials Display (Grid 3 Colum
             flex-direction: column;
             gap: 2px;
             width: 100%;
+            border-left: 3px solid transparent;
+            padding: 2px 6px;
+            border-radius: 4px;
+            box-sizing: border-box;
+            transition: all 0.15s ease;
         }
 
         .meter-container-stale {
@@ -133,19 +193,48 @@ const templateStyleOverviewCards = `        /* Credentials Display (Grid 3 Colum
             display: flex;
             align-items: center;
             justify-content: space-between;
+            font-size: 11.5px;
+            line-height: 1.4;
+            color: var(--text-primary);
+        }
+
+        .meter-name {
+            display: inline-flex;
+            align-items: center;
+            font-size: 11.5px;
+            color: var(--text-primary);
+        }
+
+        .meter-pool-name {
+            color: var(--text-primary);
+            font-weight: 700;
+        }
+
+        .meter-pct {
+            font-family: SFMono-Regular, Consolas, Menlo, monospace;
             font-size: 11px;
-            font-weight: 600;
+            font-weight: 750;
+            color: var(--text-primary);
+            margin-left: 3px;
+        }
+
+        .meter-na {
+            font-family: SFMono-Regular, Consolas, Menlo, monospace;
+            font-size: 10.5px;
             color: var(--text-muted);
+            font-weight: 500;
+            margin-left: 3px;
         }
 
         .meter-track {
-            height: 7px;
-            min-height: 7px;
+            height: 6px;
+            min-height: 6px;
             background: var(--meter-track-bg);
             border: 1px solid var(--meter-track-border);
             border-radius: 999px;
             overflow: hidden;
             position: relative;
+            margin-top: 2px;
         }
 
         .meter-fill {
@@ -161,7 +250,8 @@ const templateStyleOverviewCards = `        /* Credentials Display (Grid 3 Colum
         .meter-countdown {
             font-family: SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
             font-size: 11px;
-            color: var(--text-secondary);
+            font-weight: 650;
+            color: var(--text-primary);
         }
 
         .priority-score-box {
@@ -237,18 +327,37 @@ const templateStyleOverviewCards = `        /* Credentials Display (Grid 3 Colum
             gap: 4px;
             width: 100%;
         }
-
         .meter-container.active-pool-meter {
-            background: var(--bg-subtle);
-            border-left: 2px solid var(--accent-blue);
-            padding-left: 6px;
-            border-radius: 4px;
-            padding-top: 2px;
-            padding-bottom: 2px;
+            background: rgba(59, 130, 246, 0.08);
+            border-left-color: var(--accent-blue);
+        }
+        .meter-container.active-pool-meter .meter-pool-name {
+            color: var(--accent-blue-text);
+            font-weight: 800;
         }
 
-        .meter-container.inactive-pool-meter {
-            opacity: 0.85;
+        .meter-container.active-pool-meter .meter-pct {
+            color: var(--text-primary);
+            font-weight: 800;
+        }
+
+        .meter-container.active-pool-meter .meter-countdown {
+            color: var(--accent-blue-text);
+            font-weight: 700;
+        }
+        .meter-container.inactive-pool-meter .meter-pool-name {
+            color: var(--text-primary);
+            font-weight: 700;
+        }
+
+        .meter-container.inactive-pool-meter .meter-pct {
+            color: var(--text-primary);
+            font-weight: 750;
+        }
+
+        .meter-container.inactive-pool-meter .meter-countdown {
+            color: var(--text-primary);
+            font-weight: 650;
         }
 
         .meter-est-burn {
@@ -259,18 +368,53 @@ const templateStyleOverviewCards = `        /* Credentials Display (Grid 3 Colum
         }
 
         .badge-tier {
-            background: var(--bg-subtle);
-            border: 1px solid var(--border-color);
-            color: var(--text-primary);
-            font-weight: 700;
+            background: var(--accent-blue-subtle);
+            border: 1px solid rgba(59, 130, 246, 0.35);
+            color: var(--accent-blue-text);
+            font-weight: 750;
             font-family: SFMono-Regular, Consolas, Menlo, monospace;
+            letter-spacing: 0.2px;
         }
 
         /* Model Selector Dropdown & Badges */
         .model-select-menu {
             max-height: 380px;
             overflow-y: auto;
-            min-width: 260px;
+            min-width: 320px;
+            width: max-content;
+            max-width: 440px;
+            right: auto;
+            scrollbar-width: thin;
+            scrollbar-color: var(--border-color) transparent;
+            padding-right: 2px;
+        }
+
+        .model-select-menu::-webkit-scrollbar {
+            width: 5px;
+        }
+
+        .model-select-menu::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .model-select-menu::-webkit-scrollbar-thumb {
+            background: var(--border-color);
+            border-radius: 999px;
+        }
+
+        .model-select-menu::-webkit-scrollbar-thumb:hover {
+            background: var(--text-muted);
+        }
+
+        .model-select-name {
+            font-family: SFMono-Regular, Consolas, Menlo, monospace;
+            font-size: 12.5px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            flex: 1 1 auto;
+            text-align: left;
+            min-width: 0;
         }
 
         .model-select-group-header {
@@ -322,11 +466,26 @@ const templateStyleOverviewCards = `        /* Credentials Display (Grid 3 Colum
         .model-option-name {
             font-family: SFMono-Regular, Consolas, Menlo, monospace;
             font-size: 12px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            flex: 1 1 auto;
+            min-width: 0;
+            margin-right: 8px;
         }
 
         .metric-pill-priority {
-            background: var(--bg-subtle);
-            border: 1px solid var(--border-color);
+            background: var(--accent-green-subtle) !important;
+            border: 1px solid rgba(16, 185, 129, 0.35) !important;
+            color: var(--accent-green-text) !important;
+            font-weight: 700;
+        }
+
+        .metric-pill-priority strong {
+            color: var(--accent-green-text) !important;
+            font-size: 12px;
+            font-family: SFMono-Regular, Consolas, Menlo, monospace;
+            margin-left: 4px;
         }
 
         /* Samples Modal Pool Switcher */

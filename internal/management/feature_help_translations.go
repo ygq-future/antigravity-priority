@@ -3,7 +3,8 @@ package management
 const featureHelpTranslations = `        const HELP_ZH = {
             "zh-CN": {
                 helpTitle: "Antigravity Priority 原理与核心特色说明",
-                helpP1: "本插件专为 CLIProxyAPI 的 Google Antigravity 设计，实现双窗口自适应优先级调度与智能写回：",
+                helpGithub: "GitHub 主页",
+                helpP1: "本插件专为 CLIProxyAPI 的 Google Antigravity 设计，实现三大配额池自适应优先级调度与纯内存动态分流：",
                 help5hTitle: "⚡ 5小时短窗口 (5h) 自愈降级",
                 help5hDesc: "实时监控高频请求配额与重置倒计时。短窗耗尽仅执行软降级（priority=-1, disabled=false），短窗刷新后自动恢复调度，有效防止触发 429 速率限制。",
                 help7dTitle: "📅 7天长窗口 (7d) 全局把控",
@@ -21,7 +22,8 @@ const featureHelpTranslations = `        const HELP_ZH = {
         const HELP_EN = {
             "en-US": {
                 helpTitle: "Antigravity Priority Mechanics & Features",
-                helpP1: "Tailored for Google Antigravity in CLIProxyAPI with double-window adaptive scheduling and intelligent write-back:",
+                helpGithub: "GitHub Homepage",
+                helpP1: "Tailored for Google Antigravity in CLIProxyAPI with three-pool adaptive scheduling and in-memory dynamic dispatch:",
                 help5hTitle: "⚡ 5-Hour Short Window (5h) Soft Demote",
                 help5hDesc: "Monitors burst quota and reset countdowns. Short window depletion triggers soft demotion (priority=-1, disabled=false) with auto recovery on reset, avoiding 429 rate limits.",
                 help7dTitle: "📅 7-Day Weekly Window (7d) Global Control",

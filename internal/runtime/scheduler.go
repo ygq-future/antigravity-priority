@@ -266,14 +266,18 @@ func (r *Runtime) recomputePoolRoutingTableLocked(pool config.AntigravityModelGr
 }
 
 // recomputeRoutingTablesLocked updates all 3 pool routing tables in memory.
-func (r *Runtime) recomputeRoutingTablesLocked(now time.Time) {
+func (r *Runtime) recomputeRoutingTablesLocked(now time.Time, existingCreds ...[]core.Credential) {
 	cachePath := r.cfg.StateCachePath
 	if strings.TrimSpace(cachePath) == "" {
 		cachePath = config.DefaultStateCachePath
 	}
 	store, _ := state.Load(context.Background(), cachePath)
-	credentials := r.currentCredentialsLocked()
-
+	var credentials []core.Credential
+	if len(existingCreds) > 0 {
+		credentials = existingCreds[0]
+	} else {
+		credentials = r.currentCredentialsLocked()
+	}
 	for _, pool := range config.AllAntigravityModelGroups {
 		r.plansByPool[pool] = r.recomputePoolRoutingTableLocked(pool, now, store, credentials)
 	}

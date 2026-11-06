@@ -225,70 +225,56 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
                 const bypassedReason = entry.reason;
                 const tier = entry.tier;
 
+                const isManuallyDisabled = Boolean(item.reason && item.reason.indexOf("disabled on host") >= 0);
+                const isWeeklyDepleted = Boolean(item.target && item.target.disabled);
+                const isDisabled = isManuallyDisabled || isWeeklyDepleted;
+
                 const card = document.createElement("div");
-                card.className = "cred-card";
+                card.className = "cred-card" + (isDisabled ? " cred-card-disabled" : "");
 
                 const isBoosted = Boolean(item.is_boosted);
                 const urgency = (item.urgency || 0).toFixed(2);
                 const burnRate = (item.cycle_burn_rate || 0).toFixed(2);
 
-                let actualP = "-";
-                if (item.current) {
-                    if (item.current.disabled) actualP = currentLang === "zh-CN" ? "[已禁用]" : "[Disabled]";
-                    else if (item.current.priority_missing || item.current.priority === undefined || item.current.priority === null) actualP = t("unsetPriority");
-                    else actualP = item.current.priority;
-                } else if (item.priority_missing || item.priority === undefined || item.priority === null) {
-                    actualP = t("unsetPriority");
-                } else if (item.priority !== undefined && item.priority !== null) {
-                    actualP = item.disabled ? (currentLang === "zh-CN" ? "[已禁用]" : "[Disabled]") : item.priority;
+                let priorityDisplay = "-";
+                if (isDisabled) {
+                    priorityDisplay = "-1";
+                } else if (item.target) {
+                    if (item.target.priority_missing || item.target.priority === undefined || item.target.priority === null) {
+                        priorityDisplay = t("unsetPriority");
+                    } else {
+                        priorityDisplay = item.target.priority;
+                    }
+                } else if (item.current && item.current.priority !== undefined && item.current.priority !== null) {
+                    priorityDisplay = item.current.priority;
                 }
-
-                let targetP = "-";
-                if (item.target) {
-                    if (item.target.disabled) targetP = currentLang === "zh-CN" ? "[已禁用]" : "[Disabled]";
-                    else if (item.target.priority_missing || item.target.priority === undefined || item.target.priority === null) targetP = t("unsetPriority");
-                    else targetP = item.target.priority;
-                } else {
-                    targetP = actualP;
-                }
-
-                let tagBadge = "";
-                if (isPredictedView) {
-                    tagBadge = "<span class=\"badge badge-predicted\">" + t("predictedBadge") + "</span>";
-                } else if (pendingAuthIndexes.has(item.auth_index)) {
-                    tagBadge = "<span class=\"badge badge-pending\">" + t("pendingApply") + "</span>";
-                } else if (String(actualP) !== String(targetP)) {
-                    tagBadge = "<span class=\"badge badge-warning\">" + t("targetChanged") + "</span>";
-                }
-
                 let callOrderBadge = "";
                 if (!isBypassed) {
                     const tierText = isBoosted ? (currentLang === "zh-CN" ? "🚀 Tier #" + tier + " · Boost" : "🚀 Tier #" + tier + " · Boost") : ("Tier #" + tier);
                     callOrderBadge = "<span class=\"badge " + (isBoosted ? "badge-boost" : "badge-tier") + "\">" + escapeHTML(tierText) + "</span>";
                 } else if (bypassedReason === "cooldown") {
-                    callOrderBadge = "<span class=\"badge badge-warning\">" + (currentLang === "zh-CN" ? "⏳ 冷却避让" : "⏳ Cooldown") + "</span>";
+                    callOrderBadge = "<span class=\"badge badge-warning\">" + (currentLang === "zh-CN" ? "⏳ 429 冷却避让" : "⏳ 429 Cooldown") + "</span>";
                 } else if (bypassedReason === "unsupported_model") {
                     callOrderBadge = "<span class=\"badge badge-secondary\">" + (currentLang === "zh-CN" ? "⛔ 不支持该模型" : "⛔ Unsupported") + "</span>";
                 } else if (bypassedReason === "disabled") {
-                    callOrderBadge = "<span class=\"badge badge-secondary\">" + t("statusDisabled") + "</span>";
+                    callOrderBadge = "<span class=\"badge badge-secondary\">" + (currentLang === "zh-CN" ? "⛔ 不可用" : "⛔ Unavailable") + "</span>";
                 } else {
                     callOrderBadge = "<span class=\"badge badge-danger\">" + (currentLang === "zh-CN" ? "🚫 耗尽避让" : "🚫 Depleted") + "</span>";
                 }
 
                 const isCooldown = Boolean(item.reason && (item.reason.indexOf("rate limit cooldown") >= 0 || item.reason.indexOf("cooldown") >= 0));
                 const probeFailed = item.reason && (item.reason.indexOf("probe failed") >= 0 || item.reason.indexOf("probe invalid") >= 0);
-                const isManuallyDisabled = item.reason && item.reason.indexOf("disabled on host") >= 0;
-                let statusBadge = "<span class=\"badge badge-success\">" + t("statusActive") + "</span>";
+                let reasonColorClass = "cred-reason-normal";
                 if (isCooldown) {
-                    statusBadge = "<span class=\"badge badge-warning\">" + t("statusCooldown") + "</span>";
+                    reasonColorClass = "cred-reason-warning";
                 } else if (probeFailed) {
-                    statusBadge = "<span class=\"badge badge-danger\">" + t("statusFailed") + "</span>";
-                } else if (isManuallyDisabled) {
-                    statusBadge = "<span class=\"badge badge-secondary\">" + t("statusDisabled") + "</span>";
-                } else if (item.target && item.target.disabled) {
-                    statusBadge = "<span class=\"badge badge-danger\">" + t("statusWeeklyDepleted") + "</span>";
+                    reasonColorClass = "cred-reason-danger";
+                } else if (isManuallyDisabled || isWeeklyDepleted) {
+                    reasonColorClass = "cred-reason-muted";
+                } else if (isBypassed) {
+                    reasonColorClass = "cred-reason-danger";
                 } else if (isBoosted) {
-                    statusBadge = "<span class=\"badge badge-boost\">" + t("statusBoosted") + "</span>";
+                    reasonColorClass = "cred-reason-boost";
                 }
                 const formattedReason = formatReason(item.reason, isBoosted, item.target && item.target.disabled);
                 const authIdx = item.auth_index || "";
@@ -301,14 +287,9 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
                         "<span class=\"cred-meta\">" + formatPlanBadge(item.plan_type) + "</span>" +
                     "</div>" +
                     "<div class=\"cred-badge-row\">" +
-                        statusBadge +
-                        "<div class=\"metric-pill metric-pill-priority\">" + (currentLang === "zh-CN" ? "动态优先级: " : "Priority: ") + "<strong>" + targetP + "</strong></div>" +
+                        "<div class=\"metric-pill metric-pill-priority\">" + (currentLang === "zh-CN" ? "动态优先级: " : "Priority: ") + "<strong>" + priorityDisplay + "</strong></div>" +
                         "<div class=\"metric-pill metric-pill-urgency\">" + t("urgencyLabel") + "<strong>" + urgency + "</strong></div>" +
                         "<div class=\"metric-pill metric-pill-burn\">" + t("burnLabel") + "<strong>" + burnRate + "</strong></div>" +
-                        "<div style=\"margin-left:auto; display:flex; gap:4px;\">" +
-                            "<button type=\"button\" class=\"btn-secondary\" style=\"min-height:20px; height:20px; padding:0 6px; font-size:11px; border-radius:4px;\" onclick=\"probeSingleCredential('" + escapeHTML(authIdx) + "', this)\">⚡ " + t("btnProbeSingle") + "</button>" +
-                            "<button type=\"button\" class=\"btn-secondary\" style=\"min-height:20px; height:20px; padding:0 6px; font-size:11px; border-radius:4px;\" onclick=\"openSamplesModal('" + escapeHTML(authIdx) + "', '" + escapeHTML(credDisplayName) + "')\">📊 " + t("btnSamples") + "</button>" +
-                        "</div>" +
                     "</div>" +
                 "</div>";
 
@@ -348,9 +329,16 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
                     const activeClass = b.isActive ? " active-pool-meter" : " inactive-pool-meter";
                     const containerClass = "meter-container" + activeClass + (isStale ? " meter-container-stale" : "");
 
+                    const pctDisplay = hasVal
+                        ? " <span class=\"meter-pct\">" + pct + "%</span>"
+                        : " <span class=\"meter-na\">(N/A)</span>";
+
                     cardHtml += "<div class=\"" + containerClass + "\">" +
                         "<div class=\"meter-label-row\">" +
-                            "<span class=\"meter-name\" title=\"" + escapeHTML(b.windowType) + "\">" + escapeHTML(b.label) + (hasVal ? " (" + pct + "%)" : " (N/A)") + estBurnTag + staleTag + "</span>" +
+                            "<span class=\"meter-name\" title=\"" + escapeHTML(b.windowType) + "\">" +
+                                "<span class=\"meter-pool-name\">" + escapeHTML(b.label) + "</span>" +
+                                pctDisplay + estBurnTag + staleTag +
+                            "</span>" +
                             "<span class=\"meter-countdown\" data-reset-time=\"" + escapeHTML(resetTime) + "\">" + resetStr + "</span>" +
                         "</div>" +
                         "<div class=\"meter-track\">" +
@@ -360,16 +348,12 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
                 });
                 cardHtml += "</div>";
 
-                cardHtml += "<div class=\"cred-priority\">" +
-                    "<div class=\"priority-score-box\" style=\"flex-wrap:wrap;\">" +
-                        "<span style=\"font-size:11.5px; color:var(--text-muted); font-weight:600;\">" + t("actualPriority") + ":</span>" +
-                        "<span style=\"font-size:12.5px; font-weight:700; color:var(--text-secondary); font-family:SFMono-Regular, Consolas, Menlo, monospace;\">" + actualP + "</span>" +
-                        "<span style=\"color:var(--border-color); margin:0 1px;\">|</span>" +
-                        "<span style=\"font-size:11.5px; color:var(--text-muted); font-weight:600;\">" + (isPredictedView ? t("predictedPriority") : t("targetPriority")) + ":</span>" +
-                        "<span class=\"priority-score" + (isPredictedView ? " priority-predicted" : "") + "\">" + targetP + "</span>" +
-                        tagBadge +
+                cardHtml += "<div class=\"cred-footer\">" +
+                    "<div class=\"cred-reason " + reasonColorClass + "\" title=\"" + escapeHTML(formattedReason) + "\">" + escapeHTML(formattedReason) + "</div>" +
+                    "<div class=\"cred-actions\">" +
+                        "<button type=\"button\" class=\"btn-secondary btn-card-action\" onclick=\"probeSingleCredential('" + escapeHTML(authIdx) + "', this)\">⚡ " + t("btnProbeSingle") + "</button>" +
+                        "<button type=\"button\" class=\"btn-secondary btn-card-action\" onclick=\"openSamplesModal('" + escapeHTML(authIdx) + "', '" + escapeHTML(credDisplayName) + "')\">📊 " + t("btnSamples") + "</button>" +
                     "</div>" +
-                    "<div style=\"font-size:11px; color:var(--text-secondary);\">" + escapeHTML(formattedReason) + "</div>" +
                 "</div>";
 
                 card.innerHTML = cardHtml;

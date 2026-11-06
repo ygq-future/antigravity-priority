@@ -78,7 +78,7 @@ const templateStyleOverlays = `        /* Modals */
 
         .history-comparison-row {
             display: grid;
-            grid-template-columns: minmax(150px, max-content) 200px 200px minmax(140px, max-content);
+            grid-template-columns: minmax(150px, max-content) 170px 170px 170px minmax(130px, max-content);
             align-items: center;
             gap: 10px;
             padding: 8px 10px;
@@ -87,7 +87,7 @@ const templateStyleOverlays = `        /* Modals */
         }
 
         .history-comparison-quota-only .history-comparison-row {
-            grid-template-columns: minmax(150px, max-content) 200px 200px;
+            grid-template-columns: minmax(150px, max-content) 170px 170px 170px;
         }
 
         .history-comparison-table,

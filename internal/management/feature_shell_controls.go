@@ -135,7 +135,12 @@ const templateStyleControls = `        /* KPI Cards Grid */
             flex-direction: column;
             gap: 2px;
             min-width: 160px;
+            scrollbar-width: thin;
+            scrollbar-color: var(--border-color) transparent;
         }
+        .custom-select-options::-webkit-scrollbar { width: 5px; }
+        .custom-select-options::-webkit-scrollbar-track { background: transparent; }
+        .custom-select-options::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 999px; }
 
         .custom-select-option {
             display: flex;
@@ -148,6 +153,7 @@ const templateStyleControls = `        /* KPI Cards Grid */
             color: var(--text-secondary);
             cursor: pointer;
             transition: all 0.12s ease;
+            white-space: nowrap;
         }
 
         .custom-select-option:hover {

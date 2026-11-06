@@ -14,8 +14,8 @@ const configMarkup = `
                     <div class="config-form-grid">
                         <div class="form-row">
                             <div class="form-label-box">
-                                <span class="form-title" data-i18n="cfgAutoApply">自动定时调度</span>
-                                <span class="form-hint" data-i18n="cfgAutoApplyHint">周期性自动探测并智能更新宿主凭证优先级</span>
+                                <span class="form-title" data-i18n="cfgAutoApply">后台定时配额校准</span>
+                                <span class="form-hint" data-i18n="cfgAutoApplyHint">周期性向 Google 发起配额探测，自适应校准实时消耗估算器与内存调度路由</span>
                             </div>
                             <div class="form-input-group">
                                 <label class="toggle-label">

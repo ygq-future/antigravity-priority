@@ -11,7 +11,7 @@ const templateScriptHistoryDetails = `        function showHistoryDetails(index)
                     showToast(currentLang === "zh-CN" ? "该探测记录没有可追溯的新样本" : "This probe record has no attributable new samples", "info");
                     return;
                 }
-                const probeModelGroups = ["gemini", "claude_gpt"];
+                const probeModelGroups = ["gemini", "argon", "claude_gpt"];
                 Promise.all(probeModelGroups.map(function(modelGroup) {
                     var probePath = SAMPLES_PATH + "?probe_round_id=" + encodeURIComponent(entry.probe_round_id) + "&model_group=" + encodeURIComponent(modelGroup);
                     return apiFetch(probePath).then(function(data) {

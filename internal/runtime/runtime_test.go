@@ -2197,6 +2197,47 @@ func TestRuntime_AutoApply_PluginDisabled(t *testing.T) {
 		t.Errorf("expected 0 calls when plugin is disabled, got %d", calls)
 	}
 }
+func TestRuntime_AutoApply_DoesNotMutateHostFiles(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	mock := newMockHost()
+	mock.files = []host.AuthFile{{
+		Name:      "auth_1",
+		AuthIndex: "auth_1",
+		Provider:  string(core.ProviderAntigravity),
+		Type:      string(core.CredentialTypeAntigravity),
+		Priority:  0,
+	}}
+	mock.authDocs["auth_1"] = host.AuthDocument{
+		AuthIndex: "auth_1",
+		Path:      filepath.Join(t.TempDir(), "auth_1.json"),
+	}
+	_ = os.WriteFile(mock.authDocs["auth_1"].Path, []byte(`{"access_token":"token"}`), 0o600)
+
+	clock := &testClock{now: time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)}
+	r := newTestRuntime(t, runtime.Options{
+		Host:    mock,
+		Clock:   clock,
+		Sleeper: testSleeper{},
+	})
+	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "auto_apply: true\nstate_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := r.AutoApply(context.Background()); err != nil {
+		t.Fatalf("auto apply failed: %v", err)
+	}
+
+	// Host priority MUST NOT be modified by auto apply
+	mock.mu.Lock()
+	defer mock.mu.Unlock()
+	if mock.saveCalls != 0 {
+		t.Fatalf("expected 0 host save calls during AutoApply, got %d", mock.saveCalls)
+	}
+	if mock.files[0].Priority != 0 {
+		t.Fatalf("expected host priority to remain 0, got %d", mock.files[0].Priority)
+	}
+}
+
 
 func TestRuntime_ProductionRunner_RespectsManuallyDisabledAccounts(t *testing.T) {
 	tempDir := t.TempDir()

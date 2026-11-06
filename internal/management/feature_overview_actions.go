@@ -32,7 +32,7 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
             if (lower.indexOf("short") >= 0 && lower.indexOf("depleted") >= 0) return currentLang === "zh-CN" ? "5h短窗口耗尽" : "5h Depleted";
             if (lower.indexOf("predicted") >= 0) return currentLang === "zh-CN" ? "🔮 预测优先级" : "🔮 Predicted";
             if (lower.indexOf("in sync") >= 0 || lower.indexOf("optimal") >= 0) return currentLang === "zh-CN" ? "状态最优" : "In Sync";
-            if (lower.indexOf("disabled on host") >= 0) return currentLang === "zh-CN" ? "已禁用" : "Disabled";
+            if (lower.indexOf("disabled on host") >= 0) return t("statusDisabled");
             return reason;
         }
         function formatPlanBadge(planType) {
@@ -173,88 +173,6 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
                 return result.items;
             }
             return [];
-        }
-
-        function hasProjectedStateChange(item) {
-            if (!item || !item.current || !item.target) return false;
-
-            const currentDisabled = Boolean(item.current.disabled);
-            const targetDisabled = Boolean(item.target.disabled);
-            if (currentDisabled !== targetDisabled) return true;
-            if (currentDisabled && targetDisabled) return false;
-
-            const currentMissing = Boolean(item.current.priority_missing) || item.current.priority === undefined || item.current.priority === null;
-            const targetMissing = Boolean(item.target.priority_missing) || item.target.priority === undefined || item.target.priority === null;
-            if (currentMissing !== targetMissing) return true;
-            if (currentMissing && targetMissing) return false;
-
-            return String(item.current.priority) !== String(item.target.priority);
-        }
-
-        function buildApplyPreview(groupData) {
-            const pendingChanges = Array.isArray(groupData.changes) ? groupData.changes : [];
-            if (pendingChanges.length > 0) {
-                return { mode: "pending", changes: pendingChanges };
-            }
-
-            const projectedChanges = (Array.isArray(groupData.items) ? groupData.items : []).filter(hasProjectedStateChange);
-            return { mode: "projected", changes: projectedChanges };
-        }
-
-        async function triggerApplyWithConfirm() {
-            const groupSelect = document.getElementById("modelGroupSelect");
-            const selectedGroup = groupSelect ? groupSelect.value : "gemini";
-            const activeGroup = (dynamicConfig && dynamicConfig.antigravity_model_group) || (latestSnapshot && latestSnapshot.active_model_group) || "gemini";
-            if (selectedGroup !== activeGroup) {
-                showToast(currentLang === "zh-CN" ? "仅主控组可执行写回，当前主控组为 " + activeGroup : "Only active group can apply. Active: " + activeGroup, "info");
-                return;
-            }
-            const groupData = (latestSnapshot && latestSnapshot.groups && latestSnapshot.groups[selectedGroup]) || {};
-            const items = groupData.items || [];
-            if (items.length === 0) {
-                showToast(currentLang === "zh-CN" ? "未发现有效凭证，无需执行写回" : "No credentials found to apply", "info");
-                return;
-            }
-            const preview = buildApplyPreview(groupData);
-            if (preview.changes.length === 0) {
-                showToast(t("noChangesToApply"), "info");
-                return;
-            }
-
-            // Show changes preview modal with direct confirm button
-            showModal("apply-confirm", {
-                snapshot: groupData,
-                changes: preview.changes,
-                preview_mode: preview.mode,
-                items: items
-            }, false);
-        }
-
-        async function executeDirectApply() {
-            closeModal();
-            const groupSelect = document.getElementById("modelGroupSelect");
-            const group = groupSelect ? groupSelect.value : "gemini";
-            const btnApp = document.getElementById("btnApply");
-            if (btnApp) btnApp.disabled = true;
-
-            try {
-                const path = RUN_PATH + "?mode=apply&antigravity_model_group=" + encodeURIComponent(group);
-                const previewID = latestSnapshot && latestSnapshot.preview_id ? latestSnapshot.preview_id : "";
-                const applyPath = previewID ? path + "&preview_id=" + encodeURIComponent(previewID) : path;
-                const result = await apiFetch(applyPath, { method: "POST" });
-                const succeeded = (result && result.succeeded !== undefined) ? result.succeeded : 0;
-                const attempted = (result && result.attempted !== undefined) ? result.attempted : 0;
-                if (succeeded > 0 || attempted > 0) {
-                    showToast(currentLang === "zh-CN" ? "已成功写回 CPA 宿主凭证优先级" : "Applied credential priorities to CPA host successfully", "success");
-                } else {
-                    showToast(t("noChangesToApply"), "info");
-                }
-                await refreshDashboard({ silent: true });
-            } catch (err) {
-                showToast(err.message, "error");
-            } finally {
-                if (btnApp) btnApp.disabled = false;
-            }
         }
 
 `

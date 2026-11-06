@@ -126,10 +126,20 @@ func seedDevAuthFiles(dir string, count int, now time.Time) error {
 			existing++
 		}
 	}
-	for index := 1; existing < count; index++ {
+	for index := 1; index <= count; index++ {
 		name := fmt.Sprintf("dev-auth-%03d.json", index)
 		path := filepath.Join(dir, name)
-		if _, err := os.Stat(path); err == nil {
+		isDisabled := (index == 7) // dev-auth-007 is host manually disabled
+		if data, err := os.ReadFile(path); err == nil {
+			if index == 7 {
+				var doc devAuthDocument
+				if err := json.Unmarshal(data, &doc); err == nil && !doc.Disabled {
+					doc.Disabled = true
+					if updated, err := json.MarshalIndent(doc, "", "  "); err == nil {
+						_ = writeDevFileAtomic(path, updated)
+					}
+				}
+			}
 			continue
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("inspect dev auth file %s: %w", name, err)
@@ -138,6 +148,7 @@ func seedDevAuthFiles(dir string, count int, now time.Time) error {
 			Email:     fmt.Sprintf("dev-account-%03d@gmail.com", index),
 			Expired:   now.Add(time.Hour).Format(time.RFC3339),
 			ExpiresIn: 3599,
+			Disabled:  isDisabled,
 			Priority:  98,
 			ProjectID: fmt.Sprintf("dev-project-%03d", index),
 			Timestamp: now.UnixMilli(),
@@ -150,7 +161,6 @@ func seedDevAuthFiles(dir string, count int, now time.Time) error {
 		if err := writeDevFileAtomic(path, data); err != nil {
 			return fmt.Errorf("seed dev auth file %s: %w", name, err)
 		}
-		existing++
 	}
 	return nil
 }
@@ -306,11 +316,11 @@ func (d *devHost) HTTPDo(ctx context.Context, request host.HTTPRequest) (host.HT
 	if !state.Probed || !state.hasAllGroups() {
 		state = initialDevQuotaState(request.AuthIndex, now)
 		state.Probed = true
-	} else if state.exhausted() {
+	} else if state.exhausted(request.AuthIndex) {
 		state = fullDevQuotaState(now)
 		state.Probed = true
 	} else {
-		state.advance(now, d.rng)
+		state.advance(request.AuthIndex, now, d.rng)
 	}
 	d.quota[request.AuthIndex] = state
 	if err := d.saveQuotaStateLocked(); err != nil {
@@ -374,7 +384,10 @@ func (s devQuotaState) hasAllGroups() bool {
 	return true
 }
 
-func (s devQuotaState) exhausted() bool {
+func (s devQuotaState) exhausted(authIndex string) bool {
+	if isDevPreservedDepleted(authIndex) {
+		return false
+	}
 	for _, group := range simulatedModelGroups {
 		quota := s.Groups[group]
 		if quota.Short <= 0 || quota.Long <= 0 {
@@ -448,50 +461,50 @@ func initialDevQuotaState(authIndex string, now time.Time) devQuotaState {
 			Short:        92,
 			Long:         88,
 			ArgonWeekly:  86,
-			ShortResetAt: now.Add(3*time.Hour + 15*time.Minute),
-			LongResetAt:  now.Add(3*time.Hour + 30*time.Minute),
+			ShortResetAt: now.Add(2*time.Hour + 30*time.Minute),
+			LongResetAt:  now.Add(20 * time.Hour),
 		}
 		claude = devQuotaGroupState{
 			Short:        90,
 			Long:         85,
 			ArgonWeekly:  86,
-			ShortResetAt: now.Add(3*time.Hour + 15*time.Minute),
-			LongResetAt:  now.Add(3*time.Hour + 30*time.Minute),
+			ShortResetAt: now.Add(2*time.Hour + 30*time.Minute),
+			LongResetAt:  now.Add(20 * time.Hour),
 		}
 	} else if strings.Contains(lower, "002") {
 		gemini = devQuotaGroupState{
-			Short:        75,
-			Long:         80,
-			ArgonWeekly:  82,
-			ShortResetAt: now.Add(2*time.Hour + 40*time.Minute),
-			LongResetAt:  now.Add(62 * time.Hour),
+			Short:        85,
+			Long:         82,
+			ArgonWeekly:  80,
+			ShortResetAt: now.Add(3 * time.Hour),
+			LongResetAt:  now.Add(72 * time.Hour),
 		}
 		claude = devQuotaGroupState{
-			Short:        70,
-			Long:         75,
-			ArgonWeekly:  82,
-			ShortResetAt: now.Add(2*time.Hour + 40*time.Minute),
-			LongResetAt:  now.Add(62 * time.Hour),
+			Short:        80,
+			Long:         80,
+			ArgonWeekly:  80,
+			ShortResetAt: now.Add(3 * time.Hour),
+			LongResetAt:  now.Add(72 * time.Hour),
 		}
 	} else if strings.Contains(lower, "003") {
 		gemini = devQuotaGroupState{
-			Short:        65,
-			Long:         68,
-			ArgonWeekly:  70,
-			ShortResetAt: now.Add(4*time.Hour + 10*time.Minute),
-			LongResetAt:  now.Add(58 * time.Hour),
+			Short:        82,
+			Long:         80,
+			ArgonWeekly:  80,
+			ShortResetAt: now.Add(3 * time.Hour),
+			LongResetAt:  now.Add(70 * time.Hour),
 		}
 		claude = devQuotaGroupState{
-			Short:        60,
-			Long:         62,
-			ArgonWeekly:  70,
-			ShortResetAt: now.Add(4*time.Hour + 10*time.Minute),
-			LongResetAt:  now.Add(58 * time.Hour),
+			Short:        78,
+			Long:         78,
+			ArgonWeekly:  80,
+			ShortResetAt: now.Add(3 * time.Hour),
+			LongResetAt:  now.Add(70 * time.Hour),
 		}
 	} else if strings.Contains(lower, "004") {
 		gemini = devQuotaGroupState{
 			Short:        0,
-			Long:         55,
+			Long:         65,
 			ArgonWeekly:  60,
 			ShortResetAt: now.Add(1*time.Hour + 15*time.Minute),
 			LongResetAt:  now.Add(96 * time.Hour),
@@ -505,48 +518,48 @@ func initialDevQuotaState(authIndex string, now time.Time) devQuotaState {
 		}
 	} else if strings.Contains(lower, "005") {
 		gemini = devQuotaGroupState{
-			Short:        80,
-			Long:         72,
-			ArgonWeekly:  75,
-			ShortResetAt: now.Add(3*time.Hour + 5*time.Minute),
-			LongResetAt:  now.Add(72 * time.Hour),
+			Short:        75,
+			Long:         70,
+			ArgonWeekly:  70,
+			ShortResetAt: now.Add(2*time.Hour + 30*time.Minute),
+			LongResetAt:  now.Add(80 * time.Hour),
 		}
 		claude = devQuotaGroupState{
-			Short:        0,
-			Long:         60,
-			ArgonWeekly:  75,
-			ShortResetAt: now.Add(45 * time.Minute),
-			LongResetAt:  now.Add(72 * time.Hour),
+			Short:        75,
+			Long:         70,
+			ArgonWeekly:  70,
+			ShortResetAt: now.Add(2*time.Hour + 30*time.Minute),
+			LongResetAt:  now.Add(80 * time.Hour),
 		}
 	} else if strings.Contains(lower, "006") {
 		gemini = devQuotaGroupState{
-			Short:        70,
-			Long:         65,
+			Short:        0,
+			Long:         0,
 			ArgonWeekly:  0,
-			ShortResetAt: now.Add(2*time.Hour + 20*time.Minute),
+			ShortResetAt: now.Add(2 * time.Hour),
 			LongResetAt:  now.Add(120 * time.Hour),
 		}
 		claude = devQuotaGroupState{
-			Short:        65,
-			Long:         60,
+			Short:        0,
+			Long:         0,
 			ArgonWeekly:  0,
-			ShortResetAt: now.Add(2*time.Hour + 20*time.Minute),
+			ShortResetAt: now.Add(2 * time.Hour),
 			LongResetAt:  now.Add(120 * time.Hour),
 		}
 	} else if strings.Contains(lower, "007") {
 		gemini = devQuotaGroupState{
-			Short:        25,
-			Long:         30,
-			ArgonWeekly:  28,
-			ShortResetAt: now.Add(1*time.Hour + 50*time.Minute),
-			LongResetAt:  now.Add(138 * time.Hour),
+			Short:        50,
+			Long:         50,
+			ArgonWeekly:  50,
+			ShortResetAt: now.Add(2 * time.Hour),
+			LongResetAt:  now.Add(120 * time.Hour),
 		}
 		claude = devQuotaGroupState{
-			Short:        20,
-			Long:         25,
-			ArgonWeekly:  28,
-			ShortResetAt: now.Add(1*time.Hour + 50*time.Minute),
-			LongResetAt:  now.Add(138 * time.Hour),
+			Short:        50,
+			Long:         50,
+			ArgonWeekly:  50,
+			ShortResetAt: now.Add(2 * time.Hour),
+			LongResetAt:  now.Add(120 * time.Hour),
 		}
 	}
 
@@ -559,25 +572,51 @@ func initialDevQuotaState(authIndex string, now time.Time) devQuotaState {
 	}
 }
 
-func (s *devQuotaState) advance(now time.Time, rng *rand.Rand) {
+func (s *devQuotaState) advance(authIndex string, now time.Time, rng *rand.Rand) {
+	lower := strings.ToLower(authIndex)
+	is004 := strings.Contains(lower, "004")
+	is006 := strings.Contains(lower, "006")
+	isFree := isDevFreeAuthIndex(authIndex)
+
 	for _, group := range simulatedModelGroups {
 		quota := s.Groups[group]
 		if !now.Before(quota.ShortResetAt) {
-			quota.Short = 100
-			quota.ShortResetAt = now.Add(5 * time.Hour)
+			if !is004 && !is006 && !isFree {
+				quota.Short = 100
+				quota.ShortResetAt = now.Add(5 * time.Hour)
+			}
 		}
 		if !now.Before(quota.LongResetAt) {
-			quota.Long = 100
-			quota.ArgonWeekly = 100
-			quota.LongResetAt = now.Add(7 * 24 * time.Hour)
+			if !is006 {
+				quota.Long = 100
+				quota.ArgonWeekly = 100
+				quota.LongResetAt = now.Add(7 * 24 * time.Hour)
+			}
 		}
-		quota.Short = consumeDevQuota(quota.Short, rng)
-		quota.Long = consumeDevQuota(quota.Long, rng)
-		if group == string(antigravity.ModelGroupGemini) {
-			quota.ArgonWeekly = consumeDevQuota(quota.ArgonWeekly, rng)
+		if isFree {
+			quota.Short = 0
+			quota.Long = consumeDevQuota(quota.Long, rng)
+		} else if is004 && group == string(antigravity.ModelGroupGemini) {
+			quota.Short = 0
+			quota.Long = consumeDevQuota(quota.Long, rng)
+		} else if is006 {
+			quota.Short = 0
+			quota.Long = 0
+			quota.ArgonWeekly = 0
+		} else {
+			quota.Short = consumeDevQuota(quota.Short, rng)
+			quota.Long = consumeDevQuota(quota.Long, rng)
+			if group == string(antigravity.ModelGroupGemini) {
+				quota.ArgonWeekly = consumeDevQuota(quota.ArgonWeekly, rng)
+			}
 		}
 		s.Groups[group] = quota
 	}
+}
+
+func isDevPreservedDepleted(authIndex string) bool {
+	lower := strings.ToLower(authIndex)
+	return strings.Contains(lower, "004") || strings.Contains(lower, "006") || strings.Contains(lower, "007") || isDevFreeAuthIndex(authIndex)
 }
 
 func consumeDevQuota(value int64, rng *rand.Rand) int64 {

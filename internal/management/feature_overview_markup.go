@@ -33,7 +33,7 @@ const overviewMarkup = `
                     <option value="argon">Argon 模型</option>
                     <option value="claude_gpt" data-i18n="optClaudeGPT">Claude 与 GPT 模型</option>
                 </select>
-                <div id="customModelSelect" class="custom-select-wrapper" style="min-width: 250px;">
+                <div id="customModelSelect" class="custom-select-wrapper" style="min-width: 290px;">
                     <button type="button" class="custom-select-trigger" onclick="toggleCustomModelSelect(event)" aria-haspopup="listbox" aria-expanded="false" id="customModelSelectTrigger">
                         <span id="customModelSelectBadge" class="model-pool-badge badge-gemini">Gemini</span>
                         <span id="customModelSelectLabel" class="model-select-name">gemini-3.8-flash-high</span>
@@ -115,9 +115,6 @@ const overviewMarkup = `
                 </button>
                 <button type="button" class="btn-secondary" onclick="triggerReset()" id="btnReset" title="重置静态优先级">
                     <span>🔄 <span data-i18n="btnReset">重置静态优先级</span></span>
-                </button>
-                <button type="button" class="btn-primary" onclick="triggerApplyWithConfirm()" id="btnApply" hidden style="display:none;">
-                    <span>⚡ <span data-i18n="btnApply">立即写回</span></span>
                 </button>
                 <span id="scheduleStatusBadge" class="schedule-status active" onclick="toggleSchedulePause()" title="点击切换暂停状态">
                     🟢 <span id="scheduleStatusText" data-i18n="scheduleActive">动态调度运行中</span>

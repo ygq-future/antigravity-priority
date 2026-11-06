@@ -50,11 +50,11 @@ const templateScriptModals = `        function historyIdentity(value) {
             var quotaRecordCount = 0;
             function ensure(value) {
                 var key = historyIdentity(value);
-                if (!rows[key]) rows[key] = {email: value && value.email ? String(value.email) : "", gemini: null, claude_gpt: null, change: null};
+                if (!rows[key]) rows[key] = {email: value && value.email ? String(value.email) : "", gemini: null, argon: null, claude_gpt: null, change: null};
                 if (!rows[key].email && value && value.email) rows[key].email = String(value.email);
                 return rows[key];
             }
-            ["gemini", "claude_gpt"].forEach(function(modelGroup) {
+            ["gemini", "argon", "claude_gpt"].forEach(function(modelGroup) {
                 (Array.isArray(groups[modelGroup]) ? groups[modelGroup] : []).forEach(function(record) {
                     var row = ensure(record);
                     var sample = record.sample || {};
@@ -82,6 +82,7 @@ const templateScriptModals = `        function historyIdentity(value) {
                 "<div class=\"history-comparison-row history-comparison-header\">" +
                     "<div>" + (currentLang === "zh-CN" ? "账号" : "Account") + "</div>" +
                     "<div>" + (currentLang === "zh-CN" ? "本次探测 Gemini 额度" : "Gemini Quota This Probe") + "</div>" +
+                    "<div>" + (currentLang === "zh-CN" ? "本次探测 Argon 额度" : "Argon Quota This Probe") + "</div>" +
                     "<div>" + (currentLang === "zh-CN" ? "本次探测 Claude/GPT 额度" : "Claude/GPT Quota This Probe") + "</div>" +
                     (includePriority ? "<div>" + (currentLang === "zh-CN" ? "优先级变化" : "Priority Change") + "</div>" : "") +
                 "</div>";
@@ -90,6 +91,7 @@ const templateScriptModals = `        function historyIdentity(value) {
                 html += "<div class=\"history-comparison-row\">" +
                     "<div class=\"history-account-cell\">" + escapeHTML(row.email || "Credential") + "</div>" +
                     "<div>" + historyQuotaCell(row.gemini) + "</div>" +
+                    "<div>" + historyQuotaCell(row.argon) + "</div>" +
                     "<div>" + historyQuotaCell(row.claude_gpt) + "</div>" +
                     (includePriority ? "<div>" + historyPriorityCell(row.change) + "</div>" : "") +
                 "</div>";
@@ -105,9 +107,6 @@ const templateScriptModals = `        function historyIdentity(value) {
             const title = document.getElementById("modalTitle");
             const summary = document.getElementById("modalSummary");
             const list = document.getElementById("modalDiffList");
-            const btnApply = document.getElementById("btnModalApply");
-
-			const isApplyConfirm = (mode === "apply-confirm");
 			const isProbeHistory = (mode === "probe-history");
 			const isAutoHistory = (mode === "auto-history");
 			if (modalPanel) modalPanel.classList.toggle("modal-history-comparison", isProbeHistory || isAutoHistory);
@@ -116,39 +115,25 @@ const templateScriptModals = `        function historyIdentity(value) {
 				title.textContent = isAutoHistory
 					? (currentLang === "zh-CN" ? "自动调度明细" : "Automatic Schedule Details")
 					: (currentLang === "zh-CN" ? "配额探测明细" : "Quota Probe Details");
-                btnApply.hidden = true;
                 const groups = result && result.groups && typeof result.groups === "object" ? result.groups : {};
 				const historyChanges = isAutoHistory && result && Array.isArray(result.changes) ? result.changes : [];
-				const comparison = renderHistoryComparison(list, {groups: groups, changes: historyChanges}, isAutoHistory);
-				const summaryParts = [(currentLang === "zh-CN" ? "本轮新增额度样本: " : "New quota samples in this round: ") + comparison.quotaRecordCount];
+				const comparison = renderHistoryComparison(list, {groups: groups, changes: historyChanges}, isAutoHistory && historyChanges.length > 0);
+				const summaryParts = [(currentLang === "zh-CN" ? "本轮新增配额样本: " : "New quota samples in this round: ") + comparison.quotaRecordCount];
 				if (isAutoHistory && historyChanges.length > 0) summaryParts.push((currentLang === "zh-CN" ? "优先级变化: " : "Priority changes: ") + historyChanges.length);
 				summary.textContent = summaryParts.join(" · ");
 				modal.hidden = false;
                 return;
             }
 
-            const changes = isApplyConfirm && Array.isArray(result.changes) ? result.changes : extractChanges(result);
-            const isProjectedPreview = isApplyConfirm && result.preview_mode === "projected";
-
-            if (isApplyConfirm) {
-                title.textContent = t("confirmApplyTitle");
-                btnApply.hidden = false;
-                btnApply.textContent = t("btnConfirmApply");
-                btnApply.onclick = executeDirectApply;
-                summary.textContent = isProjectedPreview
-                    ? t("projectedApplyPreview") + ": " + changes.length + " · " + t("manualApplyRecheck")
-                    : t("pendingApplyPreview") + ": " + changes.length;
-            } else {
-                title.textContent = currentLang === "zh-CN" ? "执行明细快照" : "Execution Details Snapshot";
-                btnApply.hidden = true;
-                summary.textContent = (currentLang === "zh-CN" ? "成功: " : "Succeeded: ") + (result.succeeded || 0) + ", " +
-                    (currentLang === "zh-CN" ? "失败: " : "Failed: ") + (result.failed || 0) + ", " +
-                    (currentLang === "zh-CN" ? "跳过: " : "Skipped: ") + (result.skipped || 0);
-            }
+            const changes = extractChanges(result);
+            title.textContent = currentLang === "zh-CN" ? "执行明细快照" : "Execution Details Snapshot";
+            summary.textContent = (currentLang === "zh-CN" ? "成功: " : "Succeeded: ") + (result.succeeded || 0) + ", " +
+                (currentLang === "zh-CN" ? "失败: " : "Failed: ") + (result.failed || 0) + ", " +
+                (currentLang === "zh-CN" ? "跳过: " : "Skipped: ") + (result.skipped || 0);
 
             list.innerHTML = "";
             if (changes.length === 0) {
-                list.innerHTML = "<div class=\"empty-state\">" + (isApplyConfirm ? t("manualApplyRecheck") : t("noChanges")) + "</div>";
+                list.innerHTML = "<div class=\"empty-state\">" + t("noChanges") + "</div>";
             } else {
                 changes.forEach(c => {
                     const row = document.createElement("div");
