@@ -25,6 +25,7 @@ type mockRunner struct {
 	dynamicConfig   state.DynamicConfig
 	probeOutcomes   []management.ProbeOutcome
 	requestHistory  []state.RequestHistoryEntry
+	customTiers     map[string]int
 }
 
 func (m *mockRunner) Run(ctx context.Context, req management.RunRequest) (apply.Result, error) {
@@ -79,6 +80,25 @@ func (m *mockRunner) GetDynamicConfig(ctx context.Context) (state.DynamicConfig,
 func (m *mockRunner) SetDynamicConfig(ctx context.Context, cfg state.DynamicConfig) error {
 	m.dynamicConfig = cfg
 	m.scheduleConfig = cfg.Schedule
+	return nil
+}
+
+func (m *mockRunner) GetCustomTiers(ctx context.Context) (map[string]int, error) {
+	if m.customTiers == nil {
+		return map[string]int{}, nil
+	}
+	return m.customTiers, nil
+}
+
+func (m *mockRunner) SetCustomTier(ctx context.Context, authIndex string, tier int) error {
+	if m.customTiers == nil {
+		m.customTiers = make(map[string]int)
+	}
+	if tier <= 0 {
+		delete(m.customTiers, authIndex)
+	} else {
+		m.customTiers[authIndex] = tier
+	}
 	return nil
 }
 
@@ -819,5 +839,44 @@ func TestHandler_RequestHistory_Endpoints(t *testing.T) {
 	_ = json.Unmarshal(rec2.Body.Bytes(), &res2)
 	if res2.Total != 0 || len(res2.Records) != 0 {
 		t.Fatalf("expected 0 records after clear, got %d", res2.Total)
+	}
+}
+
+func TestHandler_CustomTier_GetAndSet(t *testing.T) {
+	runner := &mockRunner{
+		customTiers: map[string]int{
+			"auth-1": 1,
+		},
+	}
+	handler := management.NewHandler(runner)
+
+	// 1. GET /custom-tier
+	req := httptest.NewRequest(http.MethodGet, "/custom-tier", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var getRes struct {
+		OK          bool           `json:"ok"`
+		CustomTiers map[string]int `json:"custom_tiers"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &getRes); err != nil || !getRes.OK {
+		t.Fatalf("decode failed: %v, body=%s", err, rec.Body.String())
+	}
+	if getRes.CustomTiers["auth-1"] != 1 {
+		t.Errorf("expected auth-1 to be tier 1, got %v", getRes.CustomTiers)
+	}
+
+	// 2. POST /custom-tier
+	setBody := `{"auth_index":"auth-2","tier":2}`
+	postReq := httptest.NewRequest(http.MethodPost, "/custom-tier", strings.NewReader(setBody))
+	postRec := httptest.NewRecorder()
+	handler.ServeHTTP(postRec, postReq)
+	if postRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 on post, got %d, body=%s", postRec.Code, postRec.Body.String())
+	}
+	if runner.customTiers["auth-2"] != 2 {
+		t.Errorf("expected runner customTiers auth-2 to be 2, got %v", runner.customTiers)
 	}
 }

@@ -798,6 +798,54 @@ func (s *Store) SetDynamicConfig(cfg DynamicConfig) {
 	s.dynamicConfig = &cfg
 }
 
+// GetCustomTiers returns a copy of the configured custom tiers map.
+func (s *Store) GetCustomTiers() map[string]int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.dynamicConfig == nil || len(s.dynamicConfig.CustomTiers) == 0 {
+		return nil
+	}
+	res := make(map[string]int, len(s.dynamicConfig.CustomTiers))
+	for k, v := range s.dynamicConfig.CustomTiers {
+		if v > 0 {
+			res[k] = v
+		}
+	}
+	return res
+}
+
+// GetCustomTier returns the custom tier configured for an auth index (0 if not set).
+func (s *Store) GetCustomTier(authIndex string) int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.dynamicConfig == nil || s.dynamicConfig.CustomTiers == nil {
+		return 0
+	}
+	return s.dynamicConfig.CustomTiers[strings.TrimSpace(authIndex)]
+}
+
+// SetCustomTier updates or clears the custom tier for an auth index.
+func (s *Store) SetCustomTier(authIndex string, tier int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.dynamicConfig == nil {
+		def := config.Default().Dynamic()
+		s.dynamicConfig = &def
+	}
+	if s.dynamicConfig.CustomTiers == nil {
+		s.dynamicConfig.CustomTiers = make(map[string]int)
+	}
+	cleanIdx := strings.TrimSpace(authIndex)
+	if cleanIdx == "" {
+		return
+	}
+	if tier <= 0 {
+		delete(s.dynamicConfig.CustomTiers, cleanIdx)
+	} else {
+		s.dynamicConfig.CustomTiers[cleanIdx] = tier
+	}
+}
+
 // GetKnownAuthIndexes returns all unique auth indexes tracked in the store entries.
 func (s *Store) GetKnownAuthIndexes() []string {
 	s.mu.RLock()

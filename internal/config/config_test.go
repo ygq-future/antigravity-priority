@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -51,7 +52,7 @@ func TestLoadBytes_Empty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error on nil: %v", err)
 	}
-	if cfg != config.Default() {
+	if !reflect.DeepEqual(cfg, config.Default()) {
 		t.Errorf("expected default config on nil, got %+v", cfg)
 	}
 	if len(warnings) != 0 {
@@ -62,7 +63,7 @@ func TestLoadBytes_Empty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error on empty bytes: %v", err)
 	}
-	if cfg != config.Default() {
+	if !reflect.DeepEqual(cfg, config.Default()) {
 		t.Errorf("expected default config on empty bytes, got %+v", cfg)
 	}
 	if len(warnings) != 0 {
@@ -183,7 +184,7 @@ plugins:
 	if err != nil {
 		t.Fatalf("unexpected error parsing host config with lists: %v", err)
 	}
-	if cfg != config.Default() {
+	if !reflect.DeepEqual(cfg, config.Default()) {
 		t.Errorf("expected default config when plugin block absent from host config, got %+v", cfg)
 	}
 	if len(warnings) != 0 {

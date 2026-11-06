@@ -6,7 +6,8 @@ package management
 // bilingual key during asset movement.
 var overviewTranslationKeys = []string{
 	"kpiTotal", "kpiBoosted", "kpiBoostedDesc", "kpiDepleted", "kpiDepletedDesc", "kpiLastAudit",
-	"labelModelGroup", "optGemini", "optClaudeGPT", "btnRefresh", "btnApply", "btnReset", "btnProbe", "btnSamples",
+	"labelModelGroup", "optGemini", "optClaudeGPT", "btnRefresh", "btnApply", "btnReset", "btnProbe", "btnSamples", "btnTier",
+	"customTierModalTitle", "customTierSelectLabel", "customTierAutoOption", "customTierCustomInput", "customTierExplanation", "btnSaveCustomTier",
 	"samplesModalTitle", "colObservedAt", "colShortRem", "colLongRem", "noSamples", "actualPriority", "targetPriority",
 	"predictedPriority", "pendingApply", "targetChanged", "projectedApplyPreview", "pendingApplyPreview", "manualApplyRecheck", "unsetPriority", "syncSuccess", "confirmReset", "resetSuccess", "loading", "noCreds",
 	"noChanges", "noChangesToApply", "statusActive", "statusBoosted", "statusWeeklyDepleted", "statusShortDepleted",

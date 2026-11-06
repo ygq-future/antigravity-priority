@@ -1081,6 +1081,79 @@ func (r *Runtime) mergePersistedDynamicConfig(baseCfg config.Config) config.Conf
 	return merged
 }
 
+// GetCustomTiers returns the configured custom tiers map.
+func (r *Runtime) GetCustomTiers(ctx context.Context) (map[string]int, error) {
+	runtimeCfg, err := r.Config()
+	if err != nil {
+		return nil, err
+	}
+	cachePath := runtimeCfg.StateCachePath
+	if strings.TrimSpace(cachePath) == "" {
+		cachePath = config.DefaultStateCachePath
+	}
+	store, err := state.Load(ctx, cachePath)
+	if err == nil {
+		if tiers := store.GetCustomTiers(); len(tiers) > 0 {
+			return tiers, nil
+		}
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.cfg.CustomTiers) > 0 {
+		cloned := make(map[string]int, len(r.cfg.CustomTiers))
+		for k, v := range r.cfg.CustomTiers {
+			cloned[k] = v
+		}
+		return cloned, nil
+	}
+	return map[string]int{}, nil
+}
+
+// SetCustomTier updates the custom tier for a credential and recomputes the in-memory routing tables immediately.
+func (r *Runtime) SetCustomTier(ctx context.Context, authIndex string, tier int) error {
+	cleanIdx := strings.TrimSpace(authIndex)
+	if cleanIdx == "" {
+		return errors.New("auth_index must not be empty")
+	}
+	if tier < 0 || tier > 99 {
+		return fmt.Errorf("custom tier must be between 1 and 99 (or 0 to reset), got %d", tier)
+	}
+	runtimeCfg, err := r.Config()
+	if err != nil {
+		return err
+	}
+	cachePath := runtimeCfg.StateCachePath
+	if strings.TrimSpace(cachePath) == "" {
+		cachePath = config.DefaultStateCachePath
+	}
+	store, err := state.Load(ctx, cachePath)
+	if err != nil {
+		return fmt.Errorf("load state for custom tier: %w", err)
+	}
+	store.SetCustomTier(cleanIdx, tier)
+	if err := store.SaveAtomic(ctx); err != nil {
+		return fmt.Errorf("persist custom tier: %w", err)
+	}
+
+	r.mu.Lock()
+	if r.cfg.CustomTiers == nil {
+		r.cfg.CustomTiers = make(map[string]int)
+	}
+	if tier <= 0 {
+		delete(r.cfg.CustomTiers, cleanIdx)
+	} else {
+		r.cfg.CustomTiers[cleanIdx] = tier
+	}
+	r.latestDualSnapshot = nil
+	r.mu.Unlock()
+
+	r.routingMu.Lock()
+	r.recomputeRoutingTablesLocked(r.clock.Now().UTC())
+	r.routingMu.Unlock()
+
+	return nil
+}
+
 func (r *Runtime) currentRunSnapshot() (apply.Result, string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

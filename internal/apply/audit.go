@@ -58,6 +58,7 @@ type SnapshotItem struct {
 	Reason               string           `json:"reason"`
 	IsBoosted            bool             `json:"is_boosted"`
 	IsPredicted          bool             `json:"is_predicted"`
+	CustomTier           int              `json:"custom_tier,omitempty"`
 	Urgency              float64          `json:"urgency"`
 	R7d                  float64          `json:"r7d"`
 	T7d                  float64          `json:"t7d"`
@@ -159,6 +160,7 @@ func snapshotItem(item priority.PlanItem) SnapshotItem {
 		EvidenceFresh:        item.EvidenceFresh || item.ForceWrite,
 		Reason:               redactString(item.Reason),
 		IsBoosted:            item.IsBoosted,
+		CustomTier:           item.CustomTier,
 		Urgency:              item.Urgency,
 		R7d:                  item.R7d,
 		T7d:                  item.T7d,

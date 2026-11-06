@@ -293,7 +293,8 @@ const templateScriptConfig = `        let originalConfigState = null;
                         window_enabled: windowEnabled,
                         window_start: windowStart,
                         window_end: windowEnd
-                    }
+                    },
+                    custom_tiers: (dynamicConfig && dynamicConfig.custom_tiers) ? dynamicConfig.custom_tiers : undefined
                 };
 
                 dynamicConfig = await apiFetch(CONFIG_PATH, {

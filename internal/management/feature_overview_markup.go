@@ -129,8 +129,8 @@ const overviewMarkup = `
 
 var overviewPageAsset = managementPageAsset{
 	name:            "Overview",
-	markup:          overviewMarkup + overviewSamplesMarkup,
+	markup:          overviewMarkup + overviewSamplesMarkup + overviewTierMarkup,
 	styles:          templateStyleOverviewCards,
-	scripts:         templateScriptOverviewActionsCore + templateScriptOverviewReset + templateScriptOverviewRender + templateScriptProbeSchedule + templateScriptOverviewSamples,
+	scripts:         templateScriptOverviewActionsCore + templateScriptOverviewReset + templateScriptOverviewRender + templateScriptProbeSchedule + templateScriptOverviewSamples + templateScriptOverviewTier,
 	translationKeys: overviewTranslationKeys,
 }

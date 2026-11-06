@@ -32,6 +32,8 @@ type Runner interface {
 	LastProbeOutcomes(ctx context.Context) []ProbeOutcome
 	GetRequestHistory(ctx context.Context) ([]state.RequestHistoryEntry, error)
 	ClearRequestHistory(ctx context.Context) error
+	GetCustomTiers(ctx context.Context) (map[string]int, error)
+	SetCustomTier(ctx context.Context, authIndex string, tier int) error
 }
 
 // ProbeOutcome reports the diagnostic outcome of one credential probe for the management UI.
@@ -87,6 +89,7 @@ const (
 	PathSamples        = "/samples"
 	PathRequestHistory      = "/request-history"
 	PathRequestHistoryClear = "/request-history/clear"
+	PathCustomTier          = "/custom-tier"
 
 	// URL Prefixes
 	PrefixResourcePlugin   = "/v0/resource/plugins/" + config.PluginID
@@ -135,6 +138,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleGetRequestHistory(w, r)
 	case (path == PathRequestHistoryClear || path == PrefixManagementPlugin+PathRequestHistoryClear) && method == http.MethodPost:
 		h.handleClearRequestHistory(w, r)
+	case (path == PathCustomTier || path == PrefixManagementPlugin+PathCustomTier || path == PrefixLegacyPlugin+PathCustomTier) && method == http.MethodGet:
+		h.handleGetCustomTiers(w, r)
+	case (path == PathCustomTier || path == PrefixManagementPlugin+PathCustomTier || path == PrefixLegacyPlugin+PathCustomTier) && method == http.MethodPost:
+		h.handleSetCustomTier(w, r)
 	default:
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(http.StatusNotFound)
@@ -614,4 +621,49 @@ func (h *Handler) handleClearRequestHistory(w http.ResponseWriter, r *http.Reque
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+}
+
+func (h *Handler) handleGetCustomTiers(w http.ResponseWriter, r *http.Request) {
+	tiers, err := h.runner.GetCustomTiers(r.Context())
+	if err != nil {
+		h.writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ok":           true,
+		"custom_tiers": tiers,
+	})
+}
+
+type customTierRequest struct {
+	AuthIndex string `json:"auth_index"`
+	Tier      int    `json:"tier"`
+}
+
+func (h *Handler) handleSetCustomTier(w http.ResponseWriter, r *http.Request) {
+	var req customTierRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.writeJSONError(w, http.StatusBadRequest, "invalid request JSON: "+err.Error())
+		return
+	}
+	cleanIdx := strings.TrimSpace(req.AuthIndex)
+	if cleanIdx == "" {
+		h.writeJSONError(w, http.StatusBadRequest, "auth_index must not be empty")
+		return
+	}
+	if req.Tier < 0 || req.Tier > 99 {
+		h.writeJSONError(w, http.StatusBadRequest, "tier must be between 1 and 99 (or 0 to reset)")
+		return
+	}
+	if err := h.runner.SetCustomTier(r.Context(), cleanIdx, req.Tier); err != nil {
+		h.writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ok":         true,
+		"auth_index": cleanIdx,
+		"tier":       req.Tier,
+	})
 }

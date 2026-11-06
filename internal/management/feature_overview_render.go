@@ -248,10 +248,23 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
                 } else if (item.current && item.current.priority !== undefined && item.current.priority !== null) {
                     priorityDisplay = item.current.priority;
                 }
+                const authIdx = item.auth_index || "";
+                const credDisplayName = item.email || "Credential";
+                const maskedEmail = formatMaskedEmail(credDisplayName);
+
                 let callOrderBadge = "";
+                const customTier = Number(item.custom_tier) || 0;
                 if (!isBypassed) {
-                    const tierText = isBoosted ? (currentLang === "zh-CN" ? "🚀 Tier #" + tier + " · Boost" : "🚀 Tier #" + tier + " · Boost") : ("Tier #" + tier);
-                    callOrderBadge = "<span class=\"badge " + (isBoosted ? "badge-boost" : "badge-tier") + "\">" + escapeHTML(tierText) + "</span>";
+                    let tierText = "";
+                    if (customTier > 0) {
+                        tierText = "🎯 Tier #" + customTier + (currentLang === "zh-CN" ? " · 自定义" : " · Custom");
+                    } else if (isBoosted) {
+                        tierText = "🚀 Tier #" + tier + " · Boost";
+                    } else {
+                        tierText = "Tier #" + tier;
+                    }
+                    const badgeClass = customTier > 0 ? "badge-boost" : (isBoosted ? "badge-boost" : "badge-tier");
+                    callOrderBadge = "<span class=\"badge " + badgeClass + "\" style=\"cursor:pointer;\" onclick=\"openCustomTierModal('" + escapeHTML(authIdx) + "', '" + escapeHTML(credDisplayName) + "', " + customTier + ")\" title=\"" + (currentLang === "zh-CN" ? "点击修改自定义 Tier" : "Click to edit Custom Tier") + "\">" + escapeHTML(tierText) + "</span>";
                 } else if (bypassedReason === "cooldown") {
                     callOrderBadge = "<span class=\"badge badge-warning\">" + (currentLang === "zh-CN" ? "⏳ 429 冷却避让" : "⏳ 429 Cooldown") + "</span>";
                 } else if (bypassedReason === "unsupported_model") {
@@ -277,9 +290,6 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
                     reasonColorClass = "cred-reason-boost";
                 }
                 const formattedReason = formatReason(item.reason, isBoosted, item.target && item.target.disabled);
-                const authIdx = item.auth_index || "";
-                const credDisplayName = item.email || "Credential";
-                const maskedEmail = formatMaskedEmail(credDisplayName);
 
                 let cardHtml = "<div class=\"cred-info\">" +
                     "<div class=\"cred-name\">" +
@@ -357,11 +367,11 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
                 cardHtml += "<div class=\"cred-footer\">" +
                     "<div class=\"cred-reason " + reasonColorClass + "\" title=\"" + escapeHTML(formattedReason) + "\">" + escapeHTML(formattedReason) + "</div>" +
                     "<div class=\"cred-actions\">" +
+                        "<button type=\"button\" class=\"btn-secondary btn-card-action\" onclick=\"openCustomTierModal('" + escapeHTML(authIdx) + "', '" + escapeHTML(credDisplayName) + "', " + customTier + ")\">🎯 " + t("btnTier") + "</button>" +
                         "<button type=\"button\" class=\"btn-secondary btn-card-action\" onclick=\"probeSingleCredential('" + escapeHTML(authIdx) + "', this)\">⚡ " + t("btnProbeSingle") + "</button>" +
                         "<button type=\"button\" class=\"btn-secondary btn-card-action\" onclick=\"openSamplesModal('" + escapeHTML(authIdx) + "', '" + escapeHTML(credDisplayName) + "')\">📊 " + t("btnSamples") + "</button>" +
                     "</div>" +
                 "</div>";
-
                 card.innerHTML = cardHtml;
                 container.appendChild(card);
             });

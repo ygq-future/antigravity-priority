@@ -199,6 +199,11 @@ func (r *Runtime) recomputePoolRoutingTableLocked(pool config.AntigravityModelGr
 	historical := store.BuildHistoricalEvidence(credentials, string(pool))
 	cooldowns := store.GetActiveCooldownsForGroup(now, string(pool))
 
+	customTiers := store.GetCustomTiers()
+	if customTiers == nil && r.cfg.CustomTiers != nil {
+		customTiers = r.cfg.CustomTiers
+	}
+
 	options := priority.Options{
 		Now:                 now,
 		BoostStartPriority:  r.cfg.PriorityRules.BoostStartPriority,
@@ -207,6 +212,7 @@ func (r *Runtime) recomputePoolRoutingTableLocked(pool config.AntigravityModelGr
 		MinChange:           r.cfg.MinChange,
 		UrgencyTolerance:    r.cfg.UrgencyTolerance,
 		CooldownAuthIndexes: cooldowns,
+		CustomTiers:         customTiers,
 	}
 
 	plan := priority.PlanWithEvidence(credentials, historicalEvidenceSource{historical: historical}, options)

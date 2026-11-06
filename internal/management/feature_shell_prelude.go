@@ -12,5 +12,6 @@ const templateScriptPrelude = `
         const CONFIG_PATH = BASE_PATH + "/runtime-config";
         const SAMPLES_PATH = BASE_PATH + "/samples";
         const REQUEST_HISTORY_CLEAR_PATH = BASE_PATH + "/request-history/clear";
+        const CUSTOM_TIER_PATH = BASE_PATH + "/custom-tier";
 
 `

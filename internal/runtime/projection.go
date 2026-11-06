@@ -293,6 +293,13 @@ func clonePlanningOptions(options priority.Options) priority.Options {
 		}
 		options.AutoDisabledAuthIndexes = cloned
 	}
+	if len(options.CustomTiers) > 0 {
+		cloned := make(map[string]int, len(options.CustomTiers))
+		for k, v := range options.CustomTiers {
+			cloned[k] = v
+		}
+		options.CustomTiers = cloned
+	}
 	return options
 }
 

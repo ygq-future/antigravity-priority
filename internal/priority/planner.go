@@ -1,6 +1,7 @@
 package priority
 
 import (
+	"fmt"
 	"slices"
 	"time"
 
@@ -75,6 +76,7 @@ type Options struct {
 	UrgencyTolerance    float64
 	AutoDisabledAuthIndexes map[string]struct{}
 	CooldownAuthIndexes map[string]time.Time
+	CustomTiers         map[string]int
 }
 
 // PlanItem represents the calculated target state for a single credential.
@@ -104,6 +106,7 @@ type PlanItem struct {
 	TRequired            float64
 	hasQuotaEvidence     bool
 	quotaState           quotaState
+	CustomTier           int
 }
 
 type quotaState uint8
@@ -208,6 +211,7 @@ func planItems(credentials []core.Credential, evidence plannerEvidence, options 
 			Disabled:   credential.Disabled,
 			PlanType:   credential.PlanType,
 			Reason:     ReasonKeepCurrentState,
+			CustomTier: options.CustomTiers[credential.AuthIndex],
 		}
 
 		evidence, hasEvidence := freshByAuthIndex[credential.AuthIndex]
@@ -333,6 +337,7 @@ func quotaEvidenceByAuthIndex(evidence []QuotaEvidence) map[string]QuotaEvidence
 func planPositive(items []PlanItem, options Options) {
 	tolerance := options.UrgencyTolerance
 
+	customIndicesByTier := make(map[int][]int)
 	boostedIndices := make([]int, 0)
 	regularIndices := make([]int, 0)
 	freeIndices := make([]int, 0)
@@ -348,6 +353,10 @@ func planPositive(items []PlanItem, options Options) {
 			items[index].Reason = Reason429Cooldown
 			continue
 		}
+		if item.CustomTier > 0 {
+			customIndicesByTier[item.CustomTier] = append(customIndicesByTier[item.CustomTier], index)
+			continue
+		}
 		if item.PlanType == core.PlanTypeFree {
 			freeIndices = append(freeIndices, index)
 		} else if item.IsBoosted {
@@ -357,12 +366,64 @@ func planPositive(items []PlanItem, options Options) {
 		}
 	}
 
-	// 1. Plan Tier 1 (Boosted) with Equal Priority Clustering
+	// 1. Plan Custom Tiers: user-defined tiers take absolute precedence over auto tiers.
+	// Candidates sharing the identical custom tier receive equal priority for balanced load-sharing.
+	minCustomPriority := options.BoostStartPriority
+	if len(customIndicesByTier) > 0 {
+		customTiers := make([]int, 0, len(customIndicesByTier))
+		for tier := range customIndicesByTier {
+			customTiers = append(customTiers, tier)
+		}
+		slices.Sort(customTiers)
+
+		for _, tier := range customTiers {
+			p := 990 - (tier-1)*10
+			if p < 200 {
+				p = 200
+			}
+			if p < minCustomPriority {
+				minCustomPriority = p
+			}
+			indices := customIndicesByTier[tier]
+			for _, idx := range indices {
+				items[idx].Priority = p
+				items[idx].Disabled = false
+				items[idx].Reason = fmt.Sprintf("custom tier #%d", tier)
+			}
+		}
+	}
+
+	boostStart := options.BoostStartPriority
+	normalStart := options.NormalStartPriority
+	freeStart := options.FreeStartPriority
+
+	if len(customIndicesByTier) > 0 {
+		if boostStart >= minCustomPriority {
+			boostStart = minCustomPriority - 10
+			if boostStart < 150 {
+				boostStart = 150
+			}
+		}
+		if normalStart >= boostStart {
+			normalStart = boostStart - 10
+			if normalStart < 100 {
+				normalStart = 100
+			}
+		}
+		if freeStart >= normalStart {
+			freeStart = normalStart - 10
+			if freeStart < MinPriority {
+				freeStart = MinPriority
+			}
+		}
+	}
+
+	// 2. Plan Auto Tier 1 (Boosted) with Equal Priority Clustering
 	if len(boostedIndices) > 0 {
 		slices.SortStableFunc(boostedIndices, func(left, right int) int {
 			return CompareHealthyCandidates(items[left], items[right])
 		})
-		currentPriority := options.BoostStartPriority
+		currentPriority := boostStart
 		anchorUrgency := items[boostedIndices[0]].Urgency
 		for i, index := range boostedIndices {
 			if i > 0 {
@@ -384,16 +445,16 @@ func planPositive(items []PlanItem, options Options) {
 		}
 	}
 
-	// 2. Plan Tier 2 (Regular PRO Active) with Equal Priority Clustering
+	// 3. Plan Auto Tier 2 (Regular PRO Active) with Equal Priority Clustering
 	if len(regularIndices) > 0 {
 		slices.SortStableFunc(regularIndices, func(left, right int) int {
 			return CompareHealthyCandidates(items[left], items[right])
 		})
-		currentPriority := options.NormalStartPriority
+		currentPriority := normalStart
 		anchorUrgency := items[regularIndices[0]].Urgency
-		floor := options.FreeStartPriority + 1
-		if floor > options.NormalStartPriority {
-			floor = options.NormalStartPriority
+		floor := freeStart + 1
+		if floor > normalStart {
+			floor = normalStart
 		}
 		if floor < MinPriority {
 			floor = MinPriority
@@ -418,12 +479,12 @@ func planPositive(items []PlanItem, options Options) {
 		}
 	}
 
-	// 3. Plan Tier 3 (FREE Active) with Equal Priority Clustering
+	// 4. Plan Auto Tier 3 (FREE Active) with Equal Priority Clustering
 	if len(freeIndices) > 0 {
 		slices.SortStableFunc(freeIndices, func(left, right int) int {
 			return CompareHealthyCandidates(items[left], items[right])
 		})
-		currentPriority := options.FreeStartPriority
+		currentPriority := freeStart
 		anchorUrgency := items[freeIndices[0]].Urgency
 		for i, index := range freeIndices {
 			if i > 0 {

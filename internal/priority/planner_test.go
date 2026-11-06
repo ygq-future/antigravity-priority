@@ -983,3 +983,109 @@ func TestPlanWithEvidence_FreeTierIsolatedBelowPro(t *testing.T) {
 			proReg.Priority, freeNear.Priority)
 	}
 }
+
+func TestPlanWithEvidence_CustomTierOverridesAutoAndBalancesLoad(t *testing.T) {
+	now := time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
+	reset5h := now.Add(4 * time.Hour)
+	reset7d := now.Add(72 * time.Hour)
+
+	// Setup 3 accounts: a, b, c
+	// Without custom tier, urgency would determine priorities:
+	// a has highest urgency -> auto Tier 1
+	// b has medium urgency -> auto Tier 2
+	// c has low urgency -> auto Tier 3
+	remHigh := int64(80)
+	remMed := int64(50)
+	remLow := int64(20)
+
+	creds := []core.Credential{
+		{AuthIndex: "account-a", PlanType: core.PlanTypePro, Priority: 50, Disabled: false},
+		{AuthIndex: "account-b", PlanType: core.PlanTypePro, Priority: 50, Disabled: false},
+		{AuthIndex: "account-c", PlanType: core.PlanTypePro, Priority: 50, Disabled: false},
+	}
+
+	evidence := plannerEvidence{
+		Fresh: []QuotaEvidence{
+			{
+				AuthIndex:            "account-a",
+				PlanType:             core.PlanTypePro,
+				ShortWindowRemaining: &remHigh,
+				ShortWindowResetAt:   &reset5h,
+				LongWindowRemaining:  &remHigh,
+				LongWindowResetAt:    &reset7d,
+				CycleBurnRate:        0.9, // Highest urgency -> normally Tier 1
+			},
+			{
+				AuthIndex:            "account-b",
+				PlanType:             core.PlanTypePro,
+				ShortWindowRemaining: &remMed,
+				ShortWindowResetAt:   &reset5h,
+				LongWindowRemaining:  &remMed,
+				LongWindowResetAt:    &reset7d,
+				CycleBurnRate:        0.5, // Medium urgency -> normally Tier 2
+			},
+			{
+				AuthIndex:            "account-c",
+				PlanType:             core.PlanTypePro,
+				ShortWindowRemaining: &remLow,
+				ShortWindowResetAt:   &reset5h,
+				LongWindowRemaining:  &remLow,
+				LongWindowResetAt:    &reset7d,
+				CycleBurnRate:        0.1, // Lowest urgency -> normally Tier 3
+			},
+		},
+	}
+
+	// User sets: C: custom tier 1, a: 2, b: 2
+	options := Options{
+		Now:                 now,
+		BoostStartPriority:  999,
+		NormalStartPriority: 100,
+		FreeStartPriority:   10,
+		UrgencyTolerance:    0.05,
+		CustomTiers: map[string]int{
+			"account-c": 1,
+			"account-a": 2,
+			"account-b": 2,
+		},
+	}
+
+	plan := planWithEvidence(creds, evidence, options)
+	itemMap := make(map[string]PlanItem)
+	for _, item := range plan.Items {
+		itemMap[item.Credential.AuthIndex] = item
+	}
+
+	itemC := itemMap["account-c"]
+	itemA := itemMap["account-a"]
+	itemB := itemMap["account-b"]
+
+	// 1. Account C has Custom Tier 1 -> gets higher priority (990)
+	if itemC.Priority != 990 {
+		t.Errorf("account-c priority = %d, want 990", itemC.Priority)
+	}
+	if itemC.Reason != "custom tier #1" {
+		t.Errorf("account-c reason = %s, want 'custom tier #1'", itemC.Reason)
+	}
+
+	// 2. Account a and b have Custom Tier 2 -> get equal priority (980) for load balancing
+	if itemA.Priority != 980 {
+		t.Errorf("account-a priority = %d, want 980", itemA.Priority)
+	}
+	if itemB.Priority != 980 {
+		t.Errorf("account-b priority = %d, want 980", itemB.Priority)
+	}
+	if itemA.Priority != itemB.Priority {
+		t.Errorf("account-a (%d) and account-b (%d) must have equal priority for load balancing",
+			itemA.Priority, itemB.Priority)
+	}
+	if itemA.Reason != "custom tier #2" || itemB.Reason != "custom tier #2" {
+		t.Errorf("account-a/b reasons: want 'custom tier #2', got %q and %q", itemA.Reason, itemB.Reason)
+	}
+
+	// 3. Priority of C > Priority of a/b
+	if itemC.Priority <= itemA.Priority {
+		t.Errorf("account-c priority (%d) must be strictly greater than account-a/b priority (%d)",
+			itemC.Priority, itemA.Priority)
+	}
+}

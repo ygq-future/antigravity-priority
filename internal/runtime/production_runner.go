@@ -529,6 +529,7 @@ func filterCredentialsByAuthIndex(credentials []core.Credential, authIndexes []s
 func priorityOptions(cfg config.Config, store *state.Store, now time.Time) priority.Options {
 	var cooldowns map[string]time.Time
 	var autoDisabled map[string]struct{}
+	var customTiers map[string]int
 	if store != nil {
 		cooldowns = store.GetActiveCooldowns(now)
 		autoMap := store.GetAutoDisabled()
@@ -538,6 +539,10 @@ func priorityOptions(cfg config.Config, store *state.Store, now time.Time) prior
 				autoDisabled[k] = struct{}{}
 			}
 		}
+		customTiers = store.GetCustomTiers()
+	}
+	if customTiers == nil && cfg.CustomTiers != nil {
+		customTiers = cfg.CustomTiers
 	}
 	return priority.Options{
 		Now:                     now,
@@ -548,6 +553,7 @@ func priorityOptions(cfg config.Config, store *state.Store, now time.Time) prior
 		UrgencyTolerance:        cfg.UrgencyTolerance,
 		AutoDisabledAuthIndexes: autoDisabled,
 		CooldownAuthIndexes:     cooldowns,
+		CustomTiers:             customTiers,
 	}
 }
 

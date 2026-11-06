@@ -660,3 +660,130 @@ func TestScheduler_ZeroHostCallbacksDuringPick(t *testing.T) {
 		t.Errorf("expected 0 host.* callbacks during scheduler.pick, but %d were recorded", callsMade)
 	}
 }
+
+func TestScheduler_CustomTier_PrioritizesTier1_And_BalancesTier2(t *testing.T) {
+	ctx := context.Background()
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	now := time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
+	clock := &testClock{now: now}
+
+	mock := newMockHost()
+	mock.files = []host.AuthFile{
+		{Name: "account-a", AuthIndex: "idx-a", Provider: "antigravity", Status: "active"},
+		{Name: "account-b", AuthIndex: "idx-b", Provider: "antigravity", Status: "active"},
+		{Name: "account-c", AuthIndex: "idx-c", Provider: "antigravity", Status: "active"},
+	}
+
+	r := runtime.New(runtime.Options{Host: mock, StateCachePath: cachePath, Clock: clock})
+	if _, err := r.Register(ctx, runtime.RegisterRequest{ConfigYAML: "enabled: true\nstate_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = r.SyncHost(ctx, config.AntigravityModelGroupGemini)
+
+
+	// Setup healthy quotas for all three in state store
+	store, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rem := int64(80)
+	reset5h := now.Add(4 * time.Hour)
+	reset7d := now.Add(72 * time.Hour)
+	for _, idx := range []string{"idx-a", "idx-b", "idx-c"} {
+		_ = store.MarkProbeSuccess(ctx, state.ProbeSuccess{
+			AuthIndex:            idx,
+			Provider:             core.ProviderAntigravity,
+			ModelGroup:           "gemini",
+			ObservedAt:           now,
+			ResetAt:              reset7d,
+			Remaining:            rem,
+			ShortWindowRemaining: &rem,
+			ShortWindowResetAt:   reset5h,
+			LongWindowRemaining:  &rem,
+			LongWindowResetAt:    reset7d,
+			PlanType:             core.PlanTypePro,
+		})
+	}
+	_ = store.SaveAtomic(ctx)
+
+	// Configure Custom Tiers: c: 1, a: 2, b: 2
+	if err := r.SetCustomTier(ctx, "idx-c", 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.SetCustomTier(ctx, "idx-a", 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.SetCustomTier(ctx, "idx-b", 2); err != nil {
+		t.Fatal(err)
+	}
+
+	candidates := []runtime.SchedulerAuthCandidate{
+		{ID: "account-a", Provider: "antigravity"},
+		{ID: "account-b", Provider: "antigravity"},
+		{ID: "account-c", Provider: "antigravity"},
+	}
+	req, _ := json.Marshal(runtime.SchedulerPickRequest{
+		Model:      "gemini-3.8-flash-high",
+		Candidates: candidates,
+	})
+
+	// 1. With all 3 healthy, Account C (Tier 1) MUST always win
+	for i := range 5 {
+		resBytes := r.Handle(ctx, runtime.MethodSchedulerPick, req)
+		var env struct {
+			OK     bool                          `json:"ok"`
+			Result runtime.SchedulerPickResponse `json:"result"`
+		}
+		if err := json.Unmarshal(resBytes, &env); err != nil || !env.OK {
+			t.Fatalf("call %d unmarshal failed: %s", i, string(resBytes))
+		}
+		if env.Result.AuthID != "account-c" {
+			t.Fatalf("call %d expected account-c (Tier 1), got %s", i, env.Result.AuthID)
+		}
+	}
+
+	// 2. Put Account C into 429 rate limit cooldown (temporary bypass)
+	store, _ = state.Load(ctx, cachePath)
+	store.SetCooldown(state.CooldownEntry{
+		AuthIndex:     "idx-c",
+		ModelGroup:    "gemini",
+		TriggeredAt:   now,
+		CooldownUntil: now.Add(5 * time.Minute),
+		Reason:        "429 cooldown",
+	})
+	_ = store.SaveAtomic(ctx)
+
+	// Advance time by 65s (>60s routing table refresh TTL, but well within 5min cooldown)
+	clock.now = now.Add(65 * time.Second)
+	// 3. Requests must now rotate between Account A and Account B (both Tier 2, load balancing)
+	picks := make([]string, 4)
+	for i := range 4 {
+		resBytes := r.Handle(ctx, runtime.MethodSchedulerPick, req)
+		var env struct {
+			OK     bool                          `json:"ok"`
+			Result runtime.SchedulerPickResponse `json:"result"`
+		}
+		if err := json.Unmarshal(resBytes, &env); err != nil || !env.OK {
+			t.Fatalf("call %d unmarshal failed: %s", i, string(resBytes))
+		}
+		picks[i] = env.Result.AuthID
+	}
+
+	// Expected round-robin alternation between account-a and account-b
+	if picks[0] == picks[1] || picks[1] == picks[2] || picks[2] == picks[3] {
+		t.Errorf("expected alternating load balancing between account-a and account-b, got %v", picks)
+	}
+	hasA := false
+	hasB := false
+	for _, p := range picks {
+		if p == "account-a" {
+			hasA = true
+		}
+		if p == "account-b" {
+			hasB = true
+		}
+	}
+	if !hasA || !hasB {
+		t.Errorf("expected both account-a and account-b to participate in load balancing, got %v", picks)
+	}
+}

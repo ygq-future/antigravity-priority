@@ -60,6 +60,8 @@ const (
 	KeyWindowStart = "window_start"
 	// KeyWindowEnd is the JSON key for window_end.
 	KeyWindowEnd = "window_end"
+	// KeyCustomTiers is the JSON key for custom_tiers.
+	KeyCustomTiers = "custom_tiers"
 
 	// DefaultUrgencyTolerance is the default numerical delta threshold below which adjacent credentials share identical priority.
 	DefaultUrgencyTolerance = 0.05
@@ -106,6 +108,7 @@ type Config struct {
 	StateCachePath           string
 	PriorityRules            PriorityRules
 	Schedule                 ScheduleConfig
+	CustomTiers              map[string]int
 }
 
 // PriorityRules contains the priority scoring configurations.
@@ -170,6 +173,7 @@ type DynamicConfig struct {
 	QuotaSampleCapacity      int                 `json:"quota_sample_capacity"`       // e.g. 6 (range 2..30)
 	PriorityRules            PriorityRulesConfig `json:"priority_rules"`
 	Schedule                 ScheduleConfig      `json:"schedule"`
+	CustomTiers              map[string]int      `json:"custom_tiers,omitempty"`
 }
 
 // UnmarshalJSON seeds omitted fields from the canonical defaults before
@@ -230,7 +234,21 @@ func (cfg Config) Dynamic() DynamicConfig {
 			FreeStartPriority:   cfg.PriorityRules.FreeStartPriority,
 		},
 		Schedule: cfg.Schedule,
+		CustomTiers: cloneCustomTiers(cfg.CustomTiers),
 	}
+}
+
+func cloneCustomTiers(src map[string]int) map[string]int {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make(map[string]int, len(src))
+	for k, v := range src {
+		if v > 0 {
+			dst[k] = v
+		}
+	}
+	return dst
 }
 
 // Validate validates all field boundaries in DynamicConfig.
@@ -278,6 +296,14 @@ func (dyn DynamicConfig) Validate() error {
 	if err := ValidateScheduleWindow(dyn.Schedule.WindowStart, dyn.Schedule.WindowEnd); err != nil {
 		return err
 	}
+	for authIdx, tier := range dyn.CustomTiers {
+		if strings.TrimSpace(authIdx) == "" {
+			return fmt.Errorf("custom_tiers contains empty auth_index")
+		}
+		if tier < 0 || tier > 99 {
+			return fmt.Errorf("custom_tiers[%q] must be between 1 and 99 (0 to remove), got %d", authIdx, tier)
+		}
+	}
 	return nil
 }
 
@@ -303,6 +329,7 @@ func (dyn DynamicConfig) ApplyTo(base Config) (Config, error) {
 	res.PriorityRules.NormalStartPriority = dyn.PriorityRules.NormalStartPriority
 	res.PriorityRules.FreeStartPriority = dyn.PriorityRules.FreeStartPriority
 	res.Schedule = dyn.Schedule
+	res.CustomTiers = cloneCustomTiers(dyn.CustomTiers)
 	return res, nil
 }
 
