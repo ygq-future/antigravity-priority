@@ -279,11 +279,12 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
                 const formattedReason = formatReason(item.reason, isBoosted, item.target && item.target.disabled);
                 const authIdx = item.auth_index || "";
                 const credDisplayName = item.email || "Credential";
+                const maskedEmail = formatMaskedEmail(credDisplayName);
 
                 let cardHtml = "<div class=\"cred-info\">" +
                     "<div class=\"cred-name\">" +
                         callOrderBadge +
-                        "<span class=\"cred-email\">" + escapeHTML(credDisplayName) + "</span>" +
+                        "<span class=\"cred-email\" title=\"" + escapeHTML(credDisplayName) + "\">" + escapeHTML(maskedEmail) + "</span>" +
                         "<span class=\"cred-meta\">" + formatPlanBadge(item.plan_type) + "</span>" +
                     "</div>" +
                     "<div class=\"cred-badge-row\">" +

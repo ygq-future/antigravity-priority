@@ -1162,7 +1162,7 @@ func TestRuntime_ProbeReconcilesHostChangesBeforePlanning(t *testing.T) {
 		t.Fatal(err)
 	}
 	items := snapshot.Groups["gemini"].Items
-	if len(items) != 1 || items[0].AuthIndex != "au***ed" || items[0].Target.Priority != 77 {
+	if len(items) != 1 || items[0].AuthIndex != "auth***" || items[0].Target.Priority != 77 {
 		t.Fatalf("post-probe snapshot items = %#v; want newly added credential unchanged", items)
 	}
 }
@@ -1220,7 +1220,7 @@ func TestRuntime_ProbeStillPerformsSecondHostSyncWhenInitialInventoryIsEmpty(t *
 		t.Fatal(err)
 	}
 	items := snapshot.Groups["gemini"].Items
-	if len(items) != 1 || items[0].AuthIndex != "au***ed" || items[0].Target.Priority != 77 {
+	if len(items) != 1 || items[0].AuthIndex != "auth***" || items[0].Target.Priority != 77 {
 		t.Fatalf("post-probe snapshot items = %#v; want late addition unchanged", items)
 	}
 	if got := strings.Join(mock.operations, ","); got != "host-sync,host-sync" {
@@ -2369,7 +2369,7 @@ func TestRuntime_UsageHandle_429Cooldown(t *testing.T) {
 	if !ok || len(activeCD) != 1 {
 		t.Fatalf("expected 1 active cooldown in diagnostics, got %+v", diag["active_cooldowns"])
 	}
-	if activeCD[0]["auth_index"] != "au***29" {
+	if activeCD[0]["auth_index"] != "auth***" {
 		t.Errorf("expected redacted auth_index, got %v", activeCD[0]["auth_index"])
 	}
 	if _, hasWarnings := diag["config_warnings"]; hasWarnings {

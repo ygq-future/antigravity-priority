@@ -180,7 +180,7 @@ func TestSamplesModalUsesSelectedModelGroupOnly(t *testing.T) {
 		t.Skip("node is not available; samples modal behavior is checked in the Node-enabled verification environment")
 	}
 
-	harness := templateScriptOverviewSamples + `
+	harness := templateScriptOverviewActionsCore + templateScriptOverviewSamples + `
 function element(initial) {
     return Object.assign({hidden:true,textContent:"",innerHTML:""}, initial || {});
 }

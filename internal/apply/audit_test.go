@@ -200,16 +200,16 @@ func TestResultName_FallbackHierarchy(t *testing.T) {
 		t.Fatalf("apply error: %v", err)
 	}
 
-	if res.Changes[0].Name != "my***nt" {
+	if res.Changes[0].Name != "my-a***" {
 		t.Errorf("expected redacted account identity, got %s", res.Changes[0].Name)
 	}
-	if res.Changes[1].Name != "my***om" {
+	if res.Changes[1].Name != "my-e***" {
 		t.Errorf("expected redacted email identity, got %s", res.Changes[1].Name)
 	}
-	if res.Changes[2].Name != "my***e3" {
+	if res.Changes[2].Name != "my-n***" {
 		t.Errorf("expected redacted name identity, got %s", res.Changes[2].Name)
 	}
-	if res.Changes[3].Name != "my***x4" {
+	if res.Changes[3].Name != "my-i***" {
 		t.Errorf("expected redacted auth identity, got %s", res.Changes[3].Name)
 	}
 	if res.Changes[4].Name != "" {

@@ -75,6 +75,9 @@ func TestRuntime_RequestHistory_RecordsOnUsage(t *testing.T) {
 	if rec0.ModelPool != "gemini" {
 		t.Errorf("expected model pool gemini, got %q", rec0.ModelPool)
 	}
+	if rec0.Email != "auth***" {
+		t.Errorf("expected redacted email/identifier 'auth***', got %q", rec0.Email)
+	}
 
 	// Oldest should be second (the 200 success)
 	rec1 := records[1]
@@ -89,6 +92,9 @@ func TestRuntime_RequestHistory_RecordsOnUsage(t *testing.T) {
 	}
 
 	// 4. Verify Diagnostics contains request_history
+	if rec1.Email != "auth***" {
+		t.Errorf("expected redacted email/identifier 'auth***', got %q", rec1.Email)
+	}
 	diag, err := r.Diagnostics(context.Background())
 	if err != nil {
 		t.Fatal(err)

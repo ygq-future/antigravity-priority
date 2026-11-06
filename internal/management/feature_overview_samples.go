@@ -37,8 +37,9 @@ const templateScriptOverviewSamples = `        let cachedSamplesData = null;
             if (!modal || !body) return;
 
             cachedSamplesEmail = email || "";
-            title.textContent = (email || "Credential") + " - " + t("samplesModalTitle");
-            if (sub) sub.textContent = email ? "Email: " + email : "";
+            const masked = formatMaskedEmail(email);
+            title.textContent = (masked || "Credential") + " - " + t("samplesModalTitle");
+            if (sub) sub.textContent = email ? "Email: " + masked : "";
             body.innerHTML = "<div class=\"empty-state\">" + t("loading") + "</div>";
             modal.hidden = false;
 
@@ -94,7 +95,7 @@ const templateScriptOverviewSamples = `        let cachedSamplesData = null;
 
             if (samples.length === 0) {
                 body.innerHTML = "<div class=\"empty-state\">" + t("noSamples") + "</div>";
-                if (sub) sub.textContent = (email ? "Email: " + email : "") + " · " + groupLabel;
+                if (sub) sub.textContent = (email ? "Email: " + formatMaskedEmail(email) : "") + " · " + groupLabel;
                 return;
             }
 

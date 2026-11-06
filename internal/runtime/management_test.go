@@ -11,7 +11,7 @@ func TestManagementRunHistoryOverlaysFullEmailAtAdapterBoundary(t *testing.T) {
 		runHistory: []RunHistoryEntry{{
 			Kind: "apply",
 			Snapshot: &apply.PlanSnapshot{Items: []apply.SnapshotItem{{
-				Email: "us***om",
+				Email: "user***",
 			}}},
 		}},
 		latestDualSnapshot: &apply.DualGroupSnapshot{Groups: map[string]apply.GroupSnapshot{
@@ -37,7 +37,7 @@ func TestManagementRunHistoryOverlaysFullEmailAtAdapterBoundary(t *testing.T) {
 }
 
 func TestOverlayManagementCooldownEmailsUsesFullEmail(t *testing.T) {
-	cooldowns := []map[string]any{{"auth_index": "au***01"}}
+	cooldowns := []map[string]any{{"auth_index": "auth***"}}
 	overlayManagementCooldownEmails(cooldowns, map[string]string{
 		"auth-account-001": "user@example.com",
 	})
@@ -50,7 +50,7 @@ func TestManagementRunHistoryDoesNotExposeMaskedIdentityFallback(t *testing.T) {
 	r := &Runtime{runHistory: []RunHistoryEntry{{
 		Kind: "apply",
 		Snapshot: &apply.PlanSnapshot{Items: []apply.SnapshotItem{{
-			Email: "us***om",
+			Email: "user***",
 		}}},
 	}}}
 
@@ -68,7 +68,7 @@ func TestManagementRunHistoryResolvesEmailFromMaskedAuthIndex(t *testing.T) {
 		runHistory: []RunHistoryEntry{{
 			Kind: "apply",
 			Snapshot: &apply.PlanSnapshot{Changes: []apply.SnapshotChange{{
-				AuthIndex: "au***01",
+				AuthIndex: "auth***",
 			}}},
 		}},
 		latestDualSnapshot: &apply.DualGroupSnapshot{Groups: map[string]apply.GroupSnapshot{

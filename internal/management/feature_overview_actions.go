@@ -52,6 +52,12 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
             var label = planType ? planType.toUpperCase() : "ANTIGRAVITY";
             return "<span class=\"badge badge-plan badge-plan-default\">" + escapeHTML(label) + "</span>";
         }
+        function formatMaskedEmail(email) {
+            if (!email || email === "Credential") return "Credential";
+            var s = String(email).trim();
+            if (s.length <= 4) return s + "***";
+            return s.substring(0, 4) + "***";
+        }
 
 
         async function fetchSnapshot(options) {

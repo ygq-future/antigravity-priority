@@ -1369,10 +1369,14 @@ func (r *Runtime) recordCooldownFailure(ctx context.Context, store *state.Store,
 }
 
 func redactRuntimeIdentifier(value string) string {
-	if len(value) <= 4 {
-		return "***"
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
 	}
-	return value[:2] + "***" + value[len(value)-2:]
+	if len(value) <= 4 {
+		return value + "***"
+	}
+	return value[:4] + "***"
 }
 
 func buildMetadata() Metadata {

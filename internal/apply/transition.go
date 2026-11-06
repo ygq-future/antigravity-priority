@@ -549,7 +549,7 @@ func redactIdentifier(value string) string {
 		return ""
 	}
 	if len(value) <= 4 {
-		return "***"
+		return value + "***"
 	}
-	return value[:2] + "***" + value[len(value)-2:]
+	return value[:4] + "***"
 }

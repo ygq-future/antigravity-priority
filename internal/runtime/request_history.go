@@ -66,24 +66,25 @@ func (r *Runtime) ClearRequestHistory(ctx context.Context) error {
 	return nil
 }
 
-// resolveAuthEmail attempts to resolve an auth index to an email address.
+// resolveAuthEmail attempts to resolve an auth index to a masked email address (first 4 characters + ***).
 func (r *Runtime) resolveAuthEmail(authIndex string) string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	raw := authIndex
 	if r.latestDualSnapshot != nil {
 		for _, g := range r.latestDualSnapshot.Groups {
 			for _, item := range g.Items {
 				if item.AuthIndex == authIndex || item.Identity.AuthIndex == authIndex || item.Name == authIndex {
-					if item.Email != "" {
-						return item.Email
-					}
 					if item.Identity.Email != "" {
-						return item.Identity.Email
+						return redactRuntimeIdentifier(item.Identity.Email)
+					}
+					if item.Email != "" {
+						return redactRuntimeIdentifier(item.Email)
 					}
 				}
 			}
 		}
 	}
-	return authIndex
+	return redactRuntimeIdentifier(raw)
 }
