@@ -787,3 +787,71 @@ func TestScheduler_CustomTier_PrioritizesTier1_And_BalancesTier2(t *testing.T) {
 		t.Errorf("expected both account-a and account-b to participate in load balancing, got %v", picks)
 	}
 }
+
+func TestScheduler_UpdateModelInventory_FiltersNonAntigravityModels(t *testing.T) {
+	ctx := context.Background()
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	clock := &testClock{now: now}
+
+	mock := newMockHost()
+	mock.files = []host.AuthFile{
+		{Name: "ag-account", AuthIndex: "idx-ag", Provider: "antigravity", Status: "active"},
+		{Name: "vx-account", AuthIndex: "idx-vx", Provider: "vertex", Status: "active"},
+		{Name: "cx-account", AuthIndex: "idx-cx", Provider: "codex", Status: "active"},
+	}
+	mock.modelsEntries = []host.AuthModelsEntry{
+		{
+			AuthIndex: "idx-ag",
+			Provider:  "antigravity",
+			Models:    []string{"gemini-3.8-flash-high", "gemini-4-argon-high", "claude-sonnet-5-5-high"},
+		},
+		{
+			AuthIndex: "idx-vx",
+			Provider:  "vertex",
+			Models:    []string{"gemini-omni-1.2-flash", "gemini-4-argon"},
+		},
+		{
+			AuthIndex: "idx-cx",
+			Provider:  "codex",
+			Models:    []string{"gpt-6-chat-thinking", "gpt-image-2.5"},
+		},
+	}
+
+	r := runtime.New(runtime.Options{Host: mock, Clock: clock, StateCachePath: cachePath})
+	if _, err := r.Register(ctx, runtime.RegisterRequest{ConfigYAML: "enabled: true\nstate_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
+		t.Fatal(err)
+	}
+
+	snap, err := r.SyncHost(ctx, config.AntigravityModelGroupGemini)
+	if err != nil {
+		t.Fatalf("SyncHost failed: %v", err)
+	}
+
+	// 1. Verify models returned in snapshot contain only Antigravity models
+	forbiddenModels := []string{
+		"gemini-omni-1.2-flash",
+		"gemini-4-argon",
+		"gpt-6-chat-thinking",
+		"gpt-image-2.5",
+	}
+	for _, m := range snap.Models {
+		for _, forbidden := range forbiddenModels {
+			if m.ID == forbidden {
+				t.Errorf("snap.Models contains non-antigravity model %q from another provider", forbidden)
+			}
+		}
+	}
+
+	// 2. Verify all models in snap.Models are indeed Antigravity models
+	agMap := make(map[string]bool)
+	for _, m := range snap.Models {
+		agMap[m.ID] = true
+	}
+	expectedAgModels := []string{"gemini-3.8-flash-high", "gemini-4-argon-high", "claude-sonnet-5-5-high"}
+	for _, expected := range expectedAgModels {
+		if !agMap[expected] {
+			t.Errorf("snap.Models missing expected Antigravity model %q", expected)
+		}
+	}
+}

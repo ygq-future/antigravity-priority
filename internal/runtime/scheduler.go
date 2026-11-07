@@ -37,8 +37,6 @@ var builtInAntigravityModels = []ModelCatalogItem{
 	// Claude & GPT Pool
 	{ID: "claude-sonnet-5-5-high", DisplayName: "Claude Sonnet 5.5 High", QuotaPool: config.AntigravityModelGroupClaudeGPT},
 	{ID: "claude-opus-5-5-high", DisplayName: "Claude Opus 5.5 High", QuotaPool: config.AntigravityModelGroupClaudeGPT},
-	{ID: "claude-sonnet-4-6", DisplayName: "Claude Sonnet 4.6", QuotaPool: config.AntigravityModelGroupClaudeGPT},
-	{ID: "claude-opus-4-6-thinking", DisplayName: "Claude Opus 4.6 Thinking", QuotaPool: config.AntigravityModelGroupClaudeGPT},
 	{ID: "gpt-oss-120b-medium", DisplayName: "GPT OSS 120B Medium", QuotaPool: config.AntigravityModelGroupClaudeGPT},
 }
 
@@ -111,26 +109,46 @@ func (r *Runtime) resolveAuthIndex(candidateID string, attributes map[string]str
 }
 
 // updateModelInventoryLocked updates the candidate ID lookup table and catalog from CPA host auth inventory.
+func isAntigravityProviderName(provider string) bool {
+	p := strings.ToLower(strings.TrimSpace(provider))
+	return p == "antigravity" || p == "google" || p == "gemini" || p == "google-antigravity"
+}
+
 func (r *Runtime) updateModelInventoryLocked(files []host.AuthFile, models []host.AuthModelsEntry) {
+	r.authIDToIndex = make(map[string]string)
+	r.supportedModelsByAuth = make(map[string]map[string]struct{})
+
+	antigravityAuthIDs := make(map[string]struct{})
 	for _, file := range files {
+		if !isAntigravityAuthFile(file) {
+			continue
+		}
 		idx := file.AuthIndex
 		if idx == "" {
 			continue
 		}
+		antigravityAuthIDs[idx] = struct{}{}
 		r.authIDToIndex[idx] = idx
 		if file.ID != "" {
+			antigravityAuthIDs[file.ID] = struct{}{}
 			r.authIDToIndex[file.ID] = idx
 		}
 		if file.Name != "" {
+			antigravityAuthIDs[file.Name] = struct{}{}
 			r.authIDToIndex[file.Name] = idx
 		}
 		if file.Email != "" {
+			antigravityAuthIDs[file.Email] = struct{}{}
 			r.authIDToIndex[file.Email] = idx
 		}
 		if file.Account != "" {
+			antigravityAuthIDs[file.Account] = struct{}{}
 			r.authIDToIndex[file.Account] = idx
 		}
 		if file.Path != "" {
+			antigravityAuthIDs[file.Path] = struct{}{}
+			antigravityAuthIDs[filepath.Base(file.Path)] = struct{}{}
+			antigravityAuthIDs[filepath.ToSlash(file.Path)] = struct{}{}
 			r.authIDToIndex[file.Path] = idx
 			r.authIDToIndex[filepath.Base(file.Path)] = idx
 			r.authIDToIndex[filepath.ToSlash(file.Path)] = idx
@@ -138,15 +156,28 @@ func (r *Runtime) updateModelInventoryLocked(files []host.AuthFile, models []hos
 	}
 
 	catalogMap := make(map[string]ModelCatalogItem)
-	for _, item := range builtInAntigravityModels {
-		catalogMap[item.ID] = item
-	}
+	var discoveredAntigravityModels int
 
 	for _, entry := range models {
+		// Ignore models from explicit non-antigravity providers (e.g. vertex, codex, openai).
+		if p := strings.TrimSpace(entry.Provider); p != "" && !isAntigravityProviderName(p) {
+			continue
+		}
+
 		authIdx := entry.AuthIndex
 		if authIdx == "" {
 			authIdx = entry.ID
 		}
+
+		// When Antigravity credentials exist, ensure the model entry belongs to one of them.
+		if len(antigravityAuthIDs) > 0 {
+			_, byAuthIdx := antigravityAuthIDs[authIdx]
+			_, byID := antigravityAuthIDs[entry.ID]
+			if !byAuthIdx && !byID {
+				continue
+			}
+		}
+
 		if authIdx != "" {
 			if entry.ID != "" {
 				r.authIDToIndex[entry.ID] = authIdx
@@ -166,6 +197,7 @@ func (r *Runtime) updateModelInventoryLocked(files []host.AuthFile, models []hos
 					continue
 				}
 				set[trimmed] = struct{}{}
+				discoveredAntigravityModels++
 				if _, exists := catalogMap[trimmed]; !exists {
 					catalogMap[trimmed] = ModelCatalogItem{
 						ID:          trimmed,
@@ -174,6 +206,13 @@ func (r *Runtime) updateModelInventoryLocked(files []host.AuthFile, models []hos
 					}
 				}
 			}
+		}
+	}
+
+	// Fall back to built-in models only when host reports no callable Antigravity models.
+	if discoveredAntigravityModels == 0 {
+		for _, item := range builtInAntigravityModels {
+			catalogMap[item.ID] = item
 		}
 	}
 

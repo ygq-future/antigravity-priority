@@ -85,16 +85,6 @@ const overviewMarkup = `
                             <span class="model-option-name">claude-opus-5-5-high</span>
                             <span class="custom-select-check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg></span>
                         </div>
-                        <div class="custom-select-option" data-value="claude-sonnet-4-6" data-pool="claude_gpt" onclick="selectModel('claude-sonnet-4-6', event)" role="option" aria-selected="false">
-                            <span class="model-pool-badge badge-claude">Claude/GPT</span>
-                            <span class="model-option-name">claude-sonnet-4-6</span>
-                            <span class="custom-select-check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg></span>
-                        </div>
-                        <div class="custom-select-option" data-value="claude-opus-4-6-thinking" data-pool="claude_gpt" onclick="selectModel('claude-opus-4-6-thinking', event)" role="option" aria-selected="false">
-                            <span class="model-pool-badge badge-claude">Claude/GPT</span>
-                            <span class="model-option-name">claude-opus-4-6-thinking</span>
-                            <span class="custom-select-check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg></span>
-                        </div>
                         <div class="custom-select-option" data-value="gpt-oss-120b-medium" data-pool="claude_gpt" onclick="selectModel('gpt-oss-120b-medium', event)" role="option" aria-selected="false">
                             <span class="model-pool-badge badge-claude">Claude/GPT</span>
                             <span class="model-option-name">gpt-oss-120b-medium</span>
