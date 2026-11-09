@@ -728,3 +728,34 @@ func TestParseAllModelGroups_ThreePools(t *testing.T) {
 		t.Errorf("claude long window = %v, want 45", claude.LongWindowRemaining)
 	}
 }
+
+func TestParseAllModelGroups_NoArgonBucketReturnsUnavailableForArgon(t *testing.T) {
+	raw := []byte(`{"groups":[
+		{"displayName":"Gemini Models","description":"Shared quota for Gemini models","buckets":[
+			{"bucketId":"gemini-5h","displayName":"Five Hour Limit","window":"5h","remainingFraction":0.99,"resetTime":"2026-10-28T17:00:00Z"},
+			{"bucketId":"gemini-weekly","displayName":"Weekly Limit","window":"weekly","remainingFraction":0.79,"resetTime":"2026-10-31T00:00:00Z"}
+		]},
+		{"displayName":"Claude and GPT Models","description":"Shared quota for Claude and GPT models","buckets":[
+			{"bucketId":"claude-5h","displayName":"Five Hour Limit","window":"5h","remainingFraction":0.80,"resetTime":"2026-10-28T17:00:00Z"},
+			{"bucketId":"claude-weekly","displayName":"Weekly Limit","window":"weekly","remainingFraction":0.45,"resetTime":"2026-10-31T00:00:00Z"}
+		]}
+	]}`)
+	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+
+	results := ParseAllModelGroups(raw, now)
+	gemini := results[ModelGroupGemini]
+	if gemini.Status != StatusReady {
+		t.Fatalf("gemini status = %v, want ready", gemini.Status)
+	}
+	if gemini.ArgonWindowRemaining != nil {
+		t.Errorf("gemini ArgonWindowRemaining = %v, want nil when no Argon bucket exists", gemini.ArgonWindowRemaining)
+	}
+
+	argon := results[ModelGroupArgon]
+	if argon.Status != StatusProbeFailed {
+		t.Fatalf("argon status = %v, want probe failed when no Argon bucket exists", argon.Status)
+	}
+	if argon.Error != "target model group quota unavailable" {
+		t.Errorf("argon error = %q, want 'target model group quota unavailable'", argon.Error)
+	}
+}

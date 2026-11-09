@@ -343,6 +343,85 @@ func TestProjectDualModelGroups_ThreePoolIndependentPlansAndQuotaWindows(t *test
 	}
 }
 
+func TestProjectDualModelGroups_NoArgonBucketDoesNotFabricateArgon7d(t *testing.T) {
+	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+	credentials := []core.Credential{{
+		Name:      "pro-no-argon",
+		AuthIndex: "auth-no-argon",
+		Provider:  core.ProviderAntigravity,
+		Type:      core.CredentialTypeAntigravity,
+		Priority:  100,
+	}}
+
+	reset5h := now.Add(4 * time.Hour)
+	reset7d := now.Add(120 * time.Hour)
+	rem5h := int64(95)
+	rem7d := int64(88)
+
+	evidenceByGroup := map[config.AntigravityModelGroup]evidence.Result{
+		config.AntigravityModelGroupGemini: {
+			Eligible: []priority.QuotaEvidence{{
+				AuthIndex:            "auth-no-argon",
+				Provider:             core.ProviderAntigravity,
+				ModelGroup:           config.AntigravityModelGroupGemini,
+				ObservedAt:           now,
+				ResetAt:              &reset5h,
+				Remaining:            &rem5h,
+				ShortWindowResetAt:   &reset5h,
+				ShortWindowRemaining: &rem5h,
+				LongWindowResetAt:    &reset7d,
+				LongWindowRemaining:  &rem7d,
+				PlanType:             core.PlanTypePro,
+			}},
+		},
+		config.AntigravityModelGroupClaudeGPT: {
+			Eligible: []priority.QuotaEvidence{{
+				AuthIndex:            "auth-no-argon",
+				Provider:             core.ProviderAntigravity,
+				ModelGroup:           config.AntigravityModelGroupClaudeGPT,
+				ObservedAt:           now,
+				ResetAt:              &reset5h,
+				Remaining:            &rem5h,
+				ShortWindowResetAt:   &reset5h,
+				ShortWindowRemaining: &rem5h,
+				LongWindowResetAt:    &reset7d,
+				LongWindowRemaining:  &rem7d,
+				PlanType:             core.PlanTypePro,
+			}},
+		},
+		// Argon has NO quota evidence because parseArgonGroup found no Argon windows
+		config.AntigravityModelGroupArgon: {},
+	}
+
+	projection, err := runtime.ProjectDualModelGroups(runtime.ProjectionInput{
+		ControlModelGroup: config.AntigravityModelGroupGemini,
+		Credentials:       credentials,
+		EvidenceByGroup:   evidenceByGroup,
+		PlanningOptions:   priority.Options{NormalStartPriority: 100},
+		ProjectionTime:    now,
+	})
+	if err != nil {
+		t.Fatalf("ProjectDualModelGroups failed: %v", err)
+	}
+
+	for _, group := range []string{"gemini", "argon", "claude_gpt"} {
+		item := projection.Snapshot.Groups[group].Items[0]
+		qw := item.QuotaWindows
+		if qw.Gemini5h.Remaining == nil || *qw.Gemini5h.Remaining != 95 {
+			t.Errorf("[%s] QuotaWindows Gemini5h = %v, want 95", group, qw.Gemini5h.Remaining)
+		}
+		if qw.Gemini7d.Remaining == nil || *qw.Gemini7d.Remaining != 88 {
+			t.Errorf("[%s] QuotaWindows Gemini7d = %v, want 88", group, qw.Gemini7d.Remaining)
+		}
+		if qw.Argon7d.Remaining != nil {
+			t.Errorf("[%s] QuotaWindows Argon7d.Remaining = %v, want nil when no Argon bucket exists", group, *qw.Argon7d.Remaining)
+		}
+		if qw.Argon7d.Stale {
+			t.Errorf("[%s] QuotaWindows Argon7d.Stale = true, want false when no Argon bucket exists", group)
+		}
+	}
+}
+
 func readyEvidence(authIndex string, planType core.PlanType, remaining int64, resetAt time.Time) priority.QuotaEvidence {
 	return priority.QuotaEvidence{
 		AuthIndex:  authIndex,

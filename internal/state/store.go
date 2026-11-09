@@ -219,6 +219,7 @@ func Load(ctx context.Context, path string) (*Store, error) {
 			entry.Samples, entry.LearningBaselineSequence = normalizeSampleHistory(entry.Samples, entry.LearningBaselineSequence)
 			store.entries[key] = entry
 		}
+		cleanseClonedArgonEntries(store.entries)
 	}
 	store.latestAudit = doc.LatestAudit
 	if len(doc.LatestResult) > 0 {
@@ -863,8 +864,14 @@ func (s *Store) GetKnownAuthIndexes() []string {
 // Evidence; the Evidence authority decides that only from current probe
 // outcomes.
 func (s *Store) GetHistoricalEvidence(authIndex, modelGroup string) (priority.QuotaEvidence, bool) {
+	normGroup := entryModelGroup(modelGroup)
 	s.mu.RLock()
-	entry, ok := s.entries[entryKey(authIndex, modelGroup)]
+	entry, ok := s.entries[entryKey(authIndex, normGroup)]
+	var geminiEntry Entry
+	var hasGemini bool
+	if normGroup == string(config.AntigravityModelGroupArgon) {
+		geminiEntry, hasGemini = s.entries[entryKey(authIndex, string(config.AntigravityModelGroupGemini))]
+	}
 	s.mu.RUnlock()
 	if !ok || entry.SchemaVersion != SchemaVersion {
 		return priority.QuotaEvidence{}, false
@@ -872,6 +879,14 @@ func (s *Store) GetHistoricalEvidence(authIndex, modelGroup string) (priority.Qu
 
 	if entry.ObservedAt.IsZero() || (entry.ResetAt.IsZero() && entry.ShortWindowResetAt.IsZero() && entry.LongWindowResetAt.IsZero()) {
 		return priority.QuotaEvidence{}, false
+	}
+	if normGroup == string(config.AntigravityModelGroupArgon) {
+		if hasGemini && geminiEntry.ArgonWindowRemaining == nil &&
+			entry.LongWindowRemaining != nil && geminiEntry.LongWindowRemaining != nil &&
+			*entry.LongWindowRemaining == *geminiEntry.LongWindowRemaining &&
+			!entry.LongWindowResetAt.IsZero() && entry.LongWindowResetAt.Equal(geminiEntry.LongWindowResetAt) {
+			return priority.QuotaEvidence{}, false
+		}
 	}
 
 	var resetAt *time.Time
@@ -1100,4 +1115,22 @@ func (s *Store) DeleteAutoDisabled(authIndex string) {
 // Path returns the file path of the state cache.
 func (s *Store) Path() string {
 	return s.path
+}
+
+func cleanseClonedArgonEntries(entries map[string]Entry) {
+	for key, entry := range entries {
+		if entryModelGroup(entry.ModelGroup) != string(config.AntigravityModelGroupArgon) {
+			continue
+		}
+		geminiKey := entryKey(entry.AuthIndex, string(config.AntigravityModelGroupGemini))
+		geminiEntry, hasGemini := entries[geminiKey]
+		if !hasGemini || geminiEntry.ArgonWindowRemaining != nil {
+			continue
+		}
+		if entry.LongWindowRemaining != nil && geminiEntry.LongWindowRemaining != nil &&
+			*entry.LongWindowRemaining == *geminiEntry.LongWindowRemaining &&
+			!entry.LongWindowResetAt.IsZero() && entry.LongWindowResetAt.Equal(geminiEntry.LongWindowResetAt) {
+			delete(entries, key)
+		}
+	}
 }

@@ -144,12 +144,25 @@ func parseGroupFromResponse(response availableModelsResponse, observedAt time.Ti
 }
 
 func parseArgonGroup(windows []candidateWindow, observedAt time.Time) ProbeResult {
+	argonWindows := filterArgonWindows(windows, true)
+	argonLong, hasArgonLong := conservativeWindow(argonWindows, WindowWeekly)
+	if !hasArgonLong {
+		argonLong, hasArgonLong = conservativeAnyWindow(argonWindows)
+	}
+	if !hasArgonLong {
+		return failedResult(observedAt, ModelGroupArgon, "target model group quota unavailable")
+	}
+
 	result := ProbeResult{
-		Provider:   core.ProviderAntigravity,
-		ModelGroup: ModelGroupArgon,
-		ObservedAt: observedAt.UTC(),
-		Status:     StatusReady,
-		PlanType:   inferPlanType(windows),
+		Provider:             core.ProviderAntigravity,
+		ModelGroup:           ModelGroupArgon,
+		ObservedAt:           observedAt.UTC(),
+		Status:               StatusReady,
+		PlanType:             inferPlanType(windows),
+		LongWindowResetAt:    argonLong.resetAt,
+		LongWindowRemaining:  int64Ptr(argonLong.remaining),
+		ArgonWindowResetAt:   argonLong.resetAt,
+		ArgonWindowRemaining: int64Ptr(argonLong.remaining),
 	}
 
 	// 1. Short window: shared Gemini 5h burst window
@@ -159,50 +172,10 @@ func parseArgonGroup(windows []candidateWindow, observedAt time.Time) ProbeResul
 		result.ShortWindowRemaining = int64Ptr(fiveHour.remaining)
 	}
 
-	// 2. Long window: dedicated Argon 7d window, with fallback to shared Gemini 7d (Ultra/Free plans)
-	argonWindows := filterArgonWindows(windows, true)
-	argonLong, hasArgonLong := conservativeWindow(argonWindows, WindowWeekly)
-	if !hasArgonLong {
-		argonLong, hasArgonLong = conservativeAnyWindow(argonWindows)
-	}
-	if !hasArgonLong && result.PlanType != core.PlanTypeFree {
-		normalWindows := filterArgonWindows(windows, false)
-		argonLong, hasArgonLong = conservativeWindow(normalWindows, WindowWeekly)
-	}
-	if !hasArgonLong && result.PlanType != core.PlanTypeFree {
-		argonLong, hasArgonLong = conservativeWindow(windows, WindowWeekly)
-	}
-	if hasArgonLong {
-		result.LongWindowResetAt = argonLong.resetAt
-		result.LongWindowRemaining = int64Ptr(argonLong.remaining)
-		result.ArgonWindowResetAt = argonLong.resetAt
-		result.ArgonWindowRemaining = int64Ptr(argonLong.remaining)
-	}
-
-	// 3. Effective window selection for Argon
-	var selected candidateWindow
-	var hasSelected bool
-	if hasArgonLong && hasFiveHour {
-		if argonLong.remaining <= 0 {
-			selected = argonLong
-		} else if fiveHour.remaining <= 0 {
-			selected = fiveHour
-		} else {
-			selected = fiveHour
-		}
-		hasSelected = true
-	} else if hasArgonLong {
-		selected = argonLong
-		hasSelected = true
-	} else if hasFiveHour {
+	// 2. Effective window selection for Argon
+	selected := argonLong
+	if hasFiveHour && argonLong.remaining > 0 {
 		selected = fiveHour
-		hasSelected = true
-	} else {
-		selected, hasSelected = conservativeAnyWindow(windows)
-	}
-
-	if !hasSelected {
-		return failedResult(observedAt, ModelGroupArgon, "target model group quota unavailable")
 	}
 
 	result.ResetAt = selected.resetAt

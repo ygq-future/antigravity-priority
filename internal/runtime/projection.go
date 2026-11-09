@@ -136,7 +136,7 @@ func buildAllQuotaWindows(snapshots map[config.AntigravityModelGroup]apply.PlanS
 			qw.Argon7d = apply.QuotaWindowBar{
 				Remaining: cloneInt64Pointer(item.ArgonWindowRemaining),
 				ResetAt:   cloneTimePointer(item.ArgonWindowResetAt),
-				Stale:     !item.EvidenceFresh && item.ArgonWindowRemaining == nil,
+				Stale:     !item.EvidenceFresh,
 			}
 		}
 		result[item.AuthIndex] = qw
@@ -176,7 +176,7 @@ func itemShortWindowBar(item apply.SnapshotItem) apply.QuotaWindowBar {
 	return apply.QuotaWindowBar{
 		Remaining: cloneInt64Pointer(rem),
 		ResetAt:   cloneTimePointer(resetAt),
-		Stale:     !item.EvidenceFresh && rem == nil,
+		Stale:     !item.EvidenceFresh && rem != nil,
 	}
 }
 
@@ -193,7 +193,7 @@ func itemLongWindowBar(item apply.SnapshotItem) apply.QuotaWindowBar {
 	return apply.QuotaWindowBar{
 		Remaining: cloneInt64Pointer(rem),
 		ResetAt:   cloneTimePointer(resetAt),
-		Stale:     !item.EvidenceFresh && rem == nil,
+		Stale:     !item.EvidenceFresh && rem != nil,
 	}
 }
 
@@ -205,11 +205,11 @@ func itemArgonWindowBar(item apply.SnapshotItem) apply.QuotaWindowBar {
 			Stale:     false,
 		}
 	}
-	rem := item.LongWindowRemaining
-	resetAt := item.LongWindowResetAt
+	rem := item.ArgonWindowRemaining
+	resetAt := item.ArgonWindowResetAt
 	if rem == nil {
-		rem = item.ArgonWindowRemaining
-		resetAt = item.ArgonWindowResetAt
+		rem = item.LongWindowRemaining
+		resetAt = item.LongWindowResetAt
 	}
 	if rem == nil && item.EvidenceFresh && item.R7d > 0 {
 		val := int64(math.Round(item.R7d * 100.0))
@@ -221,7 +221,7 @@ func itemArgonWindowBar(item apply.SnapshotItem) apply.QuotaWindowBar {
 	return apply.QuotaWindowBar{
 		Remaining: cloneInt64Pointer(rem),
 		ResetAt:   cloneTimePointer(resetAt),
-		Stale:     !item.EvidenceFresh && rem == nil,
+		Stale:     !item.EvidenceFresh && rem != nil,
 	}
 }
 

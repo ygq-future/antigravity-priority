@@ -1636,6 +1636,15 @@ func TestRuntime_LastProbeOutcomes_SuccessAndFailure(t *testing.T) {
 					}]
 				}
 			},
+			"gemini-4-argon-high": {
+				"quotaInfo": {
+					"windows": [{
+						"name": "7d",
+						"remainingFraction": 0.75,
+						"resetTime": "2026-08-25T12:00:00Z"
+					}]
+				}
+			},
 			"claude-3-5-sonnet": {
 				"modelProvider": "anthropic",
 				"quotaInfo": {

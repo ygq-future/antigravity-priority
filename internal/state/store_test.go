@@ -927,3 +927,104 @@ func TestStore_AutoDisabled_PersistenceAndOperations(t *testing.T) {
 		t.Fatal("expected empty auto-disabled map after deletion")
 	}
 }
+
+func TestStore_CleanseClonedArgonEntriesOnLoad(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "legacy-cache.json")
+	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	reset7d := now.Add(48 * time.Hour)
+	reset5h := now.Add(3 * time.Hour)
+
+	// Write raw JSON simulating a legacy state document with cloned Argon entries
+	rawDoc := fmt.Sprintf(`{
+		"schema_version": 1,
+		"entries": {
+			"auth-cloned|model_group=gemini": {
+				"schema_version": 1,
+				"provider": "antigravity",
+				"model_group": "gemini",
+				"auth_index": "auth-cloned",
+				"observed_at": %q,
+				"remaining": 89,
+				"short_window_remaining": 100,
+				"short_window_reset_at": %q,
+				"long_window_remaining": 89,
+				"long_window_reset_at": %q,
+				"cycle_burn_rate": 0.15
+			},
+			"auth-cloned|model_group=argon": {
+				"schema_version": 1,
+				"provider": "antigravity",
+				"model_group": "argon",
+				"auth_index": "auth-cloned",
+				"observed_at": %q,
+				"remaining": 89,
+				"short_window_remaining": 100,
+				"short_window_reset_at": %q,
+				"long_window_remaining": 89,
+				"long_window_reset_at": %q,
+				"cycle_burn_rate": 0.15
+			},
+			"auth-valid|model_group=gemini": {
+				"schema_version": 1,
+				"provider": "antigravity",
+				"model_group": "gemini",
+				"auth_index": "auth-valid",
+				"observed_at": %q,
+				"remaining": 95,
+				"long_window_remaining": 95,
+				"long_window_reset_at": %q,
+				"argon_window_remaining": 70,
+				"argon_window_reset_at": %q
+			},
+			"auth-valid|model_group=argon": {
+				"schema_version": 1,
+				"provider": "antigravity",
+				"model_group": "argon",
+				"auth_index": "auth-valid",
+				"observed_at": %q,
+				"remaining": 70,
+				"long_window_remaining": 70,
+				"long_window_reset_at": %q,
+				"argon_window_remaining": 70,
+				"argon_window_reset_at": %q
+			}
+		}
+	}`,
+		now.Format(time.RFC3339), reset5h.Format(time.RFC3339), reset7d.Format(time.RFC3339),
+		now.Format(time.RFC3339), reset5h.Format(time.RFC3339), reset7d.Format(time.RFC3339),
+		now.Format(time.RFC3339), reset7d.Format(time.RFC3339), reset7d.Add(12*time.Hour).Format(time.RFC3339),
+		now.Format(time.RFC3339), reset7d.Add(12*time.Hour).Format(time.RFC3339), reset7d.Add(12*time.Hour).Format(time.RFC3339),
+	)
+	if err := os.WriteFile(path, []byte(rawDoc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := state.Load(ctx, path)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	// Cloned Argon entry must be cleansed on Load
+	if store.HasEntry("auth-cloned", "argon") {
+		t.Errorf("expected cloned argon entry to be cleansed")
+	}
+	if _, ok := store.GetHistoricalEvidence("auth-cloned", "argon"); ok {
+		t.Errorf("expected GetHistoricalEvidence for cloned argon to return false")
+	}
+	// Gemini entry for auth-cloned must remain intact
+	if !store.HasEntry("auth-cloned", "gemini") {
+		t.Errorf("expected gemini entry for auth-cloned to remain")
+	}
+	if ev, ok := store.GetHistoricalEvidence("auth-cloned", "gemini"); !ok || ev.Remaining == nil || *ev.Remaining != 89 {
+		t.Errorf("expected valid gemini evidence for auth-cloned")
+	}
+
+	// Valid Argon entry must be preserved
+	if !store.HasEntry("auth-valid", "argon") {
+		t.Errorf("expected valid argon entry to be preserved")
+	}
+	if ev, ok := store.GetHistoricalEvidence("auth-valid", "argon"); !ok || ev.Remaining == nil || *ev.Remaining != 70 {
+		t.Errorf("expected valid argon evidence for auth-valid")
+	}
+}
