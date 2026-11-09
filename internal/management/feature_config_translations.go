@@ -19,7 +19,7 @@ const featureConfigTranslations = `        const CONFIG_ZH = {
                 cfgSampleCapacityHint: "滑动窗口保留的历史探测样本数，用于平滑估计燃尽率 (2-30)",
                 cfgCooldownMinutes: "429 熔断冷却时长 (分钟)",
                 cfgCooldownMinutesHint: "遭遇 429 限流时临时降级至 -1 的冷却期 (1-1440)",
-                cfgCardRulesTitle: "优先级分值规则 (Priority Rules)",
+                cfgCardRulesTitle: "优先级分值规则",
                 cfgBoostStart: "🚀 动态 Boost 起始优先级",
                 cfgBoostStartHint: "充裕且即将重置的第一梯队凭证起始优先级 (1-999)",
                 cfgNormalStart: "常规健康凭证起始优先级",
@@ -45,6 +45,18 @@ const featureConfigTranslations = `        const CONFIG_ZH = {
                 valErrPriorityRange: "优先级分值超出范围，需在 1 到 999 之间",
                 valErrPriorityOrder: "常规起始优先级不能大于 Boost 起始优先级",
                 valErrFreePriorityOrder: "Free 起始优先级不能大于常规起始优先级",
+                cfgCardWarmupTitle: "5小时短窗预热",
+                cfgWarmupGemini: "Gemini 5h 满额自动预热",
+                cfgWarmupGeminiHint: "当 Gemini 短窗为 100% 满额且倒计时未激活时，自动发一条微小请求提前触发 5 小时重置倒计时",
+                cfgWarmupGeminiModel: "Gemini 预热目标模型",
+                cfgWarmupGeminiModelHint: "用于触发 Gemini 5h 重置倒计时的模型",
+                cfgWarmupClaude: "Claude / GPT 5h 满额自动预热",
+                cfgWarmupClaudeHint: "当 Claude 短窗为 100% 满额且倒计时未激活时，自动发一条微小请求提前触发 5 小时重置倒计时",
+                cfgWarmupClaudeModel: "Claude 预热目标模型",
+                cfgWarmupClaudeModelHint: "用于触发 Claude 5h 重置倒计时的模型",
+
+                valErrWarmupGeminiModel: "启用 Gemini 预热时模型名称不能为空",
+                valErrWarmupClaudeModel: "启用 Claude 预热时模型名称不能为空",
             }
         };
         const CONFIG_EN = {
@@ -92,6 +104,18 @@ const featureConfigTranslations = `        const CONFIG_ZH = {
                 valErrPriorityRange: "Priority out of range (1 - 999)",
                 valErrPriorityOrder: "Normal start priority cannot be greater than Boost start priority",
                 valErrFreePriorityOrder: "Free start priority cannot be greater than Normal start priority",
+                cfgCardWarmupTitle: "5-Hour Window Warm-Up",
+                cfgWarmupGemini: "Gemini 5h Full-Quota Warm-Up",
+                cfgWarmupGeminiHint: "Automatically send a minimal request when Gemini 5h is 100% to kick off the 5-hour reset countdown early",
+                cfgWarmupGeminiModel: "Gemini Warm-Up Model",
+                cfgWarmupGeminiModelHint: "Model used to kick off Gemini 5h window",
+                cfgWarmupClaude: "Claude / GPT 5h Full-Quota Warm-Up",
+                cfgWarmupClaudeHint: "Automatically send a minimal request when Claude 5h is 100% to kick off the 5-hour reset countdown early",
+                cfgWarmupClaudeModel: "Claude Warm-Up Model",
+                cfgWarmupClaudeModelHint: "Model used to kick off Claude 5h window",
+
+                valErrWarmupGeminiModel: "Gemini model name cannot be empty when Gemini warm-up is enabled",
+                valErrWarmupClaudeModel: "Claude model name cannot be empty when Claude warm-up is enabled",
             }
         };
 `

@@ -60,6 +60,8 @@ const templateScriptControls = `        let userSelectedModel = false;
 
         function updateModelDropdownFromSnapshot(models) {
             if (!Array.isArray(models) || models.length === 0) return;
+            window.cpaAvailableModels = models;
+            populateWarmupModelDropdowns(models);
             const menu = document.getElementById("customModelSelectMenu");
             if (!menu) return;
 
@@ -95,6 +97,68 @@ const templateScriptControls = `        let userSelectedModel = false;
 
             menu.innerHTML = html;
         }
+        function populateWarmupModelDropdowns(models) {
+            if (!Array.isArray(models) || models.length === 0) return;
+            window.cpaAvailableModels = models;
+
+            const geminiModels = [];
+            const claudeModels = [];
+            models.forEach(m => {
+                const p = m.quota_pool || resolveModelPool(m.id);
+                if (p === "gemini") {
+                    geminiModels.push(m);
+                } else if (p === "claude_gpt") {
+                    claudeModels.push(m);
+                }
+            });
+
+            // 1. Gemini Warmup Select
+            const gSelect = document.getElementById("cfgWarmupGeminiModelSelect");
+            const gMenu = document.getElementById("customWarmupGeminiMenu");
+            if (gSelect && gMenu && geminiModels.length > 0) {
+                const candidateVal = (dynamicConfig && dynamicConfig.warmup && dynamicConfig.warmup.gemini_model) || gSelect.value || geminiModels[0].id;
+                const hasVal = geminiModels.some(m => m.id === candidateVal);
+                const currentVal = hasVal ? candidateVal : geminiModels[0].id;
+                let selHtml = "";
+                let menuHtml = "";
+                geminiModels.forEach(m => {
+                    const isSel = m.id === currentVal;
+                    selHtml += "<option value=\"" + escapeHTML(m.id) + "\"" + (isSel ? " selected" : "") + ">" + escapeHTML(m.display_name || m.id) + "</option>";
+                    menuHtml += "<div class=\"custom-select-option" + (isSel ? " selected" : "") + "\" data-value=\"" + escapeHTML(m.id) + "\" onclick=\"selectWarmupGeminiOption('" + escapeHTML(m.id) + "', event)\" role=\"option\" aria-selected=\"" + isSel + "\">" +
+                        "<span>" + escapeHTML(m.display_name || m.id) + "</span>" +
+                        "<span class=\"custom-select-check\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\"><polyline points=\"20 6 9 17 4 12\"></polyline></svg></span>" +
+                        "</div>";
+                });
+                gSelect.innerHTML = selHtml;
+                gSelect.value = currentVal;
+                gMenu.innerHTML = menuHtml;
+                updateCustomWarmupGeminiDisplay();
+            }
+
+            // 2. Claude Warmup Select
+            const cSelect = document.getElementById("cfgWarmupClaudeModelSelect");
+            const cMenu = document.getElementById("customWarmupClaudeMenu");
+            if (cSelect && cMenu && claudeModels.length > 0) {
+                const candidateVal = (dynamicConfig && dynamicConfig.warmup && dynamicConfig.warmup.claude_model) || cSelect.value || claudeModels[0].id;
+                const hasVal = claudeModels.some(m => m.id === candidateVal);
+                const currentVal = hasVal ? candidateVal : claudeModels[0].id;
+                let selHtml = "";
+                let menuHtml = "";
+                claudeModels.forEach(m => {
+                    const isSel = m.id === currentVal;
+                    selHtml += "<option value=\"" + escapeHTML(m.id) + "\"" + (isSel ? " selected" : "") + ">" + escapeHTML(m.display_name || m.id) + "</option>";
+                    menuHtml += "<div class=\"custom-select-option" + (isSel ? " selected" : "") + "\" data-value=\"" + escapeHTML(m.id) + "\" onclick=\"selectWarmupClaudeOption('" + escapeHTML(m.id) + "', event)\" role=\"option\" aria-selected=\"" + isSel + "\">" +
+                        "<span>" + escapeHTML(m.display_name || m.id) + "</span>" +
+                        "<span class=\"custom-select-check\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\"><polyline points=\"20 6 9 17 4 12\"></polyline></svg></span>" +
+                        "</div>";
+                });
+                cSelect.innerHTML = selHtml;
+                cSelect.value = currentVal;
+                cMenu.innerHTML = menuHtml;
+                updateCustomWarmupClaudeDisplay();
+            }
+        }
+
 
         // Compatibility wrappers
         function toggleCustomSelect(event) {
@@ -158,16 +222,94 @@ const templateScriptControls = `        let userSelectedModel = false;
                 });
             }
         }
+        // Custom Select: Warmup Gemini Model
+        function toggleCustomWarmupGeminiSelect(event) {
+            if (event) event.stopPropagation();
+            closeAllCustomSelects("customWarmupGeminiModelSelect");
+            const wrapper = document.getElementById("customWarmupGeminiModelSelect");
+            const menu = document.getElementById("customWarmupGeminiMenu");
+            if (!wrapper || !menu) return;
+            const isOpen = !menu.hidden;
+            menu.hidden = isOpen;
+            wrapper.classList.toggle("open", !isOpen);
+        }
+
+        function selectWarmupGeminiOption(value, event) {
+            if (event) event.stopPropagation();
+            const select = document.getElementById("cfgWarmupGeminiModelSelect");
+            if (select) select.value = value;
+            updateCustomWarmupGeminiDisplay();
+            closeAllCustomSelects();
+            updateSaveButtonState();
+        }
+
+        function updateCustomWarmupGeminiDisplay() {
+            const select = document.getElementById("cfgWarmupGeminiModelSelect");
+            const label = document.getElementById("customWarmupGeminiLabel");
+            if (select && label) {
+                const selectedOpt = select.options[select.selectedIndex];
+                if (selectedOpt) label.textContent = selectedOpt.text || selectedOpt.value;
+            }
+            const menu = document.getElementById("customWarmupGeminiMenu");
+            if (menu && select) {
+                menu.querySelectorAll(".custom-select-option").forEach(opt => {
+                    const isSelected = opt.getAttribute("data-value") === select.value;
+                    opt.classList.toggle("selected", isSelected);
+                });
+            }
+        }
+
+        // Custom Select: Warmup Claude Model
+        function toggleCustomWarmupClaudeSelect(event) {
+            if (event) event.stopPropagation();
+            closeAllCustomSelects("customWarmupClaudeModelSelect");
+            const wrapper = document.getElementById("customWarmupClaudeModelSelect");
+            const menu = document.getElementById("customWarmupClaudeMenu");
+            if (!wrapper || !menu) return;
+            const isOpen = !menu.hidden;
+            menu.hidden = isOpen;
+            wrapper.classList.toggle("open", !isOpen);
+        }
+
+        function selectWarmupClaudeOption(value, event) {
+            if (event) event.stopPropagation();
+            const select = document.getElementById("cfgWarmupClaudeModelSelect");
+            if (select) select.value = value;
+            updateCustomWarmupClaudeDisplay();
+            closeAllCustomSelects();
+            updateSaveButtonState();
+        }
+
+        function updateCustomWarmupClaudeDisplay() {
+            const select = document.getElementById("cfgWarmupClaudeModelSelect");
+            const label = document.getElementById("customWarmupClaudeLabel");
+            if (select && label) {
+                const selectedOpt = select.options[select.selectedIndex];
+                if (selectedOpt) label.textContent = selectedOpt.text || selectedOpt.value;
+            }
+            const menu = document.getElementById("customWarmupClaudeMenu");
+            if (menu && select) {
+                menu.querySelectorAll(".custom-select-option").forEach(opt => {
+                    const isSelected = opt.getAttribute("data-value") === select.value;
+                    opt.classList.toggle("selected", isSelected);
+                });
+            }
+        }
+
 
         function updateAllCustomSelectDisplays() {
             updateCustomSelectDisplay();
             updateCustomIntervalDisplay();
+            updateCustomWarmupGeminiDisplay();
+            updateCustomWarmupClaudeDisplay();
         }
 
         function closeAllCustomSelects(exceptId) {
             const list = [
                 { wrap: "customModelSelect", menu: "customModelSelectMenu" },
                 { wrap: "customIntervalSelect", menu: "customIntervalMenu" },
+                { wrap: "customWarmupGeminiModelSelect", menu: "customWarmupGeminiMenu" },
+                { wrap: "customWarmupClaudeModelSelect", menu: "customWarmupClaudeMenu" },
             ];
             list.forEach(item => {
                 if (item.wrap !== exceptId) {

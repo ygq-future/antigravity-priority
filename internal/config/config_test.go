@@ -536,3 +536,50 @@ func TestDynamicConfigZeroToleranceAndLegacyPriorityRuleMigration(t *testing.T) 
 		t.Fatalf("config without legacy priority_rules must remain round-trip valid: %v", err)
 	}
 }
+
+func TestWarmupConfig(t *testing.T) {
+	defaults := config.DefaultWarmupConfig()
+	if defaults.GeminiEnabled || defaults.ClaudeEnabled {
+		t.Fatalf("expected warmup disabled by default, got gemini=%v claude=%v", defaults.GeminiEnabled, defaults.ClaudeEnabled)
+	}
+	if defaults.GeminiModel != config.DefaultGeminiWarmupModel {
+		t.Fatalf("expected GeminiModel=%q, got %q", config.DefaultGeminiWarmupModel, defaults.GeminiModel)
+	}
+	if defaults.ClaudeModel != config.DefaultClaudeWarmupModel {
+		t.Fatalf("expected ClaudeModel=%q, got %q", config.DefaultClaudeWarmupModel, defaults.ClaudeModel)
+	}
+	// Test normalization
+	custom := config.WarmupConfig{
+		GeminiEnabled: true,
+		ClaudeEnabled: true,
+	}
+	custom.Normalize()
+	if custom.GeminiModel != config.DefaultGeminiWarmupModel || custom.ClaudeModel != config.DefaultClaudeWarmupModel {
+		t.Fatalf("expected normalized default models, got gemini=%q claude=%q", custom.GeminiModel, custom.ClaudeModel)
+	}
+	// Test DynamicConfig validation when enabled with empty model
+	dyn := config.Default().Dynamic()
+	dyn.Warmup.GeminiEnabled = true
+	dyn.Warmup.GeminiModel = "   "
+	if err := dyn.Validate(); err == nil {
+		t.Fatal("expected error when gemini warm-up is enabled with empty model")
+	}
+	dyn.Warmup.GeminiModel = "gemini-3-flash"
+	dyn.Warmup.ClaudeEnabled = true
+	dyn.Warmup.ClaudeModel = "   "
+	if err := dyn.Validate(); err == nil {
+		t.Fatal("expected error when claude warm-up is enabled with empty model")
+	}
+	dyn.Warmup.ClaudeModel = "claude-sonnet-5-5-high"
+	if err := dyn.Validate(); err != nil {
+		t.Fatalf("expected valid warmup config, got: %v", err)
+	}
+
+	applied, err := dyn.ApplyTo(config.Default())
+	if err != nil {
+		t.Fatalf("ApplyTo failed: %v", err)
+	}
+	if !applied.Warmup.GeminiEnabled || !applied.Warmup.ClaudeEnabled {
+		t.Fatalf("expected applied warmup enabled, got: %+v", applied.Warmup)
+	}
+}

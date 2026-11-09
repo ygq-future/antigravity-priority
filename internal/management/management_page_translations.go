@@ -44,6 +44,10 @@ var configTranslationKeys = []string{
 	"optInterval5m", "optInterval15m", "optInterval30m", "optInterval1h", "optIntervalCustom", "valErrInterval", "valErrWindow",
 	"valErrConcurrency", "valErrUrgencyTol", "valErrSampleCapacity", "valErrCooldown", "valErrPriorityRange",
 	"valErrPriorityOrder", "valErrFreePriorityOrder",
+	"cfgCardWarmupTitle", "cfgWarmupGemini", "cfgWarmupGeminiHint", "cfgWarmupGeminiModel", "cfgWarmupGeminiModelHint",
+	"cfgWarmupClaude", "cfgWarmupClaudeHint", "cfgWarmupClaudeModel", "cfgWarmupClaudeModelHint",
+
+	"valErrWarmupGeminiModel", "valErrWarmupClaudeModel",
 }
 
 var helpTranslationKeys = []string{

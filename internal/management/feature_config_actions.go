@@ -31,10 +31,15 @@ const templateScriptConfig = `        let originalConfigState = null;
             var boostStart = (document.getElementById("cfgBoostStartPriority") && document.getElementById("cfgBoostStartPriority").value) || "";
             var normalStart = (document.getElementById("cfgNormalStartPriority") && document.getElementById("cfgNormalStartPriority").value) || "";
             var freeStart = (document.getElementById("cfgFreeStartPriority") && document.getElementById("cfgFreeStartPriority").value) || "";
+            var warmupGeminiEnabled = Boolean(document.getElementById("cfgWarmupGeminiEnabled") && document.getElementById("cfgWarmupGeminiEnabled").checked);
+            var warmupGeminiModel = (document.getElementById("cfgWarmupGeminiModelSelect") && document.getElementById("cfgWarmupGeminiModelSelect").value) || "gemini-3-flash";
+            var warmupClaudeEnabled = Boolean(document.getElementById("cfgWarmupClaudeEnabled") && document.getElementById("cfgWarmupClaudeEnabled").checked);
+            var warmupClaudeModel = (document.getElementById("cfgWarmupClaudeModelSelect") && document.getElementById("cfgWarmupClaudeModelSelect").value) || "claude-sonnet-5-5-high";
 
             return JSON.stringify({
                 autoApply, interval, windowEnabled, windowStart, windowEnd,
-                maxConcurrency, urgencyTol, sampleCapacity, cooldownMin, boostStart, normalStart, freeStart
+                maxConcurrency, urgencyTol, sampleCapacity, cooldownMin, boostStart, normalStart, freeStart,
+                warmupGeminiEnabled, warmupGeminiModel, warmupClaudeEnabled, warmupClaudeModel
             });
         }
 
@@ -110,6 +115,26 @@ const templateScriptConfig = `        let originalConfigState = null;
 
             var freeStart = document.getElementById("cfgFreeStartPriority");
             if (freeStart) freeStart.value = rules.free_start_priority || 10;
+
+            var warmup = cfg.warmup || {};
+            var wGemini = document.getElementById("cfgWarmupGeminiEnabled");
+            if (wGemini) wGemini.checked = Boolean(warmup.gemini_enabled);
+            var wGeminiModel = document.getElementById("cfgWarmupGeminiModelSelect");
+            if (wGeminiModel) wGeminiModel.value = warmup.gemini_model || "gemini-3-flash";
+            if (typeof updateCustomWarmupGeminiDisplay === "function") updateCustomWarmupGeminiDisplay();
+
+            var wClaude = document.getElementById("cfgWarmupClaudeEnabled");
+            if (wClaude) wClaude.checked = Boolean(warmup.claude_enabled);
+            var wClaudeModel = document.getElementById("cfgWarmupClaudeModelSelect");
+            if (wClaudeModel) wClaudeModel.value = warmup.claude_model || "claude-sonnet-5-5-high";
+            if (window.cpaAvailableModels && typeof populateWarmupModelDropdowns === "function") {
+                populateWarmupModelDropdowns(window.cpaAvailableModels);
+            } else if (typeof updateCustomWarmupGeminiDisplay === "function") {
+                updateCustomWarmupGeminiDisplay();
+                updateCustomWarmupClaudeDisplay();
+            }
+
+
 
             // Sync original snapshot and disable save button
             originalConfigState = getDynamicConfigFormData();
@@ -280,7 +305,13 @@ const templateScriptConfig = `        let originalConfigState = null;
                         window_start: windowStart,
                         window_end: windowEnd
                     },
-                    custom_tiers: (dynamicConfig && dynamicConfig.custom_tiers) ? dynamicConfig.custom_tiers : undefined
+                    custom_tiers: (dynamicConfig && dynamicConfig.custom_tiers) ? dynamicConfig.custom_tiers : undefined,
+                    warmup: {
+                        gemini_enabled: Boolean(document.getElementById("cfgWarmupGeminiEnabled") && document.getElementById("cfgWarmupGeminiEnabled").checked),
+                        gemini_model: (document.getElementById("cfgWarmupGeminiModelSelect") && document.getElementById("cfgWarmupGeminiModelSelect").value) || "gemini-3-flash",
+                        claude_enabled: Boolean(document.getElementById("cfgWarmupClaudeEnabled") && document.getElementById("cfgWarmupClaudeEnabled").checked),
+                        claude_model: (document.getElementById("cfgWarmupClaudeModelSelect") && document.getElementById("cfgWarmupClaudeModelSelect").value) || "claude-sonnet-5-5-high"
+                    },
                 };
 
                 dynamicConfig = await apiFetch(CONFIG_PATH, {
@@ -324,7 +355,13 @@ const templateScriptConfig = `        let originalConfigState = null;
                     window_enabled: false,
                     window_start: "00:00",
                     window_end: "23:59"
-                }
+                },
+                warmup: {
+                    gemini_enabled: false,
+                    gemini_model: "gemini-3-flash",
+                    claude_enabled: false,
+                    claude_model: "claude-sonnet-5-5-high"
+                },
             };
             renderDynamicConfigForm(defaultCfg);
             updateSaveButtonState();

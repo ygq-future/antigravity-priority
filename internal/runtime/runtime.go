@@ -67,6 +67,11 @@ type Runtime struct {
 	modelCatalog          []ModelCatalogItem
 	rrCursorByPool        map[config.AntigravityModelGroup]string
 	sessionAffinity       map[string]sessionBinding
+	warmupMu                 sync.Mutex
+	lastWarmupByAuthAndGroup map[string]time.Time
+	warmupResetMu            sync.Mutex
+	warmupResetTargets       map[string]warmupResetTarget
+	warmupResetWake          chan struct{}
 }
 
 // New creates an initialized Runtime instance.
@@ -98,6 +103,9 @@ func New(options Options) *Runtime {
 		modelCatalog:          append([]ModelCatalogItem(nil), builtInAntigravityModels...),
 		rrCursorByPool:        make(map[config.AntigravityModelGroup]string),
 		sessionAffinity:       make(map[string]sessionBinding),
+		lastWarmupByAuthAndGroup: make(map[string]time.Time),
+		warmupResetTargets:       make(map[string]warmupResetTarget),
+		warmupResetWake:          make(chan struct{}, 1),
 	}
 	if strings.TrimSpace(options.StateCachePath) != "" {
 		rt.cfg.StateCachePath = options.StateCachePath
@@ -150,6 +158,7 @@ func New(options Options) *Runtime {
 		_ = store.SaveAtomic(context.Background())
 	}
 	go rt.runRateLimitWorker()
+	go rt.runWarmupResetWatcher()
 
 	return rt
 }

@@ -62,6 +62,12 @@ const (
 	KeyWindowEnd = "window_end"
 	// KeyCustomTiers is the JSON key for custom_tiers.
 	KeyCustomTiers = "custom_tiers"
+	// DefaultGeminiWarmupModel is the default lightweight model used for Gemini 5h warm-up.
+	DefaultGeminiWarmupModel = "gemini-3-flash"
+	// DefaultClaudeWarmupModel is the default lightweight model used for Claude 5h warm-up.
+	DefaultClaudeWarmupModel = "claude-sonnet-5-5-high"
+
+
 
 	// DefaultUrgencyTolerance is the default numerical delta threshold below which adjacent credentials share identical priority.
 	DefaultUrgencyTolerance = 0.05
@@ -109,7 +115,40 @@ type Config struct {
 	PriorityRules            PriorityRules
 	Schedule                 ScheduleConfig
 	CustomTiers              map[string]int
+	Warmup                   WarmupConfig
 }
+// WarmupConfig encapsulates 5-hour short-window reset countdown warm-up settings.
+type WarmupConfig struct {
+	GeminiEnabled bool   `json:"gemini_enabled"`
+	ClaudeEnabled bool   `json:"claude_enabled"`
+	GeminiModel   string `json:"gemini_model"`
+	ClaudeModel   string `json:"claude_model"`
+}
+
+// DefaultWarmupConfig returns the default warm-up configuration.
+func DefaultWarmupConfig() WarmupConfig {
+	return WarmupConfig{
+		GeminiEnabled: false,
+		ClaudeEnabled: false,
+		GeminiModel:   DefaultGeminiWarmupModel,
+		ClaudeModel:   DefaultClaudeWarmupModel,
+	}
+}
+
+// Normalize ensures empty model names fall back to canonical defaults.
+func (w *WarmupConfig) Normalize() {
+	if strings.TrimSpace(w.GeminiModel) == "" {
+		w.GeminiModel = DefaultGeminiWarmupModel
+	} else {
+		w.GeminiModel = strings.TrimSpace(w.GeminiModel)
+	}
+	if strings.TrimSpace(w.ClaudeModel) == "" {
+		w.ClaudeModel = DefaultClaudeWarmupModel
+	} else {
+		w.ClaudeModel = strings.TrimSpace(w.ClaudeModel)
+	}
+}
+
 
 // PriorityRules contains the priority scoring configurations.
 type PriorityRules struct {
@@ -174,6 +213,7 @@ type DynamicConfig struct {
 	PriorityRules            PriorityRulesConfig `json:"priority_rules"`
 	Schedule                 ScheduleConfig      `json:"schedule"`
 	CustomTiers              map[string]int      `json:"custom_tiers,omitempty"`
+	Warmup                   WarmupConfig        `json:"warmup"`
 }
 
 // UnmarshalJSON seeds omitted fields from the canonical defaults before
@@ -214,6 +254,7 @@ func Default() Config {
 			WindowStart:   "00:00",
 			WindowEnd:     "23:59",
 		},
+		Warmup: DefaultWarmupConfig(),
 	}
 }
 
@@ -235,6 +276,7 @@ func (cfg Config) Dynamic() DynamicConfig {
 		},
 		Schedule: cfg.Schedule,
 		CustomTiers: cloneCustomTiers(cfg.CustomTiers),
+		Warmup:      cfg.Warmup,
 	}
 }
 
@@ -304,6 +346,12 @@ func (dyn DynamicConfig) Validate() error {
 			return fmt.Errorf("custom_tiers[%q] must be between 1 and 99 (0 to remove), got %d", authIdx, tier)
 		}
 	}
+	if dyn.Warmup.GeminiEnabled && strings.TrimSpace(dyn.Warmup.GeminiModel) == "" {
+		return fmt.Errorf("warmup.gemini_model cannot be empty when gemini warm-up is enabled")
+	}
+	if dyn.Warmup.ClaudeEnabled && strings.TrimSpace(dyn.Warmup.ClaudeModel) == "" {
+		return fmt.Errorf("warmup.claude_model cannot be empty when claude warm-up is enabled")
+	}
 	return nil
 }
 
@@ -330,6 +378,8 @@ func (dyn DynamicConfig) ApplyTo(base Config) (Config, error) {
 	res.PriorityRules.FreeStartPriority = dyn.PriorityRules.FreeStartPriority
 	res.Schedule = dyn.Schedule
 	res.CustomTiers = cloneCustomTiers(dyn.CustomTiers)
+	res.Warmup = dyn.Warmup
+	res.Warmup.Normalize()
 	return res, nil
 }
 

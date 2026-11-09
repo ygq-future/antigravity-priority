@@ -654,6 +654,33 @@ func TestHandler_SetDynamicConfig_Success(t *testing.T) {
 		t.Errorf("expected RateLimitCooldownMinutes=10, got %d", cfg.RateLimitCooldownMinutes)
 	}
 }
+
+func TestHandler_DynamicConfig_WarmupRoundTrip(t *testing.T) {
+	runner := &mockRunner{}
+	handler := management.NewHandler(runner)
+
+	body := `{"auto_apply":true,"interval":"15m","antigravity_model_group":"gemini","max_concurrency":6,"min_change":1,"urgency_tolerance":0.05,"rate_limit_cooldown_minutes":5,"quota_sample_capacity":6,"priority_rules":{"boost_start_priority":999,"normal_start_priority":100},"schedule":{"paused":false,"window_enabled":false,"window_start":"00:00","window_end":"23:59"},"warmup":{"gemini_enabled":true,"gemini_model":"gemini-2.0-flash","claude_enabled":true,"claude_model":"claude-3-7-sonnet"}}`
+	req := httptest.NewRequest(http.MethodPost, "/runtime-config", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	var cfg state.DynamicConfig
+	if err := json.Unmarshal(rec.Body.Bytes(), &cfg); err != nil {
+		t.Fatalf("decode response failed: %v", err)
+	}
+	if !cfg.Warmup.GeminiEnabled || cfg.Warmup.GeminiModel != "gemini-2.0-flash" {
+		t.Fatalf("expected gemini enabled with gemini-2.0-flash, got: %+v", cfg.Warmup)
+	}
+	if !cfg.Warmup.ClaudeEnabled || cfg.Warmup.ClaudeModel != "claude-3-7-sonnet" {
+		t.Fatalf("expected claude enabled with claude-3-7-sonnet, got: %+v", cfg.Warmup)
+	}
+
+}
 func TestHandler_SetDynamicConfig_InvalidJSON(t *testing.T) {
 	handler := management.NewHandler(&mockRunner{})
 	req := httptest.NewRequest(http.MethodPost, "/runtime-config", strings.NewReader("{invalid"))

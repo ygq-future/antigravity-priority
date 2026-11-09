@@ -1994,6 +1994,13 @@ func TestRuntime_GetSetDynamicConfig(t *testing.T) {
 			WindowStart:   "08:00",
 			WindowEnd:     "22:00",
 		},
+		Warmup: config.WarmupConfig{
+			GeminiEnabled:  true,
+			GeminiModel:    "gemini-3-flash",
+			ClaudeEnabled:  true,
+			ClaudeModel:    "claude-sonnet-5-5-high",
+
+		},
 	}
 	if err := r.SetDynamicConfig(context.Background(), update); err != nil {
 		t.Fatalf("set dynamic config failed: %v", err)
@@ -2022,6 +2029,10 @@ func TestRuntime_GetSetDynamicConfig(t *testing.T) {
 	if runtimeCfg.PriorityRules.FreeStartPriority != 15 {
 		t.Errorf("expected FreeStartPriority=15, got %d", runtimeCfg.PriorityRules.FreeStartPriority)
 	}
+	if !runtimeCfg.Warmup.GeminiEnabled || !runtimeCfg.Warmup.ClaudeEnabled {
+		t.Errorf("expected warmup enabled in runtime config, got: %+v", runtimeCfg.Warmup)
+	}
+
 
 	// 4. Verify disk persistence and survival across reloads
 	store, err := state.Load(context.Background(), cachePath)
@@ -2034,6 +2045,9 @@ func TestRuntime_GetSetDynamicConfig(t *testing.T) {
 	}
 	if diskDyn.Interval != "30m" || diskDyn.AntigravityModelGroup != "claude_gpt" || diskDyn.QuotaSampleCapacity != 10 {
 		t.Errorf("unexpected disk dynamic config: %+v", diskDyn)
+	}
+	if !diskDyn.Warmup.GeminiEnabled || diskDyn.Warmup.GeminiModel != "gemini-3-flash" {
+		t.Errorf("unexpected disk warmup config: %+v", diskDyn.Warmup)
 	}
 
 	// 5. Test validation failures

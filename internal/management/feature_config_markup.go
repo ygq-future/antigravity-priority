@@ -149,7 +149,7 @@ const configMarkup = `
                 <div class="config-card">
                     <h3 class="config-card-title">
                         <span>🎯</span>
-                        <span data-i18n="cfgCardRulesTitle">优先级分值规则 (Priority Rules)</span>
+                        <span data-i18n="cfgCardRulesTitle">优先级分值规则</span>
                     </h3>
 
                     <div class="config-form-grid">
@@ -182,6 +182,85 @@ const configMarkup = `
                                 <input type="number" id="cfgFreeStartPriority" class="config-num-input" min="1" max="999" value="10">
                             </div>
                         </div>
+                    </div>
+                </div>
+
+                <!-- Card 4: 5-Hour Window Warm-Up -->
+                <div class="config-card">
+                    <h3 class="config-card-title">
+                        <span>🔥</span>
+                        <span data-i18n="cfgCardWarmupTitle">5小时短窗预热</span>
+                    </h3>
+
+                    <div class="config-form-grid">
+                        <div class="form-row">
+                            <div class="form-label-box">
+                                <span class="form-title" data-i18n="cfgWarmupGemini">Gemini 5h 满额自动预热</span>
+                                <span class="form-hint" data-i18n="cfgWarmupGeminiHint">当 Gemini 短窗为 100% 满额且倒计时未激活时，自动发一条微小请求提前触发 5 小时重置倒计时</span>
+                            </div>
+                            <div class="form-input-group">
+                                <label class="toggle-label">
+                                    <span class="toggle-switch">
+                                        <input type="checkbox" id="cfgWarmupGeminiEnabled">
+                                        <span class="toggle-slider"></span>
+                                    </span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-label-box">
+                                <span class="form-title" data-i18n="cfgWarmupGeminiModel">Gemini 预热目标模型</span>
+                                <span class="form-hint" data-i18n="cfgWarmupGeminiModelHint">用于触发 Gemini 5h 重置倒计时的模型</span>
+                            </div>
+                            <div class="form-input-group">
+                                <select id="cfgWarmupGeminiModelSelect" hidden></select>
+                                <div id="customWarmupGeminiModelSelect" class="custom-select-wrapper" style="min-width:210px;">
+                                    <button type="button" class="custom-select-trigger" onclick="toggleCustomWarmupGeminiSelect(event)" aria-haspopup="listbox" aria-expanded="false">
+                                        <span id="customWarmupGeminiLabel">gemini-3-flash</span>
+                                        <span class="custom-select-arrow">
+                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"></path></svg>
+                                        </span>
+                                    </button>
+                                    <div id="customWarmupGeminiMenu" class="custom-select-options" hidden role="listbox"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-label-box">
+                                <span class="form-title" data-i18n="cfgWarmupClaude">Claude / GPT 5h 满额自动预热</span>
+                                <span class="form-hint" data-i18n="cfgWarmupClaudeHint">当 Claude 短窗为 100% 满额且倒计时未激活时，自动发一条微小请求提前触发 5 小时重置倒计时</span>
+                            </div>
+                            <div class="form-input-group">
+                                <label class="toggle-label">
+                                    <span class="toggle-switch">
+                                        <input type="checkbox" id="cfgWarmupClaudeEnabled">
+                                        <span class="toggle-slider"></span>
+                                    </span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-label-box">
+                                <span class="form-title" data-i18n="cfgWarmupClaudeModel">Claude 预热目标模型</span>
+                                <span class="form-hint" data-i18n="cfgWarmupClaudeModelHint">用于触发 Claude 5h 重置倒计时的模型</span>
+                            </div>
+                            <div class="form-input-group">
+                                <select id="cfgWarmupClaudeModelSelect" hidden></select>
+                                <div id="customWarmupClaudeModelSelect" class="custom-select-wrapper" style="min-width:210px;">
+                                    <button type="button" class="custom-select-trigger" onclick="toggleCustomWarmupClaudeSelect(event)" aria-haspopup="listbox" aria-expanded="false">
+                                        <span id="customWarmupClaudeLabel">claude-sonnet-5-5-high</span>
+                                        <span class="custom-select-arrow">
+                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"></path></svg>
+                                        </span>
+                                    </button>
+                                    <div id="customWarmupClaudeMenu" class="custom-select-options" hidden role="listbox"></div>
+                                </div>
+                            </div>
+                        </div>
+
                     </div>
                 </div>
             </div>

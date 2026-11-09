@@ -125,6 +125,10 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 			}
 		}
 	}
+	if preview == nil && (request.Config.Warmup.GeminiEnabled || request.Config.Warmup.ClaudeEnabled) {
+		r.triggerWarmupForEligibleCredentials(ctx, client, request.Config.Warmup, evidence.ByGroup, allAuthMaterials, now)
+	}
+
 
 	// Reconcile against the authoritative Host inventory after the potentially
 	// slow Google requests. Credentials may have been added, removed, disabled,

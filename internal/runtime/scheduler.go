@@ -25,12 +25,11 @@ type ModelCatalogItem struct {
 // Built-in standard Antigravity models matching CPA internal models.json catalog.
 var builtInAntigravityModels = []ModelCatalogItem{
 	// Gemini Pool
-	{ID: "gemini-3.8-flash-high", DisplayName: "Gemini 3.8 Flash High", QuotaPool: config.AntigravityModelGroupGemini},
 	{ID: "gemini-3-flash", DisplayName: "Gemini 3 Flash", QuotaPool: config.AntigravityModelGroupGemini},
+	{ID: "gemini-3.8-flash-high", DisplayName: "Gemini 3.8 Flash High", QuotaPool: config.AntigravityModelGroupGemini},
 	{ID: "gemini-3.5-flash-lite", DisplayName: "Gemini 3.5 Flash Lite", QuotaPool: config.AntigravityModelGroupGemini},
 	{ID: "gemini-3.1-flash-lite", DisplayName: "Gemini 3.1 Flash Lite", QuotaPool: config.AntigravityModelGroupGemini},
 	{ID: "gemini-3.1-flash-image", DisplayName: "Gemini 3.1 Flash Image", QuotaPool: config.AntigravityModelGroupGemini},
-
 	// Argon Pool
 	{ID: "gemini-4-argon-high", DisplayName: "Gemini 4 Argon High", QuotaPool: config.AntigravityModelGroupArgon},
 
