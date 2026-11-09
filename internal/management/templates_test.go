@@ -266,6 +266,9 @@ func TestStatusHTML_ContainsRequiredUIElements(t *testing.T) {
 		{"Diagnostics scheduler section", "diagSectionScheduler"},
 		{"Diagnostics cooldown section", "diagSectionCooldown"},
 		{"Diagnostics audit section", "diagSectionAudit"},
+		{"Credentials loading overlay", "credentialsLoadingOverlay"},
+		{"Credentials loading card", "credentials-loading-card"},
+		{"Quota probe radar beacon", "quota-probe-radar"},
 	}
 
 	for _, c := range checks {

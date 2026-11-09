@@ -1,12 +1,44 @@
 package management
 
-const templateScriptProbeSchedule = `        async function triggerProbe() {
+const templateScriptProbeSchedule = `        function setListProbeLoading(loading) {
+            if (typeof setListLoading === "function") {
+                if (loading) {
+                    setListLoading({
+                        title: t("probingQuotaTitle"),
+                        desc: t("probingQuotaDesc"),
+                        icon: "📡"
+                    });
+                } else {
+                    setListLoading(false);
+                }
+                return;
+            }
+            var overlay = document.getElementById("credentialsLoadingOverlay");
+            var container = document.getElementById("credentialsContainer");
+            if (loading) {
+                if (overlay) overlay.hidden = false;
+                if (container && container.classList && container.classList.add) {
+                    container.classList.add("credentials-probing");
+                }
+            } else {
+                if (overlay) overlay.hidden = true;
+                if (container && container.classList && container.classList.remove) {
+                    container.classList.remove("credentials-probing");
+                }
+            }
+        }
+
+        async function triggerProbe() {
             var btn = document.getElementById("btnProbe");
-            if (!btn || btn.classList.contains("btn-cooldown")) return;
+            if (!btn || btn.classList.contains("btn-cooldown") || btn.classList.contains("btn-probing")) return;
 
             btn.disabled = true;
-            btn.classList.add("btn-cooldown");
+            btn.classList.add("btn-probing");
+            var label = btn.querySelector("[data-i18n='btnProbe']") || btn.querySelector("span");
+            var origText = label ? label.textContent : "";
+            if (label) label.textContent = t("probing");
 
+            setListProbeLoading(true);
             try {
                 var groupSelect = document.getElementById("modelGroupSelect");
                 var group = groupSelect ? groupSelect.value : "gemini";
@@ -28,11 +60,14 @@ const templateScriptProbeSchedule = `        async function triggerProbe() {
                 await refreshDashboard();
             } catch (err) {
                 showToast(err.message, "error");
+            } finally {
+                setListProbeLoading(false);
+                btn.classList.remove("btn-probing");
             }
 
+            btn.classList.add("btn-cooldown");
             var remaining = 10;
-            var label = btn.querySelector("[data-i18n='btnProbe']") || btn.querySelector("span");
-            var origText = label ? label.textContent : "";
+            if (label) label.textContent = t("probeCooldown") + " (" + remaining + "s)";
             probeCooldownTimer = setInterval(function() {
                 remaining--;
                 if (label) label.textContent = t("probeCooldown") + " (" + remaining + "s)";

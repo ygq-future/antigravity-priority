@@ -28,6 +28,7 @@ data/devserver/refresh-cache.json
 -state-cache Runtime 状态缓存文件
 -seed       随机种子；0 表示使用时间种子
 -auto-apply 启动时打开 Runtime 自动调度
+-delay       模拟网络延迟时间，默认 800ms (支持 500ms, 1s 等格式；设为 0 禁用延迟)
 ```
 
 也可以使用对应的 `ANTIGRAVITY_DEVSERVER_*` 环境变量。

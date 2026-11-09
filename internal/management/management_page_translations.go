@@ -13,7 +13,7 @@ var overviewTranslationKeys = []string{
 	"noChanges", "noChangesToApply", "statusActive", "statusBoosted", "statusWeeklyDepleted", "statusShortDepleted",
 	"statusFailed", "shortWindow", "longWindow", "argonWindow", "resetIn", "priority", "urgencyLabel", "burnLabel", "running",
 	"scheduleActive", "schedulePaused", "scheduleSleeping", "scheduleDisabled", "predictedBadge", "predictedNote",
-	"probeSuccess", "probeCooldown", "viewDetails", "statusCooldown", "statusDisabled", "btnProbeSingle", "probeSingleSuccess",
+	"probeSuccess", "probeCooldown", "probing", "probingQuotaTitle", "probingQuotaDesc", "syncingQuotaTitle", "syncingQuotaDesc", "resettingTitle", "resettingDesc", "viewDetails", "statusCooldown", "statusDisabled", "btnProbeSingle", "probeSingleSuccess",
 	"probeSingleFailed", "probeSingleNoResult", "probeBatchFailed", "staleEvidence",
 	"poolGemini", "poolArgon", "poolClaudeGPT", "badgeGemini", "badgeArgon", "badgeClaudeGPT",
 	"statusUnsupported", "statusBypassedCooldown", "statusBypassedDepleted", "dynamicPriority", "estimatedBurn", "tierPrefix",

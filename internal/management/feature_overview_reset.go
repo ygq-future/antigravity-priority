@@ -12,6 +12,13 @@ const templateScriptOverviewReset = `        async function triggerReset() {
 
             const btn = document.getElementById("btnReset");
             if (btn) btn.disabled = true;
+            if (typeof setListLoading === "function") {
+                setListLoading({
+                    title: t("resettingTitle"),
+                    desc: t("resettingDesc"),
+                    icon: "🔄"
+                });
+            }
             try {
                 const result = await apiFetch(RESET_PATH, { method: "POST" });
                 showToast(result.message || t("resetSuccess"), "success");
@@ -19,6 +26,7 @@ const templateScriptOverviewReset = `        async function triggerReset() {
             } catch (err) {
                 showToast(err.message, "error");
             } finally {
+                if (typeof setListLoading === "function") setListLoading(false);
                 if (btn) btn.disabled = false;
             }
         }

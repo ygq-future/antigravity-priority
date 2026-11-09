@@ -542,6 +542,7 @@ const elements = {
     valBoosted: element(),
     valDepleted: element(),
     credentialsContainer: element(),
+    credentialsLoadingOverlay: element({hidden: true}),
     btnProbe: element()
 };
 
@@ -728,4 +729,165 @@ async function fetchDiagnostics() {}
 `
 
 	runNodeFixture(t, node, "probe-outcome-truth.js", harness)
+}
+
+func TestTriggerProbe_ListLoadingState(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not available; probe outcome behavior is checked in the Node-enabled verification environment")
+	}
+
+	harness := templateScriptOverviewActionsCore + templateScriptOverviewRender + templateScriptProbeSchedule + `
+function element(initial) {
+    return Object.assign({
+        hidden: true,
+        textContent: "",
+        innerHTML: "",
+        children: [],
+        classList: {
+            classes: [],
+            add: function(c) { this.classes.push(c); },
+            remove: function(c) { this.classes = this.classes.filter(x => x !== c); },
+            contains: function(c) { return this.classes.includes(c); }
+        },
+        querySelector: function() { return element({textContent: "刷新配额"}); }
+    }, initial || {});
+}
+
+const elements = {
+    credentialsContainer: element({hidden: false}),
+    credentialsLoadingOverlay: element({hidden: true}),
+    btnProbe: element({hidden: false}),
+    modelGroupSelect: element({value: "gemini"})
+};
+
+const document = {
+    getElementById: function(id) { return elements[id] || null; }
+};
+
+const RUN_PATH = "/run";
+
+function showToast() {}
+function t(key) { return key; }
+function refreshDashboard() { return Promise.resolve(); }
+
+var loadingDuringProbe = null;
+var gridClassDuringProbe = null;
+
+apiFetch = async function(path, opts) {
+    loadingDuringProbe = elements.credentialsLoadingOverlay.hidden;
+    gridClassDuringProbe = elements.credentialsContainer.classList.contains("credentials-probing");
+    return { probe_outcomes: [{ auth_index: "acc-1", status: "success" }] };
+};
+
+(async function() {
+    await triggerProbe();
+    clearInterval(probeCooldownTimer);
+
+    if (loadingDuringProbe !== false) {
+        throw new Error("expected credentialsLoadingOverlay.hidden to be false during probe, got: " + loadingDuringProbe);
+    }
+    if (gridClassDuringProbe !== true) {
+        throw new Error("expected credentialsContainer to have credentials-probing class during probe");
+    }
+    if (elements.credentialsLoadingOverlay.hidden !== true) {
+        throw new Error("expected credentialsLoadingOverlay.hidden to be restored to true after probe, got: " + elements.credentialsLoadingOverlay.hidden);
+    }
+    if (elements.credentialsContainer.classList.contains("credentials-probing")) {
+        throw new Error("expected credentialsContainer to have removed credentials-probing class after probe");
+    }
+})().catch(function(err) {
+    console.error(err.stack || err.message);
+    process.exit(1);
+});
+`
+
+	runNodeFixture(t, node, "probe-loading-state.js", harness)
+}
+
+func TestRefreshDashboard_ManualSyncLoadingState(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not available; refresh dashboard behavior is checked in the Node-enabled verification environment")
+	}
+
+	harness := templateScriptOverviewActionsCore + templateScriptOverviewRender + templateScriptProbeSchedule + `
+function element(initial) {
+    return Object.assign({
+        hidden: true,
+        textContent: "",
+        innerHTML: "",
+        children: [],
+        classList: {
+            classes: [],
+            add: function(c) { this.classes.push(c); },
+            remove: function(c) { this.classes = this.classes.filter(x => x !== c); },
+            contains: function(c) { return this.classes.includes(c); }
+        },
+        querySelector: function() { return element(); }
+    }, initial || {});
+}
+
+const elements = {
+    credentialsContainer: element({hidden: false}),
+    credentialsLoadingOverlay: element({hidden: true}),
+    btnRefresh: element({hidden: false})
+};
+
+const document = {
+    getElementById: function(id) { return elements[id] || null; }
+};
+
+const SYNC_PATH = "/sync";
+const DIAGNOSTICS_PATH = "/diagnostics";
+var isAuthBlocked = false;
+
+function showToast() {}
+function t(key) { return key; }
+function renderDashboard() {}
+function renderHistory() {}
+function renderDiagnostics() {}
+function renderScheduleStatus() {}
+function updateModelDropdownFromSnapshot() {}
+
+var loadingDuringSync = null;
+var gridClassDuringSync = null;
+var btnRefreshingDuringSync = null;
+
+apiFetch = async function(path, opts) {
+    loadingDuringSync = elements.credentialsLoadingOverlay.hidden;
+    gridClassDuringSync = elements.credentialsContainer.classList.contains("credentials-probing");
+    btnRefreshingDuringSync = elements.btnRefresh.classList.contains("btn-refreshing");
+    return { models: [] };
+};
+
+(async function() {
+    latestSnapshot = { models: [] };
+    await refreshDashboard({ withSync: true, notifySync: true });
+
+    if (loadingDuringSync !== false) {
+        throw new Error("expected credentialsLoadingOverlay.hidden to be false during manual sync, got: " + loadingDuringSync);
+    }
+    if (gridClassDuringSync !== true) {
+        throw new Error("expected credentialsContainer to have credentials-probing class during manual sync");
+    }
+    if (btnRefreshingDuringSync !== true) {
+        throw new Error("expected btnRefresh to have btn-refreshing class during manual sync");
+    }
+    if (elements.credentialsLoadingOverlay.hidden !== true) {
+        throw new Error("expected credentialsLoadingOverlay.hidden to be restored to true after sync, got: " + elements.credentialsLoadingOverlay.hidden);
+    }
+    if (elements.credentialsContainer.classList.contains("credentials-probing")) {
+        throw new Error("expected credentialsContainer to have removed credentials-probing class after sync");
+    }
+    if (elements.btnRefresh.classList.contains("btn-refreshing")) {
+        throw new Error("expected btnRefresh to have removed btn-refreshing class after sync");
+    }
+})().catch(function(err) {
+    console.error(err.stack || err.message);
+    process.exit(1);
+});
+`
+
+	runNodeFixture(t, node, "refresh-loading-state.js", harness)
 }

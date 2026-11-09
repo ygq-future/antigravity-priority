@@ -133,7 +133,7 @@ const templateScriptOverviewTier = `        let currentEditingAuthIndex = "";
                 });
                 closeCustomTierModal();
                 showToast(currentLang === "zh-CN" ? "Tier 设置已更新并立即生效" : "Tier setting updated and applied", "success");
-                await refreshDashboard({ withSync: true });
+                await refreshDashboard({ withSync: true, showLoading: true });
             } catch (e) {
                 showToast((currentLang === "zh-CN" ? "保存失败: " : "Save failed: ") + e.message, "error");
             } finally {

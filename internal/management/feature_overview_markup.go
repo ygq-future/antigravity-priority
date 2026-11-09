@@ -97,7 +97,7 @@ const overviewMarkup = `
                     <span data-i18n="btnRefresh">刷新同步</span>
                 </button>
                 <button type="button" class="btn-secondary" onclick="triggerProbe()" id="btnProbe">
-                    <span>📡 <span data-i18n="btnProbe">刷新配额</span></span>
+                    <span><span class="btn-probe-icon">📡</span> <span data-i18n="btnProbe">刷新配额</span></span>
                 </button>
                 <button type="button" class="btn-secondary" onclick="triggerReset()" id="btnReset" title="重置静态优先级">
                     <span>🔄 <span data-i18n="btnReset">重置静态优先级</span></span>
@@ -107,8 +107,25 @@ const overviewMarkup = `
                 </span>
             </div>
 
-            <div id="credentialsContainer" class="credentials-grid scroll-container">
-                <div class="empty-state" data-i18n="loading">加载中...</div>
+            <div class="credentials-wrapper">
+                <div id="credentialsLoadingOverlay" class="credentials-loading-overlay" hidden aria-live="polite">
+                    <div class="credentials-loading-card">
+                        <div class="quota-probe-radar">
+                            <div class="radar-ping"></div>
+                            <div class="radar-beacon">📡</div>
+                        </div>
+                        <div class="quota-loading-text">
+                            <div class="quota-loading-title" data-i18n="probingQuotaTitle">正在刷新全局配额...</div>
+                            <div class="quota-loading-desc" data-i18n="probingQuotaDesc">正在向 Google Antigravity 服务探测最新 5h/7d 额度窗口</div>
+                        </div>
+                        <div class="quota-loading-bar">
+                            <div class="quota-loading-bar-fill"></div>
+                        </div>
+                    </div>
+                </div>
+                <div id="credentialsContainer" class="credentials-grid scroll-container">
+                    <div class="empty-state" data-i18n="loading">加载中...</div>
+                </div>
             </div>
         </section>
 `

@@ -512,4 +512,155 @@ const templateStyleOverviewCards = `        /* Credentials Display (Grid 3 Colum
             color: #ffffff;
             border-color: var(--accent-blue);
         }
+
+        /* Credentials Wrapper & Probing Loading Overlay */
+        .credentials-wrapper {
+            position: relative;
+            flex: 1;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .credentials-loading-overlay {
+            position: absolute;
+            inset: 0;
+            z-index: 20;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            pointer-events: auto;
+        }
+
+        .credentials-loading-card {
+            position: relative;
+            z-index: 3;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 14px;
+            padding: 20px 28px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 12px;
+            box-shadow: var(--shadow-lg);
+            max-width: 380px;
+            width: calc(100% - 32px);
+            text-align: center;
+            animation: cardScaleIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        @keyframes cardScaleIn {
+            from { transform: scale(0.92); opacity: 0; }
+            to { transform: scale(1); opacity: 1; }
+        }
+
+        .quota-probe-radar {
+            position: relative;
+            width: 52px;
+            height: 52px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            background: var(--accent-blue-subtle);
+        }
+
+        .radar-ping {
+            position: absolute;
+            inset: -4px;
+            border-radius: 50%;
+            border: 2px solid var(--accent-blue);
+            animation: radarPing 1.8s cubic-bezier(0, 0.2, 0.8, 1) infinite;
+            opacity: 0.7;
+            pointer-events: none;
+        }
+
+        @keyframes radarPing {
+            0% { transform: scale(0.65); opacity: 0.85; }
+            100% { transform: scale(1.65); opacity: 0; }
+        }
+
+        .radar-beacon {
+            font-size: 24px;
+            animation: beaconPulse 1.6s ease-in-out infinite;
+            line-height: 1;
+            user-select: none;
+        }
+
+        @keyframes beaconPulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.15); }
+        }
+
+        .quota-loading-text {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .quota-loading-title {
+            font-size: 14px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: -0.01em;
+        }
+
+        .quota-loading-desc {
+            font-size: 12px;
+            color: var(--text-muted);
+            line-height: 1.45;
+        }
+
+        .quota-loading-bar {
+            width: 100%;
+            height: 4px;
+            background: var(--meter-bg);
+            border-radius: 999px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .quota-loading-bar-fill {
+            position: absolute;
+            top: 0;
+            left: 0;
+            bottom: 0;
+            width: 35%;
+            background: linear-gradient(90deg, var(--accent-blue), var(--accent-purple));
+            border-radius: 999px;
+            animation: indeterminateBar 1.4s ease-in-out infinite;
+        }
+
+        @keyframes indeterminateBar {
+            0% { left: -35%; width: 30%; }
+            50% { width: 50%; }
+            100% { left: 100%; width: 30%; }
+        }
+
+        /* Probing State on Credentials Grid Cards */
+        .credentials-grid.credentials-probing {
+            pointer-events: none;
+            user-select: none;
+        }
+
+        .credentials-grid.credentials-probing .cred-card {
+            opacity: 0.45;
+            transition: opacity 0.25s ease;
+        }
+
+        .btn-probing .btn-probe-icon {
+            display: inline-block;
+            animation: iconSpin 1s linear infinite;
+        }
+
+        .btn-refreshing svg {
+            animation: iconSpin 1s linear infinite;
+        }
+
+        @keyframes iconSpin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
 `

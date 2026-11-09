@@ -572,3 +572,51 @@ func TestDevServer_FreeAccountSimulation(t *testing.T) {
 		t.Fatalf("disabled account count = %d, want 1", disabledCount)
 	}
 }
+
+func TestDevServer_SimulatedDelay(t *testing.T) {
+	now := time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
+	clock := &devTestClock{now: now}
+	delay := 40 * time.Millisecond
+	dev, err := newDevServer(devServerOptions{
+		AuthDir:        t.TempDir(),
+		QuotaStatePath: filepath.Join(t.TempDir(), "quota.json"),
+		StateCachePath: filepath.Join(t.TempDir(), "cache.json"),
+		AccountCount:   2,
+		Seed:           42,
+		Clock:          clock,
+		Delay:          delay,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = dev.runtime.Shutdown(context.Background())
+	}()
+
+	server := httptest.NewServer(dev.Handler())
+	defer server.Close()
+
+	// 1. GET /status should NOT be delayed
+	startGet := time.Now()
+	resGet, err := http.Get(server.URL + "/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resGet.Body.Close()
+	getDuration := time.Since(startGet)
+	if getDuration >= delay {
+		t.Errorf("GET /status took %v; expected < %v", getDuration, delay)
+	}
+
+	// 2. POST /sync should be delayed by at least ~delay
+	startSync := time.Now()
+	resSync, err := http.Post(server.URL+"/sync", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resSync.Body.Close()
+	syncDuration := time.Since(startSync)
+	if syncDuration < delay-5*time.Millisecond {
+		t.Errorf("POST /sync took %v; want at least ~%v", syncDuration, delay)
+	}
+}

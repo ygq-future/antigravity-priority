@@ -59,6 +59,33 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
             return s.substring(0, 4) + "***";
         }
 
+        function setListLoading(options) {
+            var overlay = document.getElementById("credentialsLoadingOverlay");
+            var container = document.getElementById("credentialsContainer");
+            var isLoading = typeof options === "object" ? (options && options.loading !== false) : Boolean(options);
+
+            if (isLoading) {
+                if (overlay) {
+                    if (typeof options === "object" && options && typeof overlay.querySelector === "function") {
+                        var titleEl = overlay.querySelector(".quota-loading-title");
+                        var descEl = overlay.querySelector(".quota-loading-desc");
+                        var iconEl = overlay.querySelector(".radar-beacon");
+                        if (titleEl && options.title) titleEl.textContent = options.title;
+                        if (descEl && options.desc) descEl.textContent = options.desc;
+                        if (iconEl && options.icon) iconEl.textContent = options.icon;
+                    }
+                    overlay.hidden = false;
+                }
+                if (container && container.classList && container.classList.add) {
+                    container.classList.add("credentials-probing");
+                }
+            } else {
+                if (overlay) overlay.hidden = true;
+                if (container && container.classList && container.classList.remove) {
+                    container.classList.remove("credentials-probing");
+                }
+            }
+        }
 
         async function fetchSnapshot(options) {
             if (isAuthBlocked) return;
@@ -110,7 +137,21 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
             if (isAuthBlocked) return;
             const settings = options || {};
             const btn = document.getElementById("btnRefresh");
-            if (btn && settings.notifySync) btn.disabled = true;
+            const isManualSync = Boolean(btn && settings.notifySync);
+            const isInitialBoot = !latestSnapshot;
+            const shouldShowListLoading = isManualSync || isInitialBoot || Boolean(settings.showLoading);
+
+            if (isManualSync) {
+                btn.disabled = true;
+                btn.classList.add("btn-refreshing");
+            }
+            if (shouldShowListLoading) {
+                setListLoading({
+                    title: t("syncingQuotaTitle"),
+                    desc: t("syncingQuotaDesc"),
+                    icon: "🔄"
+                });
+            }
             try {
                 if (settings.withSync) {
                     await syncHost(settings);
@@ -121,7 +162,13 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
                     await fetchDiagnostics(settings);
                 }
             } finally {
-                if (btn && settings.notifySync) btn.disabled = false;
+                if (shouldShowListLoading) {
+                    setListLoading(false);
+                }
+                if (isManualSync) {
+                    btn.disabled = false;
+                    btn.classList.remove("btn-refreshing");
+                }
             }
         }
 

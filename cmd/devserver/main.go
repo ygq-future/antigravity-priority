@@ -29,11 +29,13 @@ type devServerOptions struct {
 	Seed           int64
 	Clock          runtime.Clock
 	AutoApply      bool
+	Delay          time.Duration
 }
 
 type devServer struct {
 	host    *devHost
 	runtime *runtime.Runtime
+	delay   time.Duration
 }
 
 func newDevServer(options devServerOptions) (*devServer, error) {
@@ -166,7 +168,7 @@ func newDevServer(options devServerOptions) (*devServer, error) {
 			return nil, fmt.Errorf("enable dev runtime scheduler: %w", err)
 		}
 	}
-	return &devServer{host: fakeHost, runtime: rt}, nil
+	return &devServer{host: fakeHost, runtime: rt, delay: options.Delay}, nil
 }
 
 func (d *devServer) resolveAuthIndex(r *http.Request) (string, error) {
@@ -251,7 +253,23 @@ func (d *devServer) Handler() http.Handler {
 		_, _ = w.Write(resp)
 	})
 
-	mux.Handle("/", d.runtime.ManagementHandler())
+	managementHandler := d.runtime.ManagementHandler()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if d.delay > 0 && r.Method == http.MethodPost {
+			path := r.URL.Path
+			if strings.HasSuffix(path, "/sync") ||
+				strings.HasSuffix(path, "/run") ||
+				strings.HasSuffix(path, "/reset") ||
+				strings.HasSuffix(path, "/custom-tier") {
+				select {
+				case <-time.After(d.delay):
+				case <-r.Context().Done():
+					return
+				}
+			}
+		}
+		managementHandler.ServeHTTP(w, r)
+	})
 	return mux
 }
 
@@ -265,7 +283,7 @@ func main() {
 	defaultAuthDir := envString("ANTIGRAVITY_DEVSERVER_AUTH_DIR", defaultDevAuthDir)
 	defaultQuotaState := envString("ANTIGRAVITY_DEVSERVER_QUOTA_STATE", defaultDevQuotaState)
 	defaultCachePath := envString("ANTIGRAVITY_DEVSERVER_CACHE", defaultDevCachePath)
-
+	defaultDelay := envDuration("ANTIGRAVITY_DEVSERVER_DELAY", 800*time.Millisecond)
 	address := flag.String("addr", defaultAddress, "HTTP listen address")
 	authDir := flag.String("auth-dir", defaultAuthDir, "directory containing simulated CPA auth JSON files")
 	quotaState := flag.String("quota-state", defaultQuotaState, "persistent state for simulated Antigravity quota")
@@ -273,6 +291,7 @@ func main() {
 	accounts := flag.Int("accounts", defaultAccounts, "minimum number of simulated Antigravity auth files")
 	seed := flag.Int64("seed", defaultSeed, "random seed for deterministic quota simulation; zero selects a time-based seed")
 	autoApply := flag.Bool("auto-apply", false, "enable the Runtime scheduler at startup")
+	delay := flag.Duration("delay", defaultDelay, "simulated network latency for sync/probe/reset operations (e.g. 800ms, 1s; set to 0 to disable)")
 	flag.Parse()
 
 	dev, err := newDevServer(devServerOptions{
@@ -282,6 +301,7 @@ func main() {
 		AccountCount:   *accounts,
 		Seed:           *seed,
 		AutoApply:      *autoApply,
+		Delay:          *delay,
 	})
 	if err != nil {
 		log.Fatalf("start devserver runtime: %v", err)
@@ -304,6 +324,7 @@ func main() {
 	}
 	fmt.Printf(" Server listening on: http://%s/status\n", displayAddress)
 	fmt.Printf(" Simulated CPA auth files: %s (%d minimum accounts)\n", filepath.Clean(*authDir), *accounts)
+	fmt.Printf(" Simulated network delay: %v (configurable via -delay or ANTIGRAVITY_DEVSERVER_DELAY)\n", *delay)
 	fmt.Println(" Simulated Antigravity quota requests stay inside the devserver.")
 	fmt.Println(" Simulation Hooks for Manual 429 Testing:")
 	fmt.Printf("   POST http://%s/dev/simulate-429?auth_index=<authIndex>\n", displayAddress)
@@ -358,6 +379,18 @@ func envInt64(key string, fallback int64) int64 {
 		return fallback
 	}
 	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func envDuration(key string, fallback time.Duration) time.Duration {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := time.ParseDuration(value)
 	if err != nil {
 		return fallback
 	}
