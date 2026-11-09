@@ -286,13 +286,6 @@ func roleReason(reason string, predicted bool) string {
 
 func clonePlanningOptions(options priority.Options) priority.Options {
 	options.CooldownAuthIndexes = cloneCooldowns(options.CooldownAuthIndexes)
-	if len(options.AutoDisabledAuthIndexes) > 0 {
-		cloned := make(map[string]struct{}, len(options.AutoDisabledAuthIndexes))
-		for k := range options.AutoDisabledAuthIndexes {
-			cloned[k] = struct{}{}
-		}
-		options.AutoDisabledAuthIndexes = cloned
-	}
 	if len(options.CustomTiers) > 0 {
 		cloned := make(map[string]int, len(options.CustomTiers))
 		for k, v := range options.CustomTiers {

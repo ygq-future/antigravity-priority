@@ -356,6 +356,7 @@ func (r *Runtime) triggerWarmupForEligibleCredentials(
 	cfg config.WarmupConfig,
 	evidenceByGroup map[config.AntigravityModelGroup]evidence.Result,
 	authMaterials map[string]authMaterial,
+	disabledAuthIndexes map[string]struct{},
 	now time.Time,
 ) {
 	if !cfg.GeminiEnabled && !cfg.ClaudeEnabled {
@@ -390,6 +391,11 @@ func (r *Runtime) triggerWarmupForEligibleCredentials(
 			authIdx := ev.AuthIndex
 			if authIdx == "" {
 				continue
+			}
+			if len(disabledAuthIndexes) > 0 {
+				if _, isDisabled := disabledAuthIndexes[authIdx]; isDisabled {
+					continue
+				}
 			}
 
 			key := authIdx + "::" + string(target.group)

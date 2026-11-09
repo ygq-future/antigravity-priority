@@ -87,17 +87,19 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 		}
 	} else {
 		forceProbe := request.Trigger == TriggerProbe || request.Trigger == TriggerAutoApply
+		targetedSingleAuth := len(request.AuthIndexes) > 0
 		evidence, err = r.collectEvidenceForTrigger(ctx, collectInput{
-			client:         client,
-			store:          store,
-			credentials:    probeCredentials,
-			authMaterials:  probeAuthMaterials,
-			now:            now,
-			cacheTTL:       defaultProbeCacheTTL,
-			forceProbe:     forceProbe,
-			maxConcurrency: request.Config.MaxConcurrency,
-			modelGroup:     request.Config.AntigravityModelGroup,
-			sampleCapacity: request.Config.QuotaSampleCapacity,
+			client:             client,
+			store:              store,
+			credentials:        probeCredentials,
+			authMaterials:      probeAuthMaterials,
+			now:                now,
+			cacheTTL:           defaultProbeCacheTTL,
+			forceProbe:         forceProbe,
+			targetedSingleAuth: targetedSingleAuth,
+			maxConcurrency:     request.Config.MaxConcurrency,
+			modelGroup:         request.Config.AntigravityModelGroup,
+			sampleCapacity:     request.Config.QuotaSampleCapacity,
 		}, request.Trigger)
 		if err != nil {
 			return err
@@ -126,7 +128,13 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 		}
 	}
 	if preview == nil && (request.Config.Warmup.GeminiEnabled || request.Config.Warmup.ClaudeEnabled) {
-		r.triggerWarmupForEligibleCredentials(ctx, client, request.Config.Warmup, evidence.ByGroup, allAuthMaterials, now)
+		disabledAuth := make(map[string]struct{})
+		for _, c := range allCredentials {
+			if c.Disabled {
+				disabledAuth[c.AuthIndex] = struct{}{}
+			}
+		}
+		r.triggerWarmupForEligibleCredentials(ctx, client, request.Config.Warmup, evidence.ByGroup, allAuthMaterials, disabledAuth, now)
 	}
 
 
@@ -213,20 +221,6 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 	result, err := apply.ExecutePlan(ctx, transition, plan, true)
 	if err != nil {
 		return err
-	}
-	if store != nil {
-		for _, change := range plan.Changes {
-			if change.Disabled && change.Reason == priority.ReasonFreshWeeklyDepleted {
-				store.SetAutoDisabled(state.AutoDisabledEntry{
-					AuthIndex:  change.Credential.AuthIndex,
-					ModelGroup: string(request.Config.AntigravityModelGroup),
-					Reason:     change.Reason,
-					DisabledAt: now,
-				})
-			} else if !change.Disabled {
-				store.DeleteAutoDisabled(change.Credential.AuthIndex)
-			}
-		}
 	}
 	postApplyProjection, err := projectCurrentHost(ctx, client, request, evidence.ByGroup, store, now)
 	if err != nil {
@@ -346,7 +340,6 @@ func projectCurrentHost(
 	if err != nil {
 		return DualModelGroupProjection{}, err
 	}
-	_ = reconcileAutoDisabledDrift(ctx, store, credentials)
 	credentials = enrichCredentialsPlanTypeFromStore(store, credentials, string(request.Config.AntigravityModelGroup))
 	return ProjectDualModelGroups(ProjectionInput{
 		ControlModelGroup: request.Config.AntigravityModelGroup,
@@ -523,50 +516,24 @@ func filterCredentialsByAuthIndex(credentials []core.Credential, authIndexes []s
 
 func priorityOptions(cfg config.Config, store *state.Store, now time.Time) priority.Options {
 	var cooldowns map[string]time.Time
-	var autoDisabled map[string]struct{}
 	var customTiers map[string]int
 	if store != nil {
 		cooldowns = store.GetActiveCooldowns(now)
-		autoMap := store.GetAutoDisabled()
-		if len(autoMap) > 0 {
-			autoDisabled = make(map[string]struct{}, len(autoMap))
-			for k := range autoMap {
-				autoDisabled[k] = struct{}{}
-			}
-		}
 		customTiers = store.GetCustomTiers()
 	}
 	if customTiers == nil && cfg.CustomTiers != nil {
 		customTiers = cfg.CustomTiers
 	}
 	return priority.Options{
-		Now:                     now,
-		BoostStartPriority:      cfg.PriorityRules.BoostStartPriority,
-		NormalStartPriority:     cfg.PriorityRules.NormalStartPriority,
-		FreeStartPriority:       cfg.PriorityRules.FreeStartPriority,
-		MinChange:               cfg.MinChange,
-		UrgencyTolerance:        cfg.UrgencyTolerance,
-		AutoDisabledAuthIndexes: autoDisabled,
-		CooldownAuthIndexes:     cooldowns,
-		CustomTiers:             customTiers,
+		Now:                 now,
+		BoostStartPriority:  cfg.PriorityRules.BoostStartPriority,
+		NormalStartPriority: cfg.PriorityRules.NormalStartPriority,
+		FreeStartPriority:   cfg.PriorityRules.FreeStartPriority,
+		MinChange:           cfg.MinChange,
+		UrgencyTolerance:    cfg.UrgencyTolerance,
+		CooldownAuthIndexes: cooldowns,
+		CustomTiers:         customTiers,
 	}
-}
-
-func reconcileAutoDisabledDrift(ctx context.Context, store *state.Store, credentials []core.Credential) error {
-	if store == nil {
-		return nil
-	}
-	mutated := false
-	for _, cred := range credentials {
-		if !cred.Disabled && store.IsAutoDisabled(cred.AuthIndex) {
-			store.DeleteAutoDisabled(cred.AuthIndex)
-			mutated = true
-		}
-	}
-	if mutated {
-		return store.SaveAtomic(ctx)
-	}
-	return nil
 }
 func enrichCredentialsPlanTypeFromStore(store *state.Store, credentials []core.Credential, preferredGroup string) []core.Credential {
 	if store == nil {

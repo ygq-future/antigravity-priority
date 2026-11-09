@@ -128,9 +128,7 @@ func IntentFromChange(change priority.Change) TransitionIntent {
 	if change.Priority != change.Credential.Priority || change.Credential.PriorityMissing {
 		target.Priority = PriorityTarget{Operation: FieldSet, Value: change.Priority}
 	}
-	if change.Disabled != change.Credential.Disabled {
-		target.Disabled = DisabledTarget{Operation: FieldSet, Value: change.Disabled}
-	}
+	// Disabled remains FieldUnchanged: host credential disabled state is strictly owned by the host/user.
 	return TransitionIntent{
 		AuthIndex: change.Credential.AuthIndex,
 		Name:      firstNonEmpty(change.Credential.Name, change.Credential.Account, change.Credential.Email, change.Credential.AuthIndex),

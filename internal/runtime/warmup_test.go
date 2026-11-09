@@ -186,7 +186,7 @@ func TestRuntime_TriggerWarmupForEligibleCredentials(t *testing.T) {
 	}
 
 	// 1. Initial run: both should be warmed up
-	rt.triggerWarmupForEligibleCredentials(ctx, doer, cfg, evidenceByGroup, materials, now)
+	rt.triggerWarmupForEligibleCredentials(ctx, doer, cfg, evidenceByGroup, materials, nil, now)
 	if warmupCount != 2 {
 		t.Fatalf("expected 2 warmup calls (gemini and claude), got %d", warmupCount)
 	}
@@ -202,14 +202,24 @@ func TestRuntime_TriggerWarmupForEligibleCredentials(t *testing.T) {
 
 
 	// 2. Immediate second run: debounced, no calls should happen
-	rt.triggerWarmupForEligibleCredentials(ctx, doer, cfg, evidenceByGroup, materials, now.Add(10*time.Minute))
+	rt.triggerWarmupForEligibleCredentials(ctx, doer, cfg, evidenceByGroup, materials, nil, now.Add(10*time.Minute))
 	if warmupCount != 2 {
 		t.Fatalf("expected still 2 warmup calls due to debounce, got %d", warmupCount)
 	}
 
 	// 3. After debounce expiration (5 hours later): should trigger again
-	rt.triggerWarmupForEligibleCredentials(ctx, doer, cfg, evidenceByGroup, materials, now.Add(5*time.Hour))
+	rt.triggerWarmupForEligibleCredentials(ctx, doer, cfg, evidenceByGroup, materials, nil, now.Add(5*time.Hour))
 	if warmupCount != 4 {
 		t.Fatalf("expected 4 warmup calls after debounce expired, got %d", warmupCount)
+	}
+
+	// 4. Disabled credentials must never be warmed up
+	disabledAuth := map[string]struct{}{
+		"auth-gemini-1": {},
+		"auth-claude-1": {},
+	}
+	rt.triggerWarmupForEligibleCredentials(ctx, doer, cfg, evidenceByGroup, materials, disabledAuth, now.Add(11*time.Hour))
+	if warmupCount != 4 {
+		t.Fatalf("expected warmup calls to remain 4 for disabled credentials, got %d", warmupCount)
 	}
 }

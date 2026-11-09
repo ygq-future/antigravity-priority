@@ -6,7 +6,7 @@
 1. **单提供商专精化**：彻底剥离通用启发式与非 Antigravity 逻辑（如 Codex / xAI），针对 Antigravity 的三大配额池（Gemini 5h/7d、Argon 7d、Claude & GPT 5h/7d）与 CPA `scheduler.pick` 动态调度进行极致优化；
 2. **自适应燃尽学习**：基于连续探测增量（$\Delta R_{\text{5h}} \ge 5\%, \Delta R_{\text{7d}} > 0$）自适应推算周期消耗能力 $C_{\text{cycle}}$ 并通过 EMA 平滑，杜绝用户手动配置负担；
 3. **全局最优调度**：引入**配额燃尽紧迫度（Weekly Urgency）**与**动态提前提权（Dynamic Boost Horizon）**，配合 CPA `scheduler.pick` 纯内存会话粘性轮转分流，彻底消除“最后 24 小时大额度账号撑死溢出”的痛点；
-4. **自愈式软降级与池级隔离**：5 小时短窗耗尽仅软降级（`priority = -1, disabled = false`），短窗刷新后自动恢复；周额度耗尽执行硬禁用（`priority = -1, disabled = true`）；429 限流精准隔离至受影响配额池，不影响同账号其他模型正常服务；
+4. **自愈式软降级与池级隔离**：5 小时短窗与 7 天周额度耗尽均执行纯内存软降级（`priority = -1, disabled = false`），严禁改写宿主机 `disabled` 字段（宿主机 `disabled` 权责 100% 归属用户）；短窗/长窗刷新后自动恢复；429 限流精准隔离至受影响配额池，不影响同账号其他模型正常服务；
 5. **CPA 深度融合**：嵌入式 Web 管理页纯原生自包含（零外部 CDN），深度适配 CPA 宿主暗色/明亮主题体系。
 
 ---

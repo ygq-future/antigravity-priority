@@ -257,17 +257,17 @@ func TestPlanFreshOnly(t *testing.T) {
 			itemMap[item.Credential.AuthIndex] = item
 		}
 
-		// hard-depleted: priority=-1, disabled=true
-		if itemMap["hard-depleted"].Priority != -1 || !itemMap["hard-depleted"].Disabled {
-			t.Errorf("hard-depleted: priority=%d disabled=%v; want -1, true", itemMap["hard-depleted"].Priority, itemMap["hard-depleted"].Disabled)
+		// hard-depleted: priority=-1, disabled=false (soft depletion never mutates host disabled)
+		if itemMap["hard-depleted"].Priority != -1 || itemMap["hard-depleted"].Disabled || itemMap["hard-depleted"].Reason != ReasonFreshWeeklyDepleted {
+			t.Errorf("hard-depleted: priority=%d disabled=%v reason=%s; want -1, false, %s", itemMap["hard-depleted"].Priority, itemMap["hard-depleted"].Disabled, itemMap["hard-depleted"].Reason, ReasonFreshWeeklyDepleted)
 		}
-		// both-depleted: priority=-1, disabled=true (hard depletion strict precedence!)
-		if itemMap["both-depleted"].Priority != -1 || !itemMap["both-depleted"].Disabled {
-			t.Errorf("both-depleted: priority=%d disabled=%v; want -1, true", itemMap["both-depleted"].Priority, itemMap["both-depleted"].Disabled)
+		// both-depleted: priority=-1, disabled=false (weekly depletion takes strict precedence over short depletion)
+		if itemMap["both-depleted"].Priority != -1 || itemMap["both-depleted"].Disabled || itemMap["both-depleted"].Reason != ReasonFreshWeeklyDepleted {
+			t.Errorf("both-depleted: priority=%d disabled=%v reason=%s; want -1, false, %s", itemMap["both-depleted"].Priority, itemMap["both-depleted"].Disabled, itemMap["both-depleted"].Reason, ReasonFreshWeeklyDepleted)
 		}
-		// soft-depleted: priority=-1, disabled=false (soft depletion keeps disabled=false for auto-recovery)
-		if itemMap["soft-depleted"].Priority != -1 || itemMap["soft-depleted"].Disabled {
-			t.Errorf("soft-depleted: priority=%d disabled=%v; want -1, false", itemMap["soft-depleted"].Priority, itemMap["soft-depleted"].Disabled)
+		// soft-depleted: priority=-1, disabled=false (short depletion keeps disabled=false for auto-recovery)
+		if itemMap["soft-depleted"].Priority != -1 || itemMap["soft-depleted"].Disabled || itemMap["soft-depleted"].Reason != ReasonFreshShortWindowDepleted {
+			t.Errorf("soft-depleted: priority=%d disabled=%v reason=%s; want -1, false, %s", itemMap["soft-depleted"].Priority, itemMap["soft-depleted"].Disabled, itemMap["soft-depleted"].Reason, ReasonFreshShortWindowDepleted)
 		}
 	})
 
@@ -313,27 +313,26 @@ func TestPlanFreshOnly(t *testing.T) {
 		}
 	})
 
-	t.Run("auto-disabled credential requires >= 10% 7d quota to recover", func(t *testing.T) {
+	t.Run("weekly depleted credential receives soft downgrade priority = -1 and disabled = false", func(t *testing.T) {
 		creds := []core.Credential{
-			{AuthIndex: "auto-disabled-below-threshold", Priority: -1, Disabled: true},
-			{AuthIndex: "auto-disabled-healthy", Priority: -1, Disabled: true},
-			{AuthIndex: "auto-disabled-short-depleted", Priority: -1, Disabled: true},
+			{AuthIndex: "weekly-below-threshold", Priority: 100, Disabled: false},
+			{AuthIndex: "weekly-healthy", Priority: -1, Disabled: false},
+			{AuthIndex: "weekly-short-depleted", Priority: 100, Disabled: false},
 		}
 		reset7d := now.Add(100 * time.Hour)
 		reset5h := now.Add(3 * time.Hour)
 		evidence := []QuotaEvidence{
 			{
-				// 5% 7d quota (< 10% threshold): must stay disabled
-				AuthIndex:            "auto-disabled-below-threshold",
-				LongWindowRemaining:  int64Ptr(5),
+				// 0% 7d quota: weekly depleted, priority=-1, disabled=false
+				AuthIndex:            "weekly-below-threshold",
+				LongWindowRemaining:  int64Ptr(0),
 				LongWindowResetAt:    &reset7d,
-				ShortWindowRemaining: int64Ptr(80),
 				ShortWindowResetAt:   &reset5h,
 				CycleBurnRate:        0.15,
 			},
 			{
-				// 15% 7d quota (>= 10% threshold) & 80% 5h: healthy recovery
-				AuthIndex:            "auto-disabled-healthy",
+				// 15% 7d quota (>= 10% threshold) & 80% 5h: healthy, priority=100, disabled=false
+				AuthIndex:            "weekly-healthy",
 				LongWindowRemaining:  int64Ptr(15),
 				LongWindowResetAt:    &reset7d,
 				ShortWindowRemaining: int64Ptr(80),
@@ -341,8 +340,8 @@ func TestPlanFreshOnly(t *testing.T) {
 				CycleBurnRate:        0.15,
 			},
 			{
-				// 15% 7d quota (>= 10% threshold) but 0% 5h: soft-depleted recovery
-				AuthIndex:            "auto-disabled-short-depleted",
+				// 15% 7d quota (>= 10% threshold) but 0% 5h: short-depleted, priority=-1, disabled=false
+				AuthIndex:            "weekly-short-depleted",
 				LongWindowRemaining:  int64Ptr(15),
 				LongWindowResetAt:    &reset7d,
 				ShortWindowRemaining: int64Ptr(0),
@@ -351,13 +350,7 @@ func TestPlanFreshOnly(t *testing.T) {
 			},
 		}
 
-		opts := defaultOptions
-		opts.AutoDisabledAuthIndexes = map[string]struct{}{
-			"auto-disabled-below-threshold": {},
-			"auto-disabled-healthy":         {},
-			"auto-disabled-short-depleted":  {},
-		}
-		plan := planFreshOnly(creds, evidence, opts)
+		plan := planFreshOnly(creds, evidence, defaultOptions)
 		if len(plan.Items) != 3 {
 			t.Fatalf("expected 3 items, got %d", len(plan.Items))
 		}
@@ -367,27 +360,29 @@ func TestPlanFreshOnly(t *testing.T) {
 			itemMap[it.Credential.AuthIndex] = it
 		}
 
-		// 1. Below threshold: stay depleted & disabled
-		below := itemMap["auto-disabled-below-threshold"]
-		if !below.Disabled || below.Priority != -1 || below.Reason != ReasonFreshWeeklyDepleted {
-			t.Errorf("below threshold should stay weekly depleted: %+v", below)
+		// 1. Below threshold: stay depleted with disabled=false (never mutate host disabled)
+		below := itemMap["weekly-below-threshold"]
+		if below.Disabled || below.Priority != -1 || below.Reason != ReasonFreshWeeklyDepleted {
+			t.Errorf("below threshold should be weekly depleted: %+v", below)
 		}
 
-		// 2. Healthy recovery: re-enabled, positive priority, change produced
-		healthy := itemMap["auto-disabled-healthy"]
+		// 2. Healthy recovery: positive priority, disabled=false
+		healthy := itemMap["weekly-healthy"]
 		if healthy.Disabled || healthy.Priority != 100 || healthy.Reason != ReasonFreshRemainingPositive {
 			t.Errorf("healthy recovery failed: %+v", healthy)
 		}
 
-		// 3. Short depleted recovery: re-enabled, priority=-1, soft depletion
-		shortDep := itemMap["auto-disabled-short-depleted"]
+		// 3. Short depleted: priority=-1, disabled=false
+		shortDep := itemMap["weekly-short-depleted"]
 		if shortDep.Disabled || shortDep.Priority != -1 || shortDep.Reason != ReasonFreshShortWindowDepleted {
-			t.Errorf("short depleted recovery failed: %+v", shortDep)
+			t.Errorf("short depleted failed: %+v", shortDep)
 		}
 
-		// Changes should contain healthy and shortDep (both re-enabled with disabled=false)
-		if len(plan.Changes) != 2 {
-			t.Fatalf("expected 2 re-enable changes, got %d: %+v", len(plan.Changes), plan.Changes)
+		// Changes should contain all priority updates, but NO disabled mutations
+		for _, c := range plan.Changes {
+			if c.Disabled {
+				t.Fatalf("planner must never produce a disabled=true change: %+v", c)
+			}
 		}
 	})
 

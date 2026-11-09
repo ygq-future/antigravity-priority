@@ -404,7 +404,6 @@ func (r *Runtime) SyncHost(ctx context.Context, modelGroup config.AntigravityMod
 	if err != nil {
 		return apply.DualGroupSnapshot{}, err
 	}
-	_ = reconcileAutoDisabledDrift(ctx, store, credentials)
 	credentials = enrichCredentialsPlanTypeFromStore(store, credentials, string(cfg.AntigravityModelGroup))
 	evidenceByGroup := buildProjectionEvidence(store, credentials)
 

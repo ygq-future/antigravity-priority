@@ -23,8 +23,9 @@ type collectInput struct {
 	authMaterials  map[string]authMaterial
 	now            time.Time
 	cacheTTL       time.Duration
-	forceProbe     bool
-	maxConcurrency int
+	forceProbe         bool
+	targetedSingleAuth bool
+	maxConcurrency     int
 	modelGroup     config.AntigravityModelGroup
 	sampleCapacity int
 }
@@ -143,13 +144,16 @@ func uniqueProbeCredentials(probes []evidence.ProbeObservation) int {
 }
 
 func freshProbeNeeded(ctx context.Context, input collectInput, cred core.Credential, modelGroup string) (bool, error) {
-	if input.forceProbe {
-		return true, nil
-	}
 	if cred.Disabled {
-		if input.store == nil || !input.store.IsAutoDisabled(cred.AuthIndex) {
+		// Bypassed: disabled credentials on the host must never be probed during
+		// batch operations (auto-scheduling or "Probe All").
+		// Targeted single-credential probe allows viewing quota on demand.
+		if !input.targetedSingleAuth {
 			return false, nil
 		}
+	}
+	if input.forceProbe {
+		return true, nil
 	}
 	return input.store.NeedsProbe(ctx, state.ProbeCheck{
 		AuthIndex:  cred.AuthIndex,

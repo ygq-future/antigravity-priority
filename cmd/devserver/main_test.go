@@ -531,7 +531,12 @@ func TestDevServer_FreeAccountSimulation(t *testing.T) {
 
 	freeCount := 0
 	proCount := 0
+	disabledCount := 0
 	for _, it := range items {
+		if it.Current.Disabled {
+			disabledCount++
+			continue
+		}
 		switch it.PlanType {
 		case "free":
 			freeCount++
@@ -560,7 +565,10 @@ func TestDevServer_FreeAccountSimulation(t *testing.T) {
 	if freeCount != 3 {
 		t.Fatalf("free account count = %d, want 3", freeCount)
 	}
-	if proCount != 7 {
-		t.Fatalf("pro account count = %d, want 7", proCount)
+	if proCount != 6 {
+		t.Fatalf("pro account count = %d, want 6", proCount)
+	}
+	if disabledCount != 1 {
+		t.Fatalf("disabled account count = %d, want 1", disabledCount)
 	}
 }

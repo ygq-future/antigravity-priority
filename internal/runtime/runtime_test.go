@@ -3033,7 +3033,7 @@ func TestRuntime_Diagnostics_LatestApply_AutoApplyAndManualApply(t *testing.T) {
 	}
 }
 
-func TestRuntime_AutoDisabled_LifecycleAndProbeBypass(t *testing.T) {
+func TestRuntime_DisabledAccount_ProbeBypassAndSingleProbe(t *testing.T) {
 	tempDir := t.TempDir()
 	cachePath := filepath.Join(tempDir, "cache.json")
 	authFilePath := filepath.Join(tempDir, "auth.json")
@@ -3059,20 +3059,28 @@ func TestRuntime_AutoDisabled_LifecycleAndProbeBypass(t *testing.T) {
 		StateCachePath: cachePath,
 	})
 
-	// 1. Manually disabled account should not be auto-probed during AutoApply
+	// 1. Manually disabled account must not be auto-probed during AutoApply
 	if err := r.AutoApply(context.Background()); err != nil {
 		t.Fatalf("auto apply failed: %v", err)
 	}
 	if len(mock.httpCalls) != 0 {
-		t.Fatalf("manually disabled account must not be auto-probed, got %d http calls", len(mock.httpCalls))
+		t.Fatalf("manually disabled account must not be auto-probed during AutoApply, got %d http calls", len(mock.httpCalls))
 	}
 
-	// 2. Explicit Probe allows probing manually disabled account to view quota
+	// 2. Batch "Probe All" (nil authIndexes) must NOT probe disabled accounts
 	if err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
-		t.Fatalf("probe failed: %v", err)
+		t.Fatalf("batch probe failed: %v", err)
+	}
+	if len(mock.httpCalls) != 0 {
+		t.Fatalf("batch Probe All must not probe disabled accounts, got %d http calls", len(mock.httpCalls))
+	}
+
+	// 3. Explicit targeted single-credential probe allows probing on demand
+	if err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, []string{"auth_manual"}); err != nil {
+		t.Fatalf("single probe failed: %v", err)
 	}
 	if len(mock.httpCalls) == 0 {
-		t.Fatal("explicit probe should probe manually disabled account")
+		t.Fatal("targeted single probe should allow probing disabled account on demand")
 	}
 
 	// Snapshot should retain quota metrics and reason ReasonDisabledOnHost
@@ -3086,31 +3094,6 @@ func TestRuntime_AutoDisabled_LifecycleAndProbeBypass(t *testing.T) {
 	}
 	if !items[0].Current.Disabled || !items[0].Target.Disabled {
 		t.Fatalf("expected both current and target disabled: %+v", items[0])
-	}
-
-	// 3. User manually re-enables in host -> state drift clears AutoDisabled if it was set
-	store, err := state.Load(context.Background(), cachePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	store.SetAutoDisabled(state.AutoDisabledEntry{AuthIndex: "auth_manual", Reason: "weekly_depleted"})
-	_ = store.SaveAtomic(context.Background())
-
-	mock.mu.Lock()
-	mock.files[0].Disabled = false
-	mock.mu.Unlock()
-	_ = os.WriteFile(authFilePath, []byte(`{"access_token":"token_123","project_id":"proj_123","priority":100,"disabled":false}`), 0o600)
-
-	_, err = r.SyncHost(context.Background(), config.AntigravityModelGroupGemini)
-	if err != nil {
-		t.Fatal(err)
-	}
-	reloadedStore, err := state.Load(context.Background(), cachePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if reloadedStore.IsAutoDisabled("auth_manual") {
-		t.Fatal("manual re-enable in host must clear AutoDisabled record")
 	}
 }
 

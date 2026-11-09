@@ -74,7 +74,6 @@ type Options struct {
 	FreeStartPriority   int
 	MinChange           int
 	UrgencyTolerance    float64
-	AutoDisabledAuthIndexes map[string]struct{}
 	CooldownAuthIndexes map[string]time.Time
 	CustomTiers         map[string]int
 }
@@ -250,61 +249,31 @@ func planItems(credentials []core.Credential, evidence plannerEvidence, options 
 			}
 
 			if credential.Disabled {
-				_, isAutoDisabled := options.AutoDisabledAuthIndexes[credential.AuthIndex]
-				if !isAutoDisabled {
-					// Manually disabled on host: keep current priority and disabled state untouched.
-					// Quota metrics are retained for UI display, but the credential must never be
-					// planned with positive priority, modified, or written back.
-					item.Reason = ReasonDisabledOnHost
-					item.Priority = credential.Priority
-					item.Disabled = true
-					item.EvidenceFresh = false
-					item.quotaState = quotaStateUnknown
-				} else {
-					// Automatically disabled by plugin due to weekly depletion.
-					// Must exceed WeeklyRecoveryThreshold (10%) on 7d window to recover.
-					switch {
-					case metrics.R7d < WeeklyRecoveryThreshold:
-						// Below 10%: keep weekly depleted
-						item.Priority = DepletedPriority
-						item.Disabled = true
-						item.Reason = ReasonFreshWeeklyDepleted
-						item.quotaState = quotaStateWeeklyDepleted
-					case metrics.IsShortDepleted:
-						// Exceeds 10% 7d, but short window exhausted -> soft depletion
-						item.Priority = DepletedPriority
-						item.Disabled = false
-						item.Reason = ReasonFreshShortWindowDepleted
-						item.quotaState = quotaStateShortDepleted
-					default:
-						// Healthy recovery
-						item.Disabled = false
-						if item.IsBoosted {
-							item.Reason = ReasonFreshBoosted
-						} else {
-							item.Reason = ReasonFreshRemainingPositive
-						}
-						item.quotaState = quotaStateHealthy
-					}
-				}
+				// Manually disabled on host: keep current priority and disabled state untouched.
+				// Quota metrics are retained for UI display, but the credential must never be
+				// planned with positive priority, modified, or written back.
+				item.Reason = ReasonDisabledOnHost
+				item.Priority = credential.Priority
+				item.Disabled = true
+				item.EvidenceFresh = false
+				item.quotaState = quotaStateUnknown
 			} else {
-				// Not disabled on host
+				// Active on host: the plugin manages dynamic priorities purely in memory and
+				// NEVER mutates the host credential's disabled field.
+				item.Disabled = false
 				switch {
 				case metrics.IsWeeklyDepleted:
-					// Tier 3: Weekly hard depletion has highest precedence
+					// Weekly depletion: soft downgrade priority to -1
 					item.Priority = DepletedPriority
-					item.Disabled = true
 					item.Reason = ReasonFreshWeeklyDepleted
 					item.quotaState = quotaStateWeeklyDepleted
 				case metrics.IsShortDepleted:
-					// Tier 3: Short-window soft depletion
+					// Short-window soft depletion
 					item.Priority = DepletedPriority
-					item.Disabled = false
 					item.Reason = ReasonFreshShortWindowDepleted
 					item.quotaState = quotaStateShortDepleted
 				default:
 					// Healthy candidate
-					item.Disabled = false
 					if item.IsBoosted {
 						item.Reason = ReasonFreshBoosted
 					} else {
@@ -314,9 +283,7 @@ func planItems(credentials []core.Credential, evidence plannerEvidence, options 
 				}
 			}
 		} else if credential.Disabled {
-			if _, isAutoDisabled := options.AutoDisabledAuthIndexes[credential.AuthIndex]; !isAutoDisabled {
-				item.Reason = ReasonDisabledOnHost
-			}
+			item.Reason = ReasonDisabledOnHost
 		}
 
 		items[index] = item
