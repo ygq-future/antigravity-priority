@@ -422,7 +422,7 @@ func minFutureTime(current, candidate time.Time) time.Time {
 }
 
 // handleSchedulerPick executes O(1) dynamic request scheduling across Antigravity credentials.
-func (r *Runtime) handleSchedulerPick(ctx context.Context, request []byte) []byte {
+func (r *Runtime) handleSchedulerPick(_ context.Context, request []byte) []byte {
 	var req SchedulerPickRequest
 	if err := json.Unmarshal(request, &req); err != nil {
 		return failure(err)

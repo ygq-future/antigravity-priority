@@ -109,7 +109,7 @@ func parseGroupFromResponse(response availableModelsResponse, observedAt time.Ti
 		ModelGroup: group,
 		ObservedAt: observedAt.UTC(),
 		ResetAt:    selected.resetAt,
-		Remaining:  int64Ptr(selected.remaining),
+		Remaining:  new(selected.remaining),
 		Window:     selected.window,
 		Status:     StatusReady,
 		PlanType:   inferPlanType(windows),
@@ -117,27 +117,27 @@ func parseGroupFromResponse(response availableModelsResponse, observedAt time.Ti
 
 	if fiveHour, ok := conservativeWindow(windows, WindowFiveHour); ok {
 		result.ShortWindowResetAt = fiveHour.resetAt
-		result.ShortWindowRemaining = int64Ptr(fiveHour.remaining)
+		result.ShortWindowRemaining = new(fiveHour.remaining)
 	}
 
 	// Normal weekly (non-Argon)
 	normalWindows := filterArgonWindows(windows, false)
 	if weekly, ok := conservativeWindow(normalWindows, WindowWeekly); ok {
 		result.LongWindowResetAt = weekly.resetAt
-		result.LongWindowRemaining = int64Ptr(weekly.remaining)
+		result.LongWindowRemaining = new(weekly.remaining)
 	} else if weekly, ok := conservativeWindow(windows, WindowWeekly); ok {
 		result.LongWindowResetAt = weekly.resetAt
-		result.LongWindowRemaining = int64Ptr(weekly.remaining)
+		result.LongWindowRemaining = new(weekly.remaining)
 	}
 
 	// Argon weekly
 	argonWindows := filterArgonWindows(windows, true)
 	if argon, ok := conservativeWindow(argonWindows, WindowWeekly); ok {
 		result.ArgonWindowResetAt = argon.resetAt
-		result.ArgonWindowRemaining = int64Ptr(argon.remaining)
+		result.ArgonWindowRemaining = new(argon.remaining)
 	} else if argon, ok := conservativeAnyWindow(argonWindows); ok {
 		result.ArgonWindowResetAt = argon.resetAt
-		result.ArgonWindowRemaining = int64Ptr(argon.remaining)
+		result.ArgonWindowRemaining = new(argon.remaining)
 	}
 
 	return result
@@ -160,16 +160,16 @@ func parseArgonGroup(windows []candidateWindow, observedAt time.Time) ProbeResul
 		Status:               StatusReady,
 		PlanType:             inferPlanType(windows),
 		LongWindowResetAt:    argonLong.resetAt,
-		LongWindowRemaining:  int64Ptr(argonLong.remaining),
+		LongWindowRemaining:  new(argonLong.remaining),
 		ArgonWindowResetAt:   argonLong.resetAt,
-		ArgonWindowRemaining: int64Ptr(argonLong.remaining),
+		ArgonWindowRemaining: new(argonLong.remaining),
 	}
 
 	// 1. Short window: shared Gemini 5h burst window
 	fiveHour, hasFiveHour := conservativeWindow(windows, WindowFiveHour)
 	if hasFiveHour {
 		result.ShortWindowResetAt = fiveHour.resetAt
-		result.ShortWindowRemaining = int64Ptr(fiveHour.remaining)
+		result.ShortWindowRemaining = new(fiveHour.remaining)
 	}
 
 	// 2. Effective window selection for Argon
@@ -179,7 +179,7 @@ func parseArgonGroup(windows []candidateWindow, observedAt time.Time) ProbeResul
 	}
 
 	result.ResetAt = selected.resetAt
-	result.Remaining = int64Ptr(selected.remaining)
+	result.Remaining = new(selected.remaining)
 	result.Window = selected.window
 	return result
 }
@@ -544,8 +544,4 @@ func failedResult(observedAt time.Time, group ModelGroup, message string) ProbeR
 		PlanType:   core.PlanTypeUnknown,
 		Error:      message,
 	}
-}
-
-func int64Ptr(value int64) *int64 {
-	return &value
 }

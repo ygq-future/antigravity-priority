@@ -1287,7 +1287,7 @@ func TestRuntime_ProductionRunner_Apply_Full(t *testing.T) {
 	})
 
 	cachePath := filepath.Join(tempDir, "state_apply_full.json")
-	req := []byte(fmt.Sprintf(`{"config_yaml":"enabled: true\nstate_cache_path: %q\n"}`, cachePath))
+	req := fmt.Appendf(nil, `{"config_yaml":"enabled: true\nstate_cache_path: %q\n"}`, cachePath)
 	r.Handle(context.Background(), "plugin.register", req)
 
 	prepareManualApply(t, r, config.AntigravityModelGroupGemini, nil)
@@ -1507,7 +1507,7 @@ func TestRuntime_ProductionRunner_ZeroChange_Apply_Omitted(t *testing.T) {
 	})
 	_ = store.SaveAtomic(context.Background())
 
-	req := []byte(fmt.Sprintf(`{"config_yaml":"enabled: true\nstate_cache_path: %q\n"}`, cachePath))
+	req := fmt.Appendf(nil, `{"config_yaml":"enabled: true\nstate_cache_path: %q\n"}`, cachePath)
 	r.Handle(context.Background(), "plugin.register", req)
 
 	// First run: all credentials already in sync (Priority 100 == Target 100)
@@ -1757,7 +1757,7 @@ func TestRuntime_Diagnostics(t *testing.T) {
 }
 
 func ptrInt64(v int64) *int64 {
-	return &v
+	return new(v)
 }
 
 func TestRuntime_AutoApply_Paused(t *testing.T) {
@@ -2522,13 +2522,13 @@ func TestRuntime_SameModelSuccessRestoresActiveCooldownImmediately(t *testing.T)
 
 func TestRuntime_Burst429EntersStormProtection(t *testing.T) {
 	mock := newMockHost()
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		authIndex := fmt.Sprintf("auth-%d", i)
 		mock.files = append(mock.files, host.AuthFile{Name: authIndex, AuthIndex: authIndex, Provider: "antigravity", Priority: 100})
 	}
 	r := newTestRuntime(t, runtime.Options{Host: mock})
-	for i := 0; i < 3; i++ {
-		payload := []byte(fmt.Sprintf(`{"Provider":"antigravity","AuthIndex":"auth-%d","Failed":true,"Failure":{"StatusCode":429}}`, i))
+	for i := range 3 {
+		payload := fmt.Appendf(nil, `{"Provider":"antigravity","AuthIndex":"auth-%d","Failed":true,"Failure":{"StatusCode":429}}`, i)
 		response := r.Handle(context.Background(), runtime.MethodUsageHandle, payload)
 		var envelope runtime.Envelope
 		if err := json.Unmarshal(response, &envelope); err != nil || !envelope.OK {

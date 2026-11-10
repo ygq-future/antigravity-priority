@@ -167,7 +167,7 @@ func (h *Handler) handleReset(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(result)
 }
 
-func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) handleStatus(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(StatusHTML))

@@ -37,10 +37,7 @@ const (
 
 // CalculateWeightedTurnTokens computes weighted equivalent tokens for a single request turn.
 func CalculateWeightedTurnTokens(inputTokens, outputTokens, reasoningTokens, cacheReadTokens, totalTokens int64) float64 {
-	uncachedInput := inputTokens - cacheReadTokens
-	if uncachedInput < 0 {
-		uncachedInput = 0
-	}
+	uncachedInput := max(inputTokens-cacheReadTokens, 0)
 	weighted := float64(uncachedInput) + 0.1*float64(cacheReadTokens) + 4.0*float64(outputTokens+reasoningTokens)
 	if weighted <= 0 {
 		if totalTokens > 2000 {
@@ -76,7 +73,7 @@ func effectiveCycleBurnRate(entry Entry) float64 {
 type QuotaSample struct {
 	Sequence           uint64    `json:"sequence"`
 	ObservedAt         time.Time `json:"observed_at"`
-	ShortWindowResetAt time.Time `json:"short_window_reset_at,omitempty"`
+	ShortWindowResetAt time.Time `json:"short_window_reset_at,omitzero"`
 	ShortWindowRem     int64     `json:"short_window_rem"`
 	LongWindowRem      int64     `json:"long_window_rem"`
 	ProbeRoundID       string    `json:"probe_round_id,omitempty"`

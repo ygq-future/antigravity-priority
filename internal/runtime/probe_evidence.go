@@ -206,10 +206,8 @@ func runProbeJobs(ctx context.Context, input collectInput, jobs []probeJob, roun
 	jobsCh := make(chan int)
 	resultsCh := make(chan result, len(jobs))
 	var wg sync.WaitGroup
-	for w := 0; w < workers; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range workers {
+		wg.Go(func() {
 			for index := range jobsCh {
 				if runCtx.Err() != nil {
 					return
@@ -225,7 +223,7 @@ func runProbeJobs(ctx context.Context, input collectInput, jobs []probeJob, roun
 					return
 				}
 			}
-		}()
+		})
 	}
 
 	go func() {

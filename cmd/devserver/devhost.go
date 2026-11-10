@@ -626,10 +626,7 @@ func consumeDevQuota(value int64, rng *rand.Rand) int64 {
 	if rng.Intn(8) == 0 {
 		return 0
 	}
-	maxDelta := value / 3
-	if maxDelta < 1 {
-		maxDelta = 1
-	}
+	maxDelta := max(value/3, 1)
 	delta := int64(1 + rng.Intn(int(maxDelta)))
 	if delta >= value {
 		return 0

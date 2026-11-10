@@ -156,7 +156,7 @@ func TestDevHostReturnsBothModelGroupsAndQuotaLifecycle(t *testing.T) {
 		t.Fatalf("simulated response did not contain both complete groups: %+v", previous)
 	}
 	depleted := false
-	for round := 0; round < 40; round++ {
+	for round := range 40 {
 		now = now.Add(time.Minute)
 		current := readQuota()
 		previouslyExhausted := false

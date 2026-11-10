@@ -53,11 +53,11 @@ func newHealthRuntime(t *testing.T, now time.Time, authIndexes ...string) (*runt
 }
 
 func usageFailurePayload(authIndex, model string, status int) []byte {
-	return []byte(fmt.Sprintf(`{"Provider":"antigravity","Model":%q,"AuthIndex":%q,"Failed":true,"Failure":{"StatusCode":%d}}`, model, authIndex, status))
+	return fmt.Appendf(nil, `{"Provider":"antigravity","Model":%q,"AuthIndex":%q,"Failed":true,"Failure":{"StatusCode":%d}}`, model, authIndex, status)
 }
 
 func usageSuccessPayload(authIndex, model string) []byte {
-	return []byte(fmt.Sprintf(`{"Provider":"antigravity","Model":%q,"AuthIndex":%q,"Failed":false}`, model, authIndex))
+	return fmt.Appendf(nil, `{"Provider":"antigravity","Model":%q,"AuthIndex":%q,"Failed":false}`, model, authIndex)
 }
 
 func mustOK(t *testing.T, response []byte) {

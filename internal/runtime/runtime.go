@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"sort"
 	"strings"
@@ -125,9 +126,7 @@ func New(options Options) *Runtime {
 		cachePath = config.DefaultStateCachePath
 	}
 	if store, err := state.Load(context.Background(), cachePath); err == nil {
-		for authIndex, entry := range store.GetCooldowns() {
-			rt.activeCooldowns[authIndex] = entry
-		}
+		maps.Copy(rt.activeCooldowns, store.GetCooldowns())
 		audit, resJSON, histJSON := store.GetRuntimeSnapshot()
 		if len(resJSON) > 0 {
 			var res apply.Result
@@ -477,7 +476,7 @@ func (r *Runtime) run(ctx context.Context, trigger Trigger, modelGroup config.An
 	return r.runWithPreview(ctx, trigger, modelGroup, authIndexes, "", false)
 }
 
-func (r *Runtime) runWithPreview(ctx context.Context, trigger Trigger, modelGroup config.AntigravityModelGroup, authIndexes []string, previewID string, previewRequired bool) error {
+func (r *Runtime) runWithPreview(ctx context.Context, trigger Trigger, _ config.AntigravityModelGroup, authIndexes []string, previewID string, previewRequired bool) error {
 	if !r.runMu.TryLock() {
 		return ErrRunInProgress
 	}
@@ -602,9 +601,7 @@ func (r *Runtime) nextAutoApplyWait(interval time.Duration) time.Duration {
 	remaining := interval - r.clock.Now().UTC().Sub(last)
 	// A persisted timestamp ahead of the local clock (manual clock correction)
 	// must not postpone scheduling for longer than one interval.
-	if remaining > interval {
-		remaining = interval
-	}
+	remaining = min(remaining, interval)
 	if remaining < time.Second {
 		return time.Second
 	}
@@ -1118,9 +1115,7 @@ func (r *Runtime) GetCustomTiers(ctx context.Context) (map[string]int, error) {
 	defer r.mu.Unlock()
 	if len(r.cfg.CustomTiers) > 0 {
 		cloned := make(map[string]int, len(r.cfg.CustomTiers))
-		for k, v := range r.cfg.CustomTiers {
-			cloned[k] = v
-		}
+		maps.Copy(cloned, r.cfg.CustomTiers)
 		return cloned, nil
 	}
 	return map[string]int{}, nil

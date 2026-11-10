@@ -355,13 +355,8 @@ func planPositive(items []PlanItem, options Options) {
 		slices.Sort(customTiers)
 
 		for _, tier := range customTiers {
-			p := 990 - (tier-1)*10
-			if p < 200 {
-				p = 200
-			}
-			if p < minCustomPriority {
-				minCustomPriority = p
-			}
+			p := max(990-(tier-1)*10, 200)
+			minCustomPriority = min(minCustomPriority, p)
 			indices := customIndicesByTier[tier]
 			for _, idx := range indices {
 				items[idx].Priority = p
@@ -377,22 +372,13 @@ func planPositive(items []PlanItem, options Options) {
 
 	if len(customIndicesByTier) > 0 {
 		if boostStart >= minCustomPriority {
-			boostStart = minCustomPriority - 10
-			if boostStart < 150 {
-				boostStart = 150
-			}
+			boostStart = max(minCustomPriority-10, 150)
 		}
 		if normalStart >= boostStart {
-			normalStart = boostStart - 10
-			if normalStart < 100 {
-				normalStart = 100
-			}
+			normalStart = max(boostStart-10, 100)
 		}
 		if freeStart >= normalStart {
-			freeStart = normalStart - 10
-			if freeStart < MinPriority {
-				freeStart = MinPriority
-			}
+			freeStart = max(normalStart-10, MinPriority)
 		}
 	}
 
@@ -430,13 +416,7 @@ func planPositive(items []PlanItem, options Options) {
 		})
 		currentPriority := normalStart
 		anchorUrgency := items[regularIndices[0]].Urgency
-		floor := freeStart + 1
-		if floor > normalStart {
-			floor = normalStart
-		}
-		if floor < MinPriority {
-			floor = MinPriority
-		}
+		floor := max(min(freeStart+1, normalStart), MinPriority)
 		for i, index := range regularIndices {
 			if i > 0 {
 				diff := anchorUrgency - items[index].Urgency
@@ -518,10 +498,7 @@ func shouldChange(item PlanItem, options Options) bool {
 	if item.Priority == DepletedPriority && item.Disabled {
 		return item.Credential.Priority != DepletedPriority || !item.Credential.Disabled
 	}
-	minChange := options.MinChange
-	if minChange < 0 {
-		minChange = 0
-	}
+	minChange := max(options.MinChange, 0)
 	return abs(item.Priority-item.Credential.Priority) >= minChange
 }
 

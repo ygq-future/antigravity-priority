@@ -18,36 +18,36 @@ import (
 
 type callbackTrackingHost struct {
 	mockHost
-	callCount int64
+	callCount atomic.Int64
 }
 
 func (c *callbackTrackingHost) ListAuthFiles(ctx context.Context) ([]host.AuthFile, error) {
-	atomic.AddInt64(&c.callCount, 1)
+	c.callCount.Add(1)
 	return c.mockHost.ListAuthFiles(ctx)
 }
 
 func (c *callbackTrackingHost) GetAuth(ctx context.Context, authIndex string) (host.AuthDocument, error) {
-	atomic.AddInt64(&c.callCount, 1)
+	c.callCount.Add(1)
 	return c.mockHost.GetAuth(ctx, authIndex)
 }
 
 func (c *callbackTrackingHost) GetRuntime(ctx context.Context, authIndex string) (host.RuntimeAuth, error) {
-	atomic.AddInt64(&c.callCount, 1)
+	c.callCount.Add(1)
 	return c.mockHost.GetRuntime(ctx, authIndex)
 }
 
 func (c *callbackTrackingHost) SaveAuth(ctx context.Context, name string, doc json.RawMessage) error {
-	atomic.AddInt64(&c.callCount, 1)
+	c.callCount.Add(1)
 	return c.mockHost.SaveAuth(ctx, name, doc)
 }
 
 func (c *callbackTrackingHost) HTTPDo(ctx context.Context, req host.HTTPRequest) (host.HTTPResponse, error) {
-	atomic.AddInt64(&c.callCount, 1)
+	c.callCount.Add(1)
 	return c.mockHost.HTTPDo(ctx, req)
 }
 
 func (c *callbackTrackingHost) ListAuthModels(ctx context.Context) ([]host.AuthModelsEntry, error) {
-	atomic.AddInt64(&c.callCount, 1)
+	c.callCount.Add(1)
 	return c.mockHost.ListAuthModels(ctx)
 }
 
@@ -638,7 +638,7 @@ func TestScheduler_ZeroHostCallbacksDuringPick(t *testing.T) {
 	_, _ = r.SyncHost(ctx, config.AntigravityModelGroupGemini)
 
 	// Reset host call counter
-	atomic.StoreInt64(&mock.callCount, 0)
+	mock.callCount.Store(0)
 
 	candidates := []runtime.SchedulerAuthCandidate{
 		{ID: "account-1", Provider: "antigravity"},
@@ -655,7 +655,7 @@ func TestScheduler_ZeroHostCallbacksDuringPick(t *testing.T) {
 			t.Fatalf("call %d failed: %s", i, string(res))
 		}
 	}
-	callsMade := atomic.LoadInt64(&mock.callCount)
+	callsMade := mock.callCount.Load()
 	if callsMade != 0 {
 		t.Errorf("expected 0 host.* callbacks during scheduler.pick, but %d were recorded", callsMade)
 	}

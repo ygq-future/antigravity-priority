@@ -10,7 +10,7 @@ import (
 )
 
 func int64Ptr(v int64) *int64 {
-	return &v
+	return new(v)
 }
 
 func planFreshOnly(credentials []core.Credential, evidence []QuotaEvidence, options Options) Plan {

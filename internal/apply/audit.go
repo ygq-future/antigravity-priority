@@ -259,7 +259,7 @@ type ModelOption struct {
 // DualGroupSnapshot wraps snapshots for both model groups, enabling instant client-side switching.
 type DualGroupSnapshot struct {
 	ActiveModelGroup string                   `json:"active_model_group"`
-	ObservedAt       time.Time                `json:"observed_at,omitempty"`
+	ObservedAt       time.Time                `json:"observed_at,omitzero"`
 	PreviewID        string                   `json:"preview_id,omitempty"`
 	Groups           map[string]GroupSnapshot `json:"groups"`
 	Models           []ModelOption            `json:"models,omitempty"`

@@ -306,7 +306,7 @@ func (t *Transitioner) executeOne(ctx context.Context, intent TransitionIntent) 
 	return t.verifyCommitted(intent, document, target, result)
 }
 
-func (t *Transitioner) resolveAfterCommitError(ctx context.Context, intent TransitionIntent, document host.AuthDocument, before, target credentialDocumentState, result TransitionResult, commitErr error) TransitionResult {
+func (t *Transitioner) resolveAfterCommitError(_ context.Context, intent TransitionIntent, document host.AuthDocument, before, target credentialDocumentState, result TransitionResult, commitErr error) TransitionResult {
 	final, err := t.readFinal(document, intent.AuthIndex)
 	if err != nil {
 		result.After = before.redacted()
@@ -334,7 +334,7 @@ func (t *Transitioner) verifyCommitted(intent TransitionIntent, document host.Au
 	return result.withOutcome(OutcomeCommitted, ReasonCommitted, nil)
 }
 
-func (t *Transitioner) readFinal(document host.AuthDocument, authIndex string) (credentialDocumentState, error) {
+func (t *Transitioner) readFinal(_ host.AuthDocument, authIndex string) (credentialDocumentState, error) {
 	// A successful replacement is the commit point. Verification is therefore
 	// intentionally detached from caller cancellation so a post-commit cancel
 	// cannot turn a committed Host change into a failed outcome.

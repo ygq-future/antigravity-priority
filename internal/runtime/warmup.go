@@ -289,10 +289,7 @@ func (r *Runtime) runWarmupResetWatcher() {
 		var timer *time.Timer
 		var timerC <-chan time.Time
 		if !nextDeadline.IsZero() {
-			delay := nextDeadline.Sub(r.clock.Now().UTC())
-			if delay < 0 {
-				delay = 0
-			}
+			delay := max(nextDeadline.Sub(r.clock.Now().UTC()), 0)
 			timer = time.NewTimer(delay)
 			timerC = timer.C
 		}

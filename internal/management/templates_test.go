@@ -339,16 +339,14 @@ func extractCSSTokens(t *testing.T, css string, blockStart string, blockEnd stri
 	t.Helper()
 	tokens := make(map[string]string)
 
-	idx := strings.Index(css, blockStart)
-	if idx == -1 {
+	_, content, found := strings.Cut(css, blockStart)
+	if !found {
 		return tokens
 	}
-	content := css[idx+len(blockStart):]
-	endIdx := strings.Index(content, blockEnd)
-	if endIdx == -1 {
+	blockBody, _, found := strings.Cut(content, blockEnd)
+	if !found {
 		return tokens
 	}
-	blockBody := content[:endIdx]
 
 	reToken := regexp.MustCompile(`(--[a-zA-Z0-9_-]+)\s*:\s*([^;]+);`)
 	matches := reToken.FindAllStringSubmatch(blockBody, -1)

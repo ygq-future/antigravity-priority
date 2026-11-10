@@ -398,7 +398,7 @@ func TestStore_SaveAtomic_ConcurrentWrites(t *testing.T) {
 				ObservedAt:           now,
 				ResetAt:              now.Add(time.Hour),
 				ShortWindowResetAt:   now.Add(time.Hour),
-				ShortWindowRemaining: int64Ptr(int64(idx)),
+				ShortWindowRemaining: new(int64(idx)),
 			})
 			if err := store.SaveAtomic(ctx); err != nil {
 				errCh <- fmt.Errorf("writer %d failed: %w", idx, err)

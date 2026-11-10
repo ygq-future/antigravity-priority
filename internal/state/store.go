@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"os"
 	"path/filepath"
@@ -39,13 +40,13 @@ type Entry struct {
 	ModelGroup               string        `json:"model_group,omitempty"`
 	AuthIndex                string        `json:"auth_index"`
 	ObservedAt               time.Time     `json:"observed_at"`
-	ResetAt                  time.Time     `json:"reset_at,omitempty"`
+	ResetAt                  time.Time     `json:"reset_at,omitzero"`
 	Remaining                int64         `json:"remaining"`
-	ShortWindowResetAt       time.Time     `json:"short_window_reset_at,omitempty"`
+	ShortWindowResetAt       time.Time     `json:"short_window_reset_at,omitzero"`
 	ShortWindowRemaining     *int64        `json:"short_window_remaining,omitempty"`
-	LongWindowResetAt        time.Time     `json:"long_window_reset_at,omitempty"`
+	LongWindowResetAt        time.Time     `json:"long_window_reset_at,omitzero"`
 	LongWindowRemaining      *int64        `json:"long_window_remaining,omitempty"`
-	ArgonWindowResetAt       time.Time     `json:"argon_window_reset_at,omitempty"`
+	ArgonWindowResetAt       time.Time     `json:"argon_window_reset_at,omitzero"`
 	ArgonWindowRemaining     *int64        `json:"argon_window_remaining,omitempty"`
 	CycleBurnRate            float64       `json:"cycle_burn_rate"`
 	Samples                  []QuotaSample `json:"samples,omitempty"`
@@ -54,10 +55,10 @@ type Entry struct {
 	EstimatedShortBurnPct    float64       `json:"estimated_short_burn_pct,omitempty"`
 	EstimatedLongBurnPct     float64       `json:"estimated_long_burn_pct,omitempty"`
 	TokensPerShortPct        float64       `json:"tokens_per_short_pct,omitempty"`
-	LastUsageAt              time.Time     `json:"last_usage_at,omitempty"`
+	LastUsageAt              time.Time     `json:"last_usage_at,omitzero"`
 	LastError                string        `json:"last_error,omitempty"`
-	LastFailureAt            time.Time     `json:"last_failure_at,omitempty"`
-	NextProbeAt              time.Time     `json:"next_probe_at,omitempty"`
+	LastFailureAt            time.Time     `json:"last_failure_at,omitzero"`
+	NextProbeAt              time.Time     `json:"next_probe_at,omitzero"`
 	AuthInvalid              bool          `json:"auth_invalid,omitempty"`
 	PlanType                 core.PlanType `json:"plan_type,omitempty"`
 	Source                   Source        `json:"source,omitempty"`
@@ -153,7 +154,7 @@ type CooldownEntry struct {
 	StatusCode              int         `json:"status_code,omitempty"`
 	TriggeredAt             time.Time   `json:"triggered_at"`
 	CooldownUntil           time.Time   `json:"cooldown_until"`
-	NextRecoveryAt          time.Time   `json:"next_recovery_at,omitempty"`
+	NextRecoveryAt          time.Time   `json:"next_recovery_at,omitzero"`
 	BackoffStep             int         `json:"backoff_step,omitempty"`
 	ProbeEnabled            bool        `json:"probe_enabled,omitempty"`
 	Reason                  string      `json:"reason"`
@@ -200,7 +201,7 @@ type document struct {
 	RunHistory      json.RawMessage              `json:"run_history,omitempty"`
 	ScheduleConfig  *ScheduleConfig              `json:"schedule_config,omitempty"`
 	DynamicConfig   *DynamicConfig               `json:"app_config,omitempty"`
-	LastAutoApplyAt time.Time                    `json:"last_auto_apply_at,omitempty"`
+	LastAutoApplyAt time.Time                    `json:"last_auto_apply_at,omitzero"`
 	Cooldowns       map[string]CooldownEntry     `json:"cooldowns,omitempty"`
 	AutoDisabled    map[string]AutoDisabledEntry `json:"auto_disabled,omitempty"`
 	RequestHistory  []RequestHistoryEntry        `json:"request_history,omitempty"`
@@ -680,9 +681,7 @@ func (s *Store) Entries() map[string]Entry {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	res := make(map[string]Entry, len(s.entries))
-	for k, v := range s.entries {
-		res[k] = v
-	}
+	maps.Copy(res, s.entries)
 	return res
 }
 
@@ -940,24 +939,15 @@ func (s *Store) GetHistoricalEvidence(authIndex, modelGroup string) (priority.Qu
 	argonRemaining := cloneInt64Ptr(entry.ArgonWindowRemaining)
 
 	if entry.EstimatedShortBurnPct > 0 && shortRemaining != nil {
-		deducted := *shortRemaining - int64(math.Round(entry.EstimatedShortBurnPct))
-		if deducted < 0 {
-			deducted = 0
-		}
+		deducted := max(*shortRemaining-int64(math.Round(entry.EstimatedShortBurnPct)), 0)
 		shortRemaining = &deducted
 	}
 	if entry.EstimatedLongBurnPct > 0 && longRemaining != nil {
-		deducted := *longRemaining - int64(math.Round(entry.EstimatedLongBurnPct))
-		if deducted < 0 {
-			deducted = 0
-		}
+		deducted := max(*longRemaining-int64(math.Round(entry.EstimatedLongBurnPct)), 0)
 		longRemaining = &deducted
 	}
 	if entry.EstimatedLongBurnPct > 0 && argonRemaining != nil {
-		deducted := *argonRemaining - int64(math.Round(entry.EstimatedLongBurnPct))
-		if deducted < 0 {
-			deducted = 0
-		}
+		deducted := max(*argonRemaining-int64(math.Round(entry.EstimatedLongBurnPct)), 0)
 		argonRemaining = &deducted
 	}
 	if shortRemaining != nil && remaining > *shortRemaining {
@@ -1136,9 +1126,7 @@ func (s *Store) GetCooldowns() map[string]CooldownEntry {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	copied := make(map[string]CooldownEntry, len(s.cooldowns))
-	for k, v := range s.cooldowns {
-		copied[k] = v
-	}
+	maps.Copy(copied, s.cooldowns)
 	return copied
 }
 
@@ -1169,9 +1157,7 @@ func (s *Store) GetAutoDisabled() map[string]AutoDisabledEntry {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	copied := make(map[string]AutoDisabledEntry, len(s.autoDisabled))
-	for k, v := range s.autoDisabled {
-		copied[k] = v
-	}
+	maps.Copy(copied, s.autoDisabled)
 	return copied
 }
 

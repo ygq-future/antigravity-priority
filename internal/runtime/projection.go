@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"fmt"
+	"maps"
 	"math"
 	"strings"
 	"time"
@@ -117,12 +118,11 @@ func filterCooldownsForGroup(cooldowns map[string]time.Time, group config.Antigr
 	filtered := make(map[string]time.Time)
 	for k, v := range cooldowns {
 		authIndex := k
-		if idx := strings.Index(k, "::"); idx != -1 {
-			entryGroup := strings.ToLower(strings.TrimSpace(k[idx+2:]))
-			if entryGroup != normGroup {
+		if prefix, suffix, found := strings.Cut(k, "::"); found {
+			if strings.ToLower(strings.TrimSpace(suffix)) != normGroup {
 				continue
 			}
-			authIndex = k[:idx]
+			authIndex = prefix
 		}
 		if existing, ok := filtered[authIndex]; !ok || v.After(existing) {
 			filtered[authIndex] = v
@@ -139,12 +139,11 @@ func filterCooldownReasonsForGroup(reasons map[string]string, group config.Antig
 	filtered := make(map[string]string)
 	for k, v := range reasons {
 		authIndex := k
-		if idx := strings.Index(k, "::"); idx != -1 {
-			entryGroup := strings.ToLower(strings.TrimSpace(k[idx+2:]))
-			if entryGroup != normGroup {
+		if prefix, suffix, found := strings.Cut(k, "::"); found {
+			if strings.ToLower(strings.TrimSpace(suffix)) != normGroup {
 				continue
 			}
-			authIndex = k[:idx]
+			authIndex = prefix
 		}
 		filtered[authIndex] = v
 	}
@@ -320,9 +319,7 @@ func clonePlanningOptions(options priority.Options) priority.Options {
 	options.CooldownReasonsByKey = cloneStringMap(options.CooldownReasonsByKey)
 	if len(options.CustomTiers) > 0 {
 		cloned := make(map[string]int, len(options.CustomTiers))
-		for k, v := range options.CustomTiers {
-			cloned[k] = v
-		}
+		maps.Copy(cloned, options.CustomTiers)
 		options.CustomTiers = cloned
 	}
 	return options
@@ -333,9 +330,7 @@ func cloneStringMap(values map[string]string) map[string]string {
 		return nil
 	}
 	cloned := make(map[string]string, len(values))
-	for k, v := range values {
-		cloned[k] = v
-	}
+	maps.Copy(cloned, values)
 	return cloned
 }
 
@@ -344,9 +339,7 @@ func cloneCooldowns(cooldowns map[string]time.Time) map[string]time.Time {
 		return nil
 	}
 	cloned := make(map[string]time.Time, len(cooldowns))
-	for authIndex, until := range cooldowns {
-		cloned[authIndex] = until
-	}
+	maps.Copy(cloned, cooldowns)
 	return cloned
 }
 

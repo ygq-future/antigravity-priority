@@ -16,7 +16,7 @@ import (
 func TestGenerateNaturalWarmupPrompt(t *testing.T) {
 	// Test that generated prompts are natural, non-empty, and vary across iterations
 	seen := make(map[string]bool)
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		p := GenerateNaturalWarmupPrompt()
 		if len(p) < 20 {
 			t.Fatalf("expected substantial natural prompt, got %q", p)

@@ -391,10 +391,7 @@ func (r *Runtime) runRateLimitWorker() {
 		var timer *time.Timer
 		var timerC <-chan time.Time
 		if !next.IsZero() {
-			delay := next.Sub(r.clock.Now().UTC())
-			if delay < 0 {
-				delay = 0
-			}
+			delay := max(next.Sub(r.clock.Now().UTC()), 0)
 			timer = time.NewTimer(delay)
 			timerC = timer.C
 		}

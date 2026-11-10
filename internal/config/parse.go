@@ -45,7 +45,7 @@ func extractPluginConfigYAML(data string) string {
 }
 
 func hasTopLevelPluginField(data string) bool {
-	for _, line := range strings.Split(data, "\n") {
+	for line := range strings.SplitSeq(data, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") || leadingSpaces(line) != 0 {
 			continue
@@ -130,7 +130,7 @@ func leadingSpaces(line string) int {
 
 func parseYAMLMap(data string) (map[string]any, error) {
 	result := map[string]any{}
-	for _, line := range strings.Split(data, "\n") {
+	for line := range strings.SplitSeq(data, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "- ") || trimmed == "-" {
 			continue
