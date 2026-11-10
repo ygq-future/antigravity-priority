@@ -3222,3 +3222,99 @@ func TestRuntime_StatePersistenceConsolidation_DurabilityAndRecovery(t *testing.
 		t.Fatal("expected runtime snapshot audit to be non-empty after manual apply")
 	}
 }
+
+func TestRuntime_SchedulePause_PersistsAcrossRestartAndReload(t *testing.T) {
+	clock := &testClock{now: time.Date(2026, 8, 20, 14, 0, 0, 0, time.UTC)}
+	cachePath := filepath.Join(t.TempDir(), "pause_persist_cache.json")
+	calls := 0
+
+	r := newTestRuntime(t, runtime.Options{
+		Clock:          clock,
+		StateCachePath: cachePath,
+		Runner: func(ctx context.Context, request runtime.TaskRequest) error {
+			calls++
+			return nil
+		},
+	})
+
+	cfgYAML := "enabled: true\nstate_cache_path: " + filepath.ToSlash(cachePath) + "\n"
+	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: cfgYAML}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Enable auto_apply via dynamic config (creating persisted app_config on disk)
+	dyn, err := r.GetDynamicConfig(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dyn.AutoApply = true
+	dyn.Schedule = state.ScheduleConfig{
+		Paused:        false,
+		WindowEnabled: true,
+		WindowStart:   "08:00",
+		WindowEnd:     "22:00",
+	}
+	if err := r.SetDynamicConfig(context.Background(), dyn); err != nil {
+		t.Fatal(err)
+	}
+
+	// Pause scheduler via SetScheduleConfig (the home page pause button endpoint)
+	if err := r.SetScheduleConfig(context.Background(), state.ScheduleConfig{
+		Paused:        true,
+		WindowEnabled: true,
+		WindowStart:   "08:00",
+		WindowEnd:     "22:00",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// GetDynamicConfig must immediately reflect Paused=true
+	gotDyn, err := r.GetDynamicConfig(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !gotDyn.Schedule.Paused {
+		t.Fatalf("expected GetDynamicConfig.Schedule.Paused=true after SetScheduleConfig, got false")
+	}
+
+	// Simulate full process restart pointing to same cache file
+	restarted := newTestRuntime(t, runtime.Options{
+		Clock:          clock,
+		StateCachePath: cachePath,
+		Runner: func(ctx context.Context, request runtime.TaskRequest) error {
+			calls++
+			return nil
+		},
+	})
+
+	if _, err := restarted.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: cfgYAML}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := restarted.Reconfigure(context.Background(), runtime.ReconfigureRequest{ConfigYAML: cfgYAML}); err != nil {
+		t.Fatal(err)
+	}
+
+	schedAfterRestart, err := restarted.GetScheduleConfig(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !schedAfterRestart.Paused {
+		t.Fatalf("expected schedule paused=true to survive restart & reload, got false")
+	}
+
+	dynAfterRestart, err := restarted.GetDynamicConfig(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dynAfterRestart.Schedule.Paused {
+		t.Fatalf("expected dynamicConfig.Schedule.Paused=true after restart & reload, got false")
+	}
+
+	// Verify AutoApply still skips while paused after restart
+	if err := restarted.AutoApply(context.Background()); err != nil {
+		t.Fatalf("AutoApply failed: %v", err)
+	}
+	if calls != 0 {
+		t.Fatalf("expected 0 auto-apply executions while paused after restart, got %d", calls)
+	}
+}

@@ -108,9 +108,10 @@ const templateScriptProbeSchedule = `        function setListProbeLoading(loadin
                 return;
             }
 
-            if (!scheduleConfig) return;
+            var sched = (typeof scheduleConfig !== "undefined" && scheduleConfig) ? scheduleConfig : ((typeof latestDiagnostics !== "undefined" && latestDiagnostics && latestDiagnostics.scheduler) ? latestDiagnostics.scheduler : null);
+            if (!sched) return;
 
-            if (scheduleConfig.paused) {
+            if (sched.paused) {
                 badge.className = "schedule-status paused";
                 badge.title = currentLang === "zh-CN" ? "点击恢复自动调度" : "Click to resume";
                 badge.innerHTML = "⏸ <span id=\"scheduleStatusText\">" + t("schedulePaused") + "</span>";
@@ -118,11 +119,11 @@ const templateScriptProbeSchedule = `        function setListProbeLoading(loadin
             }
 
             var windowActive = true;
-            if (scheduleConfig.window_enabled && scheduleConfig.window_start && scheduleConfig.window_end) {
-                windowActive = isCurrentTimeInScheduleWindow(scheduleConfig.window_start, scheduleConfig.window_end);
+            if (sched.window_enabled && sched.window_start && sched.window_end) {
+                windowActive = isCurrentTimeInScheduleWindow(sched.window_start, sched.window_end);
             }
 
-            if (scheduleConfig.window_enabled && !windowActive) {
+            if (sched.window_enabled && !windowActive) {
                 badge.className = "schedule-status sleeping";
                 badge.title = currentLang === "zh-CN" ? "当前时间不在生效时段内" : "Outside active schedule window";
                 badge.innerHTML = "🌙 <span id=\"scheduleStatusText\">" + t("scheduleSleeping") + "</span>";
@@ -130,8 +131,8 @@ const templateScriptProbeSchedule = `        function setListProbeLoading(loadin
             }
 
             var windowStr = "";
-            if (scheduleConfig.window_enabled && scheduleConfig.window_start && scheduleConfig.window_end) {
-                windowStr = " (" + scheduleConfig.window_start + "-" + scheduleConfig.window_end + ")";
+            if (sched.window_enabled && sched.window_start && sched.window_end) {
+                windowStr = " (" + sched.window_start + "-" + sched.window_end + ")";
             }
             badge.className = "schedule-status active";
             badge.title = currentLang === "zh-CN" ? "点击暂停自动调度" : "Click to pause";

@@ -1028,3 +1028,90 @@ func TestStore_CleanseClonedArgonEntriesOnLoad(t *testing.T) {
 		t.Errorf("expected valid argon evidence for auth-valid")
 	}
 }
+
+func TestStore_ScheduleConfig_DynamicConfig_Sync(t *testing.T) {
+	ctx := context.Background()
+	cachePath := filepath.Join(t.TempDir(), "schedule_sync_test.json")
+
+	store, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	// 1. Initially set dynamic config with paused = false
+	dyn := state.DynamicConfig{
+		AutoApply: true,
+		Interval:  "15m",
+		Schedule: state.ScheduleConfig{
+			Paused:        false,
+			WindowEnabled: true,
+			WindowStart:   "08:00",
+			WindowEnd:     "22:00",
+		},
+	}
+	store.SetDynamicConfig(dyn)
+	if err := store.SaveAtomic(ctx); err != nil {
+		t.Fatalf("SaveAtomic failed: %v", err)
+	}
+
+	// Verify scheduleConfig is in sync
+	sched := store.GetScheduleConfig()
+	if sched.Paused || !sched.WindowEnabled {
+		t.Fatalf("expected scheduleConfig to match dynamic config, got %+v", sched)
+	}
+
+	// 2. Pause schedule via SetScheduleConfig
+	store.SetScheduleConfig(state.ScheduleConfig{
+		Paused:        true,
+		WindowEnabled: true,
+		WindowStart:   "08:00",
+		WindowEnd:     "22:00",
+	})
+	if err := store.SaveAtomic(ctx); err != nil {
+		t.Fatalf("SaveAtomic failed: %v", err)
+	}
+
+	// Verify GetDynamicConfig has paused = true
+	dynGot, ok := store.GetDynamicConfig()
+	if !ok || !dynGot.Schedule.Paused {
+		t.Fatalf("expected GetDynamicConfig to reflect paused=true, got %+v", dynGot.Schedule)
+	}
+
+	// 3. Simulate legacy corrupted cache with desynchronized schedule_config vs app_config
+	legacyDesynced := `{
+		"schema_version": 1,
+		"schedule_config": {
+			"paused": true,
+			"window_enabled": true,
+			"window_start": "09:00",
+			"window_end": "21:00"
+		},
+		"app_config": {
+			"auto_apply": true,
+			"interval": "15m",
+			"schedule": {
+				"paused": false,
+				"window_enabled": false,
+				"window_start": "00:00",
+				"window_end": "23:59"
+			}
+		}
+	}`
+	legacyPath := filepath.Join(t.TempDir(), "legacy_desynced.json")
+	if err := os.WriteFile(legacyPath, []byte(legacyDesynced), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := state.Load(ctx, legacyPath)
+	if err != nil {
+		t.Fatalf("Load legacy desynced failed: %v", err)
+	}
+
+	if !loaded.GetScheduleConfig().Paused {
+		t.Fatalf("expected loaded scheduleConfig to be paused=true")
+	}
+	loadedDyn, ok := loaded.GetDynamicConfig()
+	if !ok || !loadedDyn.Schedule.Paused {
+		t.Fatalf("expected loaded dynamicConfig to be healed with paused=true, got %+v", loadedDyn.Schedule)
+	}
+}

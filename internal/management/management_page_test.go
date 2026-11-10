@@ -889,3 +889,93 @@ apiFetch = async function(path, opts) {
 
 	runNodeFixture(t, node, "refresh-loading-state.js", harness)
 }
+
+func TestRenderScheduleStatus_DiagnosticsFallbackAndSync(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not available; skipping UI JS test")
+	}
+
+	harness := templateScriptOverviewActionsCore + templateScriptProbeSchedule + `
+function element(initial) {
+    return Object.assign({
+        hidden: true,
+        textContent: "",
+        innerHTML: "",
+        className: "",
+        title: ""
+    }, initial || {});
+}
+
+const elements = {
+    scheduleStatusBadge: element({hidden: false, className: "schedule-status active"}),
+    scheduleStatusText: element({textContent: "init"})
+};
+
+const document = {
+    getElementById: function(id) { return elements[id] || null; }
+};
+
+var dynamicConfig = { auto_apply: true };
+var scheduleConfig = null;
+var latestDiagnostics = {
+    scheduler: {
+        paused: true,
+        window_enabled: false,
+        window_start: "00:00",
+        window_end: "23:59"
+    }
+};
+var isAuthBlocked = false;
+var currentLang = "zh-CN";
+const DIAGNOSTICS_PATH = "/diagnostics";
+
+function t(key) { return key; }
+function renderDashboard() {}
+function renderHistory() {}
+function renderDiagnostics() {}
+function showToast() {}
+
+apiFetch = async function(path) {
+    if (path === DIAGNOSTICS_PATH) {
+        return {
+            scheduler: {
+                paused: true,
+                window_enabled: true,
+                window_start: "09:00",
+                window_end: "21:00"
+            }
+        };
+    }
+    return {};
+};
+
+(async function() {
+    // 1. renderScheduleStatus should fallback to latestDiagnostics.scheduler if scheduleConfig is null
+    renderScheduleStatus();
+    if (!elements.scheduleStatusBadge.className.includes("paused")) {
+        throw new Error("expected badge to be paused via diagnostics fallback, got: " + elements.scheduleStatusBadge.className);
+    }
+    if (!elements.scheduleStatusBadge.innerHTML.includes("schedulePaused")) {
+        throw new Error("expected badge HTML to contain schedulePaused, got: " + elements.scheduleStatusBadge.innerHTML);
+    }
+
+    // 2. fetchDiagnostics should synchronize scheduleConfig
+    await fetchDiagnostics();
+    if (!scheduleConfig) {
+        throw new Error("expected scheduleConfig to be initialized by fetchDiagnostics");
+    }
+    if (scheduleConfig.paused !== true) {
+        throw new Error("expected scheduleConfig.paused to be true, got: " + scheduleConfig.paused);
+    }
+    if (scheduleConfig.window_start !== "09:00" || scheduleConfig.window_end !== "21:00") {
+        throw new Error("expected scheduleConfig window to be synced to 09:00-21:00, got: " + scheduleConfig.window_start + "-" + scheduleConfig.window_end);
+    }
+})().catch(function(err) {
+    console.error(err.stack || err.message);
+    process.exit(1);
+});
+`
+
+	runNodeFixture(t, node, "render-schedule-diagnostics-fallback.js", harness)
+}

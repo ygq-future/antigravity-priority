@@ -300,7 +300,11 @@ const templateScriptConfig = `        let originalConfigState = null;
                         free_start_priority: freeStart
                     },
                     schedule: {
-                        paused: Boolean(scheduleConfig && scheduleConfig.paused),
+                        paused: Boolean(
+                            (typeof scheduleConfig !== "undefined" && scheduleConfig && scheduleConfig.paused) ||
+                            (typeof latestDiagnostics !== "undefined" && latestDiagnostics && latestDiagnostics.scheduler && latestDiagnostics.scheduler.paused) ||
+                            (dynamicConfig && dynamicConfig.schedule && dynamicConfig.schedule.paused)
+                        ),
                         window_enabled: windowEnabled,
                         window_start: windowStart,
                         window_end: windowEnd

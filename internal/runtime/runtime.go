@@ -158,12 +158,14 @@ func New(options Options) *Runtime {
 		if audit != "" {
 			rt.latestAudit = audit
 		}
-		rt.scheduleConfig = store.GetScheduleConfig()
+		schedCfg := store.GetScheduleConfig()
+		rt.scheduleConfig = schedCfg
 		rt.lastAutoApplyAt = store.GetLastAutoApplyAt()
 		if dynCfg, ok := store.GetDynamicConfig(); ok {
 			if merged, err := dynCfg.ApplyTo(rt.cfg); err == nil {
+				merged.Schedule = schedCfg
 				rt.cfg = merged
-				rt.scheduleConfig = merged.Schedule
+				rt.scheduleConfig = schedCfg
 			}
 		}
 		// Unconditionally ensure cache file exists on disk upon initialization
@@ -1045,6 +1047,7 @@ func (r *Runtime) GetDynamicConfig(ctx context.Context) (config.DynamicConfig, e
 	store, err := state.Load(ctx, cachePath)
 	if err == nil {
 		if dyn, ok := store.GetDynamicConfig(); ok {
+			dyn.Schedule = sched
 			return dyn, nil
 		}
 	}
@@ -1104,6 +1107,17 @@ func (r *Runtime) mergePersistedDynamicConfig(baseCfg config.Config) config.Conf
 	if err != nil {
 		return baseCfg
 	}
+	r.mu.Lock()
+	sched := r.scheduleConfig
+	r.mu.Unlock()
+	storeSched := store.GetScheduleConfig()
+	if storeSched != (config.ScheduleConfig{}) {
+		sched = storeSched
+	}
+	merged.Schedule = sched
+	r.mu.Lock()
+	r.scheduleConfig = sched
+	r.mu.Unlock()
 	return merged
 }
 

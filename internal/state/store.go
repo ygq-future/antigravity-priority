@@ -256,6 +256,12 @@ func Load(ctx context.Context, path string) (*Store, error) {
 	}
 	if doc.DynamicConfig != nil {
 		dc := *doc.DynamicConfig
+		if store.scheduleConfig != nil {
+			dc.Schedule = *store.scheduleConfig
+		} else {
+			sc := dc.Schedule
+			store.scheduleConfig = &sc
+		}
 		store.dynamicConfig = &dc
 	}
 	store.lastAutoApplyAt = utcOrZero(doc.LastAutoApplyAt)
@@ -766,17 +772,24 @@ func sanitizeProbeError(err error) string {
 func (s *Store) GetScheduleConfig() ScheduleConfig {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if s.scheduleConfig == nil {
-		return ScheduleConfig{}
+	if s.scheduleConfig != nil {
+		return *s.scheduleConfig
 	}
-	return *s.scheduleConfig
+	if s.dynamicConfig != nil {
+		return s.dynamicConfig.Schedule
+	}
+	return ScheduleConfig{}
 }
 
 // SetScheduleConfig updates the persisted schedule configuration.
 func (s *Store) SetScheduleConfig(cfg ScheduleConfig) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.scheduleConfig = &cfg
+	sc := cfg
+	s.scheduleConfig = &sc
+	if s.dynamicConfig != nil {
+		s.dynamicConfig.Schedule = cfg
+	}
 }
 
 // GetLastAutoApplyAt returns the completion time of the most recent automatic
@@ -803,14 +816,21 @@ func (s *Store) GetDynamicConfig() (DynamicConfig, bool) {
 	if s.dynamicConfig == nil {
 		return DynamicConfig{}, false
 	}
-	return *s.dynamicConfig, true
+	cfg := *s.dynamicConfig
+	if s.scheduleConfig != nil {
+		cfg.Schedule = *s.scheduleConfig
+	}
+	return cfg, true
 }
 
 // SetDynamicConfig updates the persisted dynamic configuration.
 func (s *Store) SetDynamicConfig(cfg DynamicConfig) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.dynamicConfig = &cfg
+	dc := cfg
+	sc := cfg.Schedule
+	s.dynamicConfig = &dc
+	s.scheduleConfig = &sc
 }
 
 // GetCustomTiers returns a copy of the configured custom tiers map.
