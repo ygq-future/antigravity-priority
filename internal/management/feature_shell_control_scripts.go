@@ -3,16 +3,72 @@ package management
 const templateScriptControls = `        let userSelectedModel = false;
 
 
-        // Custom Select: Model Selector Dropdown
-        function toggleCustomModelSelect(event) {
-            if (event) event.stopPropagation();
-            closeAllCustomSelects("customModelSelect");
-            const wrapper = document.getElementById("customModelSelect");
-            const menu = document.getElementById("customModelSelectMenu");
+        // Custom Select: shared open/close + viewport-aware placement.
+        // A menu that would overflow the bottom of the viewport flips above its
+        // trigger and is clamped to the space actually available.
+        function toggleCustomSelectMenu(wrapperId, menuId) {
+            const wrapper = document.getElementById(wrapperId);
+            const menu = document.getElementById(menuId);
             if (!wrapper || !menu) return;
             const isOpen = !menu.hidden;
             menu.hidden = isOpen;
             wrapper.classList.toggle("open", !isOpen);
+            if (!isOpen) positionCustomSelectMenu(wrapper, menu);
+        }
+
+        function positionCustomSelectMenu(wrapper, menu) {
+            wrapper.classList.remove("drop-up");
+            menu.style.maxHeight = "";
+            const trigger = wrapper.querySelector(".custom-select-trigger");
+            if (!trigger) return;
+            const rect = trigger.getBoundingClientRect();
+            const boundary = customSelectBoundary(trigger);
+            const edgeGap = 8;
+            const spaceBelow = boundary.bottom - rect.bottom - edgeGap;
+            const spaceAbove = rect.top - boundary.top - edgeGap;
+            const naturalHeight = menu.scrollHeight;
+            const dropUp = naturalHeight > spaceBelow && spaceAbove > spaceBelow;
+            if (dropUp) wrapper.classList.add("drop-up");
+            const available = Math.max(dropUp ? spaceAbove : spaceBelow, 48);
+            if (naturalHeight > available) menu.style.maxHeight = available + "px";
+        }
+
+        // Nearest clipping rect: viewport intersected with every scroll container
+        // above the trigger, so flipped menus never hide behind a panel edge.
+        function customSelectBoundary(trigger) {
+            const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+            const boundary = { top: 0, bottom: viewportHeight };
+            let node = trigger.parentElement;
+            while (node && node !== document.body && node !== document.documentElement) {
+                const overflowY = window.getComputedStyle(node).overflowY;
+                if (overflowY !== "visible" && node.clientHeight > 0) {
+                    const box = node.getBoundingClientRect();
+                    boundary.top = Math.max(boundary.top, box.top);
+                    boundary.bottom = Math.min(boundary.bottom, box.bottom);
+                }
+                node = node.parentElement;
+            }
+            return boundary;
+        }
+
+        function repositionOpenCustomSelects() {
+            document.querySelectorAll(".custom-select-wrapper.open").forEach(wrapper => {
+                const menu = wrapper.querySelector(".custom-select-options");
+                if (menu && !menu.hidden) positionCustomSelectMenu(wrapper, menu);
+            });
+        }
+
+        function handleCustomSelectViewportChange(event) {
+            const target = event && event.target;
+            if (target && target.nodeType === 1 && target.closest(".custom-select-options")) return;
+            repositionOpenCustomSelects();
+        }
+
+        // Custom Select: Model Selector Dropdown
+        function toggleCustomModelSelect(event) {
+            if (event) event.stopPropagation();
+            closeAllCustomSelects("customModelSelect");
+            toggleCustomSelectMenu("customModelSelect", "customModelSelectMenu");
         }
 
         function selectModel(modelId, event) {
@@ -177,12 +233,7 @@ const templateScriptControls = `        let userSelectedModel = false;
         function toggleCustomIntervalSelect(event) {
             if (event) event.stopPropagation();
             closeAllCustomSelects("customIntervalSelect");
-            const wrapper = document.getElementById("customIntervalSelect");
-            const menu = document.getElementById("customIntervalMenu");
-            if (!wrapper || !menu) return;
-            const isOpen = !menu.hidden;
-            menu.hidden = isOpen;
-            wrapper.classList.toggle("open", !isOpen);
+            toggleCustomSelectMenu("customIntervalSelect", "customIntervalMenu");
         }
 
         function selectIntervalOption(value, event) {
@@ -226,12 +277,7 @@ const templateScriptControls = `        let userSelectedModel = false;
         function toggleCustomWarmupGeminiSelect(event) {
             if (event) event.stopPropagation();
             closeAllCustomSelects("customWarmupGeminiModelSelect");
-            const wrapper = document.getElementById("customWarmupGeminiModelSelect");
-            const menu = document.getElementById("customWarmupGeminiMenu");
-            if (!wrapper || !menu) return;
-            const isOpen = !menu.hidden;
-            menu.hidden = isOpen;
-            wrapper.classList.toggle("open", !isOpen);
+            toggleCustomSelectMenu("customWarmupGeminiModelSelect", "customWarmupGeminiMenu");
         }
 
         function selectWarmupGeminiOption(value, event) {
@@ -263,12 +309,7 @@ const templateScriptControls = `        let userSelectedModel = false;
         function toggleCustomWarmupClaudeSelect(event) {
             if (event) event.stopPropagation();
             closeAllCustomSelects("customWarmupClaudeModelSelect");
-            const wrapper = document.getElementById("customWarmupClaudeModelSelect");
-            const menu = document.getElementById("customWarmupClaudeMenu");
-            if (!wrapper || !menu) return;
-            const isOpen = !menu.hidden;
-            menu.hidden = isOpen;
-            wrapper.classList.toggle("open", !isOpen);
+            toggleCustomSelectMenu("customWarmupClaudeModelSelect", "customWarmupClaudeMenu");
         }
 
         function selectWarmupClaudeOption(value, event) {
@@ -326,6 +367,8 @@ const templateScriptControls = `        let userSelectedModel = false;
         document.addEventListener("click", () => {
             closeAllCustomSelects();
         });
+        window.addEventListener("resize", handleCustomSelectViewportChange);
+        document.addEventListener("scroll", handleCustomSelectViewportChange, true);
 
         function switchTab(tabId) {
             activeTab = tabId;

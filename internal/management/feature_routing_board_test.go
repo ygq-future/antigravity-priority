@@ -155,6 +155,10 @@ const document = {
     querySelectorAll: function() { return []; },
     addEventListener: function() {}
 };
+const window = {
+    addEventListener: function() {},
+    innerHeight: 800
+};
 
 function showToast(msg, type) {
     toastCalls.push({msg: msg, type: type});

@@ -366,6 +366,8 @@ const document = {
 };
 const window = {
     matchMedia: function() { return { matches: true }; },
+    addEventListener: function() {},
+    innerHeight: 800,
     location: { search: "" }
 };
 const localStorage = {

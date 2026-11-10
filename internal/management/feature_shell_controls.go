@@ -135,8 +135,14 @@ const templateStyleControls = `        /* KPI Cards Grid */
             flex-direction: column;
             gap: 2px;
             min-width: 160px;
+            max-height: 320px;
+            overflow-y: auto;
             scrollbar-width: thin;
             scrollbar-color: var(--border-color) transparent;
+        }
+        .custom-select-wrapper.drop-up .custom-select-options {
+            top: auto;
+            bottom: calc(100% + 6px);
         }
         .custom-select-options::-webkit-scrollbar { width: 5px; }
         .custom-select-options::-webkit-scrollbar-track { background: transparent; }
