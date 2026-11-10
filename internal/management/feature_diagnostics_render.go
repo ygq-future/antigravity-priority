@@ -198,12 +198,15 @@ const templateScriptDiagnostics = `        let latestDiagnostics = null;
                         var cdUntil = c.cooldown_until;
                         var cdCountdownStr = cdUntil ? formatCountdown(cdUntil) : "-";
                         var groupTag = c.model_group ? "<span class=\"badge badge-subtle\" style=\"font-size:10px;\">" + escapeHTML(c.model_group) + "</span>" : "";
+                        var modelTag = c.model ? "<span class=\"badge badge-subtle\" style=\"font-size:10px;\">" + escapeHTML(c.model) + "</span>" : "";
+                        var kindLabel = c.status_code ? (String(c.status_code) + " Cooldown") : "429 Cooldown";
                         html += "<div class=\"diag-cooldown-item\">" +
                             "<div style=\"display:flex; flex-direction:column; gap:4px; min-width:0;\">" +
                                 "<div style=\"display:flex; align-items:center; gap:6px;\">" +
                                     "<strong style=\"font-size:13px; color:var(--text-primary);\">" + escapeHTML(c.email || "Credential") + "</strong>" +
                                     groupTag +
-                                    "<span class=\"badge badge-danger\" style=\"font-size:10px;\">429 Cooldown</span>" +
+                                    modelTag +
+                                    "<span class=\"badge badge-danger\" style=\"font-size:10px;\">" + escapeHTML(kindLabel) + "</span>" +
                                 "</div>" +
                                 "<div style=\"font-size:11.5px; color:var(--text-muted); font-family:monospace;\">" + escapeHTML(c.reason || "429 rate limit") + "</div>" +
                             "</div>" +

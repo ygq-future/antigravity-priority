@@ -269,7 +269,7 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
                     const badgeClass = customTier > 0 ? "badge-boost" : (isBoosted ? "badge-boost" : "badge-tier");
                     callOrderBadge = "<span class=\"badge " + badgeClass + "\" style=\"cursor:pointer;\" onclick=\"openCustomTierModal('" + escapeHTML(authIdx) + "', '" + escapeHTML(credDisplayName) + "', " + customTier + ")\" title=\"" + (currentLang === "zh-CN" ? "点击修改自定义 Tier" : "Click to edit Custom Tier") + "\">" + escapeHTML(tierText) + "</span>";
                 } else if (bypassedReason === "cooldown") {
-                    callOrderBadge = "<span class=\"badge badge-warning\">" + (currentLang === "zh-CN" ? "⏳ 429 冷却避让" : "⏳ 429 Cooldown") + "</span>";
+                    callOrderBadge = "<span class=\"badge badge-warning\">" + (currentLang === "zh-CN" ? "⏳ 健康冷却避让" : "⏳ Health Cooldown") + "</span>";
                 } else if (bypassedReason === "unsupported_model") {
                     callOrderBadge = "<span class=\"badge badge-secondary\">" + (currentLang === "zh-CN" ? "⛔ 不支持该模型" : "⛔ Unsupported") + "</span>";
                 } else if (bypassedReason === "disabled") {

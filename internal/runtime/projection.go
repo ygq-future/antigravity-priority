@@ -56,6 +56,7 @@ func ProjectDualModelGroups(input ProjectionInput) (DualModelGroupProjection, er
 		grpEvidence := cloneEvidence(input.EvidenceByGroup[group])
 		grpOptions := clonePlanningOptions(options)
 		grpOptions.CooldownAuthIndexes = filterCooldownsForGroup(options.CooldownAuthIndexes, group)
+		grpOptions.CooldownReasons = filterCooldownReasonsForGroup(options.CooldownReasonsByKey, group)
 		plan := priority.PlanWithEvidence(
 			cloneCredentials(input.Credentials),
 			grpEvidence,
@@ -115,14 +116,37 @@ func filterCooldownsForGroup(cooldowns map[string]time.Time, group config.Antigr
 	normGroup := strings.ToLower(string(group))
 	filtered := make(map[string]time.Time)
 	for k, v := range cooldowns {
+		authIndex := k
 		if idx := strings.Index(k, "::"); idx != -1 {
 			entryGroup := strings.ToLower(strings.TrimSpace(k[idx+2:]))
-			if entryGroup == normGroup {
-				filtered[k[:idx]] = v
+			if entryGroup != normGroup {
+				continue
 			}
-		} else {
-			filtered[k] = v
+			authIndex = k[:idx]
 		}
+		if existing, ok := filtered[authIndex]; !ok || v.After(existing) {
+			filtered[authIndex] = v
+		}
+	}
+	return filtered
+}
+
+func filterCooldownReasonsForGroup(reasons map[string]string, group config.AntigravityModelGroup) map[string]string {
+	if len(reasons) == 0 {
+		return nil
+	}
+	normGroup := strings.ToLower(string(group))
+	filtered := make(map[string]string)
+	for k, v := range reasons {
+		authIndex := k
+		if idx := strings.Index(k, "::"); idx != -1 {
+			entryGroup := strings.ToLower(strings.TrimSpace(k[idx+2:]))
+			if entryGroup != normGroup {
+				continue
+			}
+			authIndex = k[:idx]
+		}
+		filtered[authIndex] = v
 	}
 	return filtered
 }
@@ -292,6 +316,8 @@ func roleReason(reason string, predicted bool) string {
 
 func clonePlanningOptions(options priority.Options) priority.Options {
 	options.CooldownAuthIndexes = cloneCooldowns(options.CooldownAuthIndexes)
+	options.CooldownReasons = cloneStringMap(options.CooldownReasons)
+	options.CooldownReasonsByKey = cloneStringMap(options.CooldownReasonsByKey)
 	if len(options.CustomTiers) > 0 {
 		cloned := make(map[string]int, len(options.CustomTiers))
 		for k, v := range options.CustomTiers {
@@ -300,6 +326,17 @@ func clonePlanningOptions(options priority.Options) priority.Options {
 		options.CustomTiers = cloned
 	}
 	return options
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	cloned := make(map[string]string, len(values))
+	for k, v := range values {
+		cloned[k] = v
+	}
+	return cloned
 }
 
 func cloneCooldowns(cooldowns map[string]time.Time) map[string]time.Time {

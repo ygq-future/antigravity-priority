@@ -55,6 +55,7 @@ type PoolRoutingTable struct {
 	DecidedAt        time.Time
 	NextTransitionAt time.Time
 	ByAuthIndex      map[string]PrecomputedCandidate
+	BlockedModels    map[string]map[string]time.Time
 }
 
 type sessionBinding struct {
@@ -229,13 +230,23 @@ func (r *Runtime) updateModelInventoryLocked(files []host.AuthFile, models []hos
 func (r *Runtime) recomputePoolRoutingTableLocked(pool config.AntigravityModelGroup, now time.Time, store *state.Store, credentials []core.Credential) PoolRoutingTable {
 	if store == nil {
 		return PoolRoutingTable{
-			DecidedAt:   now,
-			ByAuthIndex: make(map[string]PrecomputedCandidate),
+			DecidedAt:     now,
+			ByAuthIndex:   make(map[string]PrecomputedCandidate),
+			BlockedModels: make(map[string]map[string]time.Time),
 		}
 	}
 
 	historical := store.BuildHistoricalEvidence(credentials, string(pool))
-	cooldowns := store.GetActiveCooldownsForGroup(now, string(pool))
+	cooldownEntries := store.GetActiveCooldownEntriesForGroup(now, string(pool))
+	cooldowns := make(map[string]time.Time, len(cooldownEntries))
+	cooldownReasons := make(map[string]string, len(cooldownEntries))
+	for authIndex, entry := range cooldownEntries {
+		cooldowns[authIndex] = entry.CooldownUntil
+		if entry.Reason != "" {
+			cooldownReasons[authIndex] = entry.Reason
+		}
+	}
+	blockedModels := store.GetActiveModelCooldownsForGroup(now, string(pool))
 
 	customTiers := store.GetCustomTiers()
 	if customTiers == nil && r.cfg.CustomTiers != nil {
@@ -250,6 +261,7 @@ func (r *Runtime) recomputePoolRoutingTableLocked(pool config.AntigravityModelGr
 		MinChange:           r.cfg.MinChange,
 		UrgencyTolerance:    r.cfg.UrgencyTolerance,
 		CooldownAuthIndexes: cooldowns,
+		CooldownReasons:     cooldownReasons,
 		CustomTiers:         customTiers,
 	}
 
@@ -276,6 +288,9 @@ func (r *Runtime) recomputePoolRoutingTableLocked(pool config.AntigravityModelGr
 		if isCooling {
 			score = -1
 			reason = priority.Reason429Cooldown
+			if specific := cooldownReasons[authIdx]; specific != "" {
+				reason = specific
+			}
 		} else if item.Disabled && item.Priority == -1 {
 			score = -2
 		}
@@ -301,11 +316,19 @@ func (r *Runtime) recomputePoolRoutingTableLocked(pool config.AntigravityModelGr
 			nextTransition = minFutureTime(nextTransition, cdUntil)
 		}
 	}
+	for _, models := range blockedModels {
+		for _, until := range models {
+			if until.After(now) {
+				nextTransition = minFutureTime(nextTransition, until)
+			}
+		}
+	}
 
 	return PoolRoutingTable{
 		DecidedAt:        now,
 		NextTransitionAt: nextTransition,
 		ByAuthIndex:      candidates,
+		BlockedModels:    blockedModels,
 	}
 }
 
@@ -453,6 +476,13 @@ func (r *Runtime) handleSchedulerPick(ctx context.Context, request []byte) []byt
 		if found {
 			candScore = pre.Priority
 		}
+		if blocked := poolTable.BlockedModels[authIdx]; len(blocked) > 0 {
+			if until, isBlocked := blocked[normalizeModelKey(req.Model)]; isBlocked && now.Before(until) {
+				if candScore > priority.DepletedPriority {
+					candScore = priority.DepletedPriority
+				}
+			}
+		}
 		scores = append(scores, candidateScore{
 			candidate: c,
 			authIndex: authIdx,
@@ -569,6 +599,11 @@ func pickSuccessor(candidates []SchedulerAuthCandidate, cursor string) Scheduler
 		}
 	}
 	return candidates[0]
+}
+
+// normalizeModelKey canonicalizes a model identifier for health-state lookups.
+func normalizeModelKey(model string) string {
+	return strings.ToLower(strings.TrimSpace(model))
 }
 
 // extractSessionID extracts canonical session ID from Options metadata or headers.

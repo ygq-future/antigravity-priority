@@ -18,6 +18,9 @@ const (
 	ReasonFreshBoosted             = "fresh boosted"
 	ReasonFreshRemainingPositive   = "fresh remaining positive"
 	Reason429Cooldown              = "429 rate limit cooldown"
+	ReasonServerErrorCooldown      = "5xx server error cooldown"
+	ReasonForbiddenCooldown        = "403 forbidden cooldown"
+	ReasonUnauthorizedCooldown     = "401 unauthorized cooldown"
 )
 
 // WeeklyRecoveryThreshold is the minimum 7d quota remaining required to re-enable
@@ -75,7 +78,11 @@ type Options struct {
 	MinChange           int
 	UrgencyTolerance    float64
 	CooldownAuthIndexes map[string]time.Time
-	CustomTiers         map[string]int
+	CooldownReasons     map[string]string
+	// CooldownReasonsByKey is the pre-filter composite-key form used by
+	// projection to derive per-group CooldownReasons.
+	CooldownReasonsByKey map[string]string
+	CustomTiers          map[string]int
 }
 
 // PlanItem represents the calculated target state for a single credential.
@@ -317,7 +324,11 @@ func planPositive(items []PlanItem, options Options) {
 		if cooldownUntil, inCooldown := options.CooldownAuthIndexes[item.Credential.AuthIndex]; inCooldown && options.Now.Before(cooldownUntil) {
 			items[index].Priority = DepletedPriority
 			items[index].Disabled = false
-			items[index].Reason = Reason429Cooldown
+			reason := Reason429Cooldown
+			if specific := options.CooldownReasons[item.Credential.AuthIndex]; specific != "" {
+				reason = specific
+			}
+			items[index].Reason = reason
 			continue
 		}
 		if item.CustomTier > 0 {
@@ -473,7 +484,6 @@ func planPositive(items []PlanItem, options Options) {
 		}
 	}
 }
-
 
 func changes(items []PlanItem, options Options) []Change {
 	result := make([]Change, 0)

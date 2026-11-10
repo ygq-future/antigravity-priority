@@ -70,8 +70,12 @@ A deliberate change to one credential's persisted priority and/or disabled state
 _Avoid_: Host write, patch operation, mutation
 
 **Pool-Scoped 429 Reactive Cooldown (Circuit Breaker)**:
-Temporarily demoting an account's priority to `-1` for a specific quota pool upon encountering an upstream Google 429 Rate Limit error for a configurable duration (default 5 minutes), isolating the credential into that pool's fallback tier while preserving its enabled state and allowing other pools on the same account to continue serving traffic uninterrupted.
+Temporarily demoting an account's priority to `-1` for a specific quota pool upon encountering an upstream Google 429 Rate Limit error for a configurable duration (default 5 minutes), isolating the credential into that pool's fallback tier while preserving its enabled state and allowing other pools on the same account to continue serving traffic uninterrupted. Cooldown expiry enters the exponential-backoff probe queue; priority restores after a successful probe or a successful same-pool request.
 _Avoid_: Global account ban, indiscriminate multi-pool disable
+
+**Credential Health Failover**:
+Classifying upstream failures by scope and cause — 401 as account-level quarantine, 403 as model-scoped isolation, 5xx as pool-scoped transient cooldown, and 429 as pool-scoped rate-limit cooldown — and demoting only the affected routing score to `-1` while preserving the configured tier. 401 is quarantined without active refresh; 403/429/5xx enter an exponential-backoff probe queue that reuses the warmup generation request, and one successful probe restores the original tier.
+_Avoid_: Global account ban, unconditional refresh storm, permanent tier rewrite
 
 **Soft Depletion**:
 Setting priority to `-1` while maintaining `disabled = false` when the 5-hour short window is exhausted ($R_{\text{5h}} \le 0$), enabling automatic self-healing upon the 5-hour reset.

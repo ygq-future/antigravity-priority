@@ -131,18 +131,36 @@ type ProbeSchedule struct {
 // that can be modified via the UI Config Center without restarting the plugin (REQ-09).
 type DynamicConfig = config.DynamicConfig
 
-// CooldownEntry tracks temporary 429 rate limit circuit breaking for a credential.
+// FailureKind classifies why a credential was temporarily removed from routing.
+type FailureKind string
+
+const (
+	FailureRateLimit    FailureKind = "rate_limit"
+	FailureServerError  FailureKind = "server_error"
+	FailureForbidden    FailureKind = "forbidden"
+	FailureUnauthorized FailureKind = "unauthorized"
+)
+
+// CooldownEntry tracks a temporary health intervention for a credential.
+// An empty ModelGroup means account scope; a non-empty ModelGroup with an
+// empty Model means pool scope; both set means model scope.
 type CooldownEntry struct {
-	AuthIndex               string    `json:"auth_index"`
-	ModelGroup              string    `json:"model_group,omitempty"`
-	TriggeredAt             time.Time `json:"triggered_at"`
-	CooldownUntil           time.Time `json:"cooldown_until"`
-	Reason                  string    `json:"reason"`
-	PreviousPriority        int       `json:"previous_priority,omitempty"`
-	PreviousPriorityMissing bool      `json:"previous_priority_missing,omitempty"`
-	PreviousDisabled        bool      `json:"previous_disabled,omitempty"`
-	AppliedDisabled         bool      `json:"applied_disabled,omitempty"`
-	NextRecoveryAt          time.Time `json:"next_recovery_at,omitempty"`
+	AuthIndex               string      `json:"auth_index"`
+	ModelGroup              string      `json:"model_group,omitempty"`
+	Model                   string      `json:"model,omitempty"`
+	ProbeModel              string      `json:"probe_model,omitempty"`
+	FailureKind             FailureKind `json:"failure_kind,omitempty"`
+	StatusCode              int         `json:"status_code,omitempty"`
+	TriggeredAt             time.Time   `json:"triggered_at"`
+	CooldownUntil           time.Time   `json:"cooldown_until"`
+	NextRecoveryAt          time.Time   `json:"next_recovery_at,omitempty"`
+	BackoffStep             int         `json:"backoff_step,omitempty"`
+	ProbeEnabled            bool        `json:"probe_enabled,omitempty"`
+	Reason                  string      `json:"reason"`
+	PreviousPriority        int         `json:"previous_priority,omitempty"`
+	PreviousPriorityMissing bool        `json:"previous_priority_missing,omitempty"`
+	PreviousDisabled        bool        `json:"previous_disabled,omitempty"`
+	AppliedDisabled         bool        `json:"applied_disabled,omitempty"`
 }
 
 // AutoDisabledEntry tracks credentials automatically disabled by the plugin
@@ -983,7 +1001,7 @@ func (s *Store) BuildHistoricalEvidence(credentials []core.Credential, modelGrou
 	return evidence
 }
 
-// CooldownKey formats the map key for pool-scoped cooldown tracking.
+// CooldownKey formats the map key for account- or pool-scoped health tracking.
 func CooldownKey(authIndex, modelGroup string) string {
 	group := strings.ToLower(strings.TrimSpace(modelGroup))
 	if group == "" {
@@ -992,26 +1010,104 @@ func CooldownKey(authIndex, modelGroup string) string {
 	return authIndex + "::" + group
 }
 
-// GetActiveCooldownsForGroup returns a map of auth_index -> CooldownUntil for unexpired
-// 429 rate limit cooldowns affecting the specified model group.
-func (s *Store) GetActiveCooldownsForGroup(now time.Time, modelGroup string) map[string]time.Time {
+// FailureKey formats the map key for account-, pool-, or model-scoped health tracking.
+func FailureKey(authIndex, modelGroup, model string) string {
+	key := CooldownKey(authIndex, modelGroup)
+	if trimmed := strings.TrimSpace(model); trimmed != "" {
+		return key + "::" + trimmed
+	}
+	return key
+}
+
+// GetActiveCooldownEntriesForGroup returns the active account- or pool-scoped
+// intervention for each credential in the specified model group.
+func (s *Store) GetActiveCooldownEntriesForGroup(now time.Time, modelGroup string) map[string]CooldownEntry {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	normGroup := strings.ToLower(strings.TrimSpace(modelGroup))
-	active := make(map[string]time.Time)
+	active := make(map[string]CooldownEntry)
 	for _, v := range s.cooldowns {
-		if !now.Before(v.CooldownUntil) {
+		if !now.Before(v.CooldownUntil) || strings.TrimSpace(v.Model) != "" {
 			continue
 		}
 		entryGroup := strings.ToLower(strings.TrimSpace(v.ModelGroup))
-		if entryGroup == "" || entryGroup == normGroup {
-			active[v.AuthIndex] = v.CooldownUntil
+		if entryGroup != "" && entryGroup != normGroup {
+			continue
+		}
+		existing, ok := active[v.AuthIndex]
+		if !ok {
+			active[v.AuthIndex] = v
+			continue
+		}
+		if existing.ModelGroup == "" {
+			continue
+		}
+		if v.ModelGroup == "" || v.CooldownUntil.After(existing.CooldownUntil) {
+			active[v.AuthIndex] = v
 		}
 	}
 	return active
 }
 
-// GetActiveCooldowns returns a map of auth_index -> CooldownUntil for unexpired 429 rate limit cooldowns.
+// GetActiveCooldownsForGroup returns a map of auth_index -> CooldownUntil for unexpired
+// account- or pool-scoped interventions affecting the specified model group.
+func (s *Store) GetActiveCooldownsForGroup(now time.Time, modelGroup string) map[string]time.Time {
+	entries := s.GetActiveCooldownEntriesForGroup(now, modelGroup)
+	active := make(map[string]time.Time, len(entries))
+	for authIndex, entry := range entries {
+		active[authIndex] = entry.CooldownUntil
+	}
+	return active
+}
+
+// GetActiveModelCooldownsForGroup returns auth_index -> model -> CooldownUntil
+// for unexpired model-scoped interventions in the specified model group.
+func (s *Store) GetActiveModelCooldownsForGroup(now time.Time, modelGroup string) map[string]map[string]time.Time {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	normGroup := strings.ToLower(strings.TrimSpace(modelGroup))
+	active := make(map[string]map[string]time.Time)
+	for _, v := range s.cooldowns {
+		if !now.Before(v.CooldownUntil) {
+			continue
+		}
+		model := strings.ToLower(strings.TrimSpace(v.Model))
+		if model == "" || strings.ToLower(strings.TrimSpace(v.ModelGroup)) != normGroup {
+			continue
+		}
+		models := active[v.AuthIndex]
+		if models == nil {
+			models = make(map[string]time.Time)
+			active[v.AuthIndex] = models
+		}
+		if existing, ok := models[model]; !ok || v.CooldownUntil.After(existing) {
+			models[model] = v.CooldownUntil
+		}
+	}
+	return active
+}
+
+// GetActiveCooldownsForPlanning returns the active account- and pool-scoped
+// entries keyed by CooldownKey, plus each entry's display reason.
+func (s *Store) GetActiveCooldownsForPlanning(now time.Time) (map[string]time.Time, map[string]string) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	active := make(map[string]time.Time)
+	reasons := make(map[string]string)
+	for _, v := range s.cooldowns {
+		if !now.Before(v.CooldownUntil) || strings.TrimSpace(v.Model) != "" {
+			continue
+		}
+		key := CooldownKey(v.AuthIndex, v.ModelGroup)
+		active[key] = v.CooldownUntil
+		if strings.TrimSpace(v.Reason) != "" {
+			reasons[key] = v.Reason
+		}
+	}
+	return active, reasons
+}
+
+// GetActiveCooldowns returns a map of auth_index -> CooldownUntil for unexpired interventions.
 // Expired entries remain available until Runtime has restored the Host state.
 func (s *Store) GetActiveCooldowns(now time.Time) map[string]time.Time {
 	s.mu.RLock()
@@ -1028,19 +1124,11 @@ func (s *Store) GetActiveCooldowns(now time.Time) map[string]time.Time {
 	return active
 }
 
-// DeleteCooldown removes a completed or superseded cooldown transaction.
-func (s *Store) DeleteCooldown(key string) {
+// DeleteCooldownExact removes only the specified intervention entry.
+func (s *Store) DeleteCooldownExact(key string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.cooldowns, key)
-	if !strings.Contains(key, "::") {
-		prefix := key + "::"
-		for k := range s.cooldowns {
-			if strings.HasPrefix(k, prefix) {
-				delete(s.cooldowns, k)
-			}
-		}
-	}
 }
 
 // GetCooldowns returns a copy of all current cooldown entries.
@@ -1054,14 +1142,14 @@ func (s *Store) GetCooldowns() map[string]CooldownEntry {
 	return copied
 }
 
-// SetCooldown records or updates a 429 rate limit cooldown for a credential.
+// SetCooldown records or updates a health intervention for a credential.
 func (s *Store) SetCooldown(entry CooldownEntry) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.cooldowns == nil {
 		s.cooldowns = make(map[string]CooldownEntry)
 	}
-	key := CooldownKey(entry.AuthIndex, entry.ModelGroup)
+	key := FailureKey(entry.AuthIndex, entry.ModelGroup, entry.Model)
 	s.cooldowns[key] = entry
 }
 

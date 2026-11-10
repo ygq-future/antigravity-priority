@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"sort"
 	"strings"
 	"sync"
@@ -31,42 +32,42 @@ type quotaPreview struct {
 
 // Runtime manages plugin lifecycle, configuration, ticker worker, and single-flight execution.
 type Runtime struct {
-	mu                  sync.Mutex
-	runMu               sync.Mutex
-	runner              TaskRunner
-	rootCtx             context.Context
-	cancel              context.CancelFunc
-	cfg                 config.Config
-	hostCallbacks       host.HostCallbacks
-	clock               Clock
-	sleeper             Sleeper
-	management          *management.Handler
-	latestResult        apply.Result
-	latestAudit         string
-	latestDualSnapshot  *apply.DualGroupSnapshot
-	latestQuotaPreview  *quotaPreview
-	scheduleConfig      state.ScheduleConfig
-	stateCacheOverride  string
-	runHistory          []RunHistoryEntry
-	requestHistory      []state.RequestHistoryEntry
-	latestProbeOutcomes []management.ProbeOutcome
-	lastAutoApplyAt     time.Time
-	worker              *tickerWorker
-	shutdown            bool
-	rateLimitMu         sync.Mutex
-	pending429          map[string]pending429
-	stormUntil          time.Time
-	stormAccounts       map[string]bool
-	activeCooldowns     map[string]state.CooldownEntry
-	rateLimitWake       chan struct{}
-	rateLimitDone       chan struct{}
-	routingMu             sync.RWMutex
-	plansByPool           map[config.AntigravityModelGroup]PoolRoutingTable
-	authIDToIndex         map[string]string
-	supportedModelsByAuth map[string]map[string]struct{}
-	modelCatalog          []ModelCatalogItem
-	rrCursorByPool        map[config.AntigravityModelGroup]string
-	sessionAffinity       map[string]sessionBinding
+	mu                       sync.Mutex
+	runMu                    sync.Mutex
+	runner                   TaskRunner
+	rootCtx                  context.Context
+	cancel                   context.CancelFunc
+	cfg                      config.Config
+	hostCallbacks            host.HostCallbacks
+	clock                    Clock
+	sleeper                  Sleeper
+	management               *management.Handler
+	latestResult             apply.Result
+	latestAudit              string
+	latestDualSnapshot       *apply.DualGroupSnapshot
+	latestQuotaPreview       *quotaPreview
+	scheduleConfig           state.ScheduleConfig
+	stateCacheOverride       string
+	runHistory               []RunHistoryEntry
+	requestHistory           []state.RequestHistoryEntry
+	latestProbeOutcomes      []management.ProbeOutcome
+	lastAutoApplyAt          time.Time
+	worker                   *tickerWorker
+	shutdown                 bool
+	rateLimitMu              sync.Mutex
+	pending429               map[string]pending429
+	stormUntil               time.Time
+	stormAccounts            map[string]bool
+	activeCooldowns          map[string]state.CooldownEntry
+	rateLimitWake            chan struct{}
+	rateLimitDone            chan struct{}
+	routingMu                sync.RWMutex
+	plansByPool              map[config.AntigravityModelGroup]PoolRoutingTable
+	authIDToIndex            map[string]string
+	supportedModelsByAuth    map[string]map[string]struct{}
+	modelCatalog             []ModelCatalogItem
+	rrCursorByPool           map[config.AntigravityModelGroup]string
+	sessionAffinity          map[string]sessionBinding
 	warmupMu                 sync.Mutex
 	lastWarmupByAuthAndGroup map[string]time.Time
 	warmupResetMu            sync.Mutex
@@ -86,23 +87,23 @@ func New(options Options) *Runtime {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	rt := &Runtime{
-		rootCtx:         ctx,
-		cancel:          cancel,
-		cfg:             config.Default(),
-		hostCallbacks:   options.Host,
-		clock:           clock,
-		sleeper:         sleeper,
-		pending429:      make(map[string]pending429),
-		stormAccounts:   make(map[string]bool),
-		activeCooldowns: make(map[string]state.CooldownEntry),
-		rateLimitWake:   make(chan struct{}, 1),
-		rateLimitDone:         make(chan struct{}),
-		plansByPool:           make(map[config.AntigravityModelGroup]PoolRoutingTable),
-		authIDToIndex:         make(map[string]string),
-		supportedModelsByAuth: make(map[string]map[string]struct{}),
-		modelCatalog:          append([]ModelCatalogItem(nil), builtInAntigravityModels...),
-		rrCursorByPool:        make(map[config.AntigravityModelGroup]string),
-		sessionAffinity:       make(map[string]sessionBinding),
+		rootCtx:                  ctx,
+		cancel:                   cancel,
+		cfg:                      config.Default(),
+		hostCallbacks:            options.Host,
+		clock:                    clock,
+		sleeper:                  sleeper,
+		pending429:               make(map[string]pending429),
+		stormAccounts:            make(map[string]bool),
+		activeCooldowns:          make(map[string]state.CooldownEntry),
+		rateLimitWake:            make(chan struct{}, 1),
+		rateLimitDone:            make(chan struct{}),
+		plansByPool:              make(map[config.AntigravityModelGroup]PoolRoutingTable),
+		authIDToIndex:            make(map[string]string),
+		supportedModelsByAuth:    make(map[string]map[string]struct{}),
+		modelCatalog:             append([]ModelCatalogItem(nil), builtInAntigravityModels...),
+		rrCursorByPool:           make(map[config.AntigravityModelGroup]string),
+		sessionAffinity:          make(map[string]sessionBinding),
 		lastWarmupByAuthAndGroup: make(map[string]time.Time),
 		warmupResetTargets:       make(map[string]warmupResetTarget),
 		warmupResetWake:          make(chan struct{}, 1),
@@ -675,6 +676,11 @@ func (r *Runtime) Diagnostics(ctx context.Context) (map[string]any, error) {
 				activeCooldowns = append(activeCooldowns, map[string]any{
 					"auth_index":     redactRuntimeIdentifier(c.AuthIndex),
 					"model_group":    c.ModelGroup,
+					"model":          c.Model,
+					"failure_kind":   c.FailureKind,
+					"status_code":    c.StatusCode,
+					"backoff_step":   c.BackoffStep,
+					"probe_enabled":  c.ProbeEnabled,
 					"triggered_at":   c.TriggeredAt.Format(time.RFC3339),
 					"cooldown_until": c.CooldownUntil.Format(time.RFC3339),
 					"reason":         c.Reason,
@@ -1259,12 +1265,23 @@ func (r *Runtime) handleUsageEvent(ctx context.Context, raw []byte) []byte {
 			reasoningTokens = diff
 		}
 	}
+	kind := state.FailureKind("")
+	if payload.Failed {
+		kind = failureKindFor(payload.Failure.StatusCode, payload.Failure.Body)
+	}
 	statusCode := 200
 	if payload.Failed {
-		if payload.Failure.StatusCode != 0 {
+		switch {
+		case payload.Failure.StatusCode != 0:
 			statusCode = payload.Failure.StatusCode
-		} else {
-			statusCode = 500
+		case kind == state.FailureUnauthorized:
+			statusCode = http.StatusUnauthorized
+		case kind == state.FailureForbidden:
+			statusCode = http.StatusForbidden
+		case kind == state.FailureRateLimit:
+			statusCode = http.StatusTooManyRequests
+		default:
+			statusCode = http.StatusInternalServerError
 		}
 	}
 	r.appendRequestHistory(state.RequestHistoryEntry{
@@ -1287,17 +1304,60 @@ func (r *Runtime) handleUsageEvent(ctx context.Context, raw []byte) []byte {
 	})
 
 	if !payload.Failed {
-		if err := r.observeUsageSuccess(ctx, resolvedIndex, string(pool), payload.Detail); err != nil {
+		if err := r.observeUsageSuccess(ctx, resolvedIndex, string(pool), payload.Model, payload.Detail); err != nil {
 			return failure(err)
 		}
 		return mustMarshal(Envelope{OK: true})
 	}
-	if !is429UsageFailure(payload.Failure) {
-		return mustMarshal(Envelope{OK: true})
-	}
-	err := r.observe429(ctx, resolvedIndex, string(pool), "429 rate limit detected", true)
-	if err != nil {
-		return failure(err)
+
+	switch kind {
+	case state.FailureRateLimit:
+		if err := r.observe429(ctx, resolvedIndex, string(pool), payload.Model, true); err != nil {
+			return failure(err)
+		}
+	case state.FailureUnauthorized:
+		if err := r.observeFailure(ctx, failureInput{
+			AuthIndex:    resolvedIndex,
+			Kind:         state.FailureUnauthorized,
+			StatusCode:   http.StatusUnauthorized,
+			Reason:       priority.ReasonUnauthorizedCooldown,
+			Cooldown:     unauthorizedQuarantine,
+			ProbeEnabled: false,
+		}, true); err != nil {
+			return failure(err)
+		}
+	case state.FailureForbidden:
+		model := strings.TrimSpace(payload.Model)
+		if err := r.observeFailure(ctx, failureInput{
+			AuthIndex:    resolvedIndex,
+			ModelGroup:   string(pool),
+			Model:        model,
+			ProbeModel:   model,
+			Kind:         state.FailureForbidden,
+			StatusCode:   http.StatusForbidden,
+			Reason:       priority.ReasonForbiddenCooldown,
+			Cooldown:     forbiddenBaseCooldown,
+			ProbeEnabled: true,
+		}, true); err != nil {
+			return failure(err)
+		}
+	case state.FailureServerError:
+		status := payload.Failure.StatusCode
+		if status == 0 {
+			status = http.StatusInternalServerError
+		}
+		if err := r.observeFailure(ctx, failureInput{
+			AuthIndex:    resolvedIndex,
+			ModelGroup:   string(pool),
+			ProbeModel:   payload.Model,
+			Kind:         state.FailureServerError,
+			StatusCode:   status,
+			Reason:       fmt.Sprintf("%d server error cooldown", status),
+			Cooldown:     serverErrorBaseCooldown,
+			ProbeEnabled: true,
+		}, true); err != nil {
+			return failure(err)
+		}
 	}
 	return mustMarshal(Envelope{OK: true})
 }
@@ -1307,12 +1367,35 @@ func isAntigravityUsageProvider(provider string) bool {
 	return p == "antigravity" || p == "google" || p == "gemini" || p == "google-antigravity" || strings.Contains(p, "antigravity")
 }
 
-func is429UsageFailure(failure usageFailure) bool {
-	if failure.StatusCode == 429 {
-		return true
+func failureKindFor(statusCode int, body string) state.FailureKind {
+	switch statusCode {
+	case http.StatusUnauthorized:
+		return state.FailureUnauthorized
+	case http.StatusForbidden:
+		return state.FailureForbidden
+	case http.StatusTooManyRequests:
+		return state.FailureRateLimit
 	}
-	body := strings.ToUpper(failure.Body)
-	return strings.Contains(body, "429") || strings.Contains(body, "RESOURCE_EXHAUSTED") || strings.Contains(body, "RATE_LIMIT")
+	if statusCode >= 500 && statusCode <= 599 {
+		return state.FailureServerError
+	}
+	if statusCode != 0 {
+		return ""
+	}
+	upper := strings.ToUpper(body)
+	switch {
+	case strings.Contains(upper, "UNAUTHENTICATED") || strings.Contains(upper, "401"):
+		return state.FailureUnauthorized
+	case strings.Contains(upper, "PERMISSION_DENIED") || strings.Contains(upper, "403"):
+		return state.FailureForbidden
+	case strings.Contains(upper, "RESOURCE_EXHAUSTED") || strings.Contains(upper, "RATE_LIMIT") || strings.Contains(upper, "429"):
+		return state.FailureRateLimit
+	case strings.Contains(upper, "UNAVAILABLE") || strings.Contains(upper, "500") || strings.Contains(upper, "502") ||
+		strings.Contains(upper, "503") || strings.Contains(upper, "504"):
+		return state.FailureServerError
+	default:
+		return ""
+	}
 }
 
 func (r *Runtime) handleFilterEvent(ctx context.Context, raw []byte) []byte {
@@ -1321,6 +1404,7 @@ func (r *Runtime) handleFilterEvent(ctx context.Context, raw []byte) []byte {
 		AuthName   string `json:"auth_name"`
 		StatusCode int    `json:"status_code"`
 		Error      string `json:"error"`
+		Model      string `json:"model"`
 		ModelGroup string `json:"model_group"`
 	}
 	_ = json.Unmarshal(raw, &payload)
@@ -1329,14 +1413,63 @@ func (r *Runtime) handleFilterEvent(ctx context.Context, raw []byte) []byte {
 		return mustMarshal(Envelope{OK: true})
 	}
 	resolvedIndex := r.resolveAuthIndex(authIndex, nil)
+	model := strings.TrimSpace(payload.Model)
+	modelGroup := strings.TrimSpace(payload.ModelGroup)
+	if modelGroup == "" && model != "" {
+		modelGroup = string(config.ClassifyModelQuotaPool(model))
+	}
+	kind := failureKindFor(payload.StatusCode, payload.Error)
+	// Without a pool or model the failure cannot be isolated safely; only 401
+	// is unambiguously account-wide.
+	if modelGroup == "" && kind != state.FailureUnauthorized {
+		return mustMarshal(Envelope{OK: true})
+	}
 
-	is429 := payload.StatusCode == 429 || strings.Contains(strings.ToLower(payload.Error), "429") ||
-		strings.Contains(strings.ToUpper(payload.Error), "RESOURCE_EXHAUSTED") ||
-		strings.Contains(strings.ToUpper(payload.Error), "RATE_LIMIT")
-
-	if is429 {
-		err := r.observe429(ctx, resolvedIndex, payload.ModelGroup, "429 rate limit detected", true)
-		if err != nil {
+	switch kind {
+	case state.FailureRateLimit:
+		if err := r.observe429(ctx, resolvedIndex, modelGroup, model, true); err != nil {
+			return failure(err)
+		}
+	case state.FailureUnauthorized:
+		if err := r.observeFailure(ctx, failureInput{
+			AuthIndex:    resolvedIndex,
+			Kind:         state.FailureUnauthorized,
+			StatusCode:   http.StatusUnauthorized,
+			Reason:       priority.ReasonUnauthorizedCooldown,
+			Cooldown:     unauthorizedQuarantine,
+			ProbeEnabled: false,
+		}, true); err != nil {
+			return failure(err)
+		}
+	case state.FailureForbidden:
+		if err := r.observeFailure(ctx, failureInput{
+			AuthIndex:    resolvedIndex,
+			ModelGroup:   modelGroup,
+			Model:        model,
+			ProbeModel:   model,
+			Kind:         state.FailureForbidden,
+			StatusCode:   http.StatusForbidden,
+			Reason:       priority.ReasonForbiddenCooldown,
+			Cooldown:     forbiddenBaseCooldown,
+			ProbeEnabled: true,
+		}, true); err != nil {
+			return failure(err)
+		}
+	case state.FailureServerError:
+		status := payload.StatusCode
+		if status == 0 {
+			status = http.StatusInternalServerError
+		}
+		if err := r.observeFailure(ctx, failureInput{
+			AuthIndex:    resolvedIndex,
+			ModelGroup:   modelGroup,
+			ProbeModel:   model,
+			Kind:         state.FailureServerError,
+			StatusCode:   status,
+			Reason:       fmt.Sprintf("%d server error cooldown", status),
+			Cooldown:     serverErrorBaseCooldown,
+			ProbeEnabled: true,
+		}, true); err != nil {
 			return failure(err)
 		}
 	}
@@ -1344,98 +1477,31 @@ func (r *Runtime) handleFilterEvent(ctx context.Context, raw []byte) []byte {
 	return mustMarshal(Envelope{OK: true})
 }
 
-func (r *Runtime) triggerCooldown(ctx context.Context, authIndex, modelGroup, reason string) error {
-	now := r.clock.Now().UTC()
+func (r *Runtime) triggerCooldown(ctx context.Context, authIndex, modelGroup, model string) error {
 	cfg, err := r.Config()
 	if err != nil {
 		return err
 	}
-	cachePath := cfg.StateCachePath
-	if strings.TrimSpace(cachePath) == "" {
-		cachePath = config.DefaultStateCachePath
-	}
-	store, err := state.Load(ctx, cachePath)
-	if err != nil {
-		r.recordCooldownFailure(ctx, nil, authIndex, reason, err)
-		return fmt.Errorf("record cooldown state: %w", err)
-	}
-	if _, active := store.GetActiveCooldowns(now)[authIndex]; active {
-		return nil
-	}
-
 	cooldownMinutes := cfg.RateLimitCooldownMinutes
 	if cooldownMinutes <= 0 {
 		cooldownMinutes = config.DefaultRateLimitCooldownMinutes
 	}
-	cooldownUntil := now.Add(time.Duration(cooldownMinutes) * time.Minute)
-
-	credential, findErr := r.findCredential(ctx, authIndex)
-	if findErr != nil {
-		r.recordCooldownFailure(ctx, store, authIndex, reason, findErr)
-		return findErr
-	}
-	if credential.Disabled {
-		return nil
-	}
-	entry := state.CooldownEntry{
-		AuthIndex:               authIndex,
-		ModelGroup:              modelGroup,
-		TriggeredAt:             now,
-		CooldownUntil:           cooldownUntil,
-		Reason:                  reason,
-		PreviousPriority:        credential.Priority,
-		PreviousPriorityMissing: credential.PriorityMissing,
-		PreviousDisabled:        credential.Disabled,
-		AppliedDisabled:         credential.Disabled,
-	}
-	store.SetCooldown(entry)
-	r.setActiveCooldown(entry)
-	if r.hostCallbacks == nil {
-		err := errMissingHostCallbacks
-		r.recordCooldownFailure(ctx, store, authIndex, reason, err)
-		return err
-	}
-
-	client := host.NewClient(r.hostCallbacks)
-	transition := apply.NewHostTransition(client)
-	result, applyErr := apply.ExecuteRound(ctx, transition, apply.TransitionRound{
-		Intents: []apply.TransitionIntent{apply.CooldownIntent(credential, reason)},
+	return r.triggerFailure(ctx, failureInput{
+		AuthIndex:    authIndex,
+		ModelGroup:   modelGroup,
+		ProbeModel:   model,
+		Kind:         state.FailureRateLimit,
+		StatusCode:   http.StatusTooManyRequests,
+		Reason:       priority.Reason429Cooldown,
+		Cooldown:     time.Duration(cooldownMinutes) * time.Minute,
+		ProbeEnabled: true,
 	})
-	result.Snapshot = apply.Snapshot(priority.Plan{
-		DecidedAt: now,
-		Items: []priority.PlanItem{{
-			Credential: credential,
-			Priority:   priority.DepletedPriority,
-			Disabled:   false,
-			Reason:     priority.Reason429Cooldown,
-		}},
-	})
-	if applyErr != nil {
-		r.recordCooldownFailure(ctx, store, authIndex, reason, applyErr)
-		return applyErr
-	}
-	r.patchSnapshotCooldown(authIndex, true, priority.Reason429Cooldown, priority.DepletedPriority, credential.Disabled)
-	summary := resultSummary("429 cooldown", result)
-	_, projectErr := r.projectRun(ctx, store, result, summary, RunHistoryEntry{
-		Kind:     KindCooldown,
-		Trigger:  "rate_limit_429",
-		Message:  summary,
-		Snapshot: &result.Snapshot,
-	})
-	if projectErr != nil {
-		return projectErr
-	}
-	r.routingMu.Lock()
-	r.recomputeRoutingTablesLocked(now)
-	r.routingMu.Unlock()
-	r.signalRateLimitWorker()
-	if result.Transitions.Totals.Failed > 0 || result.Transitions.Totals.Conflicts > 0 || result.Transitions.Totals.Uncertain > 0 {
-		return errors.New("429 cooldown host mutation failed")
-	}
-	return nil
 }
 
-func (r *Runtime) recordCooldownFailure(ctx context.Context, store *state.Store, authIndex, reason string, err error) {
+func (r *Runtime) recordCooldownFailure(ctx context.Context, store *state.Store, authIndex, reason, trigger string, err error) {
+	if strings.TrimSpace(trigger) == "" {
+		trigger = "health_cooldown"
+	}
 	message := reason + ": " + host.RedactBytes([]byte(err.Error()))
 	result := apply.ResultFromTransition(apply.TransitionRoundResult{Details: []apply.TransitionResult{{
 		AuthIndex: redactRuntimeIdentifier(authIndex),
@@ -1446,7 +1512,7 @@ func (r *Runtime) recordCooldownFailure(ctx context.Context, store *state.Store,
 	}}})
 	entry := RunHistoryEntry{
 		Kind:      KindCooldown,
-		Trigger:   "rate_limit_429",
+		Trigger:   trigger,
 		Attempted: result.Attempted,
 		Succeeded: result.Succeeded,
 		Failed:    result.Failed,

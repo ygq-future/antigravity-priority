@@ -697,10 +697,10 @@ async function fetchDiagnostics() {}
         throw new Error("card 0 must NOT show the removed stale '历史数据' tag: " + card0HTML);
     }
 
-    // Card 1: 429 cooldown
+    // Card 1: health cooldown badge must win over the probe-failed state
     const card1HTML = renderedCards[1].innerHTML;
-    if (card1HTML.indexOf("429 冷却") < 0) {
-        throw new Error("card 1 should prioritize '429 冷却' badge over probe failed: " + card1HTML);
+    if (card1HTML.indexOf("badge-warning") < 0) {
+        throw new Error("card 1 should prioritize the cooldown badge over probe failed: " + card1HTML);
     }
     if (card1HTML.indexOf("探测失败: retrieve quota summary status 429") < 0) {
         throw new Error("card 1 reason line should display failure cause: " + card1HTML);

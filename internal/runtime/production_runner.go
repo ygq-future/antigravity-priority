@@ -113,7 +113,7 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 				return err
 			}
 			for authIndex, modelGroup := range evidence.RateLimited {
-				if err := r.observe429(ctx, authIndex, modelGroup, "429 rate limit detected during quota probe", false); err != nil {
+				if err := r.observe429(ctx, authIndex, modelGroup, "", false); err != nil {
 					return err
 				}
 			}
@@ -136,7 +136,6 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 		}
 		r.triggerWarmupForEligibleCredentials(ctx, client, request.Config.Warmup, evidence.ByGroup, allAuthMaterials, disabledAuth, now)
 	}
-
 
 	// Reconcile against the authoritative Host inventory after the potentially
 	// slow Google requests. Credentials may have been added, removed, disabled,
@@ -235,13 +234,13 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 
 	summary := resultSummary("apply", result)
 	_, projectErr := r.projectRun(ctx, store, result, summary, RunHistoryEntry{
-		Kind:         KindApply,
-		Trigger:      string(request.Trigger),
-		Message:      summary,
-		Snapshot:     &primarySnapshot,
+		Kind:     KindApply,
+		Trigger:  string(request.Trigger),
+		Message:  summary,
+		Snapshot: &primarySnapshot,
 	})
 	r.routingMu.Lock()
-		r.recomputeRoutingTablesLocked(now, allCredentials)
+	r.recomputeRoutingTablesLocked(now, allCredentials)
 	r.routingMu.Unlock()
 	return projectErr
 }
@@ -516,23 +515,25 @@ func filterCredentialsByAuthIndex(credentials []core.Credential, authIndexes []s
 
 func priorityOptions(cfg config.Config, store *state.Store, now time.Time) priority.Options {
 	var cooldowns map[string]time.Time
+	var cooldownReasons map[string]string
 	var customTiers map[string]int
 	if store != nil {
-		cooldowns = store.GetActiveCooldowns(now)
+		cooldowns, cooldownReasons = store.GetActiveCooldownsForPlanning(now)
 		customTiers = store.GetCustomTiers()
 	}
 	if customTiers == nil && cfg.CustomTiers != nil {
 		customTiers = cfg.CustomTiers
 	}
 	return priority.Options{
-		Now:                 now,
-		BoostStartPriority:  cfg.PriorityRules.BoostStartPriority,
-		NormalStartPriority: cfg.PriorityRules.NormalStartPriority,
-		FreeStartPriority:   cfg.PriorityRules.FreeStartPriority,
-		MinChange:           cfg.MinChange,
-		UrgencyTolerance:    cfg.UrgencyTolerance,
-		CooldownAuthIndexes: cooldowns,
-		CustomTiers:         customTiers,
+		Now:                  now,
+		BoostStartPriority:   cfg.PriorityRules.BoostStartPriority,
+		NormalStartPriority:  cfg.PriorityRules.NormalStartPriority,
+		FreeStartPriority:    cfg.PriorityRules.FreeStartPriority,
+		MinChange:            cfg.MinChange,
+		UrgencyTolerance:     cfg.UrgencyTolerance,
+		CooldownAuthIndexes:  cooldowns,
+		CooldownReasonsByKey: cooldownReasons,
+		CustomTiers:          customTiers,
 	}
 }
 func enrichCredentialsPlanTypeFromStore(store *state.Store, credentials []core.Credential, preferredGroup string) []core.Credential {
@@ -548,7 +549,6 @@ func enrichCredentialsPlanTypeFromStore(store *state.Store, credentials []core.C
 	}
 	return credentials
 }
-
 
 func buildProjectionEvidence(store *state.Store, credentials []core.Credential) map[config.AntigravityModelGroup]evidence.Result {
 	historical := historicalObservations(store, credentials)
