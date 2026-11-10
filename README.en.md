@@ -36,7 +36,8 @@ A high-performance, single-provider priority scheduler and quota management plug
 - **Dynamic Boost Horizon**: Intelligently computes the required burn horizon to proactively elevate abundant accounts to top priority (`999, 998...`), eliminating end-of-cycle quota waste.
 - **Weekly Urgency Balancing**: Quantifies unit-time consumption pressure to smoothly rotate accounts throughout the 7-day cycle.
 - **Adaptive Online Learning ($C_{\text{cycle}}$)**: Automatically measures and smooths real consumption velocity without requiring manual coefficient tuning.
-- **Self-Healing Soft Fallback & Hard Disabling**: Soft-depletes 5-hour burst exhaustion for automatic recovery upon reset, and hard-disables exhausted 7-day weekly accounts.
+- **Self-Healing Dual-Window Soft Fallback**: Both 5-hour burst exhaustion and 7-day weekly exhaustion trigger pure in-memory soft demotion (priority `-1`, keeping `disabled = false`). Credential `disabled` status remains strictly owned by the user/CPA host, and accounts automatically recover once quota resets.
+- **5-Hour Short-Window Quota Warm-Up**: Automatically dispatches lightweight natural engineering prompts when Gemini or Claude & GPT 5h windows are 100% full with an inactive countdown, starting the 5-hour reset cycle proactively to prevent idle quota waste.
 - **Web UI Dynamic Config Center**: CPA host YAML only requires `enabled: true`. All scheduling intervals, concurrency, and scoring rules are visually managed with instant zero-restart hot-reloads.
 - **Independent Pro & Free Tier Physical Separation**: Accounts without a 5-hour burst window (Free tier) are automatically isolated into a dedicated fallback tier (default priority 10 downwards) and barred from Boost elevation, guaranteeing Pro accounts strictly take precedence while allowing customizable baseline priority in the Web UI Config Center.
 - **Embedded Dual-Theme Dashboard**: Zero external CDN and strictly CSP-compliant, providing real-time quota meters, model routing board, complete email identity, and redacted audit summaries.
@@ -144,6 +145,10 @@ In the **`⚙️ Config Center`** tab of the management dashboard, the following
 | **Boost Start Priority (`boost_start_priority`)** | `999` | `1 ~ 999` | Base priority for tier-1 boosted credentials. |
 | **Normal Healthy Start Priority (`normal_start_priority`)** | `100` | `1 ~ 999`, not above Boost start | Base priority for tier-2 regular healthy credentials. |
 | **Free Tier Fallback Start Priority (`free_start_priority`)** | `10` | `1 ~ 999`, not above Normal start | Base priority for Free accounts without 5h window, serving as fallback after Pro. |
+| **Gemini 5h Auto Warm-Up (`warmup.gemini_enabled`)** | `false` | On / Off | Automatically sends a lightweight prompt when Gemini 5h quota is 100% full and inactive to trigger the reset countdown. |
+| **Gemini Warm-Up Model (`warmup.gemini_model`)** | `gemini-3-flash` | Selectable | Model used to trigger the Gemini 5h reset countdown. |
+| **Claude 5h Auto Warm-Up (`warmup.claude_enabled`)** | `false` | On / Off | Automatically sends a lightweight prompt when Claude 5h quota is 100% full and inactive to trigger the reset countdown. |
+| **Claude Warm-Up Model (`warmup.claude_model`)** | `claude-sonnet-5-5-high` | Selectable | Model used to trigger the Claude 5h reset countdown. |
 
 ---
 
