@@ -111,6 +111,89 @@ func TestProjectDualModelGroups_ControlDirectionsAndIndependentEvidence(t *testi
 	}
 }
 
+func TestProjectDualModelGroups_QuotaWindowsRemainPerCredentialWhenRedactedIndexesCollide(t *testing.T) {
+	now := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
+	credentials := []core.Credential{
+		{
+			Name:      "account-alpha",
+			AuthIndex: "auth-alpha",
+			Provider:  core.ProviderAntigravity,
+			Type:      core.CredentialTypeAntigravity,
+			Priority:  100,
+		},
+		{
+			Name:      "account-beta",
+			AuthIndex: "auth-beta",
+			Provider:  core.ProviderAntigravity,
+			Type:      core.CredentialTypeAntigravity,
+			Priority:  99,
+		},
+	}
+	groupEvidence := map[config.AntigravityModelGroup]evidence.Result{
+		config.AntigravityModelGroupGemini: {Eligible: []priority.QuotaEvidence{
+			readyEvidence("auth-alpha", core.PlanTypePro, 92, now.Add(3*time.Hour)),
+			readyEvidence("auth-beta", core.PlanTypePro, 61, now.Add(4*time.Hour)),
+		}},
+		config.AntigravityModelGroupClaudeGPT: {Eligible: []priority.QuotaEvidence{
+			readyEvidence("auth-alpha", core.PlanTypePro, 83, now.Add(3*time.Hour)),
+			readyEvidence("auth-beta", core.PlanTypePro, 47, now.Add(4*time.Hour)),
+		}},
+		config.AntigravityModelGroupArgon: {Eligible: []priority.QuotaEvidence{
+			readyEvidence("auth-alpha", core.PlanTypePro, 74, now.Add(5*time.Hour)),
+			readyEvidence("auth-beta", core.PlanTypePro, 38, now.Add(6*time.Hour)),
+		}},
+	}
+
+	projection, err := runtime.ProjectDualModelGroups(runtime.ProjectionInput{
+		ControlModelGroup: config.AntigravityModelGroupGemini,
+		Credentials:       credentials,
+		EvidenceByGroup:   groupEvidence,
+		PlanningOptions: priority.Options{
+			BoostStartPriority:  999,
+			NormalStartPriority: 100,
+			MinChange:           1,
+		},
+		ProjectionTime: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	items := projection.Snapshot.Groups[string(config.AntigravityModelGroupGemini)].Items
+	if len(items) != 2 {
+		t.Fatalf("gemini items = %d, want 2", len(items))
+	}
+	byAuth := make(map[string]apply.SnapshotItem, len(items))
+	for _, item := range items {
+		byAuth[item.Identity.AuthIndex] = item
+	}
+	alpha, ok := byAuth["auth-alpha"]
+	if !ok {
+		t.Fatal("missing auth-alpha item")
+	}
+	beta, ok := byAuth["auth-beta"]
+	if !ok {
+		t.Fatal("missing auth-beta item")
+	}
+	// Display indexes are redacted to the same prefix; internal correlation must
+	// not collapse the two credentials onto one quota window set.
+	if alpha.AuthIndex != beta.AuthIndex {
+		t.Fatalf("expected redacted display auth indexes to collide, got %q and %q", alpha.AuthIndex, beta.AuthIndex)
+	}
+	assertWindow := func(name string, bar apply.QuotaWindowBar, want int64) {
+		t.Helper()
+		if bar.Remaining == nil || *bar.Remaining != want {
+			t.Errorf("%s remaining = %v, want %d", name, bar.Remaining, want)
+		}
+	}
+	assertWindow("auth-alpha gemini5h", alpha.QuotaWindows.Gemini5h, 92)
+	assertWindow("auth-beta gemini5h", beta.QuotaWindows.Gemini5h, 61)
+	assertWindow("auth-alpha claude7d", alpha.QuotaWindows.Claude7d, 83)
+	assertWindow("auth-beta claude7d", beta.QuotaWindows.Claude7d, 47)
+	assertWindow("auth-alpha argon7d", alpha.QuotaWindows.Argon7d, 74)
+	assertWindow("auth-beta argon7d", beta.QuotaWindows.Argon7d, 38)
+}
+
 func TestProjectDualModelGroups_MissingGroupRemainsStableAndUnknown(t *testing.T) {
 	now := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
 	credentials := []core.Credential{{

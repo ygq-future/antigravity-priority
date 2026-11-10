@@ -862,10 +862,9 @@ func (r *Runtime) enrichSnapshotWithModelsLocked(snap *apply.DualGroupSnapshot) 
 	snap.Models = models
 	for groupKey, group := range snap.Groups {
 		for i, item := range group.Items {
-			authIdx := item.AuthIndex
-			if authIdx == "" {
-				authIdx = item.Identity.AuthIndex
-			}
+			// Supported-model lookup keys come from the Host inventory and are
+			// unredacted; the display AuthIndex may be truncated and collide.
+			authIdx := snapshotAuthIndex(item)
 			if supported, ok := supportedMap[authIdx]; ok && len(supported) > 0 {
 				group.Items[i].SupportedModels = supported
 			}

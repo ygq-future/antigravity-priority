@@ -69,12 +69,15 @@ func ProjectDualModelGroups(input ProjectionInput) (DualModelGroupProjection, er
 		snapshotsByGroup[group] = snapshot
 	}
 
-	// Cross-reference 5 quota windows across all groups for every credential
+	// Cross-reference 5 quota windows across all groups for every credential.
+	// SnapshotItem.AuthIndex is redacted for display, so two credentials can
+	// share it (for example every "dev-auth-*" becomes "dev-***"). Internal
+	// correlation must use the trusted in-memory identity instead.
 	quotaWindowsByAuth := buildAllQuotaWindows(snapshotsByGroup)
 	for _, group := range config.AllAntigravityModelGroups {
 		snap := snapshotsByGroup[group]
 		for index := range snap.Items {
-			authIndex := snap.Items[index].AuthIndex
+			authIndex := snapshotAuthIndex(snap.Items[index])
 			if qw, ok := quotaWindowsByAuth[authIndex]; ok {
 				snap.Items[index].QuotaWindows = qw
 			}
@@ -129,7 +132,8 @@ func buildAllQuotaWindows(snapshots map[config.AntigravityModelGroup]apply.PlanS
 
 	geminiSnap := snapshots[config.AntigravityModelGroupGemini]
 	for _, item := range geminiSnap.Items {
-		qw := result[item.AuthIndex]
+		authIndex := snapshotAuthIndex(item)
+		qw := result[authIndex]
 		qw.Gemini5h = itemShortWindowBar(item)
 		qw.Gemini7d = itemLongWindowBar(item)
 		if item.ArgonWindowRemaining != nil && item.PlanType != string(core.PlanTypeFree) {
@@ -139,28 +143,39 @@ func buildAllQuotaWindows(snapshots map[config.AntigravityModelGroup]apply.PlanS
 				Stale:     !item.EvidenceFresh,
 			}
 		}
-		result[item.AuthIndex] = qw
+		result[authIndex] = qw
 	}
 
 	claudeSnap := snapshots[config.AntigravityModelGroupClaudeGPT]
 	for _, item := range claudeSnap.Items {
-		qw := result[item.AuthIndex]
+		authIndex := snapshotAuthIndex(item)
+		qw := result[authIndex]
 		qw.Claude5h = itemShortWindowBar(item)
 		qw.Claude7d = itemLongWindowBar(item)
-		result[item.AuthIndex] = qw
+		result[authIndex] = qw
 	}
 
 	argonSnap := snapshots[config.AntigravityModelGroupArgon]
 	for _, item := range argonSnap.Items {
-		qw := result[item.AuthIndex]
+		authIndex := snapshotAuthIndex(item)
+		qw := result[authIndex]
 		argonBar := itemArgonWindowBar(item)
 		if argonBar.Remaining != nil || qw.Argon7d.Remaining == nil {
 			qw.Argon7d = argonBar
 		}
-		result[item.AuthIndex] = qw
+		result[authIndex] = qw
 	}
 
 	return result
+}
+
+// snapshotAuthIndex returns the unredacted credential identity for internal
+// correlation. Display fields are redacted and may collide across credentials.
+func snapshotAuthIndex(item apply.SnapshotItem) string {
+	if item.Identity.AuthIndex != "" {
+		return item.Identity.AuthIndex
+	}
+	return item.AuthIndex
 }
 
 func itemShortWindowBar(item apply.SnapshotItem) apply.QuotaWindowBar {
