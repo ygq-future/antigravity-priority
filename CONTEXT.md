@@ -74,7 +74,7 @@ Temporarily demoting an account's priority to `-1` for a specific quota pool upo
 _Avoid_: Global account ban, indiscriminate multi-pool disable
 
 **Credential Health Failover**:
-Classifying upstream failures by scope and cause — 401 as account-level quarantine, 403 as model-scoped isolation, 5xx as pool-scoped transient cooldown, and 429 as pool-scoped rate-limit cooldown — and demoting only the affected routing score to `-1` while preserving the configured tier. 401 is quarantined without active refresh; 403/429/5xx enter an exponential-backoff probe queue that reuses the warmup generation request, and one successful probe restores the original tier.
+Classifying upstream failures by scope and cause — 401 and 403 as account-level quarantine (credential failure with immediate soft demotion and no retry probes), 5xx as pool-scoped transient cooldown, and 429 as pool-scoped rate-limit cooldown — and demoting only the affected routing score to `-1` while preserving the configured tier. 401/403 are quarantined without active refresh; 429/5xx enter an exponential-backoff probe queue that reuses the warmup generation request, and one successful probe restores the original tier.
 _Avoid_: Global account ban, unconditional refresh storm, permanent tier rewrite
 
 **Soft Depletion**:

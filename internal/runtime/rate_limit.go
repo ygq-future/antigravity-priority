@@ -23,7 +23,6 @@ const (
 	rateLimitPendingTTL  = 24 * time.Hour
 
 	serverErrorBaseCooldown = 30 * time.Second
-	forbiddenBaseCooldown   = 5 * time.Minute
 	unauthorizedQuarantine  = 24 * time.Hour
 	healthBackoffMax        = 30 * time.Minute
 	healthBackoffJitter     = 0.2
@@ -115,7 +114,7 @@ func (r *Runtime) observeFailure(ctx context.Context, input failureInput, acquir
 		r.rateLimitMu.Unlock()
 		return nil
 	}
-	if input.Kind != state.FailureUnauthorized {
+	if input.Kind != state.FailureUnauthorized && input.Kind != state.FailureForbidden {
 		if _, active := r.activeCooldowns[input.AuthIndex]; active {
 			r.rateLimitMu.Unlock()
 			return nil
@@ -149,7 +148,7 @@ func (r *Runtime) triggerFailure(ctx context.Context, input failureInput) error 
 	if existing, active := entries[key]; active && now.Before(existing.CooldownUntil) {
 		return nil
 	}
-	if input.Kind != state.FailureUnauthorized {
+	if input.Kind != state.FailureUnauthorized && input.Kind != state.FailureForbidden {
 		if existing, active := entries[state.CooldownKey(input.AuthIndex, "")]; active && now.Before(existing.CooldownUntil) {
 			return nil
 		}
@@ -182,7 +181,7 @@ func (r *Runtime) triggerFailure(ctx context.Context, input failureInput) error 
 	}
 
 	probeEnabled := input.ProbeEnabled
-	if input.Kind == state.FailureUnauthorized {
+	if input.Kind == state.FailureUnauthorized || input.Kind == state.FailureForbidden {
 		probeEnabled = false
 	}
 	entry := state.CooldownEntry{
@@ -535,14 +534,11 @@ func (r *Runtime) rescheduleAfterRestoreFailure(ctx context.Context, store *stat
 }
 
 func (r *Runtime) rescheduleFailure(ctx context.Context, store *state.Store, entry state.CooldownEntry, status int, probeErr error, cfg config.Config, now time.Time) {
-	if status == http.StatusUnauthorized {
-		r.escalateUnauthorized(ctx, store, entry, now)
+	if status == http.StatusUnauthorized || status == http.StatusForbidden {
+		r.escalateAuthProblem(ctx, store, entry, status, now)
 		return
 	}
 	switch {
-	case status == http.StatusForbidden:
-		entry.FailureKind = state.FailureForbidden
-		entry.Reason = priority.ReasonForbiddenCooldown
 	case status == http.StatusTooManyRequests:
 		entry.FailureKind = state.FailureRateLimit
 		entry.Reason = priority.Reason429Cooldown
@@ -573,7 +569,7 @@ func (r *Runtime) rescheduleFailure(ctx context.Context, store *state.Store, ent
 	r.signalRateLimitWorker()
 }
 
-func (r *Runtime) escalateUnauthorized(ctx context.Context, store *state.Store, entry state.CooldownEntry, now time.Time) {
+func (r *Runtime) escalateAuthProblem(ctx context.Context, store *state.Store, entry state.CooldownEntry, status int, now time.Time) {
 	key := state.FailureKey(entry.AuthIndex, entry.ModelGroup, entry.Model)
 	store.DeleteCooldownExact(key)
 	r.clearActiveCooldownExact(key)
@@ -586,13 +582,19 @@ func (r *Runtime) escalateUnauthorized(ctx context.Context, store *state.Store, 
 		r.routingMu.Unlock()
 		return
 	}
+	kind := state.FailureUnauthorized
+	reason := priority.ReasonUnauthorizedCooldown
+	if status == http.StatusForbidden {
+		kind = state.FailureForbidden
+		reason = priority.ReasonForbiddenCooldown
+	}
 	accountEntry := state.CooldownEntry{
 		AuthIndex:               entry.AuthIndex,
-		FailureKind:             state.FailureUnauthorized,
-		StatusCode:              http.StatusUnauthorized,
+		FailureKind:             kind,
+		StatusCode:              status,
 		TriggeredAt:             now,
 		CooldownUntil:           now.Add(unauthorizedQuarantine),
-		Reason:                  priority.ReasonUnauthorizedCooldown,
+		Reason:                  reason,
 		PreviousPriority:        entry.PreviousPriority,
 		PreviousPriorityMissing: entry.PreviousPriorityMissing,
 		PreviousDisabled:        entry.PreviousDisabled,
@@ -682,8 +684,6 @@ func failureBaseCooldown(kind state.FailureKind, cfg config.Config) time.Duratio
 			minutes = config.DefaultRateLimitCooldownMinutes
 		}
 		return time.Duration(minutes) * time.Minute
-	case state.FailureForbidden:
-		return forbiddenBaseCooldown
 	default:
 		return serverErrorBaseCooldown
 	}

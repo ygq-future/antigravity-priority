@@ -154,10 +154,10 @@ func TestHealth_401DemotesAccountWithoutProbe(t *testing.T) {
 	}
 }
 
-func TestHealth_403BlocksOnlyFailedModel(t *testing.T) {
+func TestHealth_403DemotesAccountWithoutProbe(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
-	r, _, _, cachePath, _ := newHealthRuntime(t, now, "idx-a", "idx-b")
+	r, _, mock, cachePath, paths := newHealthRuntime(t, now, "idx-a", "idx-b")
 	if _, err := r.SyncHost(ctx, config.AntigravityModelGroupGemini); err != nil {
 		t.Fatal(err)
 	}
@@ -175,17 +175,73 @@ func TestHealth_403BlocksOnlyFailedModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	entry, ok := store.GetCooldowns()[state.FailureKey("idx-a", "gemini", "gemini-3.8-flash-high")]
-	if !ok || entry.FailureKind != state.FailureForbidden {
-		t.Fatalf("model-scoped 403 entry missing: %#v", store.GetCooldowns())
+	entry, ok := store.GetCooldowns()["idx-a"]
+	if !ok {
+		t.Fatalf("account-level 403 entry missing: %#v", store.GetCooldowns())
+	}
+	if entry.FailureKind != state.FailureForbidden || entry.ProbeEnabled {
+		t.Fatalf("403 entry = %#v; want forbidden without probe", entry)
+	}
+	if got := readPriority(t, paths["idx-a"]); got != -1 {
+		t.Fatalf("host priority = %d; want -1", got)
+	}
+	if len(mock.httpCalls) != 0 {
+		t.Fatalf("403 must not trigger an active refresh/probe, got %d HTTP calls", len(mock.httpCalls))
 	}
 
+	// 403 demotes the entire account across all models in pool
 	if got := pickModel(t, r, "gemini-3.8-flash-high"); got != "account-b" {
 		t.Fatalf("failed model picked %q; want account-b", got)
 	}
-	if got := pickModel(t, r, "gemini-3.5-flash-lite"); got != "account-a" {
-		t.Fatalf("healthy model in same pool picked %q; want account-a", got)
+	if got := pickModel(t, r, "gemini-3.5-flash-lite"); got != "account-b" {
+		t.Fatalf("sibling model picked %q; want account-b because account is demoted", got)
 	}
+
+	// Recovery on subsequent successful request
+	mustOK(t, r.Handle(ctx, runtime.MethodUsageHandle, usageSuccessPayload("idx-a", "gemini-3.8-flash-high")))
+	store, err = state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := store.GetCooldowns()["idx-a"]; exists {
+		t.Fatalf("successful request did not clear 403 quarantine: %#v", store.GetCooldowns())
+	}
+	if got := readPriority(t, paths["idx-a"]); got != 100 {
+		t.Fatalf("host priority = %d; want restored 100", got)
+	}
+}
+
+func TestHealth_Probe403EscalatesToAccountQuarantineWithoutRetry(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	r, clock, mock, cachePath, paths := newHealthRuntime(t, now, "idx-a")
+	mock.httpResponse = host.HTTPResponse{StatusCode: http.StatusForbidden, Body: []byte(`{"error":{"code":403,"message":"permission denied"}}`)}
+
+	// Trigger 5xx to start probe backoff
+	mustOK(t, r.Handle(ctx, runtime.MethodUsageHandle, usageFailurePayload("idx-a", "gemini-3.8-flash-high", http.StatusServiceUnavailable)))
+	if got := readPriority(t, paths["idx-a"]); got != -1 {
+		t.Fatalf("host priority = %d; want -1", got)
+	}
+
+	store, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := store.GetCooldowns()[state.CooldownKey("idx-a", "gemini")]
+	if first.CooldownUntil.IsZero() {
+		t.Fatalf("missing initial cooldown: %#v", first)
+	}
+
+	// Advance clock to trigger scheduled probe and signal worker
+	clock.Set(first.CooldownUntil)
+	if _, err := r.Reconfigure(ctx, runtime.ReconfigureRequest{ConfigYAML: "enabled: true\nstate_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// When probe receives 403, it must escalate to account-level quarantine with ProbeEnabled: false
+	waitForHealthEntry(t, cachePath, "idx-a", func(e state.CooldownEntry) bool {
+		return e.FailureKind == state.FailureForbidden && !e.ProbeEnabled && strings.TrimSpace(e.ModelGroup) == ""
+	})
 }
 
 func TestHealth_5xxDemotesPoolAndFailsOver(t *testing.T) {

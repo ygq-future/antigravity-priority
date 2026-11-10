@@ -126,6 +126,18 @@ func New(options Options) *Runtime {
 		cachePath = config.DefaultStateCachePath
 	}
 	if store, err := state.Load(context.Background(), cachePath); err == nil {
+		for key, entry := range store.GetCooldowns() {
+			if entry.FailureKind == state.FailureForbidden && entry.ProbeEnabled {
+				store.DeleteCooldownExact(key)
+				accountEntry := entry
+				accountEntry.ModelGroup = ""
+				accountEntry.Model = ""
+				accountEntry.ProbeModel = ""
+				accountEntry.ProbeEnabled = false
+				accountEntry.NextRecoveryAt = time.Time{}
+				store.SetCooldown(accountEntry)
+			}
+		}
 		maps.Copy(rt.activeCooldowns, store.GetCooldowns())
 		audit, resJSON, histJSON := store.GetRuntimeSnapshot()
 		if len(resJSON) > 0 {
@@ -1322,17 +1334,13 @@ func (r *Runtime) handleUsageEvent(ctx context.Context, raw []byte) []byte {
 			return failure(err)
 		}
 	case state.FailureForbidden:
-		model := strings.TrimSpace(payload.Model)
 		if err := r.observeFailure(ctx, failureInput{
 			AuthIndex:    resolvedIndex,
-			ModelGroup:   string(pool),
-			Model:        model,
-			ProbeModel:   model,
 			Kind:         state.FailureForbidden,
 			StatusCode:   http.StatusForbidden,
 			Reason:       priority.ReasonForbiddenCooldown,
-			Cooldown:     forbiddenBaseCooldown,
-			ProbeEnabled: true,
+			Cooldown:     unauthorizedQuarantine,
+			ProbeEnabled: false,
 		}, true); err != nil {
 			return failure(err)
 		}
@@ -1414,9 +1422,9 @@ func (r *Runtime) handleFilterEvent(ctx context.Context, raw []byte) []byte {
 		modelGroup = string(config.ClassifyModelQuotaPool(model))
 	}
 	kind := failureKindFor(payload.StatusCode, payload.Error)
-	// Without a pool or model the failure cannot be isolated safely; only 401
-	// is unambiguously account-wide.
-	if modelGroup == "" && kind != state.FailureUnauthorized {
+	// Without a pool or model the failure cannot be isolated safely; only 401 and 403
+	// are unambiguously account-wide.
+	if modelGroup == "" && kind != state.FailureUnauthorized && kind != state.FailureForbidden {
 		return mustMarshal(Envelope{OK: true})
 	}
 
@@ -1439,14 +1447,11 @@ func (r *Runtime) handleFilterEvent(ctx context.Context, raw []byte) []byte {
 	case state.FailureForbidden:
 		if err := r.observeFailure(ctx, failureInput{
 			AuthIndex:    resolvedIndex,
-			ModelGroup:   modelGroup,
-			Model:        model,
-			ProbeModel:   model,
 			Kind:         state.FailureForbidden,
 			StatusCode:   http.StatusForbidden,
 			Reason:       priority.ReasonForbiddenCooldown,
-			Cooldown:     forbiddenBaseCooldown,
-			ProbeEnabled: true,
+			Cooldown:     unauthorizedQuarantine,
+			ProbeEnabled: false,
 		}, true); err != nil {
 			return failure(err)
 		}
