@@ -56,6 +56,68 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
             return { eligible: true, reason: "" };
         }
 
+        function collectCredentialCards(container) {
+            if (!container) return [];
+            if (typeof container.querySelectorAll === "function") {
+                const matched = container.querySelectorAll(".cred-card");
+                if (matched && matched.length > 0) return matched;
+            }
+            return container.children || [];
+        }
+
+        function captureCredentialCardRects(container) {
+            const rects = {};
+            const cards = collectCredentialCards(container);
+            for (let i = 0; i < cards.length; i++) {
+                const card = cards[i];
+                if (!card || typeof card.getBoundingClientRect !== "function") continue;
+                const key = (typeof card.getAttribute === "function" && card.getAttribute("data-auth-index")) || "";
+                if (!key) continue;
+                const rect = card.getBoundingClientRect();
+                rects[key] = { left: rect.left, top: rect.top };
+            }
+            return rects;
+        }
+
+        function animateCredentialReorder(container, previousRects) {
+            if (!container || !previousRects) return;
+            const cards = collectCredentialCards(container);
+            const hasPreviousLayout = Object.keys(previousRects).length > 0;
+            for (let i = 0; i < cards.length; i++) {
+                const card = cards[i];
+                if (!card || !card.style) continue;
+                if (!hasPreviousLayout) continue;
+                const key = (typeof card.getAttribute === "function" && card.getAttribute("data-auth-index")) || "";
+                if (!previousRects[key]) {
+                    const enterDelay = i * 45;
+                    card.classList.add("cred-card-enter");
+                    card.style.animationDelay = enterDelay + "ms";
+                    setTimeout(function(target) {
+                        target.classList.remove("cred-card-enter");
+                        target.style.animationDelay = "";
+                    }.bind(null, card), enterDelay + 460);
+                    continue;
+                }
+                if (typeof card.getBoundingClientRect !== "function") continue;
+                const previous = previousRects[key];
+                const next = card.getBoundingClientRect();
+                const dx = previous.left - next.left;
+                const dy = previous.top - next.top;
+                if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) continue;
+
+                const moveDelay = i * 25;
+                card.style.transition = "none";
+                card.style.transform = "translate(" + dx + "px, " + dy + "px)";
+                void card.offsetWidth;
+                card.style.transition = "transform 0.48s cubic-bezier(0.22, 1, 0.36, 1) " + moveDelay + "ms";
+                card.style.transform = "translate(0px, 0px)";
+                setTimeout(function(target) {
+                    target.style.transition = "";
+                    target.style.transform = "";
+                }.bind(null, card), moveDelay + 560);
+            }
+        }
+
         function renderDashboard() {
             if (latestDiagnostics) {
                 var auditEl = document.getElementById("valLastAudit");
@@ -216,6 +278,7 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
             const elDepleted = document.getElementById("valDepleted");
             if (elDepleted) elDepleted.textContent = depletedCount;
 
+            const previousCardRects = captureCredentialCardRects(container);
             container.innerHTML = "";
             if (renderItems.length === 0) {
                 container.innerHTML = "<div class=\"empty-state\">" + t("noCreds") + "</div>";
@@ -252,6 +315,9 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
                     priorityDisplay = item.current.priority;
                 }
                 const authIdx = item.auth_index || "";
+                const isProbing = probingAuthIndexes.has(String(authIdx));
+                card.setAttribute("data-auth-index", String(authIdx));
+                if (isProbing) card.classList.add("cred-card-probing");
                 const credDisplayName = item.email || "Credential";
                 const maskedEmail = formatMaskedEmail(credDisplayName);
 
@@ -369,13 +435,15 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
                     "<div class=\"cred-reason " + reasonColorClass + "\" title=\"" + escapeHTML(formattedReason) + "\">" + escapeHTML(formattedReason) + "</div>" +
                     "<div class=\"cred-actions\">" +
                         "<button type=\"button\" class=\"btn-secondary btn-card-action\" onclick=\"openCustomTierModal('" + escapeHTML(authIdx) + "', '" + escapeHTML(credDisplayName) + "', " + customTier + ")\">🎯 " + t("btnTier") + "</button>" +
-                        "<button type=\"button\" class=\"btn-secondary btn-card-action\" onclick=\"probeSingleCredential('" + escapeHTML(authIdx) + "', this)\">⚡ " + t("btnProbeSingle") + "</button>" +
+                        "<button type=\"button\" class=\"btn-secondary btn-card-action\" data-probe-action=\"1\" onclick=\"probeSingleCredential('" + escapeHTML(authIdx) + "', this)\">" + credentialProbeButtonContent(isProbing) + "</button>" +
                         "<button type=\"button\" class=\"btn-secondary btn-card-action\" onclick=\"openSamplesModal('" + escapeHTML(authIdx) + "', '" + escapeHTML(credDisplayName) + "')\">📊 " + t("btnSamples") + "</button>" +
                     "</div>" +
                 "</div>";
                 card.innerHTML = cardHtml;
                 container.appendChild(card);
             });
+
+            animateCredentialReorder(container, previousCardRects);
         }
 
 `

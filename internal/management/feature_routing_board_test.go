@@ -460,3 +460,219 @@ latestSnapshot = sampleSnapshot;
 
 	runNodeFixture(t, node, "routing-board.js", harness)
 }
+
+func TestCredentialCardReorderAndSingleProbeLoading_NodeHarness(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not available; card animation behavior is checked in the Node-enabled verification environment")
+	}
+
+	harness := templateScriptOverviewActionsCore + templateScriptOverviewRender + templateScriptProbeSchedule + `
+const toastCalls = [];
+var activeRects = {};
+var renderStartRects = {};
+var renderEndRects = {};
+function element(initial) {
+    var el = Object.assign({
+        hidden: false,
+        textContent: "",
+        _innerHTML: "",
+        children: [],
+        attributes: {},
+        style: {},
+        classList: {
+            classes: [],
+            add: function(c) { if (this.classes.indexOf(c) < 0) this.classes.push(c); },
+            remove: function(c) { this.classes = this.classes.filter(function(x) { return x !== c; }); },
+            contains: function(c) { return this.classes.indexOf(c) >= 0; }
+        },
+        appendChild: function(child) {
+            this.children.push(child);
+            if (child && child.innerHTML) this._innerHTML += child.innerHTML;
+        },
+        setAttribute: function(k, v) { this.attributes[k] = v; },
+        getAttribute: function(k) {
+            return Object.prototype.hasOwnProperty.call(this.attributes, k) ? this.attributes[k] : null;
+        },
+        getBoundingClientRect: function() {
+            var key = this.attributes ? this.attributes["data-auth-index"] : "";
+            var rect = activeRects[key] || { left: 0, top: 0 };
+            return { left: rect.left, top: rect.top };
+        },
+        querySelector: function() { return null; },
+        querySelectorAll: function() { return []; }
+    }, initial || {});
+    Object.defineProperty(el, "innerHTML", {
+        get: function() { return this._innerHTML; },
+        set: function(val) {
+            this._innerHTML = val;
+            if (val === "") { this.children = []; }
+        }
+    });
+    return el;
+}
+
+const elements = {
+    toastRoot: element(),
+    modelSelect: element({ value: "gemini-3.8-flash-high" }),
+    modelGroupSelect: element({ value: "gemini" }),
+    valLastAudit: element(),
+    valNextProbe: element(),
+    valTotalCreds: element(),
+    valTotalDesc: element(),
+    valBoosted: element(),
+    valDepleted: element(),
+    credentialsContainer: element()
+};
+elements.credentialsContainer.querySelectorAll = function(sel) {
+    return sel === ".cred-card" ? this.children : [];
+};
+elements.credentialsContainer.appendChild = function(child) {
+    activeRects = renderEndRects;
+    this.children.push(child);
+    if (child && child.innerHTML) this._innerHTML += child.innerHTML;
+};
+
+const document = {
+    getElementById: function(id) { return elements[id] || null; },
+    createElement: function(tag) { return element({ tagName: tag }); }
+};
+
+function showToast(msg, type) { toastCalls.push({ msg: msg, type: type }); }
+function t(key) { return key === "probing" ? "探测中..." : key; }
+function formatCountdown() { return "00h 00m"; }
+function escapeHTML(s) { return String(s || ""); }
+
+currentLang = "zh-CN";
+dynamicConfig = null;
+latestDiagnostics = null;
+scheduleConfig = null;
+isAuthBlocked = false;
+userSelectedModelGroup = false;
+const RUN_PATH = "/run";
+
+function snapshotWithPriorities(priorityA, priorityB) {
+    return {
+        active_model_group: "gemini",
+        groups: {
+            gemini: {
+                items: [
+                    { auth_index: "auth-a", email: "a@example.com", target: { priority: priorityA, disabled: false }, current: { priority: priorityA, disabled: false } },
+                    { auth_index: "auth-b", email: "b@example.com", target: { priority: priorityB, disabled: false }, current: { priority: priorityB, disabled: false } }
+                ]
+            }
+        }
+    };
+}
+
+(async function() {
+    // 1. Reordering must animate every displaced card from its previous slot.
+    latestSnapshot = snapshotWithPriorities(900, 100);
+    renderStartRects = { "auth-a": { left: 0, top: 0 }, "auth-b": { left: 0, top: 120 } };
+    renderEndRects = { "auth-a": { left: 0, top: 0 }, "auth-b": { left: 0, top: 120 } };
+    activeRects = renderStartRects;
+    renderDashboard();
+
+    const firstCards = elements.credentialsContainer.children;
+    if (firstCards.length !== 2) {
+        throw new Error("expected 2 cards, got " + firstCards.length);
+    }
+    if (firstCards[0].getAttribute("data-auth-index") !== "auth-a") {
+        throw new Error("auth-a must start first");
+    }
+
+    latestSnapshot = snapshotWithPriorities(100, 900);
+    renderStartRects = { "auth-a": { left: 0, top: 0 }, "auth-b": { left: 0, top: 120 } };
+    renderEndRects = { "auth-a": { left: 0, top: 120 }, "auth-b": { left: 0, top: 0 } };
+    activeRects = renderStartRects;
+    renderDashboard();
+
+    const movedCards = elements.credentialsContainer.children;
+    if (movedCards.length !== 2) {
+        throw new Error("expected 2 cards after reorder, got " + movedCards.length);
+    }
+    const movedB = movedCards[0];
+    const movedA = movedCards[1];
+    if (movedB.getAttribute("data-auth-index") !== "auth-b") {
+        throw new Error("auth-b must render first after the swap");
+    }
+    if (String(movedB.style.transform) !== "translate(0px, 0px)") {
+        throw new Error("reordered card must animate from its previous slot, got transform=" + movedB.style.transform);
+    }
+    if (String(movedB.style.transition).indexOf("transform 0.48s") < 0) {
+        throw new Error("reordered card must carry a transform transition, got " + movedB.style.transition);
+    }
+    if (String(movedA.style.transform) !== "translate(0px, 0px)") {
+        throw new Error("both displaced cards must animate, got transform=" + movedA.style.transform);
+    }
+
+    // 2. A stable layout must not animate at all.
+    renderStartRects = { "auth-a": { left: 0, top: 120 }, "auth-b": { left: 0, top: 0 } };
+    renderEndRects = renderStartRects;
+    activeRects = renderStartRects;
+    renderDashboard();
+    const stableCards = elements.credentialsContainer.children;
+    if (stableCards[0].style.transform || stableCards[0].style.transition) {
+        throw new Error("unchanged layout must not apply inline transform/transition");
+    }
+
+    // 3. A single-credential probe must expose a card-level loading animation.
+    latestSnapshot = snapshotWithPriorities(900, 100);
+    renderDashboard();
+    const probeCard = elements.credentialsContainer.children[0];
+    if (probeCard.getAttribute("data-auth-index") !== "auth-a") {
+        throw new Error("probe target must be the first card");
+    }
+    const probeBtn = element({ textContent: "⚡ 探测" });
+    probeCard.querySelector = function(sel) {
+        return sel === "[data-probe-action]" ? probeBtn : null;
+    };
+
+    let probingClassSeen = false;
+    let spinnerSeen = false;
+    apiFetch = async function() {
+        probingClassSeen = probeCard.classList.contains("cred-card-probing");
+        spinnerSeen = String(probeBtn.innerHTML).indexOf("probe-spinner") >= 0;
+        return { probe_outcomes: [{ auth_index: "auth-a", model_group: "gemini", status: "success" }] };
+    };
+    fetchSnapshot = async function() {};
+
+    await probeSingleCredential("auth-a", probeBtn);
+
+    if (!probingClassSeen) {
+        throw new Error("card must expose cred-card-probing while the probe is running");
+    }
+    if (!spinnerSeen) {
+        throw new Error("probe button must render the spinner while the probe is running");
+    }
+    if (probeCard.classList.contains("cred-card-probing")) {
+        throw new Error("probing class must be cleared after the probe completes");
+    }
+    if (String(probeBtn.innerHTML).indexOf("probe-spinner") >= 0) {
+        throw new Error("probe button spinner must be cleared after the probe completes");
+    }
+
+    // 4. A re-render during the probe must preserve the loading affordance.
+    probingAuthIndexes.add("auth-a");
+    renderDashboard();
+    const rerendered = elements.credentialsContainer.children[0];
+    if (!rerendered.classList.contains("cred-card-probing")) {
+        throw new Error("re-render during a probe must keep cred-card-probing");
+    }
+    if (String(rerendered.innerHTML).indexOf("probe-spinner") < 0) {
+        throw new Error("re-render during a probe must keep the probe spinner");
+    }
+    probingAuthIndexes.delete("auth-a");
+    renderDashboard();
+    const settled = elements.credentialsContainer.children[0];
+    if (settled.classList.contains("cred-card-probing")) {
+        throw new Error("cleared probe state must not leak into a re-render");
+    }
+})().catch(function(err) {
+    console.error(err.stack || err.message);
+    process.exit(1);
+});
+`
+
+	runNodeFixture(t, node, "card-animation.js", harness)
+}

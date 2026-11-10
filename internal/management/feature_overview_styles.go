@@ -20,6 +20,7 @@ const templateStyleOverviewCards = `        /* Credentials Display (Grid 3 Colum
             box-shadow: var(--shadow-sm);
             height: fit-content !important;
             align-self: start !important;
+            position: relative;
         }
 
         .cred-card-disabled {
@@ -631,6 +632,68 @@ const templateStyleOverviewCards = `        /* Credentials Display (Grid 3 Colum
         .credentials-grid.credentials-probing .cred-card {
             opacity: 0.45;
             transition: opacity 0.25s ease;
+        }
+
+        /* Card reorder & per-card probe feedback */
+        .cred-card-enter {
+            animation: credCardEnter 0.36s cubic-bezier(0.16, 1, 0.3, 1) both;
+        }
+
+        @keyframes credCardEnter {
+            from { opacity: 0; transform: translateY(8px) scale(0.96); }
+            to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+
+        .cred-card-probing {
+            animation: credCardProbeGlow 1.8s ease-in-out infinite;
+        }
+
+        .cred-card-probing::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            border-radius: 11px;
+            padding: 1.5px;
+            background: conic-gradient(
+                from var(--cred-probe-angle, 0deg),
+                transparent 0deg,
+                transparent 208deg,
+                var(--accent-blue) 268deg,
+                var(--accent-purple) 326deg,
+                transparent 360deg
+            );
+            -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+            -webkit-mask-composite: xor;
+            mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+            mask-composite: exclude;
+            animation: credCardProbeSpin 1.4s linear infinite;
+            pointer-events: none;
+        }
+
+        @property --cred-probe-angle {
+            syntax: "<angle>";
+            initial-value: 0deg;
+            inherits: false;
+        }
+
+        @keyframes credCardProbeSpin {
+            from { --cred-probe-angle: 0deg; }
+            to { --cred-probe-angle: 360deg; }
+        }
+
+        @keyframes credCardProbeGlow {
+            0%, 100% { box-shadow: 0 0 0 1px var(--accent-blue-subtle), var(--shadow-sm); }
+            50% { box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.22), 0 0 16px rgba(59, 130, 246, 0.14); }
+        }
+
+        .probe-spinner {
+            display: inline-block;
+            width: 9px;
+            height: 9px;
+            border: 2px solid currentColor;
+            border-right-color: transparent;
+            border-radius: 50%;
+            animation: iconSpin 0.7s linear infinite;
         }
 
         .btn-probing .btn-probe-icon {

@@ -2,6 +2,38 @@ package management
 
 const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
         let userSelectedModelGroup = false;
+        const probingAuthIndexes = new Set();
+
+        function credentialProbeButtonContent(probing) {
+            return probing
+                ? "<span class=\"probe-spinner\"></span>" + t("probing")
+                : "⚡ " + t("btnProbeSingle");
+        }
+
+        function applyCredentialProbing(authIndex, probing, btn) {
+            const content = credentialProbeButtonContent(probing);
+            if (btn) {
+                btn.disabled = probing;
+                btn.innerHTML = content;
+            }
+            const container = document.getElementById("credentialsContainer");
+            if (!container || typeof container.querySelectorAll !== "function") return;
+            const cards = container.querySelectorAll(".cred-card");
+            for (let i = 0; i < cards.length; i++) {
+                const card = cards[i];
+                if (!card || typeof card.getAttribute !== "function") continue;
+                if (String(card.getAttribute("data-auth-index") || "") !== String(authIndex)) continue;
+                if (probing) {
+                    card.classList.add("cred-card-probing");
+                } else {
+                    card.classList.remove("cred-card-probing");
+                }
+                const probeBtn = (typeof card.querySelector === "function") ? card.querySelector("[data-probe-action]") : null;
+                if (!probeBtn || probeBtn === btn) continue;
+                probeBtn.disabled = probing;
+                probeBtn.innerHTML = content;
+            }
+        }
 
         function formatReason(reason, isBoosted, isDisabled) {
             if (!reason) {
@@ -197,11 +229,9 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
 
         async function probeSingleCredential(authIndex, btn) {
             if (isAuthBlocked || !authIndex) return;
-            const originalText = btn ? btn.textContent : "";
-            if (btn) {
-                btn.disabled = true;
-                btn.textContent = "⏳ " + (currentLang === "zh-CN" ? "探测中..." : "Probing...");
-            }
+            const probeKey = String(authIndex);
+            probingAuthIndexes.add(probeKey);
+            applyCredentialProbing(probeKey, true, btn);
             try {
                 const groupSelect = document.getElementById("modelGroupSelect");
                 const modelGroup = groupSelect ? groupSelect.value : "gemini";
@@ -227,10 +257,8 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
             } catch (err) {
                 showToast(err.message, "error");
             } finally {
-                if (btn) {
-                    btn.disabled = false;
-                    btn.textContent = originalText || ("⚡ " + t("btnProbeSingle"));
-                }
+                probingAuthIndexes.delete(probeKey);
+                applyCredentialProbing(probeKey, false, btn);
             }
         }
 
