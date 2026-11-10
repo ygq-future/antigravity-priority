@@ -87,6 +87,8 @@ func failure(err error) []byte {
 func envelopeError(err error) *EnvelopeError {
 	code, retryable := "internal_error", false
 	switch {
+	case errors.Is(err, ErrUnknownMethod):
+		code = "unknown_method"
 	case errors.Is(err, ErrInvalidRequest):
 		code = "invalid_request"
 	case errors.Is(err, config.ErrInvalidConfig):

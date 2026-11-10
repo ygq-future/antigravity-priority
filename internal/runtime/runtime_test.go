@@ -297,8 +297,40 @@ func TestRuntime_Handle_UnknownMethod(t *testing.T) {
 	if envelope.OK {
 		t.Errorf("expected OK=false for unknown method")
 	}
-	if envelope.Error == nil || envelope.Error.Code != "invalid_request" {
-		t.Errorf("expected error code 'invalid_request', got %+v", envelope.Error)
+	if envelope.Error == nil || envelope.Error.Code != "unknown_method" {
+		t.Errorf("expected error code 'unknown_method', got %+v", envelope.Error)
+	}
+}
+
+func TestRuntime_Handle_Quiesce(t *testing.T) {
+	r := newTestRuntime(t, runtime.Options{})
+	type handleEnvelope struct {
+		OK    bool                   `json:"ok"`
+		Error *runtime.EnvelopeError `json:"error"`
+	}
+	decode := func(t *testing.T, raw []byte) handleEnvelope {
+		t.Helper()
+		var envelope handleEnvelope
+		if err := json.Unmarshal(raw, &envelope); err != nil {
+			t.Fatalf("unmarshal response failed: %v", err)
+		}
+		return envelope
+	}
+
+	// Quiesce before registration is a harmless no-op.
+	if envelope := decode(t, r.Handle(context.Background(), runtime.MethodPluginQuiesce, nil)); !envelope.OK {
+		t.Fatalf("expected OK=true for quiesce, got error: %+v", envelope.Error)
+	}
+
+	// The host re-registers the old plugin when a replacement fails, so quiesce
+	// must not make the runtime permanently unusable.
+	req := []byte(`{"config_yaml":"enabled: true\nantigravity_model_group: gemini\ninterval: 15m\n"}`)
+	if envelope := decode(t, r.Handle(context.Background(), runtime.MethodPluginRegister, req)); !envelope.OK {
+		t.Fatalf("expected OK=true for register after quiesce, got error: %+v", envelope.Error)
+	}
+
+	if envelope := decode(t, r.Handle(context.Background(), runtime.MethodPluginQuiesce, nil)); !envelope.OK {
+		t.Fatalf("expected OK=true for second quiesce, got error: %+v", envelope.Error)
 	}
 }
 

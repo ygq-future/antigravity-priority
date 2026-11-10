@@ -19,9 +19,13 @@ var ErrShutdown = errors.New("runtime: shutdown")
 // ErrInvalidRequest indicates that the CPA JSON envelope request is invalid.
 var ErrInvalidRequest = errors.New("runtime: invalid request")
 
+// ErrUnknownMethod indicates that CPA requested a plugin method this runtime does not implement.
+var ErrUnknownMethod = errors.New("runtime: unknown method")
+
 const (
 	// Plugin JSON-RPC Methods
 	MethodPluginRegister     = "plugin.register"
+	MethodPluginQuiesce      = "plugin.quiesce"
 	MethodPluginReconfigure  = "plugin.reconfigure"
 	MethodPluginShutdown     = "plugin.shutdown"
 	MethodManagementRegister = "management.register"

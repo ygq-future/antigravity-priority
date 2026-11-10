@@ -187,6 +187,8 @@ func (r *Runtime) Handle(ctx context.Context, method string, request []byte) []b
 		}
 		result, err := r.Register(ctx, parsed)
 		return envelopeRegister(result, err)
+	case MethodPluginQuiesce:
+		return envelopeStatus(r.Quiesce(ctx))
 	case MethodPluginReconfigure:
 		parsed, err := decodeReconfigureRequest(request)
 		if err != nil {
@@ -207,7 +209,7 @@ func (r *Runtime) Handle(ctx context.Context, method string, request []byte) []b
 	case MethodFilterResponse, MethodFilterComplete, MethodFilterError, MethodFilterOutbound, MethodFilterInbound:
 		return r.handleFilterEvent(ctx, request)
 	default:
-		return failure(fmt.Errorf("%w: method %q", ErrInvalidRequest, method))
+		return failure(fmt.Errorf("%w: method %q", ErrUnknownMethod, method))
 	}
 }
 
@@ -750,6 +752,20 @@ func (r *Runtime) Shutdown(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+// Quiesce stops scheduled background work ahead of a hot replacement while
+// leaving the runtime registered so the host can roll back by re-registering.
+func (r *Runtime) Quiesce(ctx context.Context) error {
+	r.mu.Lock()
+	if r.shutdown {
+		r.mu.Unlock()
+		return nil
+	}
+	worker := r.worker
+	r.worker = nil
+	r.mu.Unlock()
+	return stopWorker(ctx, worker)
 }
 
 func (r *Runtime) replaceConfig(ctx context.Context, cfg config.Config) error {
