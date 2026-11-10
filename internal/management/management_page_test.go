@@ -173,7 +173,6 @@ func TestStatusHTML_JavaScriptSyntax(t *testing.T) {
 	}
 }
 
-
 func TestSamplesModalUsesSelectedModelGroupOnly(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -567,7 +566,6 @@ const ZH = {
     probeSingleFailed: "探测失败",
     probeSingleNoResult: "未返回该凭证的探测结果",
     probeBatchFailed: "配额探测完成，存在失败凭证",
-    staleEvidence: "历史数据",
     shortWindow: "5h 短窗口",
     longWindow: "7d 周窗口",
     urgencyLabel: "紧迫度",
@@ -695,8 +693,8 @@ async function fetchDiagnostics() {}
     if (card0HTML.indexOf("探测失败: retrieve quota summary status 403") < 0) {
         throw new Error("card 0 should show specific probe failure detail: " + card0HTML);
     }
-    if (card0HTML.indexOf("meter-container-stale") < 0 || card0HTML.indexOf("历史数据") < 0) {
-        throw new Error("card 0 should show stale tag and class for failed probe: " + card0HTML);
+    if (card0HTML.indexOf("meter-container-stale") >= 0 || card0HTML.indexOf("历史数据") >= 0) {
+        throw new Error("card 0 must NOT show the removed stale '历史数据' tag: " + card0HTML);
     }
 
     // Card 1: 429 cooldown

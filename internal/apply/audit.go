@@ -29,7 +29,6 @@ func Snapshot(plan priority.Plan) PlanSnapshot {
 type QuotaWindowBar struct {
 	Remaining *int64     `json:"remaining,omitempty"`
 	ResetAt   *time.Time `json:"reset_at,omitempty"`
-	Stale     bool       `json:"stale,omitempty"`
 }
 
 // AllQuotaWindows aggregates the 5 quota progress bars for display across all views.
@@ -43,40 +42,40 @@ type AllQuotaWindows struct {
 
 // SnapshotItem is the audit view of a single planned item.
 type SnapshotItem struct {
-	Identity             SnapshotIdentity `json:"-"`
-	Name                 string           `json:"name"`
-	AuthIndex            string           `json:"auth_index"`
-	Account              string           `json:"account,omitempty"`
-	Email                string           `json:"email,omitempty"`
-	Provider             string           `json:"provider"`
-	Type                 string           `json:"type"`
-	Status               string           `json:"status"`
-	PlanType             string           `json:"plan_type,omitempty"`
-	Current              Target           `json:"current"`
-	Target               Target           `json:"target"`
-	EvidenceFresh        bool             `json:"evidence_fresh"`
-	Reason               string           `json:"reason"`
-	IsBoosted            bool             `json:"is_boosted"`
-	IsPredicted          bool             `json:"is_predicted"`
-	CustomTier           int              `json:"custom_tier,omitempty"`
-	Urgency              float64          `json:"urgency"`
-	R7d                  float64          `json:"r7d"`
-	T7d                  float64          `json:"t7d"`
-	R5h                  float64          `json:"r5h"`
-	T5h                  float64          `json:"t5h"`
-	CycleBurnRate        float64          `json:"cycle_burn_rate"`
-	TRequired            float64          `json:"t_required"`
-	ResetAt              *time.Time       `json:"reset_at,omitempty"`
-	ShortWindowResetAt   *time.Time       `json:"short_window_reset_at,omitempty"`
-	ShortWindowRemaining *int64           `json:"short_window_remaining,omitempty"`
-	LongWindowResetAt    *time.Time       `json:"long_window_reset_at,omitempty"`
-	LongWindowRemaining  *int64           `json:"long_window_remaining,omitempty"`
-	ArgonWindowResetAt   *time.Time       `json:"argon_window_reset_at,omitempty"`
-	ArgonWindowRemaining *int64           `json:"argon_window_remaining,omitempty"`
-	QuotaWindows         AllQuotaWindows  `json:"quota_windows"`
-	EstimatedShortBurnPct float64         `json:"estimated_short_burn_pct,omitempty"`
-	EstimatedLongBurnPct  float64         `json:"estimated_long_burn_pct,omitempty"`
-	SupportedModels       []string        `json:"supported_models,omitempty"`
+	Identity              SnapshotIdentity `json:"-"`
+	Name                  string           `json:"name"`
+	AuthIndex             string           `json:"auth_index"`
+	Account               string           `json:"account,omitempty"`
+	Email                 string           `json:"email,omitempty"`
+	Provider              string           `json:"provider"`
+	Type                  string           `json:"type"`
+	Status                string           `json:"status"`
+	PlanType              string           `json:"plan_type,omitempty"`
+	Current               Target           `json:"current"`
+	Target                Target           `json:"target"`
+	EvidenceFresh         bool             `json:"evidence_fresh"`
+	Reason                string           `json:"reason"`
+	IsBoosted             bool             `json:"is_boosted"`
+	IsPredicted           bool             `json:"is_predicted"`
+	CustomTier            int              `json:"custom_tier,omitempty"`
+	Urgency               float64          `json:"urgency"`
+	R7d                   float64          `json:"r7d"`
+	T7d                   float64          `json:"t7d"`
+	R5h                   float64          `json:"r5h"`
+	T5h                   float64          `json:"t5h"`
+	CycleBurnRate         float64          `json:"cycle_burn_rate"`
+	TRequired             float64          `json:"t_required"`
+	ResetAt               *time.Time       `json:"reset_at,omitempty"`
+	ShortWindowResetAt    *time.Time       `json:"short_window_reset_at,omitempty"`
+	ShortWindowRemaining  *int64           `json:"short_window_remaining,omitempty"`
+	LongWindowResetAt     *time.Time       `json:"long_window_reset_at,omitempty"`
+	LongWindowRemaining   *int64           `json:"long_window_remaining,omitempty"`
+	ArgonWindowResetAt    *time.Time       `json:"argon_window_reset_at,omitempty"`
+	ArgonWindowRemaining  *int64           `json:"argon_window_remaining,omitempty"`
+	QuotaWindows          AllQuotaWindows  `json:"quota_windows"`
+	EstimatedShortBurnPct float64          `json:"estimated_short_burn_pct,omitempty"`
+	EstimatedLongBurnPct  float64          `json:"estimated_long_burn_pct,omitempty"`
+	SupportedModels       []string         `json:"supported_models,omitempty"`
 }
 
 // SnapshotChange is the audit view of a single candidate change.

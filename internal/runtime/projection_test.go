@@ -499,9 +499,6 @@ func TestProjectDualModelGroups_NoArgonBucketDoesNotFabricateArgon7d(t *testing.
 		if qw.Argon7d.Remaining != nil {
 			t.Errorf("[%s] QuotaWindows Argon7d.Remaining = %v, want nil when no Argon bucket exists", group, *qw.Argon7d.Remaining)
 		}
-		if qw.Argon7d.Stale {
-			t.Errorf("[%s] QuotaWindows Argon7d.Stale = true, want false when no Argon bucket exists", group)
-		}
 	}
 }
 

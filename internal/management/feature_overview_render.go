@@ -331,8 +331,6 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
                     if (pct <= 10) fillClass = "meter-fill-danger";
                     else if (pct <= 30) fillClass = "meter-fill-warning";
 
-                    const isStale = Boolean(probeFailed || d.stale);
-                    const staleTag = isStale ? " <span class=\"meter-stale-tag\">" + t("staleEvidence") + "</span>" : "";
                     const resetTime = d.reset_at || "";
                     const resetStr = resetTime ? formatCountdown(resetTime) : "-";
 
@@ -346,7 +344,7 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
                     }
 
                     const activeClass = b.isActive ? " active-pool-meter" : " inactive-pool-meter";
-                    const containerClass = "meter-container" + activeClass + (isStale ? " meter-container-stale" : "");
+                    const containerClass = "meter-container" + activeClass;
 
                     const pctDisplay = hasVal
                         ? " <span class=\"meter-pct\">" + pct + "%</span>"
@@ -356,7 +354,7 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
                         "<div class=\"meter-label-row\">" +
                             "<span class=\"meter-name\" title=\"" + escapeHTML(b.windowType) + "\">" +
                                 "<span class=\"meter-pool-name\">" + escapeHTML(b.label) + "</span>" +
-                                pctDisplay + estBurnTag + staleTag +
+                                pctDisplay + estBurnTag +
                             "</span>" +
                             "<span class=\"meter-countdown\" data-reset-time=\"" + escapeHTML(resetTime) + "\">" + resetStr + "</span>" +
                         "</div>" +

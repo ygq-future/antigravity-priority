@@ -140,7 +140,6 @@ func buildAllQuotaWindows(snapshots map[config.AntigravityModelGroup]apply.PlanS
 			qw.Argon7d = apply.QuotaWindowBar{
 				Remaining: cloneInt64Pointer(item.ArgonWindowRemaining),
 				ResetAt:   cloneTimePointer(item.ArgonWindowResetAt),
-				Stale:     !item.EvidenceFresh,
 			}
 		}
 		result[authIndex] = qw
@@ -191,7 +190,6 @@ func itemShortWindowBar(item apply.SnapshotItem) apply.QuotaWindowBar {
 	return apply.QuotaWindowBar{
 		Remaining: cloneInt64Pointer(rem),
 		ResetAt:   cloneTimePointer(resetAt),
-		Stale:     !item.EvidenceFresh && rem != nil,
 	}
 }
 
@@ -208,17 +206,12 @@ func itemLongWindowBar(item apply.SnapshotItem) apply.QuotaWindowBar {
 	return apply.QuotaWindowBar{
 		Remaining: cloneInt64Pointer(rem),
 		ResetAt:   cloneTimePointer(resetAt),
-		Stale:     !item.EvidenceFresh && rem != nil,
 	}
 }
 
 func itemArgonWindowBar(item apply.SnapshotItem) apply.QuotaWindowBar {
 	if item.PlanType == string(core.PlanTypeFree) {
-		return apply.QuotaWindowBar{
-			Remaining: nil,
-			ResetAt:   nil,
-			Stale:     false,
-		}
+		return apply.QuotaWindowBar{}
 	}
 	rem := item.ArgonWindowRemaining
 	resetAt := item.ArgonWindowResetAt
@@ -236,7 +229,6 @@ func itemArgonWindowBar(item apply.SnapshotItem) apply.QuotaWindowBar {
 	return apply.QuotaWindowBar{
 		Remaining: cloneInt64Pointer(rem),
 		ResetAt:   cloneTimePointer(resetAt),
-		Stale:     !item.EvidenceFresh && rem != nil,
 	}
 }
 
@@ -271,7 +263,6 @@ func canonicalModelGroup(group config.AntigravityModelGroup) (config.Antigravity
 	}
 	return parsed, nil
 }
-
 
 func snapshotForProjectionRole(plan priority.Plan, predicted bool) apply.PlanSnapshot {
 	return snapshotForProjectionRoleSnapshot(apply.Snapshot(plan), predicted)
