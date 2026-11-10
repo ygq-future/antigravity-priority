@@ -191,6 +191,7 @@ type Store struct {
 	cooldowns       map[string]CooldownEntry
 	autoDisabled    map[string]AutoDisabledEntry
 	requestHistory  []RequestHistoryEntry
+	warmupCompleted map[string]time.Time
 }
 
 type document struct {
@@ -205,6 +206,7 @@ type document struct {
 	Cooldowns       map[string]CooldownEntry     `json:"cooldowns,omitempty"`
 	AutoDisabled    map[string]AutoDisabledEntry `json:"auto_disabled,omitempty"`
 	RequestHistory  []RequestHistoryEntry        `json:"request_history,omitempty"`
+	WarmupCompleted map[string]time.Time         `json:"warmup_completed,omitempty"`
 }
 
 // Load loads the state document from path. If the file does not exist, an empty store is returned.
@@ -213,10 +215,11 @@ func Load(ctx context.Context, path string) (*Store, error) {
 		return nil, fmt.Errorf("load state context: %w", err)
 	}
 	store := &Store{
-		path:         path,
-		entries:      make(map[string]Entry),
-		cooldowns:    make(map[string]CooldownEntry),
-		autoDisabled: make(map[string]AutoDisabledEntry),
+		path:            path,
+		entries:         make(map[string]Entry),
+		cooldowns:       make(map[string]CooldownEntry),
+		autoDisabled:    make(map[string]AutoDisabledEntry),
+		warmupCompleted: make(map[string]time.Time),
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -278,6 +281,12 @@ func Load(ctx context.Context, path string) (*Store, error) {
 	if doc.AutoDisabled != nil {
 		store.autoDisabled = doc.AutoDisabled
 	}
+	if doc.WarmupCompleted != nil {
+		store.warmupCompleted = make(map[string]time.Time, len(doc.WarmupCompleted))
+		for key, at := range doc.WarmupCompleted {
+			store.warmupCompleted[key] = utcOrZero(at)
+		}
+	}
 	return store, nil
 }
 
@@ -302,6 +311,7 @@ func (s *Store) SaveAtomic(ctx context.Context) (err error) {
 		Cooldowns:       s.cooldowns,
 		AutoDisabled:    s.autoDisabled,
 		RequestHistory:  s.requestHistory,
+		WarmupCompleted: s.warmupCompleted,
 	}
 	data, err := json.MarshalIndent(doc, "", "  ")
 	s.mu.RUnlock()
@@ -367,6 +377,30 @@ func (s *Store) SetRequestHistory(entries []RequestHistoryEntry) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.requestHistory = append([]RequestHistoryEntry(nil), entries...)
+}
+
+// GetLastWarmupAt returns the last successful 5h warm-up time for a credential
+// pool. The zero time means the credential has never been warmed up.
+func (s *Store) GetLastWarmupAt(authIndex, modelGroup string) time.Time {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.warmupCompleted[entryKey(authIndex, modelGroup)]
+}
+
+// SetWarmupCompleted records a successful 5h warm-up for a credential pool.
+// Warm-up state is persisted separately from quota evidence so a probe write
+// never clears the debounce window and a restart never forgets it.
+func (s *Store) SetWarmupCompleted(authIndex, modelGroup string, at time.Time) {
+	key := entryKey(authIndex, modelGroup)
+	if key == "" || at.IsZero() {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.warmupCompleted == nil {
+		s.warmupCompleted = make(map[string]time.Time)
+	}
+	s.warmupCompleted[key] = at.UTC()
 }
 
 // MarkProbeSuccess records a successful probe, adaptively updates cycle burn rate, and resets errors.

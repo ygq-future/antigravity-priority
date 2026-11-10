@@ -69,10 +69,8 @@ type Runtime struct {
 	modelCatalog             []ModelCatalogItem
 	rrCursorByPool           map[config.AntigravityModelGroup]string
 	sessionAffinity          map[string]sessionBinding
-	warmupMu                 sync.Mutex
-	lastWarmupByAuthAndGroup map[string]time.Time
 	warmupResetMu            sync.Mutex
-	warmupResetTargets       map[string]warmupResetTarget
+	warmupAttempts           map[string]warmupAttempt
 	warmupResetWake          chan struct{}
 }
 
@@ -105,8 +103,7 @@ func New(options Options) *Runtime {
 		modelCatalog:             append([]ModelCatalogItem(nil), builtInAntigravityModels...),
 		rrCursorByPool:           make(map[config.AntigravityModelGroup]string),
 		sessionAffinity:          make(map[string]sessionBinding),
-		lastWarmupByAuthAndGroup: make(map[string]time.Time),
-		warmupResetTargets:       make(map[string]warmupResetTarget),
+		warmupAttempts:           make(map[string]warmupAttempt),
 		warmupResetWake:          make(chan struct{}, 1),
 	}
 	if strings.TrimSpace(options.StateCachePath) != "" {
@@ -787,6 +784,7 @@ func (r *Runtime) replaceConfig(ctx context.Context, cfg config.Config) error {
 	r.cfg = cfg
 	r.mu.Unlock()
 	r.signalRateLimitWorker()
+	r.signalWarmupResetWatcher()
 
 	if !needRestartWorker {
 		return nil

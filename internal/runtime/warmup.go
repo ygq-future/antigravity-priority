@@ -3,10 +3,12 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math/rand/v2"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -83,9 +85,6 @@ const WarmupDebounceDuration = 4*time.Hour + 30*time.Minute
 
 // WarmupResetGraceBaseDelay is the buffer delay after upstream reset timestamp to accommodate ledger convergence.
 const WarmupResetGraceBaseDelay = 35 * time.Second
-
-// WarmupResetGraceMaxJitter is the random jitter added to prevent multiple credentials from synchronizing simultaneously.
-const WarmupResetGraceMaxJitter = 25 * time.Second
 
 // WarmupResetThresholdDuration is the threshold reset-countdown duration indicating a full un-started 5h window.
 const WarmupResetThresholdDuration = 4 * time.Hour
@@ -168,9 +167,9 @@ func isWarmupEligible(ev *priority.QuotaEvidence, now time.Time, lastWarmup time
 
 	// 2. Quota remaining must be at full capacity (100% or >= 99%)
 	hasFullRemaining := false
-	if ev.ShortWindowRemaining != nil && *ev.ShortWindowRemaining >= 99 {
+	if ev.ShortWindowRemaining != nil && *ev.ShortWindowRemaining >= warmupFullRemainingPct {
 		hasFullRemaining = true
-	} else if ev.Remaining != nil && *ev.Remaining >= 99 && ev.ShortWindowRemaining == nil {
+	} else if ev.Remaining != nil && *ev.Remaining >= warmupFullRemainingPct && ev.ShortWindowRemaining == nil {
 		hasFullRemaining = true
 	}
 	if !hasFullRemaining {
@@ -270,10 +269,37 @@ func executeAntigravityWarmup(ctx context.Context, doer quotaHTTPDoer, authIndex
 
 	return warmupExecutionResult{StatusCode: lastStatus}, lastErr
 }
-type warmupResetTarget struct {
-	authIndex string
-	group     config.AntigravityModelGroup
+// WarmupSweepInterval is how often the warm-up watcher re-evaluates persisted
+// quota evidence for 5h windows that are due to be warmed up.
+const WarmupSweepInterval = time.Minute
+
+// warmupIdleSweepInterval is the re-evaluation cadence while warm-up is disabled.
+const warmupIdleSweepInterval = 5 * time.Minute
+
+// warmupResetMaxAttempts bounds how many probes one 5h reset may trigger when
+// the upstream window has not converged yet.
+const warmupResetMaxAttempts = 5
+
+// warmupFullRemainingPct is the remaining percentage that counts as a full,
+// warmable 5h window.
+const warmupFullRemainingPct = 99
+
+// warmupAttempt tracks retry state for one credential pool window so a
+// non-converging upstream cannot turn the watcher into a probe loop.
+type warmupAttempt struct {
 	resetAt   time.Time
+	attempts  int
+	nextAt    time.Time
+	exhausted bool
+}
+
+// warmupCandidate is a credential pool whose 5h window is due for a warm-up probe.
+type warmupCandidate struct {
+	key        string
+	authIndex  string
+	group      config.AntigravityModelGroup
+	resetAt    time.Time
+	lastWarmup time.Time
 }
 
 func (r *Runtime) signalWarmupResetWatcher() {
@@ -283,70 +309,257 @@ func (r *Runtime) signalWarmupResetWatcher() {
 	}
 }
 
+// runWarmupResetWatcher re-derives warm-up deadlines from persisted quota
+// evidence instead of relying on an in-flight scheduling run, so a paused auto
+// schedule (or a restart) cannot suppress a 5h window warm-up.
 func (r *Runtime) runWarmupResetWatcher() {
 	for {
-		nextDeadline := r.nextWarmupResetDeadline()
-		var timer *time.Timer
-		var timerC <-chan time.Time
-		if !nextDeadline.IsZero() {
-			delay := max(nextDeadline.Sub(r.clock.Now().UTC()), 0)
-			timer = time.NewTimer(delay)
-			timerC = timer.C
-		}
+		wait := r.sweepWarmupResets(r.rootCtx)
+		timer := time.NewTimer(wait)
 		select {
 		case <-r.rootCtx.Done():
-			if timer != nil {
-				timer.Stop()
-			}
+			timer.Stop()
 			return
 		case <-r.warmupResetWake:
-			if timer != nil {
-				timer.Stop()
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
 			}
-			r.processWarmupResetDeadlines()
-		case <-timerC:
-			r.processWarmupResetDeadlines()
+		case <-timer.C:
 		}
 	}
 }
 
-func (r *Runtime) nextWarmupResetDeadline() time.Time {
+// enabledWarmupGroups returns the quota pools the operator enabled warm-up for.
+func enabledWarmupGroups(warmup config.WarmupConfig) []config.AntigravityModelGroup {
+	groups := make([]config.AntigravityModelGroup, 0, 2)
+	if warmup.GeminiEnabled {
+		groups = append(groups, config.AntigravityModelGroupGemini)
+	}
+	if warmup.ClaudeEnabled {
+		groups = append(groups, config.AntigravityModelGroupClaudeGPT)
+	}
+	return groups
+}
+
+// sweepWarmupResets probes every credential pool whose persisted 5h window is
+// due, then returns how long the watcher should wait before sweeping again.
+func (r *Runtime) sweepWarmupResets(ctx context.Context) time.Duration {
+	if ctx.Err() != nil {
+		return warmupIdleSweepInterval
+	}
+	cfg, err := r.Config()
+	if err != nil {
+		return warmupIdleSweepInterval
+	}
+	groups := enabledWarmupGroups(cfg.Warmup)
+	if len(groups) == 0 {
+		r.clearWarmupAttempts()
+		return warmupIdleSweepInterval
+	}
+	if !cfg.Enabled {
+		return WarmupSweepInterval
+	}
+	store, err := state.Load(ctx, warmupStatePath(cfg))
+	if err != nil {
+		return WarmupSweepInterval
+	}
+	now := r.clock.Now().UTC()
+	candidates := r.dueWarmupCandidates(store, groups, now)
+	if len(candidates) == 0 {
+		return WarmupSweepInterval
+	}
+	disabled := r.disabledWarmupAuthIndexes(ctx)
+	for _, candidate := range candidates {
+		if ctx.Err() != nil {
+			return WarmupSweepInterval
+		}
+		if _, isDisabled := disabled[candidate.authIndex]; isDisabled {
+			continue
+		}
+		r.recordWarmupAttempt(candidate, now)
+		if err := r.probeWarmupCandidate(ctx, cfg, candidate); errors.Is(err, ErrRunInProgress) {
+			// Another run owns the lock; do not spend a retry budget on it.
+			r.clearWarmupAttempt(candidate.key)
+		}
+	}
+	return WarmupSweepInterval
+}
+
+// dueWarmupCandidates lists the pools whose 5h window is due for a warm-up probe.
+func (r *Runtime) dueWarmupCandidates(store *state.Store, groups []config.AntigravityModelGroup, now time.Time) []warmupCandidate {
+	if store == nil {
+		return nil
+	}
+	enabled := make(map[config.AntigravityModelGroup]struct{}, len(groups))
+	cooldowns := make(map[config.AntigravityModelGroup]map[string]state.CooldownEntry, len(groups))
+	for _, group := range groups {
+		enabled[group] = struct{}{}
+		cooldowns[group] = store.GetActiveCooldownEntriesForGroup(now, string(group))
+	}
+	candidates := make([]warmupCandidate, 0)
+	for _, entry := range store.Entries() {
+		group := config.AntigravityModelGroup(entry.ModelGroup)
+		if _, ok := enabled[group]; !ok {
+			continue
+		}
+		if strings.TrimSpace(entry.AuthIndex) == "" {
+			continue
+		}
+		resetAt := entry.ShortWindowResetAt
+		if resetAt.IsZero() {
+			resetAt = entry.ResetAt
+		}
+		if resetAt.IsZero() {
+			continue
+		}
+		key := warmupAttemptKey(entry.AuthIndex, string(group))
+		lastWarmup := store.GetLastWarmupAt(entry.AuthIndex, entry.ModelGroup)
+		if !lastWarmup.IsZero() && now.Sub(lastWarmup) < WarmupDebounceDuration {
+			continue
+		}
+		if !warmupWindowDue(entry, resetAt, now) {
+			continue
+		}
+		if _, inCooldown := cooldowns[group][entry.AuthIndex]; inCooldown {
+			continue
+		}
+		if r.warmupAttemptBlocked(key, resetAt, now) {
+			continue
+		}
+		candidates = append(candidates, warmupCandidate{
+			key:        key,
+			authIndex:  entry.AuthIndex,
+			group:      group,
+			resetAt:    resetAt,
+			lastWarmup: lastWarmup,
+		})
+	}
+	slices.SortFunc(candidates, func(left, right warmupCandidate) int {
+		return strings.Compare(left.key, right.key)
+	})
+	return candidates
+}
+
+// warmupWindowDue reports whether the stored 5h window either already reset or
+// is a full, un-started window that should be kicked off now.
+func warmupWindowDue(entry state.Entry, resetAt, now time.Time) bool {
+	if !now.Before(resetAt.Add(WarmupResetGraceBaseDelay)) {
+		return true
+	}
+	if resetAt.Sub(now) < WarmupResetThresholdDuration {
+		return false
+	}
+	remaining := entry.Remaining
+	if entry.ShortWindowRemaining != nil {
+		remaining = *entry.ShortWindowRemaining
+	}
+	return remaining >= warmupFullRemainingPct
+}
+
+func (r *Runtime) warmupAttemptBlocked(key string, resetAt, now time.Time) bool {
 	r.warmupResetMu.Lock()
 	defer r.warmupResetMu.Unlock()
-	var next time.Time
-	for _, target := range r.warmupResetTargets {
-		if !target.resetAt.IsZero() {
-			next = earlierTime(next, target.resetAt)
-		}
+	attempt, ok := r.warmupAttempts[key]
+	if !ok || !attempt.resetAt.Equal(resetAt) {
+		return false
 	}
-	return next
+	return attempt.exhausted || now.Before(attempt.nextAt)
 }
 
-func (r *Runtime) processWarmupResetDeadlines() {
-	now := r.clock.Now().UTC()
-	var dueTargets []warmupResetTarget
-
+func (r *Runtime) recordWarmupAttempt(candidate warmupCandidate, now time.Time) {
 	r.warmupResetMu.Lock()
-	for key, target := range r.warmupResetTargets {
-		if !target.resetAt.IsZero() && !target.resetAt.After(now) {
-			dueTargets = append(dueTargets, target)
-			delete(r.warmupResetTargets, key)
+	defer r.warmupResetMu.Unlock()
+	attempt := r.warmupAttempts[candidate.key]
+	if !attempt.resetAt.Equal(candidate.resetAt) {
+		attempt = warmupAttempt{resetAt: candidate.resetAt}
+	}
+	attempt.attempts++
+	if attempt.attempts >= warmupResetMaxAttempts {
+		attempt.exhausted = true
+	} else {
+		attempt.nextAt = now.Add(warmupRetryDelay(attempt.attempts))
+	}
+	r.warmupAttempts[candidate.key] = attempt
+}
+
+func (r *Runtime) clearWarmupAttempt(key string) {
+	r.warmupResetMu.Lock()
+	defer r.warmupResetMu.Unlock()
+	delete(r.warmupAttempts, key)
+}
+
+func (r *Runtime) clearWarmupAttempts() {
+	r.warmupResetMu.Lock()
+	defer r.warmupResetMu.Unlock()
+	clear(r.warmupAttempts)
+}
+
+// warmupRetryDelay backs off retries after a reset whose warm-up did not land.
+func warmupRetryDelay(attempts int) time.Duration {
+	delay := WarmupResetGraceBaseDelay
+	for i := 1; i < attempts; i++ {
+		delay *= 2
+		if delay >= 10*time.Minute {
+			return 10 * time.Minute
 		}
 	}
-	r.warmupResetMu.Unlock()
+	return delay
+}
 
-	for _, target := range dueTargets {
-		tAuth := target.authIndex
-		tGroup := target.group
-		go func() {
-			_ = r.Probe(r.rootCtx, tGroup, []string{tAuth})
-		}()
+// probeWarmupCandidate runs the targeted probe that refreshes evidence and
+// performs the warm-up, then clears retry state once the warm-up landed.
+func (r *Runtime) probeWarmupCandidate(ctx context.Context, cfg config.Config, candidate warmupCandidate) error {
+	if err := r.Probe(ctx, candidate.group, []string{candidate.authIndex}); err != nil {
+		return err
 	}
+	store, err := state.Load(ctx, warmupStatePath(cfg))
+	if err != nil {
+		return err
+	}
+	if store.GetLastWarmupAt(candidate.authIndex, string(candidate.group)).After(candidate.lastWarmup) {
+		r.clearWarmupAttempt(candidate.key)
+	}
+	return nil
+}
+
+// warmupAttemptKey identifies retry state for one credential pool.
+func warmupAttemptKey(authIndex, modelGroup string) string {
+	return strings.TrimSpace(authIndex) + "::" + strings.TrimSpace(modelGroup)
+}
+
+// disabledWarmupAuthIndexes returns host-disabled credentials, which background
+// warm-up must never probe.
+func (r *Runtime) disabledWarmupAuthIndexes(ctx context.Context) map[string]struct{} {
+	if r.hostCallbacks == nil {
+		return nil
+	}
+	files, err := host.NewClient(r.hostCallbacks).ListAuthFiles(ctx)
+	if err != nil {
+		return nil
+	}
+	disabled := make(map[string]struct{})
+	for _, file := range files {
+		if file.Disabled && strings.TrimSpace(file.AuthIndex) != "" {
+			disabled[file.AuthIndex] = struct{}{}
+		}
+	}
+	return disabled
+}
+
+func warmupStatePath(cfg config.Config) string {
+	if strings.TrimSpace(cfg.StateCachePath) == "" {
+		return config.DefaultStateCachePath
+	}
+	return cfg.StateCachePath
 }
 
 
 // triggerWarmupForEligibleCredentials checks eligible full-quota credentials in configured model pools
 // and kicks off the 5h rolling window by issuing a minimal token generation request.
+// It returns the number of successful warm-ups so the caller can persist them.
 func (r *Runtime) triggerWarmupForEligibleCredentials(
 	ctx context.Context,
 	doer quotaHTTPDoer,
@@ -354,10 +567,11 @@ func (r *Runtime) triggerWarmupForEligibleCredentials(
 	evidenceByGroup map[config.AntigravityModelGroup]evidence.Result,
 	authMaterials map[string]authMaterial,
 	disabledAuthIndexes map[string]struct{},
+	store *state.Store,
 	now time.Time,
-) {
+) int {
 	if !cfg.GeminiEnabled && !cfg.ClaudeEnabled {
-		return
+		return 0
 	}
 	cfg.Normalize()
 
@@ -379,6 +593,7 @@ func (r *Runtime) triggerWarmupForEligibleCredentials(
 		})
 	}
 
+	warmed := 0
 	for _, target := range targets {
 		groupRes, ok := evidenceByGroup[target.group]
 		if !ok {
@@ -395,26 +610,10 @@ func (r *Runtime) triggerWarmupForEligibleCredentials(
 				}
 			}
 
-			key := authIdx + "::" + string(target.group)
-			r.warmupMu.Lock()
-			lastWarmup := r.lastWarmupByAuthAndGroup[key]
-			r.warmupMu.Unlock()
-			// If credential is in an active countdown, schedule precision wake-up at its reset time
-			resetAt := ev.ShortWindowResetAt
-			if resetAt == nil {
-				resetAt = ev.ResetAt
-			}
-			if resetAt != nil && resetAt.After(now) && resetAt.Sub(now) < WarmupResetThresholdDuration {
-				jitter := time.Duration(rand.IntN(int(WarmupResetGraceMaxJitter/time.Second))) * time.Second
-				graceDelay := WarmupResetGraceBaseDelay + jitter
-				r.warmupResetMu.Lock()
-				r.warmupResetTargets[key] = warmupResetTarget{
-					authIndex: authIdx,
-					group:     target.group,
-					resetAt:   resetAt.Add(graceDelay),
-				}
-				r.warmupResetMu.Unlock()
-				r.signalWarmupResetWatcher()
+			key := warmupAttemptKey(authIdx, string(target.group))
+			var lastWarmup time.Time
+			if store != nil {
+				lastWarmup = store.GetLastWarmupAt(authIdx, string(target.group))
 			}
 			if !isWarmupEligible(&ev, now, lastWarmup) {
 				continue
@@ -459,10 +658,13 @@ func (r *Runtime) triggerWarmupForEligibleCredentials(
 				authIdx, maskedEmail, target.group, target.model, res.StatusCode, err, res.InputTokens, res.OutputTokens, res.TotalTokens)
 
 			if err == nil && res.StatusCode == http.StatusOK {
-				r.warmupMu.Lock()
-				r.lastWarmupByAuthAndGroup[key] = now
-				r.warmupMu.Unlock()
+				warmed++
+				if store != nil {
+					store.SetWarmupCompleted(authIdx, string(target.group), now)
+				}
+				r.clearWarmupAttempt(key)
 			}
 		}
 	}
+	return warmed
 }

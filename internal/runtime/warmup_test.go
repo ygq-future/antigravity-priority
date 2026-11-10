@@ -2,15 +2,21 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"antigravity-priority/internal/config"
+	"antigravity-priority/internal/core"
+	"antigravity-priority/internal/evidence"
 	"antigravity-priority/internal/host"
 	"antigravity-priority/internal/priority"
-	"antigravity-priority/internal/evidence"
+	"antigravity-priority/internal/state"
 )
 
 func TestGenerateNaturalWarmupPrompt(t *testing.T) {
@@ -140,6 +146,10 @@ func TestRuntime_TriggerWarmupForEligibleCredentials(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
 	rt := New(Options{})
+	store, err := state.Load(ctx, filepath.Join(t.TempDir(), "cache.json"))
+	if err != nil {
+		t.Fatalf("load state store failed: %v", err)
+	}
 
 	warmupCount := 0
 	doer := quotaHTTPDoerFunc(func(_ context.Context, req host.HTTPRequest) (host.HTTPResponse, error) {
@@ -186,7 +196,7 @@ func TestRuntime_TriggerWarmupForEligibleCredentials(t *testing.T) {
 	}
 
 	// 1. Initial run: both should be warmed up
-	rt.triggerWarmupForEligibleCredentials(ctx, doer, cfg, evidenceByGroup, materials, nil, now)
+	rt.triggerWarmupForEligibleCredentials(ctx, doer, cfg, evidenceByGroup, materials, nil, store, now)
 	if warmupCount != 2 {
 		t.Fatalf("expected 2 warmup calls (gemini and claude), got %d", warmupCount)
 	}
@@ -202,13 +212,13 @@ func TestRuntime_TriggerWarmupForEligibleCredentials(t *testing.T) {
 
 
 	// 2. Immediate second run: debounced, no calls should happen
-	rt.triggerWarmupForEligibleCredentials(ctx, doer, cfg, evidenceByGroup, materials, nil, now.Add(10*time.Minute))
+	rt.triggerWarmupForEligibleCredentials(ctx, doer, cfg, evidenceByGroup, materials, nil, store, now.Add(10*time.Minute))
 	if warmupCount != 2 {
 		t.Fatalf("expected still 2 warmup calls due to debounce, got %d", warmupCount)
 	}
 
 	// 3. After debounce expiration (5 hours later): should trigger again
-	rt.triggerWarmupForEligibleCredentials(ctx, doer, cfg, evidenceByGroup, materials, nil, now.Add(5*time.Hour))
+	rt.triggerWarmupForEligibleCredentials(ctx, doer, cfg, evidenceByGroup, materials, nil, store, now.Add(5*time.Hour))
 	if warmupCount != 4 {
 		t.Fatalf("expected 4 warmup calls after debounce expired, got %d", warmupCount)
 	}
@@ -218,8 +228,218 @@ func TestRuntime_TriggerWarmupForEligibleCredentials(t *testing.T) {
 		"auth-gemini-1": {},
 		"auth-claude-1": {},
 	}
-	rt.triggerWarmupForEligibleCredentials(ctx, doer, cfg, evidenceByGroup, materials, disabledAuth, now.Add(11*time.Hour))
+	rt.triggerWarmupForEligibleCredentials(ctx, doer, cfg, evidenceByGroup, materials, disabledAuth, store, now.Add(11*time.Hour))
 	if warmupCount != 4 {
 		t.Fatalf("expected warmup calls to remain 4 for disabled credentials, got %d", warmupCount)
+	}
+}
+
+func warmupQuotaBody(reset5h, reset7d time.Time) []byte {
+	return []byte(fmt.Sprintf(
+		`{"models":{"gemini-2.5-pro":{"quotaInfo":{"windows":[{"name":"5h","remainingFraction":1.0,"resetTime":%q}]}},`+
+			`"gemini-2.5-flash":{"quotaInfo":{"windows":[{"name":"7d","remainingFraction":1.0,"resetTime":%q}]}}}}`,
+		reset5h.UTC().Format(time.RFC3339),
+		reset7d.UTC().Format(time.RFC3339),
+	))
+}
+
+// warmupStubHost is the minimal host surface the warm-up sweep needs: auth
+// inventory, auth material, and a single canned quota response.
+type warmupStubHost struct {
+	mu        sync.Mutex
+	files     []host.AuthFile
+	body      []byte
+	httpCalls []host.HTTPRequest
+}
+
+func (h *warmupStubHost) ListAuthFiles(context.Context) ([]host.AuthFile, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]host.AuthFile(nil), h.files...), nil
+}
+
+func (h *warmupStubHost) GetAuth(_ context.Context, authIndex string) (host.AuthDocument, error) {
+	return host.AuthDocument{
+		AuthIndex: authIndex,
+		JSON:      json.RawMessage(`{"access_token":"test-token","project_id":"test-project","account":"test@example.com"}`),
+	}, nil
+}
+
+func (h *warmupStubHost) GetRuntime(_ context.Context, authIndex string) (host.RuntimeAuth, error) {
+	return host.RuntimeAuth{AuthIndex: authIndex}, nil
+}
+
+func (h *warmupStubHost) SaveAuth(context.Context, string, json.RawMessage) error { return nil }
+
+func (h *warmupStubHost) HTTPDo(_ context.Context, request host.HTTPRequest) (host.HTTPResponse, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.httpCalls = append(h.httpCalls, request)
+	return host.HTTPResponse{StatusCode: http.StatusOK, Body: h.body}, nil
+}
+
+func (h *warmupStubHost) ListAuthModels(context.Context) ([]host.AuthModelsEntry, error) {
+	return nil, nil
+}
+
+func (h *warmupStubHost) setBody(body []byte) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.body = body
+}
+
+func (h *warmupStubHost) countCalls(needle string) int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	count := 0
+	for _, request := range h.httpCalls {
+		if strings.Contains(request.URL, needle) {
+			count++
+		}
+	}
+	return count
+}
+
+type warmupTestClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func (c *warmupTestClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *warmupTestClock) advance(delta time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(delta)
+}
+
+// seedReadyWindow stores the exact evidence shape of a card showing "Ready":
+// the recorded 5h reset time already elapsed while the quota still reads full.
+func seedReadyWindow(t *testing.T, cachePath string, now time.Time) {
+	t.Helper()
+	ctx := context.Background()
+	store, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatalf("load state failed: %v", err)
+	}
+	remaining := int64(100)
+	longReset := now.Add(7 * 24 * time.Hour)
+	if err := store.MarkProbeSuccess(ctx, state.ProbeSuccess{
+		AuthIndex:            "idx-a",
+		Provider:             core.ProviderAntigravity,
+		ModelGroup:           string(config.AntigravityModelGroupGemini),
+		ObservedAt:           now.Add(-2 * time.Hour),
+		ResetAt:              longReset,
+		Remaining:            100,
+		ShortWindowRemaining: &remaining,
+		ShortWindowResetAt:   now.Add(-30 * time.Minute),
+		LongWindowRemaining:  &remaining,
+		LongWindowResetAt:    longReset,
+		PlanType:             core.PlanTypePro,
+	}); err != nil {
+		t.Fatalf("seed ready window failed: %v", err)
+	}
+	if err := store.SaveAtomic(ctx); err != nil {
+		t.Fatalf("save seeded evidence failed: %v", err)
+	}
+}
+
+func newWarmupSweepRuntime(t *testing.T, now time.Time) (*Runtime, *warmupStubHost, *warmupTestClock, string) {
+	t.Helper()
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	stub := &warmupStubHost{
+		files: []host.AuthFile{{Name: "account-a", AuthIndex: "idx-a", Provider: "antigravity", Status: "active"}},
+		body:  warmupQuotaBody(now.Add(5*time.Hour), now.Add(7*24*time.Hour)),
+	}
+	clock := &warmupTestClock{now: now}
+	rt := New(Options{Host: stub, StateCachePath: cachePath, Clock: clock})
+	t.Cleanup(func() { _ = rt.Shutdown(context.Background()) })
+	if _, err := rt.Register(context.Background(), RegisterRequest{ConfigYAML: "enabled: true"}); err != nil {
+		t.Fatalf("register failed: %v", err)
+	}
+	return rt, stub, clock, cachePath
+}
+
+func enableGeminiWarmup(t *testing.T, rt *Runtime) {
+	t.Helper()
+	dyn := config.Default().Dynamic()
+	dyn.Warmup = config.WarmupConfig{GeminiEnabled: true, GeminiModel: "gemini-3-flash"}
+	if err := rt.SetDynamicConfig(context.Background(), dyn); err != nil {
+		t.Fatalf("enable warm-up failed: %v", err)
+	}
+}
+
+func TestRuntime_WarmupSweepWarmsReadyWindowWithoutSchedulingRun(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	rt, stub, _, cachePath := newWarmupSweepRuntime(t, now)
+	enableGeminiWarmup(t, rt)
+	seedReadyWindow(t, cachePath, now)
+
+	rt.sweepWarmupResets(ctx)
+
+	if got := stub.countCalls("generateContent"); got != 1 {
+		t.Fatalf("expected exactly 1 warm-up without a scheduling run, got %d", got)
+	}
+	persisted, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatalf("reload state failed: %v", err)
+	}
+	if persisted.GetLastWarmupAt("idx-a", string(config.AntigravityModelGroupGemini)).IsZero() {
+		t.Fatal("expected the warm-up timestamp to be persisted")
+	}
+
+	rt.sweepWarmupResets(ctx)
+	if got := stub.countCalls("generateContent"); got != 1 {
+		t.Fatalf("expected the debounce window to block a second warm-up, got %d", got)
+	}
+}
+
+func TestRuntime_WarmupSweepSkipsDisabledWarmup(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	rt, stub, _, cachePath := newWarmupSweepRuntime(t, now)
+	seedReadyWindow(t, cachePath, now)
+
+	rt.sweepWarmupResets(ctx)
+
+	if got := stub.countCalls("generateContent"); got != 0 {
+		t.Fatalf("expected no warm-up while warm-up is disabled, got %d", got)
+	}
+	if got := stub.countCalls("retrieveUserQuota"); got != 0 {
+		t.Fatalf("expected no background probe while warm-up is disabled, got %d", got)
+	}
+}
+
+func TestRuntime_WarmupSweepBoundsRetriesWhenWindowDoesNotConverge(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	rt, stub, clock, cachePath := newWarmupSweepRuntime(t, now)
+	enableGeminiWarmup(t, rt)
+	seedReadyWindow(t, cachePath, now)
+
+	// Upstream keeps reporting an exhausted 5h window whose reset already passed,
+	// so the warm-up cannot land until the window actually converges.
+	stub.setBody([]byte(fmt.Sprintf(
+		`{"models":{"gemini-2.5-pro":{"quotaInfo":{"windows":[{"name":"5h","remainingFraction":0.0,"resetTime":%q}]}},`+
+			`"gemini-2.5-flash":{"quotaInfo":{"windows":[{"name":"7d","remainingFraction":1.0,"resetTime":%q}]}}}}`,
+		now.Add(-30*time.Minute).UTC().Format(time.RFC3339),
+		now.Add(7*24*time.Hour).UTC().Format(time.RFC3339),
+	)))
+
+	for range 7 {
+		rt.sweepWarmupResets(ctx)
+		clock.advance(20 * time.Minute)
+	}
+
+	if got := stub.countCalls("generateContent"); got != 0 {
+		t.Fatalf("expected no warm-up while the window is not full, got %d", got)
+	}
+	if got := stub.countCalls("retrieveUserQuota"); got != warmupResetMaxAttempts {
+		t.Fatalf("expected retries to stop after %d probes, got %d", warmupResetMaxAttempts, got)
 	}
 }

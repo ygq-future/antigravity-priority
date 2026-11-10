@@ -134,7 +134,11 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 				disabledAuth[c.AuthIndex] = struct{}{}
 			}
 		}
-		r.triggerWarmupForEligibleCredentials(ctx, client, request.Config.Warmup, evidence.ByGroup, allAuthMaterials, disabledAuth, now)
+		if r.triggerWarmupForEligibleCredentials(ctx, client, request.Config.Warmup, evidence.ByGroup, allAuthMaterials, disabledAuth, store, now) > 0 {
+			if err := store.SaveAtomic(ctx); err != nil {
+				return fmt.Errorf("persist warm-up state: %w", err)
+			}
+		}
 	}
 
 	// Reconcile against the authoritative Host inventory after the potentially
