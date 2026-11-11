@@ -125,7 +125,6 @@ function element(initial) {
 const elements = {
     toastRoot: element(),
     modelSelect: element({value: "gemini-3.8-flash-high"}),
-    modelGroupSelect: element({value: "gemini"}),
     customModelSelect: element(),
     customModelSelectMenu: element(),
     customModelSelectBadge: element(),
@@ -179,7 +178,6 @@ const ZH = {
     burnLabel: "燃烧率",
     actualPriority: "实际",
     targetPriority: "目标",
-    predictedPriority: "预测",
     unsetPriority: "[未设置]",
     badgeGemini: "Gemini",
     badgeArgon: "Argon",
@@ -191,15 +189,13 @@ function escapeHTML(s) { return String(s || ""); }
 function formatCountdown(d) { return "02h 15m"; }
 
 currentLang = "zh-CN";
-dynamicConfig = { auto_apply: true, antigravity_model_group: "gemini" };
+dynamicConfig = { auto_apply: true };
 latestDiagnostics = { latest_audit: "scheduled probe completed: 4 observations" };
 scheduleConfig = null;
 isAuthBlocked = false;
-userSelectedModelGroup = false;
 
 // Mock 4 accounts across gemini, argon, and claude_gpt
 const sampleSnapshot = {
-    active_model_group: "gemini",
     models: [
         { id: "gemini-3.8-flash-high", display_name: "Gemini 3.8 Flash High", quota_pool: "gemini" },
         { id: "gemini-4-argon-high", display_name: "Gemini 4 Argon High", quota_pool: "argon" },
@@ -364,9 +360,6 @@ latestSnapshot = sampleSnapshot;
     if (elements.modelSelect.value !== "gemini-3.8-flash-high") {
         throw new Error("selectModel failed to set modelSelect value");
     }
-    if (elements.modelGroupSelect.value !== "gemini") {
-        throw new Error("selectModel failed to sync modelGroupSelect to gemini");
-    }
 
     // Verify KPI counters for Gemini
     if (String(elements.valTotalCreds.textContent) !== "4") {
@@ -414,9 +407,6 @@ latestSnapshot = sampleSnapshot;
 
     // === SCENARIO 2: Select claude-sonnet-5-5-high ===
     selectModel("claude-sonnet-5-5-high");
-    if (elements.modelGroupSelect.value !== "claude_gpt") {
-        throw new Error("selectModel failed to sync to claude_gpt");
-    }
 
     const cardsC = elements.credentialsContainer.children;
     // In Claude route: pro-b is top (priority 999 -> Tier #1 · Boost), pro-a is Tier #2, free-c is unsupported
@@ -431,9 +421,6 @@ latestSnapshot = sampleSnapshot;
 
     // === SCENARIO 3: Select gemini-4-argon-high ===
     selectModel("gemini-4-argon-high");
-    if (elements.modelGroupSelect.value !== "argon") {
-        throw new Error("selectModel failed to sync to argon");
-    }
     const cardsA = elements.credentialsContainer.children;
     if (cardsA.length !== 2) {
         throw new Error("expected 2 cards in Argon pool, got " + cardsA.length);
@@ -515,7 +502,6 @@ function element(initial) {
 const elements = {
     toastRoot: element(),
     modelSelect: element({ value: "gemini-3.8-flash-high" }),
-    modelGroupSelect: element({ value: "gemini" }),
     valLastAudit: element(),
     valNextProbe: element(),
     valTotalCreds: element(),
@@ -548,12 +534,10 @@ dynamicConfig = null;
 latestDiagnostics = null;
 scheduleConfig = null;
 isAuthBlocked = false;
-userSelectedModelGroup = false;
 const RUN_PATH = "/run";
 
 function snapshotWithPriorities(priorityA, priorityB) {
     return {
-        active_model_group: "gemini",
         groups: {
             gemini: {
                 items: [

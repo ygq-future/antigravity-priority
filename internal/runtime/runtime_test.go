@@ -176,7 +176,7 @@ func newTestRuntime(t *testing.T, options runtime.Options) *runtime.Runtime {
 
 func TestRuntime_Handle_Register(t *testing.T) {
 	r := newTestRuntime(t, runtime.Options{})
-	req := []byte(`{"config_yaml":"enabled: true\nantigravity_model_group: gemini\ninterval: 15m\n"}`)
+	req := []byte(`{"config_yaml":"enabled: true\ninterval: 15m\n"}`)
 
 	respBytes := r.Handle(context.Background(), "plugin.register", req)
 
@@ -216,7 +216,7 @@ func TestRuntime_Handle_Register(t *testing.T) {
 
 func TestRuntime_Handle_Reconfigure(t *testing.T) {
 	r := newTestRuntime(t, runtime.Options{})
-	req := []byte(`{"config_yaml":"enabled: false\nantigravity_model_group: claude_gpt\n"}`)
+	req := []byte(`{"config_yaml":"enabled: false\n"}`)
 
 	respBytes := r.Handle(context.Background(), "plugin.reconfigure", req)
 
@@ -309,7 +309,7 @@ func TestRuntime_Handle_Quiesce(t *testing.T) {
 
 	// The host re-registers the old plugin when a replacement fails, so quiesce
 	// must not make the runtime permanently unusable.
-	req := []byte(`{"config_yaml":"enabled: true\nantigravity_model_group: gemini\ninterval: 15m\n"}`)
+	req := []byte(`{"config_yaml":"enabled: true\ninterval: 15m\n"}`)
 	if envelope := decode(t, r.Handle(context.Background(), runtime.MethodPluginRegister, req)); !envelope.OK {
 		t.Fatalf("expected OK=true for register after quiesce, got error: %+v", envelope.Error)
 	}
@@ -657,8 +657,8 @@ func TestRuntime_ProductionRunner_ConcurrentProbes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("latest snapshot failed: %v", err)
 	}
-	if len(snap.Groups[snap.ActiveModelGroup].Items) != 3 {
-		t.Errorf("expected 3 total items, got %d", len(snap.Groups[snap.ActiveModelGroup].Items))
+	if len(snap.Groups["gemini"].Items) != 3 {
+		t.Errorf("expected 3 total items, got %d", len(snap.Groups["gemini"].Items))
 	}
 }
 
@@ -710,7 +710,7 @@ func TestRuntime_ProbeProjectsAllPoolsFromOneQuotaResponse(t *testing.T) {
 	if len(argon.Items) != 1 || argon.Items[0].R7d != 0.71 {
 		t.Fatalf("argon projection = %#v, want fresh quota data", argon)
 	}
-	if len(claudeGPT.Items) != 1 || claudeGPT.Items[0].R7d != 0.6 || claudeGPT.Items[0].IsPredicted {
+	if len(claudeGPT.Items) != 1 || claudeGPT.Items[0].R7d != 0.6 {
 		t.Fatalf("claude/gpt projection = %#v, want fresh live quota data", claudeGPT)
 	}
 	if mock.saveCalls != 0 {
@@ -943,8 +943,8 @@ func TestRuntime_ProductionRunner_FilteredAuthIndexes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("latest snapshot failed: %v", err)
 	}
-	if len(snap.Groups[snap.ActiveModelGroup].Items) != 2 {
-		t.Errorf("expected all 2 items retained in snapshot, got %d", len(snap.Groups[snap.ActiveModelGroup].Items))
+	if len(snap.Groups["gemini"].Items) != 2 {
+		t.Errorf("expected all 2 items retained in snapshot, got %d", len(snap.Groups["gemini"].Items))
 	}
 }
 
@@ -1046,8 +1046,8 @@ func TestRuntime_ProductionRunner_CachedEvidence(t *testing.T) {
 	if len(history) == 0 || history[0].Kind != runtime.KindAutoApply || history[0].Trigger != string(runtime.TriggerAutoApply) {
 		t.Fatalf("automatic scheduling history = %#v; want a distinct auto-apply entry", history)
 	}
-	if history[0].ProbeRoundID == "" || history[0].Snapshot == nil {
-		t.Fatalf("automatic scheduling history must combine probe and Host projection evidence: %#v", history[0])
+	if history[0].ProbeRoundID == "" {
+		t.Fatalf("automatic scheduling history must retain the probe round: %#v", history[0])
 	}
 	latestApply, ok := diagnostics["latest_apply"].(*runtime.RunHistoryEntry)
 	if !ok || latestApply == nil {
@@ -1204,7 +1204,7 @@ func TestRuntime_DiagnosticsWithProbeOnlyHistoryHasNoLatestApply(t *testing.T) {
 	}
 }
 
-func TestRuntime_SyncHostPreservesConfiguredControlGroup(t *testing.T) {
+func TestRuntime_SyncHostRefreshesAllPoolsWithoutGoogleCalls(t *testing.T) {
 	cachePath := filepath.Join(t.TempDir(), "cache.json")
 	mock := newMockHost()
 	mock.files = []host.AuthFile{{Name: "control", AuthIndex: "auth-control", Provider: "antigravity", Priority: 100}}
@@ -1217,15 +1217,15 @@ func TestRuntime_SyncHostPreservesConfiguredControlGroup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.ActiveModelGroup != "gemini" {
-		t.Fatalf("active_model_group = %q; want configured gemini", snapshot.ActiveModelGroup)
+	if len(snapshot.Groups) != 3 {
+		t.Fatalf("groups = %d; want all three quota pools", len(snapshot.Groups))
 	}
 	if len(mock.httpCalls) != httpCallsBefore {
 		t.Fatal("overview synchronization unexpectedly called Google")
 	}
 }
 
-func TestRuntime_SyncHostUsesUpdatedDynamicControlGroup(t *testing.T) {
+func TestRuntime_SyncHostUsesUpdatedDynamicConfig(t *testing.T) {
 	cachePath := filepath.Join(t.TempDir(), "cache.json")
 	mock := newMockHost()
 	mock.files = []host.AuthFile{{Name: "control", AuthIndex: "auth-control", Provider: "antigravity", Priority: 100}}
@@ -1237,7 +1237,7 @@ func TestRuntime_SyncHostUsesUpdatedDynamicControlGroup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dynamic.AntigravityModelGroup = string(config.AntigravityModelGroupClaudeGPT)
+	dynamic.MinChange = 2
 	if err := r.SetDynamicConfig(context.Background(), dynamic); err != nil {
 		t.Fatal(err)
 	}
@@ -1246,11 +1246,8 @@ func TestRuntime_SyncHostUsesUpdatedDynamicControlGroup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.ActiveModelGroup != string(config.AntigravityModelGroupClaudeGPT) {
-		t.Fatalf("active_model_group = %q, want updated Dynamic Config control", snapshot.ActiveModelGroup)
-	}
 	if len(snapshot.Groups[string(config.AntigravityModelGroupGemini)].Items) != 1 || len(snapshot.Groups[string(config.AntigravityModelGroupClaudeGPT)].Items) != 1 {
-		t.Fatalf("updated control projection = %#v, want both canonical groups", snapshot.Groups)
+		t.Fatalf("projection = %#v, want both canonical groups", snapshot.Groups)
 	}
 	if mock.saveCalls != 0 {
 		t.Fatalf("SyncHost or config change wrote Host documents: %d saves", mock.saveCalls)
@@ -1290,7 +1287,7 @@ func TestRuntime_ProductionRunner_ProbeFailure(t *testing.T) {
 		t.Fatalf("latest snapshot failed: %v", err)
 	}
 
-	activeGroup := snap.Groups[snap.ActiveModelGroup]
+	activeGroup := snap.Groups["gemini"]
 	if len(activeGroup.Items) != 1 {
 		t.Fatalf("expected 1 item in snapshot, got %d", len(activeGroup.Items))
 	}
@@ -1755,9 +1752,6 @@ func TestRuntime_GetSetDynamicConfig(t *testing.T) {
 	if dynCfg.Interval != "15m0s" {
 		t.Errorf("expected default Interval=15m0s, got %q", dynCfg.Interval)
 	}
-	if dynCfg.AntigravityModelGroup != "gemini" {
-		t.Errorf("expected default model group=gemini, got %q", dynCfg.AntigravityModelGroup)
-	}
 	if dynCfg.QuotaSampleCapacity != 6 {
 		t.Errorf("expected default QuotaSampleCapacity=6, got %d", dynCfg.QuotaSampleCapacity)
 	}
@@ -1766,7 +1760,6 @@ func TestRuntime_GetSetDynamicConfig(t *testing.T) {
 	update := state.DynamicConfig{
 		AutoApply:                true,
 		Interval:                 "30m",
-		AntigravityModelGroup:    "claude_gpt",
 		MaxConcurrency:           8,
 		MinChange:                3,
 		UrgencyTolerance:         0.08,
@@ -1806,9 +1799,6 @@ func TestRuntime_GetSetDynamicConfig(t *testing.T) {
 	if runtimeCfg.Interval != 30*time.Minute {
 		t.Errorf("expected Interval=30m, got %v", runtimeCfg.Interval)
 	}
-	if runtimeCfg.AntigravityModelGroup != config.AntigravityModelGroupClaudeGPT {
-		t.Errorf("expected claude_gpt, got %v", runtimeCfg.AntigravityModelGroup)
-	}
 	if runtimeCfg.MaxConcurrency != 8 {
 		t.Errorf("expected MaxConcurrency=8, got %d", runtimeCfg.MaxConcurrency)
 	}
@@ -1834,7 +1824,7 @@ func TestRuntime_GetSetDynamicConfig(t *testing.T) {
 	if !ok {
 		t.Fatal("expected dynamic config on disk")
 	}
-	if diskDyn.Interval != "30m" || diskDyn.AntigravityModelGroup != "claude_gpt" || diskDyn.QuotaSampleCapacity != 10 {
+	if diskDyn.Interval != "30m" || diskDyn.QuotaSampleCapacity != 10 {
 		t.Errorf("unexpected disk dynamic config: %+v", diskDyn)
 	}
 	if !diskDyn.Warmup.GeminiEnabled || diskDyn.Warmup.GeminiModel != "gemini-3-flash" {
@@ -1846,12 +1836,6 @@ func TestRuntime_GetSetDynamicConfig(t *testing.T) {
 	badInterval.Interval = "invalid"
 	if err := r.SetDynamicConfig(context.Background(), badInterval); err == nil {
 		t.Error("expected error for invalid interval")
-	}
-
-	badGroup := update
-	badGroup.AntigravityModelGroup = "unknown_group"
-	if err := r.SetDynamicConfig(context.Background(), badGroup); err == nil {
-		t.Error("expected error for invalid model group")
 	}
 
 	invalidCases := []struct {
@@ -1902,7 +1886,6 @@ func TestRuntime_DynamicConfig_SurvivesReconfigure(t *testing.T) {
 	if err := r.SetDynamicConfig(context.Background(), state.DynamicConfig{
 		AutoApply:                true,
 		Interval:                 "45m",
-		AntigravityModelGroup:    "claude_gpt",
 		MaxConcurrency:           10,
 		MinChange:                5,
 		UrgencyTolerance:         0.05,
@@ -1942,9 +1925,6 @@ func TestRuntime_DynamicConfig_SurvivesReconfigure(t *testing.T) {
 	}
 	if cfg.Interval != 45*time.Minute {
 		t.Errorf("expected Interval=45m, got %v", cfg.Interval)
-	}
-	if cfg.AntigravityModelGroup != config.AntigravityModelGroupClaudeGPT {
-		t.Errorf("expected claude_gpt, got %v", cfg.AntigravityModelGroup)
 	}
 	if cfg.MaxConcurrency != 10 {
 		t.Errorf("expected MaxConcurrency=10, got %d", cfg.MaxConcurrency)
@@ -2678,7 +2658,7 @@ func TestRuntime_ResetProjectionUsesPostResetHostInventory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := len(snapshot.Groups[snapshot.ActiveModelGroup].Items); got != 1 {
+	if got := len(snapshot.Groups["gemini"].Items); got != 1 {
 		t.Fatalf("post-reset projection has %d items, want current Host inventory of 1", got)
 	}
 }
@@ -2855,7 +2835,7 @@ func TestRuntime_DisabledAccount_ProbeBypassAndSingleProbe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	items := snap.Groups[snap.ActiveModelGroup].Items
+	items := snap.Groups["gemini"].Items
 	if len(items) != 1 || items[0].Reason != "disabled on host" {
 		t.Fatalf("expected reason %q, got %+v", "disabled on host", items)
 	}

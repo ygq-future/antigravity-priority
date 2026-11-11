@@ -18,7 +18,7 @@ import (
 type mockRunner struct {
 	runFunc         func(ctx context.Context, req management.RunRequest) (apply.Result, error)
 	resetFunc       func(ctx context.Context) (map[string]any, error)
-	snapshotFunc    func(ctx context.Context) (apply.DualGroupSnapshot, error)
+	snapshotFunc    func(ctx context.Context) (apply.SnapshotSet, error)
 	diagnosticsFunc func(ctx context.Context) (map[string]any, error)
 	scheduleConfig  state.ScheduleConfig
 	dynamicConfig   state.DynamicConfig
@@ -41,18 +41,18 @@ func (m *mockRunner) Reset(ctx context.Context) (map[string]any, error) {
 	return map[string]any{"ok": true, "reset_count": 0}, nil
 }
 
-func (m *mockRunner) LatestSnapshot(ctx context.Context) (apply.DualGroupSnapshot, error) {
+func (m *mockRunner) LatestSnapshot(ctx context.Context) (apply.SnapshotSet, error) {
 	if m.snapshotFunc != nil {
 		return m.snapshotFunc(ctx)
 	}
-	return apply.DualGroupSnapshot{}, nil
+	return apply.SnapshotSet{}, nil
 }
 
-func (m *mockRunner) SyncHost(ctx context.Context) (apply.DualGroupSnapshot, error) {
+func (m *mockRunner) SyncHost(ctx context.Context) (apply.SnapshotSet, error) {
 	if m.snapshotFunc != nil {
 		return m.snapshotFunc(ctx)
 	}
-	return apply.DualGroupSnapshot{}, nil
+	return apply.SnapshotSet{}, nil
 }
 
 func (m *mockRunner) Diagnostics(ctx context.Context) (map[string]any, error) {
@@ -291,7 +291,7 @@ func TestHandler_Diagnostics_Redaction(t *testing.T) {
 
 func TestHandler_Snapshot_Latest(t *testing.T) {
 	runner := &mockRunner{
-		snapshotFunc: func(ctx context.Context) (apply.DualGroupSnapshot, error) {
+		snapshotFunc: func(ctx context.Context) (apply.SnapshotSet, error) {
 			primary := apply.PlanSnapshot{
 				TotalItems:   1,
 				TotalChanges: 1,
@@ -307,7 +307,7 @@ func TestHandler_Snapshot_Latest(t *testing.T) {
 				},
 			}
 			predicted := apply.PlanSnapshot{Items: []apply.SnapshotItem{}, Changes: []apply.SnapshotChange{}}
-			return testDualGroupSnapshot(time.Now().UTC(), primary, predicted), nil
+			return testSnapshotSet(time.Now().UTC(), primary, predicted), nil
 		},
 	}
 
@@ -321,12 +321,9 @@ func TestHandler_Snapshot_Latest(t *testing.T) {
 		t.Fatalf("expected status 200, got %d", rec.Code)
 	}
 
-	var snap apply.DualGroupSnapshot
+	var snap apply.SnapshotSet
 	if err := json.Unmarshal(rec.Body.Bytes(), &snap); err != nil {
 		t.Fatalf("decode snapshot failed: %v", err)
-	}
-	if snap.ActiveModelGroup != "gemini" {
-		t.Errorf("expected active_model_group 'gemini', got %q", snap.ActiveModelGroup)
 	}
 	group, ok := snap.Groups["gemini"]
 	if !ok {
@@ -526,7 +523,6 @@ func TestHandler_GetDynamicConfig(t *testing.T) {
 		dynamicConfig: state.DynamicConfig{
 			AutoApply:                true,
 			Interval:                 "30m",
-			AntigravityModelGroup:    "claude_gpt",
 			MaxConcurrency:           8,
 			MinChange:                2,
 			UrgencyTolerance:         0.05,
@@ -563,9 +559,6 @@ func TestHandler_GetDynamicConfig(t *testing.T) {
 	if cfg.Interval != "30m" {
 		t.Errorf("expected Interval=30m, got %q", cfg.Interval)
 	}
-	if cfg.AntigravityModelGroup != "claude_gpt" {
-		t.Errorf("expected AntigravityModelGroup=claude_gpt, got %q", cfg.AntigravityModelGroup)
-	}
 	if cfg.MaxConcurrency != 8 {
 		t.Errorf("expected MaxConcurrency=8, got %d", cfg.MaxConcurrency)
 	}
@@ -587,7 +580,7 @@ func TestHandler_SetDynamicConfig_Success(t *testing.T) {
 	runner := &mockRunner{}
 	handler := management.NewHandler(runner)
 
-	body := `{"auto_apply":true,"interval":"20m","antigravity_model_group":"gemini","max_concurrency":4,"min_change":3,"urgency_tolerance":0.08,"rate_limit_cooldown_minutes":10,"quota_sample_capacity":6,"priority_rules":{"boost_start_priority":995,"normal_start_priority":120},"schedule":{"paused":false,"window_enabled":true,"window_start":"09:00","window_end":"18:00"}}`
+	body := `{"auto_apply":true,"interval":"20m","max_concurrency":4,"min_change":3,"urgency_tolerance":0.08,"rate_limit_cooldown_minutes":10,"quota_sample_capacity":6,"priority_rules":{"boost_start_priority":995,"normal_start_priority":120},"schedule":{"paused":false,"window_enabled":true,"window_start":"09:00","window_end":"18:00"}}`
 	req := httptest.NewRequest(http.MethodPost, "/runtime-config", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 
@@ -619,7 +612,7 @@ func TestHandler_DynamicConfig_WarmupRoundTrip(t *testing.T) {
 	runner := &mockRunner{}
 	handler := management.NewHandler(runner)
 
-	body := `{"auto_apply":true,"interval":"15m","antigravity_model_group":"gemini","max_concurrency":6,"min_change":1,"urgency_tolerance":0.05,"rate_limit_cooldown_minutes":5,"quota_sample_capacity":6,"priority_rules":{"boost_start_priority":999,"normal_start_priority":100},"schedule":{"paused":false,"window_enabled":false,"window_start":"00:00","window_end":"23:59"},"warmup":{"gemini_enabled":true,"gemini_model":"gemini-2.0-flash","claude_enabled":true,"claude_model":"claude-3-7-sonnet"}}`
+	body := `{"auto_apply":true,"interval":"15m","max_concurrency":6,"min_change":1,"urgency_tolerance":0.05,"rate_limit_cooldown_minutes":5,"quota_sample_capacity":6,"priority_rules":{"boost_start_priority":999,"normal_start_priority":100},"schedule":{"paused":false,"window_enabled":false,"window_start":"00:00","window_end":"23:59"},"warmup":{"gemini_enabled":true,"gemini_model":"gemini-2.0-flash","claude_enabled":true,"claude_model":"claude-3-7-sonnet"}}`
 	req := httptest.NewRequest(http.MethodPost, "/runtime-config", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 
@@ -655,7 +648,7 @@ func TestHandler_SetDynamicConfig_InvalidJSON(t *testing.T) {
 
 func TestHandler_Sync_Success(t *testing.T) {
 	runner := &mockRunner{
-		snapshotFunc: func(ctx context.Context) (apply.DualGroupSnapshot, error) {
+		snapshotFunc: func(ctx context.Context) (apply.SnapshotSet, error) {
 			primary := apply.PlanSnapshot{
 				TotalItems: 1,
 				Items: []apply.SnapshotItem{
@@ -668,7 +661,7 @@ func TestHandler_Sync_Success(t *testing.T) {
 				},
 			}
 			predicted := apply.PlanSnapshot{}
-			return testDualGroupSnapshot(time.Now().UTC(), primary, predicted), nil
+			return testSnapshotSet(time.Now().UTC(), primary, predicted), nil
 		},
 	}
 
@@ -682,20 +675,16 @@ func TestHandler_Sync_Success(t *testing.T) {
 		t.Fatalf("expected status 200, got %d", rec.Code)
 	}
 
-	var snap apply.DualGroupSnapshot
+	var snap apply.SnapshotSet
 	if err := json.Unmarshal(rec.Body.Bytes(), &snap); err != nil {
 		t.Fatalf("decode snapshot failed: %v", err)
 	}
-	if snap.ActiveModelGroup != "gemini" {
-		t.Errorf("expected active_model_group 'gemini', got %q", snap.ActiveModelGroup)
-	}
 }
 
-func testDualGroupSnapshot(observedAt time.Time, primary, predicted apply.PlanSnapshot) apply.DualGroupSnapshot {
-	return apply.DualGroupSnapshot{
-		ActiveModelGroup: "gemini",
-		ObservedAt:       observedAt,
-		Groups: map[string]apply.GroupSnapshot{
+func testSnapshotSet(observedAt time.Time, primary, predicted apply.PlanSnapshot) apply.SnapshotSet {
+	return apply.SnapshotSet{
+		ObservedAt: observedAt,
+		Groups: map[string]apply.PoolSnapshot{
 			"gemini":     {Items: primary.Items, Changes: primary.Changes},
 			"claude_gpt": {Items: predicted.Items, Changes: predicted.Changes},
 		},
@@ -736,8 +725,8 @@ func TestHandler_GetSamples_Success(t *testing.T) {
 }
 
 func TestHandler_GetProbeSamples_Success(t *testing.T) {
-	runner := &mockRunner{snapshotFunc: func(context.Context) (apply.DualGroupSnapshot, error) {
-		return apply.DualGroupSnapshot{Groups: map[string]apply.GroupSnapshot{
+	runner := &mockRunner{snapshotFunc: func(context.Context) (apply.SnapshotSet, error) {
+		return apply.SnapshotSet{Groups: map[string]apply.PoolSnapshot{
 			"gemini": {Items: []apply.SnapshotItem{{Identity: apply.SnapshotIdentity{
 				AuthIndex: "auth_test",
 				Email:     "probe@example.com",

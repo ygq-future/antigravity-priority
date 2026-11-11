@@ -44,12 +44,9 @@ const templateScriptOverviewSamples = `        let cachedSamplesData = null;
             modal.hidden = false;
 
             const modelInput = document.getElementById("modelSelect");
-            const groupSelect = document.getElementById("modelGroupSelect");
             let initialPool = "gemini";
             if (modelInput && modelInput.value) {
                 initialPool = resolveModelPool(modelInput.value);
-            } else if (groupSelect && groupSelect.value) {
-                initialPool = groupSelect.value;
             }
             activeSamplePool = initialPool;
 

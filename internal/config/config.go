@@ -30,8 +30,6 @@ const (
 	KeyAutoApply = "auto_apply"
 	// KeyInterval is the JSON key for interval.
 	KeyInterval = "interval"
-	// KeyAntigravityModelGroup is the JSON key for antigravity_model_group.
-	KeyAntigravityModelGroup = "antigravity_model_group"
 	// KeyMaxConcurrency is the JSON key for max_concurrency.
 	KeyMaxConcurrency = "max_concurrency"
 	// KeyMinChange is the JSON key for min_change.
@@ -70,8 +68,6 @@ const (
 	DefaultGeminiWarmupModel = "gemini-3-flash"
 	// DefaultClaudeWarmupModel is the default lightweight model used for Claude 5h warm-up.
 	DefaultClaudeWarmupModel = "claude-sonnet-5-5-high"
-
-
 
 	// DefaultUrgencyTolerance is the default numerical delta threshold below which adjacent credentials share identical priority.
 	DefaultUrgencyTolerance = 0.05
@@ -115,7 +111,6 @@ type Config struct {
 	Enabled                  bool
 	AutoApply                bool
 	Interval                 time.Duration
-	AntigravityModelGroup    AntigravityModelGroup
 	MaxConcurrency           int
 	MinChange                int
 	UrgencyTolerance         float64
@@ -128,6 +123,7 @@ type Config struct {
 	CustomTiers              map[string]int
 	Warmup                   WarmupConfig
 }
+
 // WarmupConfig encapsulates 5-hour short-window reset countdown warm-up settings.
 type WarmupConfig struct {
 	GeminiEnabled bool   `json:"gemini_enabled"`
@@ -159,7 +155,6 @@ func (w *WarmupConfig) Normalize() {
 		w.ClaudeModel = strings.TrimSpace(w.ClaudeModel)
 	}
 }
-
 
 // PriorityRules contains the priority scoring configurations.
 type PriorityRules struct {
@@ -210,12 +205,12 @@ func (cfg *PriorityRulesConfig) UnmarshalJSON(data []byte) error {
 func defaultPriorityRules() PriorityRules {
 	return PriorityRules{BoostStartPriority: 999, NormalStartPriority: 100, FreeStartPriority: 10}
 }
+
 // DynamicConfig contains all runtime-customizable configuration parameters
 // that can be modified via the UI Config Center without restarting the plugin (REQ-09).
 type DynamicConfig struct {
 	AutoApply                bool                `json:"auto_apply"`
-	Interval                 string              `json:"interval"`                // e.g. "15m", "30m"
-	AntigravityModelGroup    string              `json:"antigravity_model_group"` // "gemini", "argon", or "claude_gpt"
+	Interval                 string              `json:"interval"` // e.g. "15m", "30m"
 	MaxConcurrency           int                 `json:"max_concurrency"`
 	MinChange                int                 `json:"min_change"`
 	UrgencyTolerance         float64             `json:"urgency_tolerance"`           // e.g. 0.05
@@ -252,7 +247,6 @@ func Default() Config {
 		Enabled:                  true,
 		AutoApply:                false,
 		Interval:                 15 * time.Minute,
-		AntigravityModelGroup:    AntigravityModelGroupGemini,
 		MaxConcurrency:           6,
 		MinChange:                1,
 		UrgencyTolerance:         DefaultUrgencyTolerance,
@@ -276,7 +270,6 @@ func (cfg Config) Dynamic() DynamicConfig {
 	return DynamicConfig{
 		AutoApply:                cfg.AutoApply,
 		Interval:                 cfg.Interval.String(),
-		AntigravityModelGroup:    string(cfg.AntigravityModelGroup),
 		MaxConcurrency:           cfg.MaxConcurrency,
 		MinChange:                cfg.MinChange,
 		UrgencyTolerance:         cfg.UrgencyTolerance,
@@ -288,7 +281,7 @@ func (cfg Config) Dynamic() DynamicConfig {
 			NormalStartPriority: cfg.PriorityRules.NormalStartPriority,
 			FreeStartPriority:   cfg.PriorityRules.FreeStartPriority,
 		},
-		Schedule: cfg.Schedule,
+		Schedule:    cfg.Schedule,
 		CustomTiers: cloneCustomTiers(cfg.CustomTiers),
 		Warmup:      cfg.Warmup,
 	}
@@ -315,9 +308,6 @@ func (dyn DynamicConfig) Validate() error {
 	}
 	if interval < time.Minute {
 		return fmt.Errorf("interval %s too short: minimum is 1m", dyn.Interval)
-	}
-	if _, err := ParseAntigravityModelGroup(dyn.AntigravityModelGroup); err != nil {
-		return fmt.Errorf("invalid antigravity_model_group %q: must be 'gemini' or 'claude_gpt'", dyn.AntigravityModelGroup)
 	}
 	if dyn.MaxConcurrency < MinMaxConcurrency || dyn.MaxConcurrency > MaxMaxConcurrency {
 		return fmt.Errorf("max_concurrency must be between %d and %d, got %d", MinMaxConcurrency, MaxMaxConcurrency, dyn.MaxConcurrency)
@@ -379,12 +369,10 @@ func (dyn DynamicConfig) ApplyTo(base Config) (Config, error) {
 	}
 
 	interval, _ := time.ParseDuration(dyn.Interval)
-	modelGroup, _ := ParseAntigravityModelGroup(dyn.AntigravityModelGroup)
 
 	res := base
 	res.AutoApply = dyn.AutoApply
 	res.Interval = interval
-	res.AntigravityModelGroup = modelGroup
 	res.MaxConcurrency = dyn.MaxConcurrency
 	res.MinChange = dyn.MinChange
 	res.UrgencyTolerance = dyn.UrgencyTolerance

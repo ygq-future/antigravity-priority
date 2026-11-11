@@ -111,8 +111,8 @@ func (r *Runtime) resolveAuthEmail(authIndex string) string {
 	defer r.mu.Unlock()
 
 	raw := authIndex
-	if r.latestDualSnapshot != nil {
-		for _, g := range r.latestDualSnapshot.Groups {
+	if r.latestSnapshotSet != nil {
+		for _, g := range r.latestSnapshotSet.Groups {
 			for _, item := range g.Items {
 				if item.AuthIndex == authIndex || item.Identity.AuthIndex == authIndex || item.Name == authIndex {
 					if item.Identity.Email != "" {

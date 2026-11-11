@@ -37,7 +37,7 @@ type Runtime struct {
 	management              *management.Handler
 	latestResult            apply.Result
 	latestAudit             string
-	latestDualSnapshot      *apply.DualGroupSnapshot
+	latestSnapshotSet       *apply.SnapshotSet
 	scheduleConfig          state.ScheduleConfig
 	stateCacheOverride      string
 	runHistory              []RunHistoryEntry
@@ -314,25 +314,34 @@ func (r *Runtime) ResetAllPriorities(ctx context.Context) (map[string]any, error
 	if err != nil {
 		return nil, err
 	}
-	credentials = enrichCredentialsPlanTypeFromStore(store, credentials, string(cfg.AntigravityModelGroup))
+	credentials = enrichCredentialsPlanTypeFromStore(store, credentials)
 	evidenceByGroup := buildProjectionEvidence(store, credentials)
 	now := r.clock.Now().UTC()
-	projection, err := ProjectDualModelGroups(ProjectionInput{
-		ControlModelGroup: cfg.AntigravityModelGroup,
-		Credentials:       credentials,
-		EvidenceByGroup:   evidenceByGroup,
-		PlanningOptions:   priorityOptions(cfg, store, now),
-		ProjectionTime:    now,
+	projection, err := ProjectModelGroups(ProjectionInput{
+		Credentials:     credentials,
+		EvidenceByGroup: evidenceByGroup,
+		PlanningOptions: priorityOptions(cfg, store, now),
+		ProjectionTime:  now,
 	})
 	if err != nil {
 		return nil, err
 	}
-	primarySnapshot := projection.ControlSnapshot
-	r.setDualSnapshot(projection.Snapshot)
+	// Reset execution details still render a single plan snapshot. Use the
+	// Gemini pool as the stable legacy view; the three-pool SnapshotSet remains
+	// the authoritative snapshot for every other consumer.
+	geminiPool := projection.Snapshot.Groups[string(config.AntigravityModelGroupGemini)]
+	legacySnapshot := apply.PlanSnapshot{
+		DecidedAt:    projection.Snapshot.ObservedAt,
+		TotalItems:   len(geminiPool.Items),
+		TotalChanges: len(geminiPool.Changes),
+		Items:        geminiPool.Items,
+		Changes:      geminiPool.Changes,
+	}
+	r.setSnapshotSet(projection.Snapshot)
 
 	summary := resultSummary("reset", result)
-	result.Snapshot = primarySnapshot
-	snap := primarySnapshot
+	result.Snapshot = legacySnapshot
+	snap := legacySnapshot
 	_, projectErr := r.projectRun(ctx, store, result, summary, RunHistoryEntry{
 		Kind:     KindReset,
 		Trigger:  string(TriggerManualReset),
@@ -368,10 +377,10 @@ func (r *Runtime) ResetAllPriorities(ctx context.Context) (map[string]any, error
 	}, nil
 }
 
-// SyncHost re-reads credentials from CPA host, re-evaluates cached evidence, and updates the dual-group snapshot.
-func (r *Runtime) SyncHost(ctx context.Context) (apply.DualGroupSnapshot, error) {
+// SyncHost re-reads credentials from CPA host, re-evaluates cached evidence, and updates the three-pool snapshot.
+func (r *Runtime) SyncHost(ctx context.Context) (apply.SnapshotSet, error) {
 	if !r.runMu.TryLock() {
-		return apply.DualGroupSnapshot{}, ErrRunInProgress
+		return apply.SnapshotSet{}, ErrRunInProgress
 	}
 	defer r.runMu.Unlock()
 
@@ -380,19 +389,19 @@ func (r *Runtime) SyncHost(ctx context.Context) (apply.DualGroupSnapshot, error)
 	r.mu.Unlock()
 
 	if r.hostCallbacks == nil {
-		return apply.DualGroupSnapshot{}, errMissingHostCallbacks
+		return apply.SnapshotSet{}, errMissingHostCallbacks
 	}
 
 	client := host.NewClient(r.hostCallbacks)
 	files, err := client.ListAuthFiles(ctx)
 	if err != nil {
-		return apply.DualGroupSnapshot{}, err
+		return apply.SnapshotSet{}, err
 	}
 
 	credentials := credentialsFromAuthFiles(files)
 	credentials, _, err = enrichCredentialsFromAuthDocuments(ctx, client, credentials)
 	if err != nil {
-		return apply.DualGroupSnapshot{}, err
+		return apply.SnapshotSet{}, err
 	}
 
 	cachePath := cfg.StateCachePath
@@ -401,28 +410,27 @@ func (r *Runtime) SyncHost(ctx context.Context) (apply.DualGroupSnapshot, error)
 	}
 	store, err := state.Load(ctx, cachePath)
 	if err != nil {
-		return apply.DualGroupSnapshot{}, err
+		return apply.SnapshotSet{}, err
 	}
-	credentials = enrichCredentialsPlanTypeFromStore(store, credentials, string(cfg.AntigravityModelGroup))
+	credentials = enrichCredentialsPlanTypeFromStore(store, credentials)
 	evidenceByGroup := buildProjectionEvidence(store, credentials)
 
 	now := r.clock.Now().UTC()
-	projection, err := ProjectDualModelGroups(ProjectionInput{
-		ControlModelGroup: cfg.AntigravityModelGroup,
-		Credentials:       credentials,
-		EvidenceByGroup:   evidenceByGroup,
-		PlanningOptions:   priorityOptions(cfg, store, now),
-		ProjectionTime:    now,
+	projection, err := ProjectModelGroups(ProjectionInput{
+		Credentials:     credentials,
+		EvidenceByGroup: evidenceByGroup,
+		PlanningOptions: priorityOptions(cfg, store, now),
+		ProjectionTime:  now,
 	})
 	if err != nil {
-		return apply.DualGroupSnapshot{}, err
+		return apply.SnapshotSet{}, err
 	}
 	authModels, _ := client.ListAuthModels(ctx)
 	r.routingMu.Lock()
 	r.updateModelInventoryLocked(files, authModels)
 	r.recomputeRoutingTablesLocked(now)
 	r.routingMu.Unlock()
-	r.setDualSnapshot(projection.Snapshot)
+	r.setSnapshotSet(projection.Snapshot)
 	return r.LatestSnapshot(ctx)
 }
 
@@ -605,32 +613,30 @@ func (r *Runtime) Config() (config.Config, error) {
 	return r.cfg, nil
 }
 
-// LatestSnapshot returns the most recently generated dual-group plan snapshot.
-func (r *Runtime) LatestSnapshot(ctx context.Context) (apply.DualGroupSnapshot, error) {
+// LatestSnapshot returns the most recently generated three-pool plan snapshot.
+func (r *Runtime) LatestSnapshot(ctx context.Context) (apply.SnapshotSet, error) {
 	if _, err := r.Config(); err != nil {
-		return apply.DualGroupSnapshot{}, err
+		return apply.SnapshotSet{}, err
 	}
 	r.mu.Lock()
-	snap := r.latestDualSnapshot
+	snap := r.latestSnapshotSet
 	if snap != nil {
 		r.enrichSnapshotWithModelsLocked(snap)
-		cloned := cloneDualGroupSnapshot(*snap)
+		cloned := cloneSnapshotSet(*snap)
 		r.mu.Unlock()
 		return cloned, nil
 	}
 	r.mu.Unlock()
 	// projection seam until a shared projection is available.
-	cfg, _ := r.Config()
 	now := r.clock.Now().UTC()
-	projection, err := ProjectDualModelGroups(ProjectionInput{
-		ControlModelGroup: cfg.AntigravityModelGroup,
-		ProjectionTime:    now,
+	projection, err := ProjectModelGroups(ProjectionInput{
+		ProjectionTime: now,
 	})
 	if err != nil {
-		return apply.DualGroupSnapshot{}, err
+		return apply.SnapshotSet{}, err
 	}
-	r.setDualSnapshot(projection.Snapshot)
-	return cloneDualGroupSnapshot(projection.Snapshot), nil
+	r.setSnapshotSet(projection.Snapshot)
+	return cloneSnapshotSet(projection.Snapshot), nil
 }
 
 // Diagnostics returns a comprehensive diagnostics map.
@@ -873,7 +879,7 @@ func (r *Runtime) snapshotRunEntry(result apply.Result, audit string, entry RunH
 	r.runHistory = history
 }
 
-func (r *Runtime) enrichSnapshotWithModelsLocked(snap *apply.DualGroupSnapshot) {
+func (r *Runtime) enrichSnapshotWithModelsLocked(snap *apply.SnapshotSet) {
 	if snap == nil {
 		return
 	}
@@ -917,21 +923,21 @@ func (r *Runtime) enrichSnapshotWithModelsLocked(snap *apply.DualGroupSnapshot) 
 	}
 }
 
-func (r *Runtime) setDualSnapshot(snap apply.DualGroupSnapshot) {
+func (r *Runtime) setSnapshotSet(snap apply.SnapshotSet) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	cloned := cloneDualGroupSnapshot(snap)
+	cloned := cloneSnapshotSet(snap)
 	r.enrichSnapshotWithModelsLocked(&cloned)
-	r.latestDualSnapshot = &cloned
+	r.latestSnapshotSet = &cloned
 }
 
 func (r *Runtime) patchSnapshotCooldown(authIndex string, inCooldown bool, reason string, restoredPriority int, restoredDisabled bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.latestDualSnapshot == nil {
+	if r.latestSnapshotSet == nil {
 		return
 	}
-	for groupKey, group := range r.latestDualSnapshot.Groups {
+	for groupKey, group := range r.latestSnapshotSet.Groups {
 		for i, item := range group.Items {
 			if item.Identity.AuthIndex == authIndex || item.Name == authIndex || item.Identity.Email == authIndex || item.Email == authIndex || strings.EqualFold(item.AuthIndex, authIndex) {
 				if inCooldown {
@@ -948,13 +954,13 @@ func (r *Runtime) patchSnapshotCooldown(authIndex string, inCooldown bool, reaso
 				}
 			}
 		}
-		r.latestDualSnapshot.Groups[groupKey] = group
+		r.latestSnapshotSet.Groups[groupKey] = group
 	}
 }
 
 func (r *Runtime) currentSnapshotEmails() map[string]string {
 	r.mu.Lock()
-	snapshot := r.latestDualSnapshot
+	snapshot := r.latestSnapshotSet
 	r.mu.Unlock()
 	if snapshot == nil {
 		return nil
@@ -1178,7 +1184,7 @@ func (r *Runtime) SetCustomTier(ctx context.Context, authIndex string, tier int)
 	} else {
 		r.cfg.CustomTiers[cleanIdx] = tier
 	}
-	r.latestDualSnapshot = nil
+	r.latestSnapshotSet = nil
 	r.mu.Unlock()
 
 	r.routingMu.Lock()

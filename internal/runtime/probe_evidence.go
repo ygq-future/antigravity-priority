@@ -22,11 +22,8 @@ type collectInput struct {
 	credentials        []core.Credential
 	authMaterials      map[string]authMaterial
 	now                time.Time
-	cacheTTL           time.Duration
-	forceProbe         bool
 	targetedSingleAuth bool
 	maxConcurrency     int
-	modelGroup         config.AntigravityModelGroup
 	sampleCapacity     int
 }
 
@@ -50,11 +47,7 @@ func collectFreshEvidence(ctx context.Context, input collectInput) (collectedEvi
 	probes := make([]evidence.ProbeObservation, 0)
 	jobs := make([]probeJob, 0, len(input.credentials))
 	for _, cred := range input.credentials {
-		needsProbe, err := freshProbeNeeded(ctx, input, cred, string(input.modelGroup))
-		if err != nil {
-			return collectedEvidence{}, err
-		}
-		if needsProbe {
+		if freshProbeNeeded(cred, input.targetedSingleAuth) {
 			jobs = append(jobs, probeJob{
 				credential:   cred,
 				authMaterial: input.authMaterials[cred.AuthIndex],
@@ -141,32 +134,14 @@ func uniqueProbeCredentials(probes []evidence.ProbeObservation) int {
 	return len(authIndexes)
 }
 
-func freshProbeNeeded(ctx context.Context, input collectInput, cred core.Credential, modelGroup string) (bool, error) {
-	if cred.Disabled {
-		// Bypassed: disabled credentials on the host must never be probed during
-		// batch operations (auto-scheduling or "Probe All").
-		// Targeted single-credential probe allows viewing quota on demand.
-		if !input.targetedSingleAuth {
-			return false, nil
-		}
+func freshProbeNeeded(cred core.Credential, targetedSingleAuth bool) bool {
+	if !cred.Disabled {
+		return true
 	}
-	if input.forceProbe {
-		return true, nil
-	}
-	return input.store.NeedsProbe(ctx, state.ProbeCheck{
-		AuthIndex:  cred.AuthIndex,
-		Provider:   core.ProviderAntigravity,
-		ModelGroup: modelGroup,
-		Now:        input.now,
-		Policy:     probePolicy(input.cacheTTL),
-	})
-}
-
-func probePolicy(cacheTTL time.Duration) state.ProbePolicy {
-	if cacheTTL <= 0 {
-		cacheTTL = 15 * time.Minute
-	}
-	return state.ProbePolicy{TTL: cacheTTL, ResetStaleAfter: time.Hour}
+	// Bypassed: disabled credentials on the host must never be probed during
+	// batch operations (auto-scheduling or "Probe All").
+	// Targeted single-credential probe allows viewing quota on demand.
+	return targetedSingleAuth
 }
 
 func runProbeJobs(ctx context.Context, input collectInput, jobs []probeJob, roundID string) ([]evidence.ProbeObservation, error) {

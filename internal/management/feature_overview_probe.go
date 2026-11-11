@@ -40,8 +40,6 @@ const templateScriptProbeSchedule = `        function setListProbeLoading(loadin
 
             setListProbeLoading(true);
             try {
-                var groupSelect = document.getElementById("modelGroupSelect");
-                var group = groupSelect ? groupSelect.value : "gemini";
                 var path = RUN_PATH + "?mode=probe";
                 var data = await apiFetch(path, { method: "POST" });
                 var outcomes = (data && Array.isArray(data.probe_outcomes)) ? data.probe_outcomes : [];
@@ -50,7 +48,7 @@ const templateScriptProbeSchedule = `        function setListProbeLoading(loadin
                 var unavailableCount = 0;
                 for (var i = 0; i < outcomes.length; i++) {
                     var o = outcomes[i];
-                    if (!o || (group && o.model_group !== group)) continue;
+                    if (!o) continue;
                     if (o.status === "success") {
                         successCount++;
                     } else if (o.status === "unavailable") {

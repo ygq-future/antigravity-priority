@@ -6,13 +6,13 @@ package management
 // bilingual key during asset movement.
 var overviewTranslationKeys = []string{
 	"kpiTotal", "kpiBoosted", "kpiBoostedDesc", "kpiDepleted", "kpiDepletedDesc", "kpiLastAudit",
-	"labelModelGroup", "optGemini", "optClaudeGPT", "btnRefresh", "btnReset", "btnProbe", "btnSamples", "btnTier",
+	"btnRefresh", "btnReset", "btnProbe", "btnSamples", "btnTier",
 	"customTierModalTitle", "customTierSelectLabel", "customTierAutoOption", "customTierCustomInput", "customTierExplanation", "btnSaveCustomTier",
 	"samplesModalTitle", "colObservedAt", "colShortRem", "colLongRem", "noSamples", "actualPriority", "targetPriority",
-	"predictedPriority", "unsetPriority", "syncSuccess", "confirmReset", "resetSuccess", "loading", "noCreds",
+	"unsetPriority", "syncSuccess", "confirmReset", "resetSuccess", "loading", "noCreds",
 	"noChanges", "statusActive", "statusBoosted", "statusWeeklyDepleted", "statusShortDepleted",
 	"statusFailed", "shortWindow", "longWindow", "argonWindow", "resetIn", "priority", "urgencyLabel", "burnLabel", "running",
-	"scheduleActive", "schedulePaused", "scheduleSleeping", "scheduleDisabled", "predictedBadge", "predictedNote",
+	"scheduleActive", "schedulePaused", "scheduleSleeping", "scheduleDisabled",
 	"probeSuccess", "probeCooldown", "probing", "probingQuotaTitle", "probingQuotaDesc", "syncingQuotaTitle", "syncingQuotaDesc", "resettingTitle", "resettingDesc", "viewDetails", "statusCooldown", "statusDisabled", "btnProbeSingle", "probeSingleSuccess",
 	"probeSingleFailed", "probeUnavailable", "probeSingleNoResult", "probeBatchFailed",
 	"poolGemini", "poolArgon", "poolClaudeGPT", "badgeGemini", "badgeArgon", "badgeClaudeGPT",

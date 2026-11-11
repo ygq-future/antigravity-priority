@@ -24,9 +24,6 @@ func TestDefault(t *testing.T) {
 	if cfg.Interval != 15*time.Minute {
 		t.Errorf("expected Interval=15m, got %v", cfg.Interval)
 	}
-	if cfg.AntigravityModelGroup != config.AntigravityModelGroupGemini {
-		t.Errorf("expected AntigravityModelGroup=gemini, got %v", cfg.AntigravityModelGroup)
-	}
 	if cfg.MaxConcurrency != 6 {
 		t.Errorf("expected MaxConcurrency=6, got %v", cfg.MaxConcurrency)
 	}
@@ -232,7 +229,6 @@ func TestDynamicConfig_ValidateAndApplyTo(t *testing.T) {
 		dyn := config.DynamicConfig{
 			AutoApply:                true,
 			Interval:                 "30m",
-			AntigravityModelGroup:    "claude_gpt",
 			MaxConcurrency:           12,
 			MinChange:                5,
 			UrgencyTolerance:         0.10,
@@ -262,9 +258,6 @@ func TestDynamicConfig_ValidateAndApplyTo(t *testing.T) {
 		}
 		if merged.Interval != 30*time.Minute {
 			t.Errorf("expected Interval=30m, got %v", merged.Interval)
-		}
-		if merged.AntigravityModelGroup != config.AntigravityModelGroupClaudeGPT {
-			t.Errorf("expected ModelGroup=claude_gpt, got %v", merged.AntigravityModelGroup)
 		}
 		if merged.MaxConcurrency != 12 {
 			t.Errorf("expected MaxConcurrency=12, got %d", merged.MaxConcurrency)
@@ -319,11 +312,6 @@ func TestDynamicConfig_ValidateAndApplyTo(t *testing.T) {
 				name:    "interval duration too short (< 1m)",
 				mutate:  func(dyn *config.DynamicConfig) { dyn.Interval = "30s" },
 				wantErr: "too short",
-			},
-			{
-				name:    "invalid model group",
-				mutate:  func(dyn *config.DynamicConfig) { dyn.AntigravityModelGroup = "unknown" },
-				wantErr: "invalid antigravity_model_group",
 			},
 			{
 				name:    "max concurrency out of range (0)",
@@ -506,7 +494,7 @@ func TestDynamicConfigZeroToleranceAndLegacyPriorityRuleMigration(t *testing.T) 
 	}
 
 	var legacyFalse config.DynamicConfig
-	legacyJSON := []byte(`{"auto_apply":false,"interval":"15m","antigravity_model_group":"gemini","max_concurrency":6,"min_change":1,"urgency_tolerance":0.05,"rate_limit_cooldown_minutes":5,"quota_sample_capacity":6,"priority_rules":{"enabled":false,"boost_start_priority":777,"normal_start_priority":222},"schedule":{"paused":false}}`)
+	legacyJSON := []byte(`{"auto_apply":false,"interval":"15m","max_concurrency":6,"min_change":1,"urgency_tolerance":0.05,"rate_limit_cooldown_minutes":5,"quota_sample_capacity":6,"priority_rules":{"enabled":false,"boost_start_priority":777,"normal_start_priority":222},"schedule":{"paused":false}}`)
 	if err := json.Unmarshal(legacyJSON, &legacyFalse); err != nil {
 		t.Fatal(err)
 	}

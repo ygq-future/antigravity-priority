@@ -146,7 +146,7 @@ func main() {
 
 	// 3. Verify plugin.register call
 	methodRegister := append([]byte("plugin.register"), 0)
-	reqRegister := []byte("{\"config_yaml\":\"enabled: true\\nantigravity_model_group: gemini\\n\"}")
+	reqRegister := []byte("{\"config_yaml\":\"enabled: true\\n\"}")
 
 	respBuf = cliproxyBuffer{}
 	ret, _, _ = callProc.Call(

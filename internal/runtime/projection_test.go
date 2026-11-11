@@ -18,7 +18,7 @@ import (
 	"antigravity-priority/internal/runtime"
 )
 
-func TestProjectDualModelGroups_ControlDirectionsAndIndependentEvidence(t *testing.T) {
+func TestProjectModelGroups_AllPoolsAreActiveAndIndependent(t *testing.T) {
 	now := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
 	credentials := []core.Credential{
 		{
@@ -42,76 +42,50 @@ func TestProjectDualModelGroups_ControlDirectionsAndIndependentEvidence(t *testi
 		}},
 	}
 
-	tests := []struct {
-		name    string
-		control config.AntigravityModelGroup
-		other   config.AntigravityModelGroup
-	}{
-		{name: "gemini control", control: config.AntigravityModelGroupGemini, other: config.AntigravityModelGroupClaudeGPT},
-		{name: "claude gpt control", control: config.AntigravityModelGroupClaudeGPT, other: config.AntigravityModelGroupGemini},
+	projection, err := runtime.ProjectModelGroups(runtime.ProjectionInput{
+		Credentials:     credentials,
+		EvidenceByGroup: groupEvidence,
+		PlanningOptions: priority.Options{
+			BoostStartPriority:  999,
+			NormalStartPriority: 100,
+			MinChange:           1,
+		},
+		ProjectionTime: now,
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			projection, err := runtime.ProjectDualModelGroups(runtime.ProjectionInput{
-				ControlModelGroup: tt.control,
-				Credentials:       credentials,
-				EvidenceByGroup:   groupEvidence,
-				PlanningOptions: priority.Options{
-					BoostStartPriority:  999,
-					NormalStartPriority: 100,
-					MinChange:           1,
-				},
-				ProjectionTime: now,
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if projection.ControlPlan.DecidedAt != now {
-				t.Fatalf("control plan decided_at = %s, want %s", projection.ControlPlan.DecidedAt, now)
-			}
-			if projection.Snapshot.ActiveModelGroup != string(tt.control) {
-				t.Fatalf("active_model_group = %q, want %q", projection.Snapshot.ActiveModelGroup, tt.control)
-			}
-			if !projection.Snapshot.ObservedAt.Equal(now) {
-				t.Fatalf("observed_at = %s, want %s", projection.Snapshot.ObservedAt, now)
-			}
-			if len(projection.Snapshot.Groups) != 3 {
-				t.Fatalf("groups count = %d, want 3 active canonical groups", len(projection.Snapshot.Groups))
-			}
+	if !projection.Snapshot.ObservedAt.Equal(now) {
+		t.Fatalf("observed_at = %s, want %s", projection.Snapshot.ObservedAt, now)
+	}
+	if len(projection.Snapshot.Groups) != 3 {
+		t.Fatalf("groups count = %d, want 3 active canonical groups", len(projection.Snapshot.Groups))
+	}
 
-			control := projection.Snapshot.Groups[string(tt.control)]
-			other := projection.Snapshot.Groups[string(tt.other)]
-			argon := projection.Snapshot.Groups[string(config.AntigravityModelGroupArgon)]
+	for _, group := range config.AllAntigravityModelGroups {
+		pool := projection.Snapshot.Groups[string(group)]
+		if len(pool.Items) != 1 {
+			t.Fatalf("%s items = %#v, want one item", group, pool.Items)
+		}
+	}
 
-			if len(control.Items) != 1 || control.Items[0].IsPredicted {
-				t.Fatalf("control items = %#v, want one non-predicted item", control.Items)
-			}
-			if len(other.Items) != 1 || other.Items[0].IsPredicted {
-				t.Fatalf("other items = %#v, want one non-predicted item", other.Items)
-			}
-			if len(argon.Items) != 1 || argon.Items[0].IsPredicted {
-				t.Fatalf("argon items = %#v, want one non-predicted item", argon.Items)
-			}
-
-			// Verify AllQuotaWindows is populated on every item
-			qw := control.Items[0].QuotaWindows
-			if qw.Gemini5h.Remaining == nil || *qw.Gemini5h.Remaining != 92 {
-				t.Errorf("control QuotaWindows Gemini5h = %v, want 92", qw.Gemini5h.Remaining)
-			}
-			if qw.Claude7d.Remaining == nil || *qw.Claude7d.Remaining != 61 {
-				t.Errorf("control QuotaWindows Claude7d = %v, want 61", qw.Claude7d.Remaining)
-			}
-			if qw.Claude5h.Remaining != nil {
-				t.Errorf("control QuotaWindows Claude5h = %v, want nil on Free tier", qw.Claude5h.Remaining)
-			}
-			if qw.Argon7d.Remaining == nil || *qw.Argon7d.Remaining != 75 {
-				t.Errorf("control QuotaWindows Argon7d = %v, want 75", qw.Argon7d.Remaining)
-			}
-		})
+	gemini := projection.Snapshot.Groups[string(config.AntigravityModelGroupGemini)]
+	qw := gemini.Items[0].QuotaWindows
+	if qw.Gemini5h.Remaining == nil || *qw.Gemini5h.Remaining != 92 {
+		t.Errorf("QuotaWindows Gemini5h = %v, want 92", qw.Gemini5h.Remaining)
+	}
+	if qw.Claude7d.Remaining == nil || *qw.Claude7d.Remaining != 61 {
+		t.Errorf("QuotaWindows Claude7d = %v, want 61", qw.Claude7d.Remaining)
+	}
+	if qw.Claude5h.Remaining != nil {
+		t.Errorf("QuotaWindows Claude5h = %v, want nil on Free tier", qw.Claude5h.Remaining)
+	}
+	if qw.Argon7d.Remaining == nil || *qw.Argon7d.Remaining != 75 {
+		t.Errorf("QuotaWindows Argon7d = %v, want 75", qw.Argon7d.Remaining)
 	}
 }
 
-func TestProjectDualModelGroups_QuotaWindowsRemainPerCredentialWhenRedactedIndexesCollide(t *testing.T) {
+func TestProjectModelGroups_QuotaWindowsRemainPerCredentialWhenRedactedIndexesCollide(t *testing.T) {
 	now := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
 	credentials := []core.Credential{
 		{
@@ -144,10 +118,9 @@ func TestProjectDualModelGroups_QuotaWindowsRemainPerCredentialWhenRedactedIndex
 		}},
 	}
 
-	projection, err := runtime.ProjectDualModelGroups(runtime.ProjectionInput{
-		ControlModelGroup: config.AntigravityModelGroupGemini,
-		Credentials:       credentials,
-		EvidenceByGroup:   groupEvidence,
+	projection, err := runtime.ProjectModelGroups(runtime.ProjectionInput{
+		Credentials:     credentials,
+		EvidenceByGroup: groupEvidence,
 		PlanningOptions: priority.Options{
 			BoostStartPriority:  999,
 			NormalStartPriority: 100,
@@ -194,7 +167,7 @@ func TestProjectDualModelGroups_QuotaWindowsRemainPerCredentialWhenRedactedIndex
 	assertWindow("auth-beta argon7d", beta.QuotaWindows.Argon7d, 38)
 }
 
-func TestProjectDualModelGroups_MissingGroupRemainsStableAndUnknown(t *testing.T) {
+func TestProjectModelGroups_MissingGroupRemainsStableAndUnknown(t *testing.T) {
 	now := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
 	credentials := []core.Credential{{
 		Name:      "account-1",
@@ -204,9 +177,8 @@ func TestProjectDualModelGroups_MissingGroupRemainsStableAndUnknown(t *testing.T
 		PlanType:  core.PlanTypeUnknown,
 		Priority:  42,
 	}}
-	projection, err := runtime.ProjectDualModelGroups(runtime.ProjectionInput{
-		ControlModelGroup: config.AntigravityModelGroupGemini,
-		Credentials:       credentials,
+	projection, err := runtime.ProjectModelGroups(runtime.ProjectionInput{
+		Credentials: credentials,
 		EvidenceByGroup: map[config.AntigravityModelGroup]evidence.Result{
 			config.AntigravityModelGroupGemini: {Eligible: []priority.QuotaEvidence{readyEvidence("auth-1", core.PlanTypePlus, 88, now.Add(2*time.Hour))}},
 		},
@@ -228,12 +200,11 @@ func TestProjectDualModelGroups_MissingGroupRemainsStableAndUnknown(t *testing.T
 	}
 }
 
-func TestProjectDualModelGroups_HistoricalEvidenceProjectsStoredQuota(t *testing.T) {
+func TestProjectModelGroups_HistoricalEvidenceProjectsStoredQuota(t *testing.T) {
 	now := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
 	credentials := []core.Credential{{AuthIndex: "auth-1", Priority: 42}}
-	projection, err := runtime.ProjectDualModelGroups(runtime.ProjectionInput{
-		ControlModelGroup: config.AntigravityModelGroupGemini,
-		Credentials:       credentials,
+	projection, err := runtime.ProjectModelGroups(runtime.ProjectionInput{
+		Credentials: credentials,
 		EvidenceByGroup: map[config.AntigravityModelGroup]evidence.Result{
 			config.AntigravityModelGroupGemini: historicalEvidenceResult(readyEvidence("auth-1", core.PlanTypePro, 88, now.Add(100*time.Hour))),
 		},
@@ -252,7 +223,7 @@ func TestProjectDualModelGroups_HistoricalEvidenceProjectsStoredQuota(t *testing
 	}
 }
 
-func TestProjectDualModelGroups_DoesNotMutateInputsOrReturnedSnapshots(t *testing.T) {
+func TestProjectModelGroups_DoesNotMutateInputsOrReturnedSnapshots(t *testing.T) {
 	now := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
 	credentials := []core.Credential{{
 		Name:      "account-1",
@@ -263,29 +234,31 @@ func TestProjectDualModelGroups_DoesNotMutateInputsOrReturnedSnapshots(t *testin
 	}}
 	fresh := readyEvidence("auth-1", core.PlanTypePro, 88, now.Add(2*time.Hour))
 	input := runtime.ProjectionInput{
-		ControlModelGroup: config.AntigravityModelGroupGemini,
-		Credentials:       credentials,
+		Credentials: credentials,
 		EvidenceByGroup: map[config.AntigravityModelGroup]evidence.Result{
 			config.AntigravityModelGroupGemini: {Eligible: []priority.QuotaEvidence{fresh}},
 		},
 		PlanningOptions: priority.Options{NormalStartPriority: 100, MinChange: 1},
 		ProjectionTime:  now,
 	}
-	first, err := runtime.ProjectDualModelGroups(input)
+	first, err := runtime.ProjectModelGroups(input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	first.Snapshot.Groups["gemini"] = apply.GroupSnapshot{}
-	first.ControlPlan.Items[0].Credential.Priority = 999
+	originalTarget := first.Snapshot.Groups["gemini"].Items[0].Target.Priority
+	mutated := first.Snapshot.Groups["gemini"]
+	mutated.Items[0].Target.Priority = 999
+	first.Snapshot.Groups["gemini"] = mutated
 	if credentials[0].Priority != 42 || fresh.Remaining == nil || *fresh.Remaining != 88 {
 		t.Fatalf("projection mutated input: credentials=%#v evidence=%#v", credentials, fresh)
 	}
-	second, err := runtime.ProjectDualModelGroups(input)
+	second, err := runtime.ProjectModelGroups(input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(second.Snapshot.Groups["gemini"].Items) != 1 || second.ControlPlan.Items[0].Credential.Priority != 42 {
-		t.Fatalf("projection result was not independent: %#v / %#v", second.Snapshot, second.ControlPlan.Items)
+	secondGemini := second.Snapshot.Groups["gemini"]
+	if len(secondGemini.Items) != 1 || secondGemini.Items[0].Target.Priority != originalTarget {
+		t.Fatalf("projection result was not independent: %#v", second.Snapshot)
 	}
 }
 
@@ -317,7 +290,7 @@ func TestRuntime_LatestSnapshotFallbackIsStableAndComplete(t *testing.T) {
 	if len(first.Groups) != 3 || len(first.Groups["gemini"].Items) != 0 || len(first.Groups["claude_gpt"].Items) != 0 || len(first.Groups["argon"].Items) != 0 {
 		t.Fatalf("fallback = %#v, want three stable empty groups", first)
 	}
-	first.Groups["gemini"] = apply.GroupSnapshot{Items: []apply.SnapshotItem{{AuthIndex: "mutated"}}}
+	first.Groups["gemini"] = apply.PoolSnapshot{Items: []apply.SnapshotItem{{AuthIndex: "mutated"}}}
 
 	second, err := r.LatestSnapshot(context.Background())
 	if err != nil {
@@ -331,7 +304,7 @@ func TestRuntime_LatestSnapshotFallbackIsStableAndComplete(t *testing.T) {
 	}
 }
 
-func TestProjectDualModelGroups_ThreePoolIndependentPlansAndQuotaWindows(t *testing.T) {
+func TestProjectModelGroups_ThreePoolIndependentPlansAndQuotaWindows(t *testing.T) {
 	raw := []byte(`{"groups":[
 		{"displayName":"Gemini Models","description":"Shared quota for Gemini models","buckets":[
 			{"bucketId":"gemini-5h","displayName":"Five Hour Limit","window":"5h","remainingFraction":0.99,"resetTime":"2026-10-28T17:00:00Z"},
@@ -377,15 +350,14 @@ func TestProjectDualModelGroups_ThreePoolIndependentPlansAndQuotaWindows(t *test
 		}
 	}
 
-	projection, err := runtime.ProjectDualModelGroups(runtime.ProjectionInput{
-		ControlModelGroup: config.AntigravityModelGroupGemini,
-		Credentials:       credentials,
-		EvidenceByGroup:   evidenceByGroup,
-		PlanningOptions:   priority.Options{NormalStartPriority: 100},
-		ProjectionTime:    now,
+	projection, err := runtime.ProjectModelGroups(runtime.ProjectionInput{
+		Credentials:     credentials,
+		EvidenceByGroup: evidenceByGroup,
+		PlanningOptions: priority.Options{NormalStartPriority: 100},
+		ProjectionTime:  now,
 	})
 	if err != nil {
-		t.Fatalf("ProjectDualModelGroups failed: %v", err)
+		t.Fatalf("ProjectModelGroups failed: %v", err)
 	}
 
 	// Verify independent plans
@@ -426,7 +398,7 @@ func TestProjectDualModelGroups_ThreePoolIndependentPlansAndQuotaWindows(t *test
 	}
 }
 
-func TestProjectDualModelGroups_NoArgonBucketDoesNotFabricateArgon7d(t *testing.T) {
+func TestProjectModelGroups_NoArgonBucketDoesNotFabricateArgon7d(t *testing.T) {
 	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
 	credentials := []core.Credential{{
 		Name:      "pro-no-argon",
@@ -476,15 +448,14 @@ func TestProjectDualModelGroups_NoArgonBucketDoesNotFabricateArgon7d(t *testing.
 		config.AntigravityModelGroupArgon: {},
 	}
 
-	projection, err := runtime.ProjectDualModelGroups(runtime.ProjectionInput{
-		ControlModelGroup: config.AntigravityModelGroupGemini,
-		Credentials:       credentials,
-		EvidenceByGroup:   evidenceByGroup,
-		PlanningOptions:   priority.Options{NormalStartPriority: 100},
-		ProjectionTime:    now,
+	projection, err := runtime.ProjectModelGroups(runtime.ProjectionInput{
+		Credentials:     credentials,
+		EvidenceByGroup: evidenceByGroup,
+		PlanningOptions: priority.Options{NormalStartPriority: 100},
+		ProjectionTime:  now,
 	})
 	if err != nil {
-		t.Fatalf("ProjectDualModelGroups failed: %v", err)
+		t.Fatalf("ProjectModelGroups failed: %v", err)
 	}
 
 	for _, group := range []string{"gemini", "argon", "claude_gpt"} {

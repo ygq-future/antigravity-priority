@@ -159,20 +159,11 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
             if (!container || !latestSnapshot) return;
 
             const modelInput = document.getElementById("modelSelect");
-            let selectedModel = (modelInput && modelInput.value) || "gemini-3.8-flash-high";
-            let pool = resolveModelPool(selectedModel);
+            const selectedModel = (modelInput && modelInput.value) || "gemini-3.8-flash-high";
+            const pool = resolveModelPool(selectedModel);
 
-            const groupSelect = document.getElementById("modelGroupSelect");
-            if ((!modelInput || !modelInput.value) && groupSelect && groupSelect.value) {
-                pool = groupSelect.value;
-                if (pool === "claude_gpt") selectedModel = "claude-sonnet-5-5-high";
-                else if (pool === "argon") selectedModel = "gemini-4-argon-high";
-                else selectedModel = "gemini-3.8-flash-high";
-            }
-
-            const activeGroup = (latestSnapshot && latestSnapshot.active_model_group) || "gemini";
             const groups = (latestSnapshot && latestSnapshot.groups) || {};
-            const groupData = groups[pool] || groups[activeGroup] || groups["gemini"] || {};
+            const groupData = groups[pool] || {};
             const rawItems = groupData.items || [];
 
             const activeItems = [];

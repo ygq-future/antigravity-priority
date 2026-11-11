@@ -54,7 +54,6 @@ type SnapshotItem struct {
 	Target                Target           `json:"target"`
 	Reason                string           `json:"reason"`
 	IsBoosted             bool             `json:"is_boosted"`
-	IsPredicted           bool             `json:"is_predicted"`
 	CustomTier            int              `json:"custom_tier,omitempty"`
 	Urgency               float64          `json:"urgency"`
 	R7d                   float64          `json:"r7d"`
@@ -226,8 +225,8 @@ func errStrings(errs []error) []string {
 	return values
 }
 
-// GroupSnapshot holds the snapshot for a single model group within a dual-group response.
-type GroupSnapshot struct {
+// PoolSnapshot holds the snapshot for a single quota pool.
+type PoolSnapshot struct {
 	Items   []SnapshotItem   `json:"items"`
 	Changes []SnapshotChange `json:"changes"`
 }
@@ -239,10 +238,9 @@ type ModelOption struct {
 	QuotaPool   string `json:"quota_pool"`
 }
 
-// DualGroupSnapshot wraps snapshots for both model groups, enabling instant client-side switching.
-type DualGroupSnapshot struct {
-	ActiveModelGroup string                   `json:"active_model_group"`
-	ObservedAt       time.Time                `json:"observed_at,omitzero"`
-	Groups           map[string]GroupSnapshot `json:"groups"`
-	Models           []ModelOption            `json:"models,omitempty"`
+// SnapshotSet wraps the snapshots for all three quota pools.
+type SnapshotSet struct {
+	ObservedAt time.Time               `json:"observed_at,omitzero"`
+	Groups     map[string]PoolSnapshot `json:"groups"`
+	Models     []ModelOption           `json:"models,omitempty"`
 }

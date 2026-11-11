@@ -148,7 +148,7 @@ func TestProbeAndRecord_SummaryKeepsDualWindowEvidence(t *testing.T) {
 		Provider:   core.ProviderAntigravity,
 		ModelGroup: string(antigravity.ModelGroupGemini),
 		Now:        now,
-		Policy:     probePolicy(15 * time.Minute),
+		Policy:     state.ProbePolicy{TTL: 15 * time.Minute, ResetStaleAfter: time.Hour},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -201,10 +201,7 @@ func TestCollectFreshEvidence_SummaryUsesOneCallPerAccount(t *testing.T) {
 		credentials:    credentials,
 		authMaterials:  authMaterials,
 		now:            now,
-		cacheTTL:       15 * time.Minute,
-		forceProbe:     true,
 		maxConcurrency: 2,
-		modelGroup:     config.AntigravityModelGroupGemini,
 		sampleCapacity: 10,
 	})
 	if err != nil {
@@ -283,10 +280,7 @@ func TestCollectFreshEvidence_FallsBackToAvailableModelsWhenSummaryFails(t *test
 		credentials:    credentials,
 		authMaterials:  authMaterials,
 		now:            now,
-		cacheTTL:       15 * time.Minute,
-		forceProbe:     true,
 		maxConcurrency: 1,
-		modelGroup:     config.AntigravityModelGroupGemini,
 		sampleCapacity: 10,
 	})
 	if err != nil {
@@ -339,8 +333,6 @@ func TestCollectFreshEvidence_PartialSummaryContinuesProbe(t *testing.T) {
 		credentials:    credentials,
 		authMaterials:  authMaterials,
 		now:            now,
-		cacheTTL:       15 * time.Minute,
-		forceProbe:     true,
 		maxConcurrency: 1,
 		sampleCapacity: 10,
 	})

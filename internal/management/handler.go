@@ -19,8 +19,8 @@ import (
 type Runner interface {
 	Run(ctx context.Context, request RunRequest) (apply.Result, error)
 	Reset(ctx context.Context) (map[string]any, error)
-	LatestSnapshot(ctx context.Context) (apply.DualGroupSnapshot, error)
-	SyncHost(ctx context.Context) (apply.DualGroupSnapshot, error)
+	LatestSnapshot(ctx context.Context) (apply.SnapshotSet, error)
+	SyncHost(ctx context.Context) (apply.SnapshotSet, error)
 	Diagnostics(ctx context.Context) (map[string]any, error)
 	GetScheduleConfig(ctx context.Context) (config.ScheduleConfig, error)
 	SetScheduleConfig(ctx context.Context, cfg config.ScheduleConfig) error
@@ -360,7 +360,7 @@ func (h *Handler) handleSync(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(redactedSnap)
 }
 
-func managementSnapshotMap(snapshot apply.DualGroupSnapshot) (map[string]any, error) {
+func managementSnapshotMap(snapshot apply.SnapshotSet) (map[string]any, error) {
 	encoded, err := json.Marshal(snapshot)
 	if err != nil {
 		return nil, fmt.Errorf("marshal snapshot failed: %w", err)

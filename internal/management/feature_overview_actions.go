@@ -1,7 +1,6 @@
 package management
 
 const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
-        let userSelectedModelGroup = false;
         const probingAuthIndexes = new Set();
 
         function credentialProbeButtonContent(probing) {
@@ -59,7 +58,6 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
             if (lower.indexOf("remaining positive") >= 0) return currentLang === "zh-CN" ? "余量充足" : "Positive Balance";
             if (lower.indexOf("weekly depleted") >= 0) return currentLang === "zh-CN" ? "周额度耗尽" : "Weekly Depleted";
             if (lower.indexOf("short") >= 0 && lower.indexOf("depleted") >= 0) return currentLang === "zh-CN" ? "5h短窗口耗尽" : "5h Depleted";
-            if (lower.indexOf("predicted") >= 0) return currentLang === "zh-CN" ? "🔮 预测优先级" : "🔮 Predicted";
             if (lower.indexOf("in sync") >= 0 || lower.indexOf("optimal") >= 0) return currentLang === "zh-CN" ? "状态最优" : "In Sync";
             if (lower.indexOf("disabled on host") >= 0) return t("statusDisabled");
             return reason;
@@ -239,15 +237,12 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
             probingAuthIndexes.add(probeKey);
             applyCredentialProbing(probeKey, true, btn);
             try {
-                const groupSelect = document.getElementById("modelGroupSelect");
-                const modelGroup = groupSelect ? groupSelect.value : "gemini";
                 const url = RUN_PATH + "?mode=probe&auth_index=" + encodeURIComponent(authIndex);
                 const data = await apiFetch(url, { method: "POST" });
                 await fetchSnapshot({ silent: true });
 
                 const outcomes = (data && Array.isArray(data.probe_outcomes)) ? data.probe_outcomes : [];
-                const targetOutcome = outcomes.find(function(o) { return o && o.auth_index === authIndex && (!modelGroup || o.model_group === modelGroup); }) ||
-                    outcomes.find(function(o) { return o && o.auth_index === authIndex; }) || null;
+                const targetOutcome = outcomes.find(function(o) { return o && o.auth_index === authIndex; }) || null;
 
                 if (targetOutcome && targetOutcome.status === "unavailable") {
                     var unavailableDetail = targetOutcome.error ? " · " + targetOutcome.error : "";

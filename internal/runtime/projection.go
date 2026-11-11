@@ -14,43 +14,33 @@ import (
 	"antigravity-priority/internal/priority"
 )
 
-// ProjectionInput contains the complete in-process input for one dual-group
+// ProjectionInput contains the complete in-process input for one three-pool
 // projection. Evidence is already classified by the caller's evidence
-// authority; projection only applies the same planning inputs to each group.
+// authority; projection only applies the same planning inputs to each pool.
 // None of the supplied slices or maps are mutated.
 type ProjectionInput struct {
-	ControlModelGroup config.AntigravityModelGroup
-	Credentials       []core.Credential
-	EvidenceByGroup   map[config.AntigravityModelGroup]evidence.Result
-	PlanningOptions   priority.Options
-	ProjectionTime    time.Time
+	Credentials     []core.Credential
+	EvidenceByGroup map[config.AntigravityModelGroup]evidence.Result
+	PlanningOptions priority.Options
+	ProjectionTime  time.Time
 }
 
-// DualModelGroupProjection is the only projection result exposed to Runtime
-// callers. The predicted Plan is intentionally not returned, so it cannot be
-// passed to Host Transition by an Apply use case.
-type DualModelGroupProjection struct {
-	ControlPlan     priority.Plan
-	ControlSnapshot apply.PlanSnapshot
-	Snapshot        apply.DualGroupSnapshot
+// ModelGroupProjection is the projection result exposed to Runtime callers.
+type ModelGroupProjection struct {
+	Snapshot apply.SnapshotSet
 }
 
-// ProjectDualModelGroups calculates the configured control plan and both
-// model-group snapshots from one immutable input set.
-func ProjectDualModelGroups(input ProjectionInput) (DualModelGroupProjection, error) {
-	controlGroup, err := canonicalModelGroup(input.ControlModelGroup)
-	if err != nil {
-		return DualModelGroupProjection{}, err
-	}
+// ProjectModelGroups calculates all three model-group snapshots from one
+// immutable input set.
+func ProjectModelGroups(input ProjectionInput) (ModelGroupProjection, error) {
 	if input.ProjectionTime.IsZero() {
-		return DualModelGroupProjection{}, fmt.Errorf("runtime: projection time is required")
+		return ModelGroupProjection{}, fmt.Errorf("runtime: projection time is required")
 	}
 
 	projectionTime := input.ProjectionTime.UTC()
 	options := clonePlanningOptions(input.PlanningOptions)
 	options.Now = projectionTime
 
-	plansByGroup := make(map[config.AntigravityModelGroup]priority.Plan, len(config.AllAntigravityModelGroups))
 	snapshotsByGroup := make(map[config.AntigravityModelGroup]apply.PlanSnapshot, len(config.AllAntigravityModelGroups))
 
 	for _, group := range config.AllAntigravityModelGroups {
@@ -64,11 +54,7 @@ func ProjectDualModelGroups(input ProjectionInput) (DualModelGroupProjection, er
 			grpOptions,
 		)
 		annotatePlanObservations(&plan, grpEvidence.Observations)
-		plansByGroup[group] = plan
-
-		// All three pools are live, active scheduling authorities; IsPredicted is always false
-		snapshot := snapshotForProjectionRole(plan, false)
-		snapshotsByGroup[group] = snapshot
+		snapshotsByGroup[group] = apply.Snapshot(plan)
 	}
 
 	// Cross-reference 5 quota windows across all groups for every credential.
@@ -87,25 +73,19 @@ func ProjectDualModelGroups(input ProjectionInput) (DualModelGroupProjection, er
 		snapshotsByGroup[group] = snap
 	}
 
-	controlPlan := plansByGroup[controlGroup]
-	controlSnapshot := snapshotsByGroup[controlGroup]
-
-	groups := make(map[string]apply.GroupSnapshot, len(config.AllAntigravityModelGroups))
+	groups := make(map[string]apply.PoolSnapshot, len(config.AllAntigravityModelGroups))
 	for _, group := range config.AllAntigravityModelGroups {
 		snap := snapshotsByGroup[group]
-		groups[string(group)] = apply.GroupSnapshot{
+		groups[string(group)] = apply.PoolSnapshot{
 			Items:   snap.Items,
 			Changes: snap.Changes,
 		}
 	}
 
-	return DualModelGroupProjection{
-		ControlPlan:     controlPlan,
-		ControlSnapshot: controlSnapshot,
-		Snapshot: apply.DualGroupSnapshot{
-			ActiveModelGroup: string(controlGroup),
-			ObservedAt:       projectionTime,
-			Groups:           groups,
+	return ModelGroupProjection{
+		Snapshot: apply.SnapshotSet{
+			ObservedAt: projectionTime,
+			Groups:     groups,
 		},
 	}, nil
 }
@@ -286,37 +266,6 @@ func annotatePlanObservations(plan *priority.Plan, observations []evidence.Obser
 	}
 }
 
-func canonicalModelGroup(group config.AntigravityModelGroup) (config.AntigravityModelGroup, error) {
-	parsed, err := config.ParseAntigravityModelGroup(string(group))
-	if err != nil {
-		return "", err
-	}
-	return parsed, nil
-}
-
-func snapshotForProjectionRole(plan priority.Plan, predicted bool) apply.PlanSnapshot {
-	return snapshotForProjectionRoleSnapshot(apply.Snapshot(plan), predicted)
-}
-
-func snapshotForProjectionRoleSnapshot(snapshot apply.PlanSnapshot, predicted bool) apply.PlanSnapshot {
-	for index := range snapshot.Items {
-		snapshot.Items[index].IsPredicted = predicted
-		snapshot.Items[index].Reason = roleReason(snapshot.Items[index].Reason, predicted)
-	}
-	for index := range snapshot.Changes {
-		snapshot.Changes[index].Reason = roleReason(snapshot.Changes[index].Reason, predicted)
-	}
-	return snapshot
-}
-
-func roleReason(reason string, predicted bool) string {
-	reason = strings.TrimPrefix(reason, "predicted: ")
-	if predicted && reason != "" && reason != priority.ReasonKeepCurrentState {
-		return "predicted: " + reason
-	}
-	return reason
-}
-
 func clonePlanningOptions(options priority.Options) priority.Options {
 	options.CooldownAuthIndexes = cloneCooldowns(options.CooldownAuthIndexes)
 	options.CooldownReasons = cloneStringMap(options.CooldownReasons)
@@ -409,13 +358,13 @@ func cloneInt64Pointer(value *int64) *int64 {
 	return &cloned
 }
 
-func cloneDualGroupSnapshot(snapshot apply.DualGroupSnapshot) apply.DualGroupSnapshot {
+func cloneSnapshotSet(snapshot apply.SnapshotSet) apply.SnapshotSet {
 	cloned := snapshot
 	if snapshot.Models != nil {
 		cloned.Models = make([]apply.ModelOption, len(snapshot.Models))
 		copy(cloned.Models, snapshot.Models)
 	}
-	cloned.Groups = make(map[string]apply.GroupSnapshot, len(snapshot.Groups))
+	cloned.Groups = make(map[string]apply.PoolSnapshot, len(snapshot.Groups))
 	for group, groupSnapshot := range snapshot.Groups {
 		clonedGroup := groupSnapshot
 		items := make([]apply.SnapshotItem, len(groupSnapshot.Items))

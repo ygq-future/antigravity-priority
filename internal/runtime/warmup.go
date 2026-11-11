@@ -80,6 +80,7 @@ func GenerateNaturalWarmupPrompt() string {
 func RenderWarmupPrompt(_ config.WarmupConfig, _ string) string {
 	return GenerateNaturalWarmupPrompt()
 }
+
 // WarmupDebounceDuration is the minimum interval before a credential in the same pool can be warmed up again.
 const WarmupDebounceDuration = 4*time.Hour + 30*time.Minute
 
@@ -150,9 +151,6 @@ func parseWarmupTokenUsage(body []byte) (int64, int64, int64) {
 	}
 	return 2, 8, 10
 }
-
-
-
 
 // isWarmupEligible evaluates whether a credential's evidence meets 5h full-quota and unstarted window criteria.
 func isWarmupEligible(ev *priority.QuotaEvidence, now time.Time, lastWarmup time.Time) bool {
@@ -269,6 +267,7 @@ func executeAntigravityWarmup(ctx context.Context, doer quotaHTTPDoer, authIndex
 
 	return warmupExecutionResult{StatusCode: lastStatus}, lastErr
 }
+
 // WarmupSweepInterval is how often the warm-up watcher re-evaluates persisted
 // quota evidence for 5h windows that are due to be warmed up.
 const WarmupSweepInterval = time.Minute
@@ -555,7 +554,6 @@ func warmupStatePath(cfg config.Config) string {
 	}
 	return cfg.StateCachePath
 }
-
 
 // triggerWarmupForEligibleCredentials checks eligible full-quota credentials in configured model pools
 // and kicks off the 5h rolling window by issuing a minimal token generation request.

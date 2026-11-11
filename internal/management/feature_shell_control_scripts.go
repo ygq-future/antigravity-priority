@@ -1,9 +1,6 @@
 package management
 
-const templateScriptControls = `        let userSelectedModel = false;
-
-
-        // Custom Select: shared open/close + viewport-aware placement.
+const templateScriptControls = `        // Custom Select: shared open/close + viewport-aware placement.
         // A menu that would overflow the bottom of the viewport flips above its
         // trigger and is clamped to the space actually available.
         function toggleCustomSelectMenu(wrapperId, menuId) {
@@ -74,15 +71,9 @@ const templateScriptControls = `        let userSelectedModel = false;
         function selectModel(modelId, event) {
             if (event) {
                 event.stopPropagation();
-                userSelectedModel = true;
-                userSelectedModelGroup = true;
             }
             const modelInput = document.getElementById("modelSelect");
             if (modelInput) modelInput.value = modelId;
-
-            const pool = resolveModelPool(modelId);
-            const groupSelect = document.getElementById("modelGroupSelect");
-            if (groupSelect) groupSelect.value = pool;
 
             const menu = document.getElementById("customModelSelectMenu");
             if (menu && typeof menu.querySelectorAll === "function") {

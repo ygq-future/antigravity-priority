@@ -250,11 +250,11 @@ func (r managementRunner) Reset(ctx context.Context) (map[string]any, error) {
 	return r.runtime.ResetAllPriorities(ctx)
 }
 
-func (r managementRunner) LatestSnapshot(ctx context.Context) (apply.DualGroupSnapshot, error) {
+func (r managementRunner) LatestSnapshot(ctx context.Context) (apply.SnapshotSet, error) {
 	return r.runtime.LatestSnapshot(ctx)
 }
 
-func (r managementRunner) SyncHost(ctx context.Context) (apply.DualGroupSnapshot, error) {
+func (r managementRunner) SyncHost(ctx context.Context) (apply.SnapshotSet, error) {
 	return r.runtime.SyncHost(ctx)
 }
 

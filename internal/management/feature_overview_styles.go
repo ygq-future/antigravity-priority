@@ -252,10 +252,6 @@ const templateStyleOverviewCards = `        /* Credentials Display (Grid 3 Colum
             line-height: 1;
         }
 
-        .priority-predicted {
-            color: var(--accent-purple-text);
-        }
-
         .empty-state {
             grid-column: 1 / -1;
             width: 100%;

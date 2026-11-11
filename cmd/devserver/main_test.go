@@ -326,7 +326,7 @@ func TestDevServer_ManuallyDisabledAccountSimulation(t *testing.T) {
 
 	// 2. Perform single-credential probe via management endpoint
 	handler := dev.runtime.ManagementHandler()
-	req := httptest.NewRequest(http.MethodPost, "/v0/management/plugins/antigravity-priority/run?mode=probe&auth_index="+targetAuth+"&antigravity_model_group=gemini", nil)
+	req := httptest.NewRequest(http.MethodPost, "/v0/management/plugins/antigravity-priority/run?mode=probe&auth_index="+targetAuth+"", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {

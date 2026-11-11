@@ -28,11 +28,6 @@ const overviewMarkup = `
 
             <div class="control-bar">
                 <input type="hidden" id="modelSelect" value="gemini-3.8-flash-high">
-                <select id="modelGroupSelect" hidden>
-                    <option value="gemini" data-i18n="optGemini">Gemini 模型</option>
-                    <option value="argon">Argon 模型</option>
-                    <option value="claude_gpt" data-i18n="optClaudeGPT">Claude 与 GPT 模型</option>
-                </select>
                 <div id="customModelSelect" class="custom-select-wrapper" style="min-width: 290px;">
                     <button type="button" class="custom-select-trigger" onclick="toggleCustomModelSelect(event)" aria-haspopup="listbox" aria-expanded="false" id="customModelSelectTrigger">
                         <span id="customModelSelectBadge" class="model-pool-badge badge-gemini">Gemini</span>

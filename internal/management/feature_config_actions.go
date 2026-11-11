@@ -357,7 +357,6 @@ const templateScriptConfig = `        let originalConfigState = null;
 
             var defaultCfg = {
                 auto_apply: false,
-                antigravity_model_group: "gemini",
                 max_concurrency: 6,
                 min_change: 1,
                 urgency_tolerance: 0.05,

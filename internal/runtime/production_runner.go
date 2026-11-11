@@ -22,7 +22,6 @@ var errMissingHostCallbacks = errors.New("runtime: host callbacks are required")
 const (
 	autoQuotaProbeAttempts = 3
 	autoQuotaProbeDelay    = 5 * time.Second
-	defaultProbeCacheTTL   = 15 * time.Minute
 )
 
 func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) error {
@@ -69,7 +68,6 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 	}
 
 	var evidence collectedEvidence
-	forceProbe := request.Trigger == TriggerProbe || request.Trigger == TriggerAutoApply
 	targetedSingleAuth := len(request.AuthIndexes) > 0
 	evidence, err = r.collectEvidenceForTrigger(ctx, collectInput{
 		client:             client,
@@ -77,11 +75,8 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 		credentials:        probeCredentials,
 		authMaterials:      probeAuthMaterials,
 		now:                now,
-		cacheTTL:           defaultProbeCacheTTL,
-		forceProbe:         forceProbe,
 		targetedSingleAuth: targetedSingleAuth,
 		maxConcurrency:     request.Config.MaxConcurrency,
-		modelGroup:         request.Config.AntigravityModelGroup,
 		sampleCapacity:     request.Config.QuotaSampleCapacity,
 	}, request.Trigger)
 	if err != nil {
@@ -128,22 +123,17 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 	if err != nil {
 		return err
 	}
-	primarySnapshot := projection.ControlSnapshot
-
-	// Probe-only: evidence collected and dual snapshot updated; no Host write occurs.
+	// Probe-only: evidence collected and three-pool snapshot updated; no Host write occurs.
 	if request.Trigger == TriggerProbe {
-		r.setDualSnapshot(projection.Snapshot)
-		result := apply.Result{Snapshot: primarySnapshot}
+		r.setSnapshotSet(projection.Snapshot)
 		audit := fmt.Sprintf("probe completed: %d probe observations", evidence.Probed)
-		snap := primarySnapshot
-		_, projectErr := r.projectRun(ctx, store, result, audit, RunHistoryEntry{
+		_, projectErr := r.projectRun(ctx, store, apply.Result{}, audit, RunHistoryEntry{
 			Kind:         KindProbe,
 			Trigger:      string(request.Trigger),
 			ProbeRoundID: evidence.RoundID,
 			Attempted:    evidence.Probed,
 			Succeeded:    readyProbeCredentialCount(evidence.Probes),
 			Message:      audit,
-			Snapshot:     &snap,
 		})
 		r.routingMu.Lock()
 		r.recomputeRoutingTablesLocked(now, allCredentials)
@@ -153,17 +143,15 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 
 	// AutoApply: background quota probe and calibration only. Never writes back priorities to host files.
 	if request.Trigger == TriggerAutoApply {
-		r.setDualSnapshot(projection.Snapshot)
-		result := apply.Result{Snapshot: primarySnapshot}
+		r.setSnapshotSet(projection.Snapshot)
 		summary := fmt.Sprintf("auto schedule probed=%d; in-memory routing tables calibrated", evidence.Probed)
-		_, projectErr := r.projectRun(ctx, store, result, summary, RunHistoryEntry{
+		_, projectErr := r.projectRun(ctx, store, apply.Result{}, summary, RunHistoryEntry{
 			Kind:         KindAutoApply,
 			Trigger:      string(request.Trigger),
 			ProbeRoundID: evidence.RoundID,
 			Attempted:    evidence.Probed,
 			Succeeded:    readyProbeCredentialCount(evidence.Probes),
 			Message:      summary,
-			Snapshot:     &primarySnapshot,
 		})
 		r.routingMu.Lock()
 		r.recomputeRoutingTablesLocked(now, allCredentials)
@@ -182,10 +170,10 @@ func projectCurrentHost(
 	evidenceByGroup map[config.AntigravityModelGroup]evidence.Result,
 	store *state.Store,
 	now time.Time,
-) (DualModelGroupProjection, error) {
+) (ModelGroupProjection, error) {
 	files, err := client.ListAuthFiles(ctx)
 	if err != nil {
-		return DualModelGroupProjection{}, err
+		return ModelGroupProjection{}, err
 	}
 	credentials := credentialsFromAuthFiles(files)
 	effectiveEvidence := evidenceByGroup
@@ -194,15 +182,14 @@ func projectCurrentHost(
 	}
 	credentials, _, err = enrichCredentialsFromAuthDocuments(ctx, client, credentials)
 	if err != nil {
-		return DualModelGroupProjection{}, err
+		return ModelGroupProjection{}, err
 	}
-	credentials = enrichCredentialsPlanTypeFromStore(store, credentials, string(request.Config.AntigravityModelGroup))
-	return ProjectDualModelGroups(ProjectionInput{
-		ControlModelGroup: request.Config.AntigravityModelGroup,
-		Credentials:       credentials,
-		EvidenceByGroup:   effectiveEvidence,
-		PlanningOptions:   priorityOptions(request.Config, store, now),
-		ProjectionTime:    now,
+	credentials = enrichCredentialsPlanTypeFromStore(store, credentials)
+	return ProjectModelGroups(ProjectionInput{
+		Credentials:     credentials,
+		EvidenceByGroup: effectiveEvidence,
+		PlanningOptions: priorityOptions(request.Config, store, now),
+		ProjectionTime:  now,
 	})
 }
 
@@ -220,7 +207,6 @@ func (r *Runtime) collectEvidenceForTrigger(ctx context.Context, input collectIn
 		if !hasRetryableProbeFailure(current) || attempt == autoQuotaProbeAttempts {
 			return collected, nil
 		}
-		input.forceProbe = true
 		if err := r.sleeper.Sleep(ctx, autoQuotaProbeDelay); err != nil {
 			return collectedEvidence{}, err
 		}
@@ -393,14 +379,19 @@ func priorityOptions(cfg config.Config, store *state.Store, now time.Time) prior
 		CustomTiers:          customTiers,
 	}
 }
-func enrichCredentialsPlanTypeFromStore(store *state.Store, credentials []core.Credential, preferredGroup string) []core.Credential {
+func enrichCredentialsPlanTypeFromStore(store *state.Store, credentials []core.Credential) []core.Credential {
 	if store == nil {
 		return credentials
 	}
 	for i, cred := range credentials {
-		if cred.PlanType == "" || cred.PlanType == core.PlanTypeUnknown {
-			if pt := store.GetPlanType(cred.AuthIndex, preferredGroup); pt != "" && pt != core.PlanTypeUnknown {
+		if cred.PlanType != "" && cred.PlanType != core.PlanTypeUnknown {
+			continue
+		}
+		for _, group := range config.AllAntigravityModelGroups {
+			pt := store.GetPlanType(cred.AuthIndex, string(group))
+			if pt != "" && pt != core.PlanTypeUnknown {
 				credentials[i].PlanType = pt
+				break
 			}
 		}
 	}

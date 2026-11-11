@@ -247,7 +247,7 @@ func TestStatusHTML_ContainsRequiredUIElements(t *testing.T) {
 		{"Boost badge styling", "badge-boost"},
 		{"Plan badge styling", "badge-plan-pro"},
 		{"Free plan badge styling", "badge-plan-free"},
-		{"Model Group dropdown", "modelGroupSelect"},
+		{"Model Group dropdown", "customModelSelect"},
 		{"Gemini model group option", "gemini"},
 		{"Claude GPT model group option", "claude_gpt"},
 		{"Probe action button", "btnProbe"},
@@ -327,6 +327,9 @@ func TestStatusHTML_ContainsRequiredUIElements(t *testing.T) {
 	}
 	if !strings.Contains(html, "latestDiagnostics.latest_apply") || !strings.Contains(html, "diagNoLastRun") {
 		t.Error("diagnostics last-run UI must use latest_apply and expose the no-run state")
+	}
+	if strings.Contains(html, "modelGroupSelect") {
+		t.Error("hidden model group selector must not remain in the dashboard")
 	}
 	if strings.Contains(html, `SYNC_PATH + "?antigravity_model_group="`) {
 		t.Error("dashboard view selector must not be sent as write-back/control authority")

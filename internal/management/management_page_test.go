@@ -188,11 +188,16 @@ const elements = {
     samplesModalTitle: element(),
     samplesModalSubtitle: element(),
     samplesModalBody: element(),
-    modelGroupSelect: element({value:"claude_gpt"})
+    modelSelect: element({value:"claude-sonnet-5-5-high"})
 };
 const document = {
     getElementById: function(id) { return elements[id] || null; }
 };
+function resolveModelPool(modelId) {
+    if (String(modelId).indexOf("claude") === 0) return "claude_gpt";
+    if (String(modelId).indexOf("argon") >= 0) return "argon";
+    return "gemini";
+}
 const SAMPLES_PATH = "/samples";
 const currentLang = "zh-CN";
 function t(key) { return key; }
@@ -426,7 +431,7 @@ global.fetch = async function(path) {
             status: 200,
             ok: true,
             statusText: "OK",
-            text: async function() { return JSON.stringify({ ok: true, active_model_group: "gemini" }); }
+            text: async function() { return "{}"; }
         };
     };
     elements.manualKeyInput.value = "secret_key";
@@ -535,7 +540,6 @@ function element(initial) {
 
 const elements = {
     toastRoot: element(),
-    modelGroupSelect: element({value: "gemini"}),
     valLastAudit: element(),
     valNextProbe: element(),
     valTotalCreds: element(),
@@ -574,7 +578,6 @@ const ZH = {
     burnLabel: "燃烧率",
     actualPriority: "实际",
     targetPriority: "目标",
-    predictedPriority: "预测",
     unsetPriority: "[未设置]"
 };
 
@@ -583,11 +586,10 @@ function escapeHTML(s) { return String(s || ""); }
 function formatCountdown(d) { return "01h 00m"; }
 
 currentLang = "zh-CN";
-dynamicConfig = { auto_apply: false, antigravity_model_group: "gemini" };
+dynamicConfig = { auto_apply: false };
 latestDiagnostics = { latest_audit: "test audit" };
 scheduleConfig = null;
 isAuthBlocked = false;
-userSelectedModelGroup = false;
 const RUN_PATH = "/run";
 const SNAPSHOT_PATH = "/snapshot/latest";
 const DIAGNOSTICS_PATH = "/diagnostics";
@@ -630,7 +632,6 @@ async function fetchDiagnostics() {}
 
     // 2. Test card render: 403 failed card
     latestSnapshot = {
-        active_model_group: "gemini",
         groups: {
             gemini: {
                 items: [
@@ -755,7 +756,6 @@ const elements = {
     credentialsContainer: element({hidden: false}),
     credentialsLoadingOverlay: element({hidden: true}),
     btnProbe: element({hidden: false}),
-    modelGroupSelect: element({value: "gemini"})
 };
 
 const document = {

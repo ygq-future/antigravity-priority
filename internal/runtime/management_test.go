@@ -14,7 +14,7 @@ func TestManagementRunHistoryOverlaysFullEmailAtAdapterBoundary(t *testing.T) {
 				Email: "user***",
 			}}},
 		}},
-		latestDualSnapshot: &apply.DualGroupSnapshot{Groups: map[string]apply.GroupSnapshot{
+		latestSnapshotSet: &apply.SnapshotSet{Groups: map[string]apply.PoolSnapshot{
 			"gemini": {Items: []apply.SnapshotItem{{
 				Identity: apply.SnapshotIdentity{
 					AuthIndex: "auth-account-001",
@@ -71,7 +71,7 @@ func TestManagementRunHistoryResolvesEmailFromMaskedAuthIndex(t *testing.T) {
 				AuthIndex: "auth***",
 			}}},
 		}},
-		latestDualSnapshot: &apply.DualGroupSnapshot{Groups: map[string]apply.GroupSnapshot{
+		latestSnapshotSet: &apply.SnapshotSet{Groups: map[string]apply.PoolSnapshot{
 			"gemini": {Items: []apply.SnapshotItem{{
 				Identity: apply.SnapshotIdentity{
 					AuthIndex: "auth-account-001",
