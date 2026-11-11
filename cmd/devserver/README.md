@@ -43,6 +43,20 @@ data/devserver/refresh-cache.json
 - 任一模型组的任一窗口耗尽后，下一次该凭证探测恢复两个模型组的满额。
 - 配额状态、样本历史、优先级写回和调度诊断分别由模拟 Host 与生产 Runtime 持久化。
 
+## 请求历史仿真与错误验收
+
+Dev Server 首次启动时会写入成功与失败混合的请求历史样本（含 429、500、403），便于直接验收错误详情展示。历史保留条数可在页面「请求历史」右上角或「⚙️ 配置中心」中调整（1-1000，默认 100），修改后立即裁剪并持久化。
+
+注入任意失败请求并写入请求历史：
+
+```bash
+# 默认注入 500 错误，错误详情会显示在请求历史状态后的圆形信息图标中：
+curl -X POST "http://localhost:8080/dev/simulate-error?auth_index=dev-auth-001"
+
+# 自定义状态码、错误详情与模型：
+curl -X POST "http://localhost:8080/dev/simulate-error?auth_index=dev-auth-001&status=503&message=upstream%20overloaded&model=claude-sonnet-5-5-high"
+```
+
 ## 429 熔断与恢复仿真 (Manual Testing)
 
 Dev Server 提供了快速注入 429 异常和成功请求的辅助接口，方便在本地人工验收 429 熔断与自愈机制：

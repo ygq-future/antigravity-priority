@@ -21,6 +21,7 @@ var overviewTranslationKeys = []string{
 
 var historyTranslationKeys = []string{
 	"historyTitle", "noHistory", "btnRefresh", "btnClearHistory",
+	"historyRetainLabel", "historyRetainUnit", "btnSaveHistoryLimit", "historyLimitSaved", "historyErrorDetails",
 	"thTime", "thModel", "thCredential", "thTokens", "thStatus",
 	"statusRateLimited", "statusError",
 }
@@ -39,10 +40,11 @@ var configTranslationKeys = []string{
 	"cfgCardScheduleTitle", "cfgAutoApply", "cfgAutoApplyHint", "cfgInterval", "cfgIntervalHint",
 	"cfgScheduleWindow", "cfgScheduleWindowHint", "cfgWindowEnabledLabel", "cfgCardPerfTitle", "cfgMaxConcurrency", "cfgMaxConcurrencyHint",
 	"cfgUrgencyTolerance", "cfgUrgencyToleranceHint", "cfgSampleCapacity", "cfgSampleCapacityHint",
-	"cfgCooldownMinutes", "cfgCooldownMinutesHint", "cfgCardRulesTitle", "cfgBoostStart", "cfgBoostStartHint", "cfgNormalStart",
+	"cfgCooldownMinutes", "cfgCooldownMinutesHint", "cfgRequestHistoryLimit", "cfgRequestHistoryLimitHint",
+	"cfgCardRulesTitle", "cfgBoostStart", "cfgBoostStartHint", "cfgNormalStart",
 	"cfgNormalStartHint", "cfgFreeStart", "cfgFreeStartHint", "btnSaveConfig", "btnResetToDefaults", "configSaveSuccess", "confirmResetConfigTitle", "confirmResetConfigMsg",
 	"optInterval5m", "optInterval15m", "optInterval30m", "optInterval1h", "optIntervalCustom", "valErrInterval", "valErrWindow",
-	"valErrConcurrency", "valErrUrgencyTol", "valErrSampleCapacity", "valErrCooldown", "valErrPriorityRange",
+	"valErrConcurrency", "valErrUrgencyTol", "valErrSampleCapacity", "valErrCooldown", "valErrRequestHistoryLimit", "valErrPriorityRange",
 	"valErrPriorityOrder", "valErrFreePriorityOrder",
 	"cfgCardWarmupTitle", "cfgWarmupGemini", "cfgWarmupGeminiHint", "cfgWarmupGeminiModel", "cfgWarmupGeminiModelHint",
 	"cfgWarmupClaude", "cfgWarmupClaudeHint", "cfgWarmupClaudeModel", "cfgWarmupClaudeModelHint",

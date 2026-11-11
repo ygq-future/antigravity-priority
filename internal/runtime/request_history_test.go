@@ -78,6 +78,9 @@ func TestRuntime_RequestHistory_RecordsOnUsage(t *testing.T) {
 	if rec0.Email != "auth***" {
 		t.Errorf("expected redacted email/identifier 'auth***', got %q", rec0.Email)
 	}
+	if rec0.ErrorMessage != "RESOURCE_EXHAUSTED" {
+		t.Errorf("expected sanitized error detail, got %q", rec0.ErrorMessage)
+	}
 
 	// Oldest should be second (the 200 success)
 	rec1 := records[1]
@@ -156,6 +159,97 @@ func TestRuntime_RequestHistory_CapacityLimit100(t *testing.T) {
 	// Oldest should be model-021 (120 - 100 + 1 = 21)
 	if records[99].Model != "model-021" {
 		t.Errorf("expected oldest to be model-021, got %s", records[99].Model)
+	}
+}
+
+func TestRuntime_RequestHistory_CustomLimitTrimsAndPersists(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	clock := &testClock{now: time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)}
+	r := newTestRuntime(t, runtime.Options{
+		Clock:   clock,
+		Sleeper: testSleeper{},
+	})
+	if _, err := r.Register(context.Background(), runtime.RegisterRequest{
+		ConfigYAML: "enabled: true\nstate_cache_path: " + filepath.ToSlash(cachePath) + "\n",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = r.Shutdown(context.Background()) }()
+
+	dyn, err := r.GetDynamicConfig(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dyn.RequestHistoryLimit = 3
+	if err := r.SetDynamicConfig(context.Background(), dyn); err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 1; i <= 5; i++ {
+		clock.Advance(time.Second)
+		payload := fmt.Sprintf(`{"Provider":"antigravity","Model":"model-%03d","AuthIndex":"auth-1","Failed":false,"Detail":{"TotalTokens":%d}}`, i, i*10)
+		_ = r.Handle(context.Background(), runtime.MethodUsageHandle, []byte(payload))
+	}
+
+	records, err := r.GetRequestHistory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 3 {
+		t.Fatalf("expected exactly 3 records after custom limit, got %d", len(records))
+	}
+	if records[0].Model != "model-005" || records[2].Model != "model-003" {
+		t.Fatalf("unexpected retained records: newest=%s oldest=%s", records[0].Model, records[2].Model)
+	}
+
+	// Lowering the limit must trim existing entries immediately and persist the trimmed set.
+	dyn.RequestHistoryLimit = 2
+	if err := r.SetDynamicConfig(context.Background(), dyn); err != nil {
+		t.Fatal(err)
+	}
+	records, err = r.GetRequestHistory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("expected immediate trim to 2 records, got %d", len(records))
+	}
+
+	store, err := state.Load(context.Background(), cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted := store.GetRequestHistory(); len(persisted) != 2 {
+		t.Fatalf("expected 2 persisted records, got %d", len(persisted))
+	}
+}
+
+func TestRuntime_RequestHistory_FailedRequestFallsBackToStatusText(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	clock := &testClock{now: time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)}
+	r := newTestRuntime(t, runtime.Options{
+		Clock:   clock,
+		Sleeper: testSleeper{},
+	})
+	if _, err := r.Register(context.Background(), runtime.RegisterRequest{
+		ConfigYAML: "enabled: true\nstate_cache_path: " + filepath.ToSlash(cachePath) + "\n",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = r.Shutdown(context.Background()) }()
+
+	payload := `{"Provider":"antigravity","Model":"gemini-3.8-flash-high","AuthIndex":"auth-1","Failed":true,"Failure":{"StatusCode":503}}`
+	_ = r.Handle(context.Background(), runtime.MethodUsageHandle, []byte(payload))
+
+	records, err := r.GetRequestHistory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("expected 1 record, got %d", len(records))
+	}
+	if records[0].ErrorMessage != "HTTP 503 Service Unavailable" {
+		t.Fatalf("expected status text fallback, got %q", records[0].ErrorMessage)
 	}
 }
 

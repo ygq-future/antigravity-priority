@@ -51,6 +51,7 @@ type Runtime struct {
 	stateCacheOverride       string
 	runHistory               []RunHistoryEntry
 	requestHistory           []state.RequestHistoryEntry
+	requestHistoryPersistMu  sync.Mutex
 	latestProbeOutcomes      []management.ProbeOutcome
 	lastAutoApplyAt          time.Time
 	worker                   *tickerWorker
@@ -164,6 +165,14 @@ func New(options Options) *Runtime {
 				rt.cfg = merged
 				rt.scheduleConfig = schedCfg
 			}
+		}
+		historyLimit := rt.cfg.RequestHistoryLimit
+		if historyLimit <= 0 {
+			historyLimit = state.DefaultMaxRequestHistory
+		}
+		if len(rt.requestHistory) > historyLimit {
+			rt.requestHistory = rt.requestHistory[:historyLimit]
+			store.SetRequestHistory(rt.requestHistory)
 		}
 		// Unconditionally ensure cache file exists on disk upon initialization
 		_ = store.SaveAtomic(context.Background())
@@ -725,6 +734,7 @@ func (r *Runtime) Diagnostics(ctx context.Context) (map[string]any, error) {
 		"latest_apply":     r.latestApplyEntry(),
 		"run_history":      r.currentRunHistory(),
 		"request_history":  r.currentRequestHistory(),
+		"request_history_limit": cfg.RequestHistoryLimit,
 	}, nil
 }
 
@@ -783,6 +793,7 @@ func (r *Runtime) replaceConfig(ctx context.Context, cfg config.Config) error {
 		oldCfg.Interval != cfg.Interval
 	r.cfg = cfg
 	r.mu.Unlock()
+	r.trimRequestHistory(ctx)
 	r.signalRateLimitWorker()
 	r.signalWarmupResetWatcher()
 
@@ -1335,7 +1346,7 @@ func (r *Runtime) handleUsageEvent(ctx context.Context, raw []byte) []byte {
 		TotalTokens:         totalTokens,
 		Failed:              payload.Failed,
 		StatusCode:          statusCode,
-		ErrorMessage:        payload.Failure.Body,
+		ErrorMessage:        requestHistoryErrorMessage(payload.Failed, statusCode, payload.Failure.Body),
 	})
 
 	if !payload.Failed {

@@ -2024,6 +2024,7 @@ func TestRuntime_GetSetDynamicConfig(t *testing.T) {
 		UrgencyTolerance:         0.08,
 		RateLimitCooldownMinutes: 5,
 		QuotaSampleCapacity:      10,
+		RequestHistoryLimit:      150,
 		PriorityRules: state.PriorityRulesConfig{
 			BoostStartPriority:  990,
 			NormalStartPriority: 120,
@@ -2066,6 +2067,9 @@ func TestRuntime_GetSetDynamicConfig(t *testing.T) {
 	}
 	if runtimeCfg.QuotaSampleCapacity != 10 {
 		t.Errorf("expected QuotaSampleCapacity=10, got %d", runtimeCfg.QuotaSampleCapacity)
+	}
+	if runtimeCfg.RequestHistoryLimit != 150 {
+		t.Errorf("expected RequestHistoryLimit=150, got %d", runtimeCfg.RequestHistoryLimit)
 	}
 	if runtimeCfg.PriorityRules.FreeStartPriority != 15 {
 		t.Errorf("expected FreeStartPriority=15, got %d", runtimeCfg.PriorityRules.FreeStartPriority)
@@ -2158,6 +2162,7 @@ func TestRuntime_DynamicConfig_SurvivesReconfigure(t *testing.T) {
 		UrgencyTolerance:         0.05,
 		RateLimitCooldownMinutes: 5,
 		QuotaSampleCapacity:      6,
+		RequestHistoryLimit:      80,
 		PriorityRules: state.PriorityRulesConfig{
 			BoostStartPriority:  980,
 			NormalStartPriority: 200,

@@ -22,6 +22,8 @@ const (
 	defaultDevAuthDir      = "data/devserver/auth-files"
 	defaultDevQuotaState   = "data/devserver/quota-state.json"
 	defaultDevCachePath    = "data/devserver/refresh-cache.json"
+	// defaultSimulatedErrorMessage is intentionally long to exercise tooltip wrapping.
+	defaultSimulatedErrorMessage = "upstream connect error or disconnect/reset before headers. reset reason: connection termination; retry budget exhausted after 3 attempts (endpoint: cloudcode-pa.googleapis.com, region: us-central1)"
 )
 
 var simulatedModelGroups = []string{

@@ -102,18 +102,18 @@ func newDevServer(options devServerOptions) (*devServer, error) {
 					StatusCode:   200,
 				},
 				{
-					ID:           "req-seed-002",
-					At:           nowTime.Add(-48 * time.Second),
-					Model:        "gemini-3.8-flash-high",
-					ModelPool:    "gemini",
-					AuthIndex:    "dev-auth-002",
-					Email:        "arno***",
+					ID:              "req-seed-002",
+					At:              nowTime.Add(-48 * time.Second),
+					Model:           "gemini-3.8-flash-high",
+					ModelPool:       "gemini",
+					AuthIndex:       "dev-auth-002",
+					Email:           "arno***",
 					InputTokens:     259,
 					OutputTokens:    445,
 					ReasoningTokens: 938,
 					TotalTokens:     1642,
-					Failed:       false,
-					StatusCode:   200,
+					Failed:          false,
+					StatusCode:      200,
 				},
 				{
 					ID:           "req-seed-003",
@@ -141,6 +141,34 @@ func newDevServer(options devServerOptions) (*devServer, error) {
 					Failed:       true,
 					StatusCode:   429,
 					ErrorMessage: "RESOURCE_EXHAUSTED: rate limit exceeded",
+				},
+				{
+					ID:           "req-seed-005",
+					At:           nowTime.Add(-8 * time.Minute),
+					Model:        "claude-sonnet-5-5-high",
+					ModelPool:    "claude_gpt",
+					AuthIndex:    "dev-auth-002",
+					Email:        "arno***",
+					InputTokens:  940,
+					OutputTokens: 0,
+					TotalTokens:  940,
+					Failed:       true,
+					StatusCode:   500,
+					ErrorMessage: defaultSimulatedErrorMessage,
+				},
+				{
+					ID:           "req-seed-006",
+					At:           nowTime.Add(-11 * time.Minute),
+					Model:        "gemini-4-argon-high",
+					ModelPool:    "argon",
+					AuthIndex:    "dev-auth-003",
+					Email:        "mojs***",
+					InputTokens:  320,
+					OutputTokens: 0,
+					TotalTokens:  320,
+					Failed:       true,
+					StatusCode:   403,
+					ErrorMessage: "PERMISSION_DENIED: caller does not have permission to access the requested resource",
 				},
 			})
 			_ = store.SaveAtomic(context.Background())
@@ -238,6 +266,52 @@ func (d *devServer) Handler() http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(resp)
 	})
+	mux.HandleFunc("/dev/simulate-error", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		authIndex, err := d.resolveAuthIndex(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		statusCode := http.StatusInternalServerError
+		if rawStatus := strings.TrimSpace(r.URL.Query().Get("status")); rawStatus != "" {
+			parsed, parseErr := strconv.Atoi(rawStatus)
+			if parseErr != nil || parsed < 100 || parsed > 599 {
+				http.Error(w, "status must be an integer between 100 and 599", http.StatusBadRequest)
+				return
+			}
+			statusCode = parsed
+		}
+		message := strings.TrimSpace(r.URL.Query().Get("message"))
+		if message == "" {
+			message = defaultSimulatedErrorMessage
+		}
+		model := strings.TrimSpace(r.URL.Query().Get("model"))
+		if model == "" {
+			model = "gemini-3.8-flash-high"
+		}
+		payload, err := json.Marshal(map[string]any{
+			"Provider":  "antigravity",
+			"Model":     model,
+			"AuthIndex": authIndex,
+			"Failed":    true,
+			"Failure": map[string]any{
+				"StatusCode": statusCode,
+				"Body":       message,
+			},
+		})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		resp := d.runtime.Handle(r.Context(), runtime.MethodUsageHandle, payload)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(resp)
+	})
+
 	mux.HandleFunc("/dev/simulate-usage", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -329,6 +403,7 @@ func main() {
 	fmt.Println(" Simulation Hooks for Manual 429 Testing:")
 	fmt.Printf("   POST http://%s/dev/simulate-429?auth_index=<authIndex>\n", displayAddress)
 	fmt.Printf("   POST http://%s/dev/simulate-success?auth_index=<authIndex>\n", displayAddress)
+	fmt.Printf("   POST http://%s/dev/simulate-error?auth_index=<authIndex>&status=500&message=<detail>\n", displayAddress)
 	fmt.Println(" Press Ctrl+C to stop the server.")
 	fmt.Println("=========================================================")
 

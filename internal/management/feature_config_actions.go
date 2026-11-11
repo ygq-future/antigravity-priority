@@ -28,6 +28,7 @@ const templateScriptConfig = `        let originalConfigState = null;
             var urgencyTol = (document.getElementById("cfgUrgencyTolerance") && document.getElementById("cfgUrgencyTolerance").value) || "";
             var sampleCapacity = (document.getElementById("cfgSampleCapacity") && document.getElementById("cfgSampleCapacity").value) || "";
             var cooldownMin = (document.getElementById("cfgCooldownMinutes") && document.getElementById("cfgCooldownMinutes").value) || "";
+            var requestHistoryLimit = (document.getElementById("cfgRequestHistoryLimit") && document.getElementById("cfgRequestHistoryLimit").value) || "";
             var boostStart = (document.getElementById("cfgBoostStartPriority") && document.getElementById("cfgBoostStartPriority").value) || "";
             var normalStart = (document.getElementById("cfgNormalStartPriority") && document.getElementById("cfgNormalStartPriority").value) || "";
             var freeStart = (document.getElementById("cfgFreeStartPriority") && document.getElementById("cfgFreeStartPriority").value) || "";
@@ -39,6 +40,7 @@ const templateScriptConfig = `        let originalConfigState = null;
             return JSON.stringify({
                 autoApply, interval, windowEnabled, windowStart, windowEnd,
                 maxConcurrency, urgencyTol, sampleCapacity, cooldownMin, boostStart, normalStart, freeStart,
+                requestHistoryLimit,
                 warmupGeminiEnabled, warmupGeminiModel, warmupClaudeEnabled, warmupClaudeModel
             });
         }
@@ -105,6 +107,9 @@ const templateScriptConfig = `        let originalConfigState = null;
 
             var cooldownMin = document.getElementById("cfgCooldownMinutes");
             if (cooldownMin) cooldownMin.value = cfg.rate_limit_cooldown_minutes !== undefined ? cfg.rate_limit_cooldown_minutes : 5;
+
+            var requestHistoryLimit = document.getElementById("cfgRequestHistoryLimit");
+            if (requestHistoryLimit) requestHistoryLimit.value = cfg.request_history_limit !== undefined ? cfg.request_history_limit : 100;
 
             var rules = cfg.priority_rules || {};
             var boostStart = document.getElementById("cfgBoostStartPriority");
@@ -267,6 +272,13 @@ const templateScriptConfig = `        let originalConfigState = null;
                     return;
                 }
 
+				var requestHistoryLimit = parseStrictInteger((document.getElementById("cfgRequestHistoryLimit") && document.getElementById("cfgRequestHistoryLimit").value) || "100");
+                if (isNaN(requestHistoryLimit) || requestHistoryLimit < 1 || requestHistoryLimit > 1000) {
+                    showToast(t("valErrRequestHistoryLimit"), "error");
+                    updateSaveButtonState();
+                    return;
+                }
+
 				var boostStart = parseStrictInteger((document.getElementById("cfgBoostStartPriority") && document.getElementById("cfgBoostStartPriority").value) || "999");
 				var normalStart = parseStrictInteger((document.getElementById("cfgNormalStartPriority") && document.getElementById("cfgNormalStartPriority").value) || "100");
 				var freeStart = parseStrictInteger((document.getElementById("cfgFreeStartPriority") && document.getElementById("cfgFreeStartPriority").value) || "10");
@@ -294,6 +306,7 @@ const templateScriptConfig = `        let originalConfigState = null;
                     urgency_tolerance: urgencyTol,
                     rate_limit_cooldown_minutes: cooldownMin,
                     quota_sample_capacity: sampleCapacity,
+                    request_history_limit: requestHistoryLimit,
                     priority_rules: {
                         boost_start_priority: boostStart,
                         normal_start_priority: normalStart,
@@ -350,6 +363,7 @@ const templateScriptConfig = `        let originalConfigState = null;
                 urgency_tolerance: 0.05,
                 quota_sample_capacity: 6,
                 rate_limit_cooldown_minutes: 5,
+                request_history_limit: 100,
                 priority_rules: {
                     boost_start_priority: 999,
                     normal_start_priority: 100

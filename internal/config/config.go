@@ -40,6 +40,8 @@ const (
 	KeyRateLimitCooldownMinutes = "rate_limit_cooldown_minutes"
 	// KeyQuotaSampleCapacity is the JSON key for quota_sample_capacity.
 	KeyQuotaSampleCapacity = "quota_sample_capacity"
+	// KeyRequestHistoryLimit is the JSON key for request_history_limit.
+	KeyRequestHistoryLimit = "request_history_limit"
 	// KeyStateCachePath is the JSON/YAML key for state_cache_path.
 	KeyStateCachePath = "state_cache_path"
 	// KeyPriorityRules is the JSON key for priority_rules.
@@ -75,6 +77,12 @@ const (
 	DefaultRateLimitCooldownMinutes = 5
 	// DefaultQuotaSampleCapacity is the default sliding window capacity for multi-sample estimation.
 	DefaultQuotaSampleCapacity = 6
+	// DefaultRequestHistoryLimit is the default number of recent requests retained for display.
+	DefaultRequestHistoryLimit = 100
+	// MinRequestHistoryLimit is the minimum allowed request history retention.
+	MinRequestHistoryLimit = 1
+	// MaxRequestHistoryLimit is the maximum allowed request history retention.
+	MaxRequestHistoryLimit = 1000
 	// MinQuotaSampleCapacity is the minimum allowed sample capacity.
 	MinQuotaSampleCapacity = 2
 	// MaxQuotaSampleCapacity is the maximum allowed sample capacity.
@@ -111,6 +119,7 @@ type Config struct {
 	UrgencyTolerance         float64
 	RateLimitCooldownMinutes int
 	QuotaSampleCapacity      int
+	RequestHistoryLimit      int
 	StateCachePath           string
 	PriorityRules            PriorityRules
 	Schedule                 ScheduleConfig
@@ -210,6 +219,7 @@ type DynamicConfig struct {
 	UrgencyTolerance         float64             `json:"urgency_tolerance"`           // e.g. 0.05
 	RateLimitCooldownMinutes int                 `json:"rate_limit_cooldown_minutes"` // e.g. 5
 	QuotaSampleCapacity      int                 `json:"quota_sample_capacity"`       // e.g. 6 (range 2..30)
+	RequestHistoryLimit      int                 `json:"request_history_limit"`       // e.g. 100 (range 1..1000)
 	PriorityRules            PriorityRulesConfig `json:"priority_rules"`
 	Schedule                 ScheduleConfig      `json:"schedule"`
 	CustomTiers              map[string]int      `json:"custom_tiers,omitempty"`
@@ -246,6 +256,7 @@ func Default() Config {
 		UrgencyTolerance:         DefaultUrgencyTolerance,
 		RateLimitCooldownMinutes: DefaultRateLimitCooldownMinutes,
 		QuotaSampleCapacity:      DefaultQuotaSampleCapacity,
+		RequestHistoryLimit:      DefaultRequestHistoryLimit,
 		StateCachePath:           DefaultStateCachePath,
 		PriorityRules:            defaultPriorityRules(),
 		Schedule: ScheduleConfig{
@@ -269,6 +280,7 @@ func (cfg Config) Dynamic() DynamicConfig {
 		UrgencyTolerance:         cfg.UrgencyTolerance,
 		RateLimitCooldownMinutes: cfg.RateLimitCooldownMinutes,
 		QuotaSampleCapacity:      cfg.QuotaSampleCapacity,
+		RequestHistoryLimit:      cfg.RequestHistoryLimit,
 		PriorityRules: PriorityRulesConfig{
 			BoostStartPriority:  cfg.PriorityRules.BoostStartPriority,
 			NormalStartPriority: cfg.PriorityRules.NormalStartPriority,
@@ -335,6 +347,9 @@ func (dyn DynamicConfig) Validate() error {
 	if dyn.QuotaSampleCapacity < MinQuotaSampleCapacity || dyn.QuotaSampleCapacity > MaxQuotaSampleCapacity {
 		return fmt.Errorf("quota_sample_capacity must be between %d and %d, got %d", MinQuotaSampleCapacity, MaxQuotaSampleCapacity, dyn.QuotaSampleCapacity)
 	}
+	if dyn.RequestHistoryLimit < MinRequestHistoryLimit || dyn.RequestHistoryLimit > MaxRequestHistoryLimit {
+		return fmt.Errorf("request_history_limit must be between %d and %d, got %d", MinRequestHistoryLimit, MaxRequestHistoryLimit, dyn.RequestHistoryLimit)
+	}
 	if err := ValidateScheduleWindow(dyn.Schedule.WindowStart, dyn.Schedule.WindowEnd); err != nil {
 		return err
 	}
@@ -373,6 +388,7 @@ func (dyn DynamicConfig) ApplyTo(base Config) (Config, error) {
 	res.UrgencyTolerance = dyn.UrgencyTolerance
 	res.RateLimitCooldownMinutes = dyn.RateLimitCooldownMinutes
 	res.QuotaSampleCapacity = dyn.QuotaSampleCapacity
+	res.RequestHistoryLimit = dyn.RequestHistoryLimit
 	res.PriorityRules.BoostStartPriority = dyn.PriorityRules.BoostStartPriority
 	res.PriorityRules.NormalStartPriority = dyn.PriorityRules.NormalStartPriority
 	res.PriorityRules.FreeStartPriority = dyn.PriorityRules.FreeStartPriority

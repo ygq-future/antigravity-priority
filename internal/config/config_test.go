@@ -238,6 +238,7 @@ func TestDynamicConfig_ValidateAndApplyTo(t *testing.T) {
 			UrgencyTolerance:         0.10,
 			RateLimitCooldownMinutes: 10,
 			QuotaSampleCapacity:      15,
+			RequestHistoryLimit:      150,
 			PriorityRules: config.PriorityRulesConfig{
 				BoostStartPriority:  990,
 				NormalStartPriority: 250,
@@ -279,6 +280,9 @@ func TestDynamicConfig_ValidateAndApplyTo(t *testing.T) {
 		}
 		if merged.QuotaSampleCapacity != 15 {
 			t.Errorf("expected QuotaSampleCapacity=15, got %d", merged.QuotaSampleCapacity)
+		}
+		if merged.RequestHistoryLimit != 150 {
+			t.Errorf("expected RequestHistoryLimit=150, got %d", merged.RequestHistoryLimit)
 		}
 		if merged.PriorityRules.BoostStartPriority != 990 {
 			t.Errorf("expected BoostStartPriority=990, got %d", merged.PriorityRules.BoostStartPriority)
@@ -418,6 +422,16 @@ func TestDynamicConfig_ValidateAndApplyTo(t *testing.T) {
 				wantErr: "quota_sample_capacity must be between",
 			},
 			{
+				name:    "request history limit out of range (0)",
+				mutate:  func(dyn *config.DynamicConfig) { dyn.RequestHistoryLimit = 0 },
+				wantErr: "request_history_limit must be between",
+			},
+			{
+				name:    "request history limit out of range (1001)",
+				mutate:  func(dyn *config.DynamicConfig) { dyn.RequestHistoryLimit = 1001 },
+				wantErr: "request_history_limit must be between",
+			},
+			{
 				name:    "invalid schedule window format",
 				mutate:  func(dyn *config.DynamicConfig) { dyn.Schedule.WindowStart = "25:00" },
 				wantErr: "window_start",
@@ -454,6 +468,8 @@ func TestDynamicConfig_ValidateAndApplyTo(t *testing.T) {
 			{"cooldown maximum", func(d *config.DynamicConfig) { d.RateLimitCooldownMinutes = 1440 }},
 			{"sample capacity minimum", func(d *config.DynamicConfig) { d.QuotaSampleCapacity = 2 }},
 			{"sample capacity maximum", func(d *config.DynamicConfig) { d.QuotaSampleCapacity = 30 }},
+			{"request history minimum", func(d *config.DynamicConfig) { d.RequestHistoryLimit = 1 }},
+			{"request history maximum", func(d *config.DynamicConfig) { d.RequestHistoryLimit = 1000 }},
 			{"priority minimum", func(d *config.DynamicConfig) {
 				d.PriorityRules.BoostStartPriority = 1
 				d.PriorityRules.NormalStartPriority = 1
