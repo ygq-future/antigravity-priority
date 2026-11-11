@@ -36,14 +36,14 @@ const configMarkup = `
                             <div class="form-input-group">
                                 <select id="cfgIntervalSelect" hidden>
                                     <option value="5m" data-i18n="optInterval5m">5 分钟</option>
-                                    <option value="15m" selected data-i18n="optInterval15m">15 分钟 (推荐)</option>
+                                    <option value="15m" selected data-i18n="optInterval15m">15 分钟</option>
                                     <option value="30m" data-i18n="optInterval30m">30 分钟</option>
                                     <option value="1h" data-i18n="optInterval1h">1 小时</option>
                                     <option value="custom" data-i18n="optIntervalCustom">自定义</option>
                                 </select>
                                 <div id="customIntervalSelect" class="custom-select-wrapper" style="min-width:140px;">
                                     <button type="button" class="custom-select-trigger" onclick="toggleCustomIntervalSelect(event)" aria-haspopup="listbox" aria-expanded="false">
-                                        <span id="customIntervalLabel">15 分钟 (推荐)</span>
+                                        <span id="customIntervalLabel">15 分钟</span>
                                         <span class="custom-select-arrow">
                                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"></path></svg>
                                         </span>
@@ -54,7 +54,7 @@ const configMarkup = `
                                             <span class="custom-select-check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg></span>
                                         </div>
                                         <div class="custom-select-option selected" data-value="15m" onclick="selectIntervalOption('15m', event)">
-                                            <span data-i18n="optInterval15m">15 分钟 (推荐)</span>
+                                            <span data-i18n="optInterval15m">15 分钟</span>
                                             <span class="custom-select-check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg></span>
                                         </div>
                                         <div class="custom-select-option" data-value="30m" onclick="selectIntervalOption('30m', event)">
