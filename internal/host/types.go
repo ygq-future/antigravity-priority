@@ -10,8 +10,6 @@ import (
 )
 
 const (
-	// ManagementAuthStatusPath is the CPA management API path to update credential disabled status.
-	ManagementAuthStatusPath = "/v0/management/auth-files/status"
 	// RedactedValue is the placeholder string for sensitive headers and fields.
 	RedactedValue = "[REDACTED]"
 

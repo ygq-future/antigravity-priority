@@ -173,17 +173,6 @@ type CooldownEntry struct {
 	Reason                  string      `json:"reason"`
 	PreviousPriority        int         `json:"previous_priority,omitempty"`
 	PreviousPriorityMissing bool        `json:"previous_priority_missing,omitempty"`
-	PreviousDisabled        bool        `json:"previous_disabled,omitempty"`
-	AppliedDisabled         bool        `json:"applied_disabled,omitempty"`
-}
-
-// AutoDisabledEntry tracks credentials automatically disabled by the plugin
-// due to weekly quota depletion (7d exhausted).
-type AutoDisabledEntry struct {
-	AuthIndex  string    `json:"auth_index"`
-	ModelGroup string    `json:"model_group,omitempty"`
-	Reason     string    `json:"reason"`
-	DisabledAt time.Time `json:"disabled_at"`
 }
 
 // PriorityRulesConfig holds priority rule settings for DynamicConfig.
@@ -202,7 +191,6 @@ type Store struct {
 	dynamicConfig   *DynamicConfig
 	lastAutoApplyAt time.Time
 	cooldowns       map[string]CooldownEntry
-	autoDisabled    map[string]AutoDisabledEntry
 	requestHistory  []RequestHistoryEntry
 	warmupCompleted map[string]time.Time
 	loadErrors      []string
@@ -211,11 +199,10 @@ type Store struct {
 // stateDocument is the main quota/health document. Run and request history
 // live in sibling documents so their writes never rewrite quota evidence.
 type stateDocument struct {
-	SchemaVersion   int                          `json:"schema_version"`
-	Entries         map[string]Entry             `json:"entries"`
-	Cooldowns       map[string]CooldownEntry     `json:"cooldowns,omitempty"`
-	AutoDisabled    map[string]AutoDisabledEntry `json:"auto_disabled,omitempty"`
-	WarmupCompleted map[string]time.Time         `json:"warmup_completed,omitempty"`
+	SchemaVersion   int                      `json:"schema_version"`
+	Entries         map[string]Entry         `json:"entries"`
+	Cooldowns       map[string]CooldownEntry `json:"cooldowns,omitempty"`
+	WarmupCompleted map[string]time.Time     `json:"warmup_completed,omitempty"`
 }
 
 // legacyStateDocument retains the pre-split single-file fields so an existing
@@ -270,7 +257,6 @@ func Load(ctx context.Context, path string) (*Store, error) {
 		paths:           paths,
 		entries:         make(map[string]Entry),
 		cooldowns:       make(map[string]CooldownEntry),
-		autoDisabled:    make(map[string]AutoDisabledEntry),
 		warmupCompleted: make(map[string]time.Time),
 	}
 
@@ -459,9 +445,6 @@ func (s *Store) applyStateDocument(doc legacyStateDocument) {
 			s.cooldowns[key] = v
 		}
 	}
-	if doc.AutoDisabled != nil {
-		s.autoDisabled = doc.AutoDisabled
-	}
 	if doc.WarmupCompleted != nil {
 		s.warmupCompleted = make(map[string]time.Time, len(doc.WarmupCompleted))
 		for key, at := range doc.WarmupCompleted {
@@ -543,7 +526,6 @@ func (s *Store) SaveStateAtomic(ctx context.Context) error {
 			SchemaVersion:   SchemaVersion,
 			Entries:         s.entries,
 			Cooldowns:       s.cooldowns,
-			AutoDisabled:    s.autoDisabled,
 			WarmupCompleted: s.warmupCompleted,
 		}
 	})
@@ -1561,40 +1543,6 @@ func (s *Store) ClearExpiredCooldowns(now time.Time) {
 			delete(s.cooldowns, k)
 		}
 	}
-}
-
-// GetAutoDisabled returns a copy of all current auto-disabled entries.
-func (s *Store) GetAutoDisabled() map[string]AutoDisabledEntry {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	copied := make(map[string]AutoDisabledEntry, len(s.autoDisabled))
-	maps.Copy(copied, s.autoDisabled)
-	return copied
-}
-
-// IsAutoDisabled checks if a credential is automatically disabled by the plugin.
-func (s *Store) IsAutoDisabled(authIndex string) bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	_, ok := s.autoDisabled[authIndex]
-	return ok
-}
-
-// SetAutoDisabled records an auto-disabled state for a credential.
-func (s *Store) SetAutoDisabled(entry AutoDisabledEntry) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.autoDisabled == nil {
-		s.autoDisabled = make(map[string]AutoDisabledEntry)
-	}
-	s.autoDisabled[entry.AuthIndex] = entry
-}
-
-// DeleteAutoDisabled removes an auto-disabled record for a credential.
-func (s *Store) DeleteAutoDisabled(authIndex string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.autoDisabled, authIndex)
 }
 
 // Path returns the file path of the main state cache document.

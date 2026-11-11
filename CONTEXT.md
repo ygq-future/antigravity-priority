@@ -78,5 +78,5 @@ Setting priority to `-1` while maintaining `disabled = false` when the 5-hour sh
 _Avoid_: Temporary ban, mute, hard disable
 
 **Hard Depletion**:
-Setting priority to `-1` and marking `disabled = true` in host state when the 7-day weekly quota is completely exhausted ($R_{\text{7d}} \le 0$).
-_Avoid_: Account ban, credential deletion, permanent lockout
+Setting priority to `-1` while leaving `disabled` unchanged when the 7-day weekly quota is completely exhausted ($R_{\text{7d}} \le 0$); the credential recovers automatically when the weekly window resets or fresh evidence shows remaining quota.
+_Avoid_: Account ban, credential deletion, permanent lockout, host-level disable

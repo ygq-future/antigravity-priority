@@ -929,7 +929,7 @@ func (r *Runtime) setSnapshotSet(snap apply.SnapshotSet) {
 	r.latestSnapshotSet = &cloned
 }
 
-func (r *Runtime) patchSnapshotCooldown(authIndex string, inCooldown bool, reason string, restoredPriority int, restoredDisabled bool) {
+func (r *Runtime) patchSnapshotCooldown(authIndex string, inCooldown bool, reason string, restoredPriority int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.latestSnapshotSet == nil {
@@ -946,8 +946,6 @@ func (r *Runtime) patchSnapshotCooldown(authIndex string, inCooldown bool, reaso
 				} else {
 					group.Items[i].Host.Priority = restoredPriority
 					group.Items[i].Target.Priority = restoredPriority
-					group.Items[i].Host.Disabled = restoredDisabled
-					group.Items[i].Target.Disabled = restoredDisabled
 					group.Items[i].Reason = reason
 				}
 			}

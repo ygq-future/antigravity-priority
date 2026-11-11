@@ -165,7 +165,6 @@ func (r *Runtime) triggerFailure(ctx context.Context, input failureInput) error 
 
 	previousPriority := credential.Priority
 	previousPriorityMissing := credential.PriorityMissing
-	previousDisabled := credential.Disabled
 	baselineFound := false
 	for _, existing := range entries {
 		if existing.AuthIndex != input.AuthIndex {
@@ -176,7 +175,6 @@ func (r *Runtime) triggerFailure(ctx context.Context, input failureInput) error 
 		}
 		previousPriority = existing.PreviousPriority
 		previousPriorityMissing = existing.PreviousPriorityMissing
-		previousDisabled = existing.PreviousDisabled
 		baselineFound = true
 	}
 
@@ -198,8 +196,6 @@ func (r *Runtime) triggerFailure(ctx context.Context, input failureInput) error 
 		Reason:                  input.Reason,
 		PreviousPriority:        previousPriority,
 		PreviousPriorityMissing: previousPriorityMissing,
-		PreviousDisabled:        previousDisabled,
-		AppliedDisabled:         credential.Disabled,
 	}
 	if !probeEnabled {
 		entry.NextRecoveryAt = time.Time{}
@@ -233,7 +229,7 @@ func (r *Runtime) triggerFailure(ctx context.Context, input failureInput) error 
 		r.recordCooldownFailure(ctx, store, input.AuthIndex, input.Reason, failureTrigger(input.Kind), applyErr)
 		return applyErr
 	}
-	r.patchSnapshotCooldown(input.AuthIndex, true, input.Reason, priority.DepletedPriority, credential.Disabled)
+	r.patchSnapshotCooldown(input.AuthIndex, true, input.Reason, priority.DepletedPriority)
 	summary := resultSummary("health cooldown", result)
 	_, projectErr := r.projectRun(ctx, store, result, summary, withTransitionStats(result, RunHistoryEntry{
 		Kind:     KindCooldown,
@@ -601,8 +597,6 @@ func (r *Runtime) escalateAuthProblem(ctx context.Context, store *state.Store, e
 		Reason:                  reason,
 		PreviousPriority:        entry.PreviousPriority,
 		PreviousPriorityMissing: entry.PreviousPriorityMissing,
-		PreviousDisabled:        entry.PreviousDisabled,
-		AppliedDisabled:         entry.AppliedDisabled,
 		ProbeEnabled:            false,
 	}
 	store.SetCooldown(accountEntry)
@@ -730,7 +724,7 @@ func (r *Runtime) restoreCooldown(ctx context.Context, store *state.Store, entry
 		return err
 	}
 	now := r.clock.Now().UTC()
-	manualChange := credential.Priority != priority.DepletedPriority || credential.Disabled != entry.AppliedDisabled
+	manualChange := credential.Priority != priority.DepletedPriority
 	store.DeleteCooldownExact(key)
 	r.clearActiveCooldownExact(key)
 	if manualChange {
@@ -755,7 +749,7 @@ func (r *Runtime) applyCooldownRecovery(ctx context.Context, store *state.Store,
 	if err != nil {
 		return err
 	}
-	if credential.Priority != priority.DepletedPriority || credential.Disabled != entry.AppliedDisabled {
+	if credential.Priority != priority.DepletedPriority {
 		_ = store.SaveStateAtomic(ctx)
 		r.routingMu.Lock()
 		r.recomputeRoutingTablesLocked(r.clock.Now().UTC())
@@ -763,7 +757,7 @@ func (r *Runtime) applyCooldownRecovery(ctx context.Context, store *state.Store,
 		return nil
 	}
 	client := host.NewClient(r.hostCallbacks)
-	intent := apply.CooldownRecoveryIntent(credential, entry.PreviousPriority, entry.PreviousPriorityMissing, entry.PreviousDisabled, cause)
+	intent := apply.CooldownRecoveryIntent(credential, entry.PreviousPriority, entry.PreviousPriorityMissing, cause)
 	result, applyErr := apply.ExecuteRound(ctx, apply.NewHostTransition(client), apply.TransitionRound{Intents: []apply.TransitionIntent{intent}})
 	if applyErr != nil {
 		return applyErr
@@ -772,8 +766,8 @@ func (r *Runtime) applyCooldownRecovery(ctx context.Context, store *state.Store,
 	if strings.TrimSpace(reason) == "" {
 		reason = priority.Reason429Cooldown
 	}
-	r.patchSnapshotCooldown(entry.AuthIndex, false, "cooldown recovered", entry.PreviousPriority, entry.PreviousDisabled)
-	result.Snapshot = apply.Snapshot(priority.Plan{DecidedAt: r.clock.Now().UTC(), Items: []priority.PlanItem{{Credential: credential, Priority: entry.PreviousPriority, Disabled: entry.PreviousDisabled, Reason: reason}}})
+	r.patchSnapshotCooldown(entry.AuthIndex, false, "cooldown recovered", entry.PreviousPriority)
+	result.Snapshot = apply.Snapshot(priority.Plan{DecidedAt: r.clock.Now().UTC(), Items: []priority.PlanItem{{Credential: credential, Priority: entry.PreviousPriority, Disabled: credential.Disabled, Reason: reason}}})
 	r.routingMu.Lock()
 	r.recomputeRoutingTablesLocked(r.clock.Now().UTC())
 	r.routingMu.Unlock()

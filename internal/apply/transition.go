@@ -131,8 +131,9 @@ func CooldownIntent(credential core.Credential, cause string) TransitionIntent {
 	}
 }
 
-// CooldownRecoveryIntent restores the exact Host state captured before a 429 cooldown.
-func CooldownRecoveryIntent(credential core.Credential, priorityValue int, priorityMissing, disabled bool, cause string) TransitionIntent {
+// CooldownRecoveryIntent restores the priority captured before a 429 cooldown.
+// Cooldowns never mutate disabled, so recovery leaves it untouched.
+func CooldownRecoveryIntent(credential core.Credential, priorityValue int, priorityMissing bool, cause string) TransitionIntent {
 	priorityTarget := SetPriority(priorityValue)
 	if priorityMissing {
 		priorityTarget = UnsetPriority()
@@ -143,7 +144,7 @@ func CooldownRecoveryIntent(credential core.Credential, priorityValue int, prior
 		Expected:  ExpectedState(credential),
 		Target: CredentialTarget{
 			Priority: priorityTarget,
-			Disabled: SetDisabled(disabled),
+			Disabled: KeepDisabled(),
 		},
 		Cause: cause,
 	}

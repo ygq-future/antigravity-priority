@@ -24,10 +24,6 @@ const (
 	ReasonUnauthorizedCooldown     = "401 unauthorized cooldown"
 )
 
-// WeeklyRecoveryThreshold is the minimum 7d quota remaining required to re-enable
-// an account that was automatically disabled due to weekly depletion.
-const WeeklyRecoveryThreshold = 0.10
-
 // QuotaEvidence represents a validated quota observation. It intentionally
 // contains no freshness or probe-status flags: only the Evidence authority
 // decides whether an instance belongs to the Fresh or Historical set supplied
