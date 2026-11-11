@@ -143,15 +143,6 @@ const configMarkup = `
                             </div>
                         </div>
 
-                        <div class="form-row">
-                            <div class="form-label-box">
-                                <span class="form-title" data-i18n="cfgRequestHistoryLimit">请求历史保留条数</span>
-                                <span class="form-hint" data-i18n="cfgRequestHistoryLimitHint">最近请求历史仅保留最新 X 条记录 (1-1000)</span>
-                            </div>
-                            <div class="form-input-group">
-                                <input type="number" id="cfgRequestHistoryLimit" class="config-num-input" min="1" max="1000" value="100">
-                            </div>
-                        </div>
                     </div>
                 </div>
 
