@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -252,8 +253,19 @@ func routingTier(item priority.PlanItem) int {
 	return item.Priority
 }
 
+// routingConfigSnapshot returns the configuration fields consumed by routing.
+// The live Config is owned by r.mu, and CustomTiers is mutable state, so the
+// map is cloned before it leaves the lock.
+func (r *Runtime) routingConfigSnapshot() config.Config {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	cfg := r.cfg
+	cfg.CustomTiers = maps.Clone(r.cfg.CustomTiers)
+	return cfg
+}
+
 // recomputePoolRoutingTableLocked computes a PoolRoutingTable for a single pool in pure memory.
-func (r *Runtime) recomputePoolRoutingTableLocked(pool config.AntigravityModelGroup, now time.Time, store *state.Store, credentials []core.Credential) PoolRoutingTable {
+func (r *Runtime) recomputePoolRoutingTableLocked(pool config.AntigravityModelGroup, cfg config.Config, now time.Time, store *state.Store, credentials []core.Credential) PoolRoutingTable {
 	if store == nil {
 		return PoolRoutingTable{
 			DecidedAt:     now,
@@ -275,16 +287,16 @@ func (r *Runtime) recomputePoolRoutingTableLocked(pool config.AntigravityModelGr
 	blockedModels := store.GetActiveModelCooldownsForGroup(now, string(pool))
 
 	customTiers := store.GetCustomTiers()
-	if customTiers == nil && r.cfg.CustomTiers != nil {
-		customTiers = r.cfg.CustomTiers
+	if customTiers == nil && cfg.CustomTiers != nil {
+		customTiers = cfg.CustomTiers
 	}
 
 	options := priority.Options{
 		Now:                 now,
-		BoostStartPriority:  r.cfg.PriorityRules.BoostStartPriority,
-		NormalStartPriority: r.cfg.PriorityRules.NormalStartPriority,
-		FreeStartPriority:   r.cfg.PriorityRules.FreeStartPriority,
-		UrgencyTolerance:    r.cfg.UrgencyTolerance,
+		BoostStartPriority:  cfg.PriorityRules.BoostStartPriority,
+		NormalStartPriority: cfg.PriorityRules.NormalStartPriority,
+		FreeStartPriority:   cfg.PriorityRules.FreeStartPriority,
+		UrgencyTolerance:    cfg.UrgencyTolerance,
 		CooldownAuthIndexes: cooldowns,
 		CooldownReasons:     cooldownReasons,
 		CustomTiers:         customTiers,
@@ -364,7 +376,8 @@ func (r *Runtime) recomputePoolRoutingTableLocked(pool config.AntigravityModelGr
 
 // recomputeRoutingTablesLocked updates all 3 pool routing tables in memory.
 func (r *Runtime) recomputeRoutingTablesLocked(now time.Time, existingCreds ...[]core.Credential) {
-	cachePath := r.cfg.StateCachePath
+	cfg := r.routingConfigSnapshot()
+	cachePath := cfg.StateCachePath
 	if strings.TrimSpace(cachePath) == "" {
 		cachePath = config.DefaultStateCachePath
 	}
@@ -373,15 +386,15 @@ func (r *Runtime) recomputeRoutingTablesLocked(now time.Time, existingCreds ...[
 	if len(existingCreds) > 0 {
 		credentials = existingCreds[0]
 	} else {
-		credentials = r.currentCredentialsLocked()
+		credentials = r.currentCredentialsLocked(cfg)
 	}
 	for _, pool := range config.AllAntigravityModelGroups {
-		r.plansByPool[pool] = r.recomputePoolRoutingTableLocked(pool, now, store, credentials)
+		r.plansByPool[pool] = r.recomputePoolRoutingTableLocked(pool, cfg, now, store, credentials)
 	}
 }
 
 // currentCredentialsLocked extracts current known credentials from host or state cache.
-func (r *Runtime) currentCredentialsLocked() []core.Credential {
+func (r *Runtime) currentCredentialsLocked(cfg config.Config) []core.Credential {
 	if r.hostCallbacks != nil {
 		client := host.NewClient(r.hostCallbacks)
 		if files, err := client.ListAuthFiles(context.Background()); err == nil && len(files) > 0 {
@@ -390,7 +403,7 @@ func (r *Runtime) currentCredentialsLocked() []core.Credential {
 		}
 	}
 
-	cachePath := r.cfg.StateCachePath
+	cachePath := cfg.StateCachePath
 	if strings.TrimSpace(cachePath) == "" {
 		cachePath = config.DefaultStateCachePath
 	}
@@ -430,15 +443,28 @@ func (r *Runtime) getOrRefreshPoolTable(pool config.AntigravityModelGroup, now t
 		return table
 	}
 
-	cachePath := r.cfg.StateCachePath
+	cfg := r.routingConfigSnapshot()
+	r.pruneExpiredSessionAffinityLocked(now)
+	cachePath := cfg.StateCachePath
 	if strings.TrimSpace(cachePath) == "" {
 		cachePath = config.DefaultStateCachePath
 	}
 	store, _ := state.Load(context.Background(), cachePath)
-	credentials := r.currentCredentialsLocked()
-	refreshed := r.recomputePoolRoutingTableLocked(pool, now, store, credentials)
+	credentials := r.currentCredentialsLocked(cfg)
+	refreshed := r.recomputePoolRoutingTableLocked(pool, cfg, now, store, credentials)
 	r.plansByPool[pool] = refreshed
 	return refreshed
+}
+
+// pruneExpiredSessionAffinityLocked drops bindings that can no longer be
+// honored. It runs only while routingMu is held for writing, so the map cannot
+// change underneath the sweep.
+func (r *Runtime) pruneExpiredSessionAffinityLocked(now time.Time) {
+	for key, binding := range r.sessionAffinity {
+		if !now.Before(binding.ExpiresAt) {
+			delete(r.sessionAffinity, key)
+		}
+	}
 }
 
 func minFutureTime(current, candidate time.Time) time.Time {

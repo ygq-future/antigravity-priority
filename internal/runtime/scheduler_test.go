@@ -858,6 +858,83 @@ func TestScheduler_UnavailablePoolIsNotRouted(t *testing.T) {
 	}
 }
 
+func TestScheduler_DynamicConfigHotAppliesCustomTiers(t *testing.T) {
+	ctx := context.Background()
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	now := time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
+	clock := &testClock{now: now}
+
+	mock := newMockHost()
+	mock.files = []host.AuthFile{
+		{Name: "account-a", AuthIndex: "idx-a", Provider: "antigravity", Status: "active"},
+		{Name: "account-b", AuthIndex: "idx-b", Provider: "antigravity", Status: "active"},
+	}
+
+	r := runtime.New(runtime.Options{Host: mock, StateCachePath: cachePath, Clock: clock})
+	if _, err := r.Register(ctx, runtime.RegisterRequest{ConfigYAML: "enabled: true\nstate_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.SyncHost(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rem := int64(80)
+	reset5h := now.Add(4 * time.Hour)
+	reset7d := now.Add(72 * time.Hour)
+	for _, idx := range []string{"idx-a", "idx-b"} {
+		if err := store.MarkProbeSuccess(ctx, state.ProbeSuccess{
+			AuthIndex:            idx,
+			Provider:             core.ProviderAntigravity,
+			ModelGroup:           "gemini",
+			ObservedAt:           now,
+			ResetAt:              reset7d,
+			Remaining:            rem,
+			ShortWindowRemaining: &rem,
+			ShortWindowResetAt:   reset5h,
+			LongWindowRemaining:  &rem,
+			LongWindowResetAt:    reset7d,
+			PlanType:             core.PlanTypePro,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.SaveAtomic(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, idx := range []string{"idx-a", "idx-b"} {
+		if err := r.SetCustomTier(ctx, idx, 2); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	candidates := []runtime.SchedulerAuthCandidate{
+		{ID: "account-a", Provider: "antigravity"},
+		{ID: "account-b", Provider: "antigravity"},
+	}
+	if got := pickSchedulerAuth(t, ctx, r, candidates); got.AuthID != "account-a" {
+		t.Fatalf("expected the equal-tier tie to select account-a first, got %q", got.AuthID)
+	}
+
+	dyn, err := r.GetDynamicConfig(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dyn.CustomTiers = map[string]int{"idx-a": 2, "idx-b": 1}
+	if err := r.SetDynamicConfig(ctx, dyn); err != nil {
+		t.Fatal(err)
+	}
+
+	// The clock is unchanged: the new tier must apply through cache
+	// invalidation, not through the 60-second routing table TTL.
+	if got := pickSchedulerAuth(t, ctx, r, candidates); got.AuthID != "account-b" {
+		t.Fatalf("dynamic config did not hot-apply: expected account-b (tier 1), got %q", got.AuthID)
+	}
+}
+
 func TestScheduler_CustomTier_PrioritizesTier1_And_BalancesTier2(t *testing.T) {
 	ctx := context.Background()
 	cachePath := filepath.Join(t.TempDir(), "cache.json")
@@ -876,7 +953,6 @@ func TestScheduler_CustomTier_PrioritizesTier1_And_BalancesTier2(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, _ = r.SyncHost(ctx)
-
 
 	// Setup healthy quotas for all three in state store
 	store, err := state.Load(ctx, cachePath)

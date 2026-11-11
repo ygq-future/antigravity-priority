@@ -809,6 +809,14 @@ func (r *Runtime) replaceConfig(ctx context.Context, cfg config.Config) error {
 		oldCfg.Interval != cfg.Interval
 	r.cfg = cfg
 	r.mu.Unlock()
+
+	// Routing reads an immutable config snapshot, so replacing the config must
+	// discard tables built from the previous values. The next pick rebuilds
+	// them with the new rules instead of waiting for the 60-second TTL.
+	r.routingMu.Lock()
+	r.plansByPool = make(map[config.AntigravityModelGroup]PoolRoutingTable)
+	r.routingMu.Unlock()
+
 	r.trimRequestHistory(ctx)
 	r.signalRateLimitWorker()
 	r.signalWarmupResetWatcher()
