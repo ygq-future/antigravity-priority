@@ -19,19 +19,12 @@ import (
 	"antigravity-priority/internal/priority"
 )
 
-// SchemaVersion is the current state cache document version.
-const SchemaVersion = 1
+// SchemaVersion is the current state cache document version. Version 2 removed
+// legacy probe scheduling and entry source fields.
+const SchemaVersion = 2
 
 // ErrCorruptCache indicates the cache file could not be parsed as valid state JSON.
 var ErrCorruptCache = errors.New("state: corrupt cache")
-
-// Source identifies the origin of a cache entry.
-type Source string
-
-const (
-	// SourceFreshProbe indicates the entry originated from a fresh probe.
-	SourceFreshProbe Source = "fresh_probe"
-)
 
 // Entry represents the persisted and learned state for a single credential and model group.
 type Entry struct {
@@ -58,28 +51,11 @@ type Entry struct {
 	LastUsageAt              time.Time     `json:"last_usage_at,omitzero"`
 	LastError                string        `json:"last_error,omitempty"`
 	LastFailureAt            time.Time     `json:"last_failure_at,omitzero"`
-	NextProbeAt              time.Time     `json:"next_probe_at,omitzero"`
 	AuthInvalid              bool          `json:"auth_invalid,omitempty"`
 	PlanType                 core.PlanType `json:"plan_type,omitempty"`
-	Source                   Source        `json:"source,omitempty"`
 	Unavailable              bool          `json:"unavailable,omitempty"`
 	UnavailableAt            time.Time     `json:"unavailable_at,omitzero"`
 	UnavailableReason        string        `json:"unavailable_reason,omitempty"`
-}
-
-// ProbePolicy defines cache staleness and expiration thresholds.
-type ProbePolicy struct {
-	TTL             time.Duration
-	ResetStaleAfter time.Duration
-}
-
-// ProbeCheck specifies the criteria for deciding if a probe is required.
-type ProbeCheck struct {
-	AuthIndex  string
-	Provider   core.Provider
-	ModelGroup string
-	Now        time.Time
-	Policy     ProbePolicy
 }
 
 // ProbeSuccess contains updated quota and state evidence after a successful probe.
@@ -96,10 +72,8 @@ type ProbeSuccess struct {
 	LongWindowRemaining  *int64
 	ArgonWindowResetAt   time.Time
 	ArgonWindowRemaining *int64
-	NextProbeAt          time.Time
 	AuthInvalid          bool
 	PlanType             core.PlanType
-	Source               Source
 	SampleCapacity       int
 	ProbeRoundID         string
 }
@@ -115,12 +89,11 @@ type ProbeSampleRecord struct {
 
 // ProbeFailure contains diagnostic information after a probe failure.
 type ProbeFailure struct {
-	AuthIndex   string
-	Provider    core.Provider
-	ModelGroup  string
-	ObservedAt  time.Time
-	Err         error
-	NextProbeAt time.Time
+	AuthIndex  string
+	Provider   core.Provider
+	ModelGroup string
+	ObservedAt time.Time
+	Err        error
 }
 
 // ProbeUnavailable records that the upstream does not expose a model group for
@@ -131,14 +104,6 @@ type ProbeUnavailable struct {
 	ModelGroup string
 	ObservedAt time.Time
 	Reason     string
-}
-
-// ProbeSchedule contains scheduling timing for a deferred probe.
-type ProbeSchedule struct {
-	AuthIndex   string
-	Provider    core.Provider
-	ModelGroup  string
-	NextProbeAt time.Time
 }
 
 // DynamicConfig contains all runtime-customizable configuration parameters
@@ -425,6 +390,12 @@ func (s *Store) applyStateDocument(doc legacyStateDocument) {
 		s.entries = doc.Entries
 		for key, entry := range s.entries {
 			entry.Samples, entry.LearningBaselineSequence = normalizeSampleHistory(entry.Samples, entry.LearningBaselineSequence)
+			// Removed probe scheduling/source fields were optional, so older
+			// entries remain valid after normalization. SaveAtomic will persist
+			// them under the current schema version.
+			if entry.SchemaVersion < SchemaVersion {
+				entry.SchemaVersion = SchemaVersion
+			}
 			s.entries[key] = entry
 		}
 		cleanseClonedArgonEntries(s.entries)
@@ -758,16 +729,14 @@ func (s *Store) MarkProbeSuccess(ctx context.Context, success ProbeSuccess) erro
 		LastUsageAt:              time.Time{},
 		LastError:                "",
 		LastFailureAt:            time.Time{},
-		NextProbeAt:              utcOrZero(success.NextProbeAt),
 		AuthInvalid:              success.AuthInvalid,
 		PlanType:                 success.PlanType,
-		Source:                   success.Source,
 	}
 	s.entries[key] = entry
 	return nil
 }
 
-// MarkProbeFailure records a probe failure and sets the next probe time and sanitized error message.
+// MarkProbeFailure records a probe failure and sanitized error message.
 func (s *Store) MarkProbeFailure(ctx context.Context, failure ProbeFailure) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("mark probe failure context: %w", err)
@@ -784,7 +753,6 @@ func (s *Store) MarkProbeFailure(ctx context.Context, failure ProbeFailure) erro
 	entry.AuthIndex = authIndexKey(failure.AuthIndex)
 	entry.LastError = sanitizeProbeError(failure.Err)
 	entry.LastFailureAt = failure.ObservedAt.UTC()
-	entry.NextProbeAt = utcOrZero(failure.NextProbeAt)
 	entry.Unavailable = false
 	entry.UnavailableAt = time.Time{}
 	entry.UnavailableReason = ""
@@ -817,7 +785,6 @@ func (s *Store) MarkProbeUnavailable(ctx context.Context, unavailable ProbeUnava
 	entry.UnavailableReason = strings.TrimSpace(unavailable.Reason)
 	entry.LastError = ""
 	entry.LastFailureAt = time.Time{}
-	entry.NextProbeAt = time.Time{}
 	entry.ResetAt = time.Time{}
 	entry.Remaining = 0
 	entry.ShortWindowResetAt = time.Time{}
@@ -834,27 +801,6 @@ func (s *Store) MarkProbeUnavailable(ctx context.Context, unavailable ProbeUnava
 	entry.EstimatedLongBurnPct = 0
 	entry.TokensPerShortPct = 0
 	entry.PlanType = core.PlanTypeUnknown
-
-	s.entries[key] = entry
-	return nil
-}
-
-// MarkProbeScheduled records the next scheduled probe time without modifying existing evidence.
-func (s *Store) MarkProbeScheduled(ctx context.Context, schedule ProbeSchedule) error {
-	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("mark probe scheduled context: %w", err)
-	}
-	key := entryKey(schedule.AuthIndex, schedule.ModelGroup)
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	entry := s.entries[key]
-	entry.SchemaVersion = SchemaVersion
-	entry.Provider = schedule.Provider
-	entry.ModelGroup = entryModelGroup(schedule.ModelGroup)
-	entry.AuthIndex = authIndexKey(schedule.AuthIndex)
-	entry.NextProbeAt = utcOrZero(schedule.NextProbeAt)
 
 	s.entries[key] = entry
 	return nil
@@ -910,14 +856,6 @@ func (s *Store) GetEntry(authIndex, modelGroup string) (Entry, bool) {
 	defer s.mu.RUnlock()
 	entry, ok := s.entries[entryKey(authIndex, modelGroup)]
 	return entry, ok
-}
-
-// HasEntry returns true if an entry exists for authIndex and modelGroup.
-func (s *Store) HasEntry(authIndex, modelGroup string) bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	_, ok := s.entries[entryKey(authIndex, modelGroup)]
-	return ok
 }
 
 // GetPlanType returns the cached PlanType for authIndex across known model groups.
@@ -1008,50 +946,6 @@ func (s *Store) GetSamplesByProbeRound(probeRoundID, modelGroup string) []ProbeS
 	return records
 }
 
-// NeedsProbe evaluates whether the entry requires a fresh probe.
-func (s *Store) NeedsProbe(ctx context.Context, check ProbeCheck) (bool, error) {
-	if err := ctx.Err(); err != nil {
-		return false, fmt.Errorf("needs probe context: %w", err)
-	}
-	key := entryKey(check.AuthIndex, check.ModelGroup)
-
-	s.mu.RLock()
-	entry, ok := s.entries[key]
-	s.mu.RUnlock()
-
-	if !ok || entry.SchemaVersion != SchemaVersion {
-		return true, nil
-	}
-	if check.Provider != "" && entry.Provider != check.Provider {
-		return true, nil
-	}
-	if entry.ModelGroup != entryModelGroup(check.ModelGroup) {
-		return true, nil
-	}
-	// An unavailable group has no quota window to expire. Re-probe on the next
-	// scheduling opportunity so a newly granted entitlement is discovered.
-	if entry.Unavailable {
-		return true, nil
-	}
-	// Window reset reached -> must re-probe
-	if isResetReached(entry, check.Now) {
-		return true, nil
-	}
-	if isResetTooOld(entry, check) {
-		return true, nil
-	}
-	if isTTLExpired(entry, check) {
-		return true, nil
-	}
-	if !entry.NextProbeAt.IsZero() && check.Now.Before(entry.NextProbeAt) {
-		return false, nil
-	}
-	if !entry.NextProbeAt.IsZero() && !check.Now.Before(entry.NextProbeAt) {
-		return true, nil
-	}
-	return false, nil
-}
-
 // Entries returns a shallow copy of all cached entries.
 func (s *Store) Entries() map[string]Entry {
 	s.mu.RLock()
@@ -1076,33 +970,6 @@ func authIndexKey(authIndex string) string {
 
 func entryModelGroup(modelGroup string) string {
 	return strings.TrimSpace(modelGroup)
-}
-
-func isTTLExpired(entry Entry, check ProbeCheck) bool {
-	return !entry.ObservedAt.IsZero() && check.Policy.TTL > 0 && !check.Now.Before(entry.ObservedAt.Add(check.Policy.TTL))
-}
-
-func isResetReached(entry Entry, now time.Time) bool {
-	if !entry.ShortWindowResetAt.IsZero() && !now.Before(entry.ShortWindowResetAt) {
-		return true
-	}
-	if !entry.ResetAt.IsZero() && !now.Before(entry.ResetAt) {
-		return true
-	}
-	return false
-}
-
-func isResetTooOld(entry Entry, check ProbeCheck) bool {
-	if check.Policy.ResetStaleAfter <= 0 {
-		return false
-	}
-	if !entry.ShortWindowResetAt.IsZero() && check.Now.Sub(entry.ShortWindowResetAt) > check.Policy.ResetStaleAfter {
-		return true
-	}
-	if !entry.ResetAt.IsZero() && check.Now.Sub(entry.ResetAt) > check.Policy.ResetStaleAfter {
-		return true
-	}
-	return false
 }
 
 func utcOrZero(t time.Time) time.Time {
@@ -1217,16 +1084,6 @@ func (s *Store) GetCustomTiers() map[string]int {
 		}
 	}
 	return res
-}
-
-// GetCustomTier returns the custom tier configured for an auth index (0 if not set).
-func (s *Store) GetCustomTier(authIndex string) int {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.dynamicConfig == nil || s.dynamicConfig.CustomTiers == nil {
-		return 0
-	}
-	return s.dynamicConfig.CustomTiers[strings.TrimSpace(authIndex)]
 }
 
 // SetCustomTier updates or clears the custom tier for an auth index.
@@ -1432,17 +1289,6 @@ func (s *Store) GetActiveCooldownEntriesForGroup(now time.Time, modelGroup strin
 	return active
 }
 
-// GetActiveCooldownsForGroup returns a map of auth_index -> CooldownUntil for unexpired
-// account- or pool-scoped interventions affecting the specified model group.
-func (s *Store) GetActiveCooldownsForGroup(now time.Time, modelGroup string) map[string]time.Time {
-	entries := s.GetActiveCooldownEntriesForGroup(now, modelGroup)
-	active := make(map[string]time.Time, len(entries))
-	for authIndex, entry := range entries {
-		active[authIndex] = entry.CooldownUntil
-	}
-	return active
-}
-
 // GetActiveModelCooldownsForGroup returns auth_index -> model -> CooldownUntil
 // for unexpired model-scoped interventions in the specified model group.
 func (s *Store) GetActiveModelCooldownsForGroup(now time.Time, modelGroup string) map[string]map[string]time.Time {
@@ -1490,23 +1336,6 @@ func (s *Store) GetActiveCooldownsForPlanning(now time.Time) (map[string]time.Ti
 	return active, reasons
 }
 
-// GetActiveCooldowns returns a map of auth_index -> CooldownUntil for unexpired interventions.
-// Expired entries remain available until Runtime has restored the Host state.
-func (s *Store) GetActiveCooldowns(now time.Time) map[string]time.Time {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	active := make(map[string]time.Time)
-	for k, v := range s.cooldowns {
-		if now.Before(v.CooldownUntil) {
-			active[k] = v.CooldownUntil
-			if v.AuthIndex != "" {
-				active[v.AuthIndex] = v.CooldownUntil
-			}
-		}
-	}
-	return active
-}
-
 // DeleteCooldownExact removes only the specified intervention entry.
 func (s *Store) DeleteCooldownExact(key string) {
 	s.mu.Lock()
@@ -1532,22 +1361,6 @@ func (s *Store) SetCooldown(entry CooldownEntry) {
 	}
 	key := FailureKey(entry.AuthIndex, entry.ModelGroup, entry.Model)
 	s.cooldowns[key] = entry
-}
-
-// ClearExpiredCooldowns removes cooldowns whose CooldownUntil time has passed.
-func (s *Store) ClearExpiredCooldowns(now time.Time) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for k, v := range s.cooldowns {
-		if !now.Before(v.CooldownUntil) {
-			delete(s.cooldowns, k)
-		}
-	}
-}
-
-// Path returns the file path of the main state cache document.
-func (s *Store) Path() string {
-	return s.paths.Main
 }
 
 func cleanseClonedArgonEntries(entries map[string]Entry) {

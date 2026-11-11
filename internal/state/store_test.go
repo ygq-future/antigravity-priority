@@ -34,7 +34,7 @@ func TestStore_Load_NotExist(t *testing.T) {
 		t.Fatalf("expected default rate %v, got %v", state.DefaultCycleBurnRate, rate)
 	}
 
-	if store.HasEntry("auth-1", "gemini") {
+	if _, ok := store.GetEntry("auth-1", "gemini"); ok {
 		t.Fatalf("expected store to not have entry")
 	}
 }
@@ -175,12 +175,6 @@ func TestStore_ContextCanceled(t *testing.T) {
 	}
 	if err := store.MarkProbeFailure(ctx, state.ProbeFailure{}); err == nil {
 		t.Fatalf("expected error on canceled context in MarkProbeFailure, got nil")
-	}
-	if err := store.MarkProbeScheduled(ctx, state.ProbeSchedule{}); err == nil {
-		t.Fatalf("expected error on canceled context in MarkProbeScheduled, got nil")
-	}
-	if _, err := store.NeedsProbe(ctx, state.ProbeCheck{}); err == nil {
-		t.Fatalf("expected error on canceled context in NeedsProbe, got nil")
 	}
 }
 
@@ -484,36 +478,6 @@ func TestStore_ProbeRoundMarksOnlyAppendedSamples(t *testing.T) {
 	}
 }
 
-func TestStore_MarkProbeScheduled(t *testing.T) {
-	ctx := context.Background()
-	tmpDir := t.TempDir()
-	cachePath := filepath.Join(tmpDir, "sched_cache.json")
-
-	store, err := state.Load(ctx, cachePath)
-	if err != nil {
-		t.Fatalf("load failed: %v", err)
-	}
-
-	next := time.Date(2026, 8, 18, 14, 30, 0, 0, time.UTC)
-	err = store.MarkProbeScheduled(ctx, state.ProbeSchedule{
-		AuthIndex:   "sched-account",
-		Provider:    core.ProviderAntigravity,
-		ModelGroup:  "gemini",
-		NextProbeAt: next,
-	})
-	if err != nil {
-		t.Fatalf("mark probe scheduled failed: %v", err)
-	}
-
-	entry, ok := store.GetEntry("sched-account", "gemini")
-	if !ok {
-		t.Fatalf("expected scheduled entry to exist")
-	}
-	if entry.NextProbeAt != next {
-		t.Fatalf("expected next probe at %v, got %v", next, entry.NextProbeAt)
-	}
-}
-
 func TestStore_MarkProbeFailure_Sanitized(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()
@@ -525,15 +489,13 @@ func TestStore_MarkProbeFailure_Sanitized(t *testing.T) {
 	}
 
 	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
-	nextProbe := now.Add(15 * time.Minute)
 
 	t.Run("sensitive token redaction", func(t *testing.T) {
 		err = store.MarkProbeFailure(ctx, state.ProbeFailure{
-			AuthIndex:   "acc-fail",
-			ModelGroup:  "claude_gpt",
-			ObservedAt:  now,
-			NextProbeAt: nextProbe,
-			Err:         errors.New("request failed with Bearer secret-token-12345: upstream 500"),
+			AuthIndex:  "acc-fail",
+			ModelGroup: "claude_gpt",
+			ObservedAt: now,
+			Err:        errors.New("request failed with Bearer secret-token-12345: upstream 500"),
 		})
 		if err != nil {
 			t.Fatalf("mark probe failure failed: %v", err)
@@ -551,11 +513,10 @@ func TestStore_MarkProbeFailure_Sanitized(t *testing.T) {
 	t.Run("normal error truncation", func(t *testing.T) {
 		longErr := strings.Repeat("network timeout connecting to upstream endpoint; ", 10)
 		err = store.MarkProbeFailure(ctx, state.ProbeFailure{
-			AuthIndex:   "acc-long-fail",
-			ModelGroup:  "",
-			ObservedAt:  now,
-			NextProbeAt: nextProbe,
-			Err:         errors.New(longErr),
+			AuthIndex:  "acc-long-fail",
+			ModelGroup: "",
+			ObservedAt: now,
+			Err:        errors.New(longErr),
 		})
 		if err != nil {
 			t.Fatalf("mark probe failure failed: %v", err)
@@ -572,10 +533,9 @@ func TestStore_MarkProbeFailure_Sanitized(t *testing.T) {
 
 	t.Run("nil error", func(t *testing.T) {
 		err = store.MarkProbeFailure(ctx, state.ProbeFailure{
-			AuthIndex:   "acc-nil-err",
-			ObservedAt:  now,
-			NextProbeAt: nextProbe,
-			Err:         nil,
+			AuthIndex:  "acc-nil-err",
+			ObservedAt: now,
+			Err:        nil,
 		})
 		if err != nil {
 			t.Fatalf("mark probe failure with nil err failed: %v", err)
@@ -585,142 +545,6 @@ func TestStore_MarkProbeFailure_Sanitized(t *testing.T) {
 			t.Fatalf("expected empty last error for nil err, got %q", entry.LastError)
 		}
 	})
-}
-
-func TestStore_NeedsProbe(t *testing.T) {
-	ctx := context.Background()
-	tmpDir := t.TempDir()
-	store, _ := state.Load(ctx, filepath.Join(tmpDir, "cache.json"))
-
-	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
-	policy := state.ProbePolicy{
-		TTL:             15 * time.Minute,
-		ResetStaleAfter: 1 * time.Hour,
-	}
-
-	// 1. Unknown entry -> Needs probe
-	needs, err := store.NeedsProbe(ctx, state.ProbeCheck{
-		AuthIndex:  "acc-1",
-		ModelGroup: "gemini",
-		Now:        now,
-		Policy:     policy,
-	})
-	if err != nil || !needs {
-		t.Fatalf("expected needs probe for unknown entry, got %v, err=%v", needs, err)
-	}
-
-	// 2. Fresh entry -> Does NOT need probe
-	_ = store.MarkProbeSuccess(ctx, state.ProbeSuccess{
-		AuthIndex:            "acc-1",
-		Provider:             core.ProviderAntigravity,
-		ModelGroup:           "gemini",
-		ObservedAt:           now,
-		ShortWindowResetAt:   now.Add(4 * time.Hour),
-		ShortWindowRemaining: int64Ptr(80),
-		LongWindowResetAt:    now.Add(48 * time.Hour),
-		LongWindowRemaining:  int64Ptr(90),
-	})
-
-	needs, err = store.NeedsProbe(ctx, state.ProbeCheck{
-		AuthIndex:  "acc-1",
-		Provider:   core.ProviderAntigravity,
-		ModelGroup: "gemini",
-		Now:        now.Add(5 * time.Minute), // only 5m passed
-		Policy:     policy,
-	})
-	if err != nil || needs {
-		t.Fatalf("expected not needing probe within TTL, got %v, err=%v", needs, err)
-	}
-
-	// 3. Different provider / model group -> Needs probe
-	needs, _ = store.NeedsProbe(ctx, state.ProbeCheck{
-		AuthIndex:  "acc-1",
-		Provider:   core.Provider("other"),
-		ModelGroup: "gemini",
-		Now:        now.Add(5 * time.Minute),
-		Policy:     policy,
-	})
-	if !needs {
-		t.Fatalf("expected needing probe when provider mismatch")
-	}
-
-	needs, _ = store.NeedsProbe(ctx, state.ProbeCheck{
-		AuthIndex:  "acc-1",
-		Provider:   core.ProviderAntigravity,
-		ModelGroup: "claude_gpt",
-		Now:        now.Add(5 * time.Minute),
-		Policy:     policy,
-	})
-	if !needs {
-		t.Fatalf("expected needing probe when model group mismatch")
-	}
-
-	// 4. TTL Expired -> Needs probe
-	needs, err = store.NeedsProbe(ctx, state.ProbeCheck{
-		AuthIndex:  "acc-1",
-		Provider:   core.ProviderAntigravity,
-		ModelGroup: "gemini",
-		Now:        now.Add(16 * time.Minute), // 16m > 15m TTL
-		Policy:     policy,
-	})
-	if err != nil || !needs {
-		t.Fatalf("expected needing probe when TTL expired, got %v, err=%v", needs, err)
-	}
-
-	// 5. Short Window Reset reached -> Needs probe
-	needs, err = store.NeedsProbe(ctx, state.ProbeCheck{
-		AuthIndex:  "acc-1",
-		Provider:   core.ProviderAntigravity,
-		ModelGroup: "gemini",
-		Now:        now.Add(4 * time.Hour).Add(1 * time.Second),
-		Policy:     policy,
-	})
-	if err != nil || !needs {
-		t.Fatalf("expected needing probe when short reset reached, got %v, err=%v", needs, err)
-	}
-
-	// 6. Reset stale after -> Needs probe
-	needs, err = store.NeedsProbe(ctx, state.ProbeCheck{
-		AuthIndex:  "acc-1",
-		Provider:   core.ProviderAntigravity,
-		ModelGroup: "gemini",
-		Now:        now.Add(5 * time.Hour).Add(30 * time.Minute), // > 1h after 4h reset
-		Policy:     policy,
-	})
-	if err != nil || !needs {
-		t.Fatalf("expected needing probe when reset too old, got %v, err=%v", needs, err)
-	}
-
-	// 7. NextProbeAt in future vs passed
-	_ = store.MarkProbeFailure(ctx, state.ProbeFailure{
-		AuthIndex:   "acc-cooldown",
-		Provider:    core.ProviderAntigravity,
-		ModelGroup:  "gemini",
-		ObservedAt:  now,
-		NextProbeAt: now.Add(10 * time.Minute),
-	})
-	// before NextProbeAt -> false
-	needs, _ = store.NeedsProbe(ctx, state.ProbeCheck{
-		AuthIndex:  "acc-cooldown",
-		Provider:   core.ProviderAntigravity,
-		ModelGroup: "gemini",
-		Now:        now.Add(3 * time.Minute),
-		Policy:     policy,
-	})
-	if needs {
-		t.Fatalf("expected not needing probe during cooldown")
-	}
-	// after NextProbeAt -> true
-	needs, _ = store.NeedsProbe(ctx, state.ProbeCheck{
-		AuthIndex:  "acc-cooldown",
-		Provider:   core.ProviderAntigravity,
-		ModelGroup: "gemini",
-		Now:        now.Add(12 * time.Minute),
-		Policy:     policy,
-	})
-	if !needs {
-		t.Fatalf("expected needing probe after cooldown passed")
-	}
 }
 
 func TestStore_Auxiliary_Coverage(t *testing.T) {
@@ -740,18 +564,6 @@ func TestStore_Auxiliary_Coverage(t *testing.T) {
 	rate := store.GetCycleBurnRate("zero-rate-acc", "gemini")
 	if rate != state.DefaultCycleBurnRate {
 		t.Fatalf("expected default rate %v for zero-rate entry, got %v", state.DefaultCycleBurnRate, rate)
-	}
-
-	// Test isResetReached with ResetAt
-	policy := state.ProbePolicy{TTL: 1 * time.Hour}
-	needs, _ := store.NeedsProbe(ctx, state.ProbeCheck{
-		AuthIndex:  "zero-rate-acc",
-		ModelGroup: "gemini",
-		Now:        now.Add(2 * time.Hour).Add(1 * time.Second),
-		Policy:     policy,
-	})
-	if !needs {
-		t.Fatalf("expected needing probe when ResetAt is reached")
 	}
 }
 
@@ -1004,22 +816,25 @@ func TestStore_CleanseClonedArgonEntriesOnLoad(t *testing.T) {
 	}
 
 	// Cloned Argon entry must be cleansed on Load
-	if store.HasEntry("auth-cloned", "argon") {
+	if _, ok := store.GetEntry("auth-cloned", "argon"); ok {
 		t.Errorf("expected cloned argon entry to be cleansed")
 	}
 	if _, ok := store.GetHistoricalEvidence("auth-cloned", "argon"); ok {
 		t.Errorf("expected GetHistoricalEvidence for cloned argon to return false")
 	}
 	// Gemini entry for auth-cloned must remain intact
-	if !store.HasEntry("auth-cloned", "gemini") {
+	if _, ok := store.GetEntry("auth-cloned", "gemini"); !ok {
 		t.Errorf("expected gemini entry for auth-cloned to remain")
+	}
+	if entry, ok := store.GetEntry("auth-cloned", "gemini"); !ok || entry.SchemaVersion != state.SchemaVersion {
+		t.Errorf("expected legacy entry to migrate to schema %d, got %d", state.SchemaVersion, entry.SchemaVersion)
 	}
 	if ev, ok := store.GetHistoricalEvidence("auth-cloned", "gemini"); !ok || ev.Remaining == nil || *ev.Remaining != 89 {
 		t.Errorf("expected valid gemini evidence for auth-cloned")
 	}
 
 	// Valid Argon entry must be preserved
-	if !store.HasEntry("auth-valid", "argon") {
+	if _, ok := store.GetEntry("auth-valid", "argon"); !ok {
 		t.Errorf("expected valid argon entry to be preserved")
 	}
 	if ev, ok := store.GetHistoricalEvidence("auth-valid", "argon"); !ok || ev.Remaining == nil || *ev.Remaining != 70 {

@@ -99,50 +99,6 @@ func TestIsInScheduleWindow(t *testing.T) {
 	}
 }
 
-func TestNextWindowStart(t *testing.T) {
-	tests := []struct {
-		name      string
-		now       time.Time
-		cfg       state.ScheduleConfig
-		expectMin int // expected minutes approximately
-	}{
-		{
-			name:      "window disabled returns 0",
-			now:       time.Date(2026, 8, 19, 3, 0, 0, 0, time.UTC),
-			cfg:       state.ScheduleConfig{WindowEnabled: false, WindowStart: "09:00", WindowEnd: "23:00"},
-			expectMin: 0,
-		},
-		{
-			name:      "already inside window returns 0",
-			now:       time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC),
-			cfg:       state.ScheduleConfig{WindowEnabled: true, WindowStart: "09:00", WindowEnd: "23:00"},
-			expectMin: 0,
-		},
-		{
-			name:      "before window start same day",
-			now:       time.Date(2026, 8, 19, 7, 0, 0, 0, time.UTC),
-			cfg:       state.ScheduleConfig{WindowEnabled: true, WindowStart: "09:00", WindowEnd: "23:00"},
-			expectMin: 120, // 2 hours
-		},
-		{
-			name:      "after window end wraps to next day",
-			now:       time.Date(2026, 8, 19, 23, 30, 0, 0, time.UTC),
-			cfg:       state.ScheduleConfig{WindowEnabled: true, WindowStart: "09:00", WindowEnd: "23:00"},
-			expectMin: 570, // 9.5 hours
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := state.NextWindowStart(tc.now, tc.cfg)
-			gotMin := int(got.Minutes())
-			if gotMin != tc.expectMin {
-				t.Errorf("NextWindowStart() = %v (%d min), want ~%d min", got, gotMin, tc.expectMin)
-			}
-		})
-	}
-}
-
 func TestValidateScheduleWindow(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -171,7 +127,8 @@ func TestValidateScheduleWindow(t *testing.T) {
 }
 
 func TestScheduleConfig_Persistence(t *testing.T) {
-	store, err := state.Load(context.Background(), t.TempDir()+"/test-schedule.json")
+	cachePath := t.TempDir() + "/test-schedule.json"
+	store, err := state.Load(context.Background(), cachePath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +163,7 @@ func TestScheduleConfig_Persistence(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store2, err := state.Load(context.Background(), store.Path())
+	store2, err := state.Load(context.Background(), cachePath)
 	if err != nil {
 		t.Fatal(err)
 	}

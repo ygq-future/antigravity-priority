@@ -17,12 +17,6 @@ func IsInScheduleWindow(now time.Time, cfg ScheduleConfig) bool {
 	return config.IsInScheduleWindow(now, cfg)
 }
 
-// NextWindowStart returns the next time the schedule window opens, relative to now.
-// Returns zero duration if the window is not enabled or if already inside the window.
-func NextWindowStart(now time.Time, cfg ScheduleConfig) time.Duration {
-	return config.NextWindowStart(now, cfg)
-}
-
 // ValidateScheduleWindow validates window_start and window_end format.
 func ValidateScheduleWindow(start, end string) error {
 	return config.ValidateScheduleWindow(start, end)

@@ -68,7 +68,6 @@ type Credential struct {
 	Type            CredentialType
 	Status          CredentialStatus
 	Disabled        bool
-	Unavailable     bool
 	Priority        int
 	PriorityMissing bool
 	Account         string

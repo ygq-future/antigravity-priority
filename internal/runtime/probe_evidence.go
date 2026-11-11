@@ -272,12 +272,11 @@ func recordAntigravityProbeResult(ctx context.Context, store *state.Store, resul
 		})
 	case result.Status != antigravity.StatusReady || result.ResetAt == nil || result.Remaining == nil:
 		return store.MarkProbeFailure(ctx, state.ProbeFailure{
-			AuthIndex:   result.AuthIndex,
-			Provider:    core.ProviderAntigravity,
-			ModelGroup:  string(result.ModelGroup),
-			ObservedAt:  now,
-			Err:         errors.New(result.Error),
-			NextProbeAt: now.Add(time.Hour),
+			AuthIndex:  result.AuthIndex,
+			Provider:   core.ProviderAntigravity,
+			ModelGroup: string(result.ModelGroup),
+			ObservedAt: now,
+			Err:        errors.New(result.Error),
 		})
 	}
 
@@ -294,9 +293,7 @@ func recordAntigravityProbeResult(ctx context.Context, store *state.Store, resul
 		LongWindowRemaining:  result.LongWindowRemaining,
 		ArgonWindowResetAt:   timeOrZero(result.ArgonWindowResetAt),
 		ArgonWindowRemaining: result.ArgonWindowRemaining,
-		Source:               state.SourceFreshProbe,
 		PlanType:             result.PlanType,
-		NextProbeAt:          result.ObservedAt.Add(time.Hour),
 		SampleCapacity:       sampleCapacity,
 		ProbeRoundID:         roundID,
 	})

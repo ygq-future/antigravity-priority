@@ -54,37 +54,6 @@ func IsInScheduleWindow(now time.Time, cfg ScheduleConfig) bool {
 	return nowMin >= startMin || nowMin < endMin
 }
 
-// NextWindowStart returns the next time the schedule window opens, relative to now.
-// Returns zero duration if the window is not enabled or if already inside the window.
-func NextWindowStart(now time.Time, cfg ScheduleConfig) time.Duration {
-	if !cfg.WindowEnabled {
-		return 0
-	}
-	if IsInScheduleWindow(now, cfg) {
-		return 0
-	}
-	start := strings.TrimSpace(cfg.WindowStart)
-	if start == "" {
-		return 0
-	}
-	startMin, err := parseHHMM(start)
-	if err != nil {
-		return 0
-	}
-	nowMin := now.Hour()*60 + now.Minute()
-	nowSec := now.Second()
-
-	var deltaMin int
-	if startMin > nowMin {
-		deltaMin = startMin - nowMin
-	} else {
-		// Next day
-		deltaMin = (24*60 - nowMin) + startMin
-	}
-
-	return time.Duration(deltaMin)*time.Minute - time.Duration(nowSec)*time.Second
-}
-
 // ValidateScheduleWindow validates window_start and window_end format.
 func ValidateScheduleWindow(start, end string) error {
 	if start != "" {

@@ -806,7 +806,6 @@ func TestRuntime_ProbeAndSyncHostUseTheSameLearnedCycleBurnRate(t *testing.T) {
 			ShortWindowRemaining: &sample.short,
 			LongWindowResetAt:    reset7d,
 			LongWindowRemaining:  &sample.long,
-			Source:               state.SourceFreshProbe,
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -965,8 +964,6 @@ func TestRuntime_ProductionRunner_CachedEvidence(t *testing.T) {
 		ShortWindowRemaining: ptrInt64(90),
 		LongWindowResetAt:    time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC),
 		LongWindowRemaining:  ptrInt64(80),
-		NextProbeAt:          time.Date(2026, 8, 18, 13, 0, 0, 0, time.UTC),
-		Source:               state.SourceFreshProbe,
 	})
 	_ = store.SaveAtomic(context.Background())
 
@@ -2130,8 +2127,7 @@ func TestRuntime_UsageHandle_429Cooldown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cooldowns := store.GetActiveCooldowns(clock.Now())
-	until, inCooldown := cooldowns["auth_429"]
+	until, inCooldown := activeCooldownUntil(store, "auth_429", clock.Now())
 	if !inCooldown {
 		t.Fatal("expected auth_429 to be in active cooldown")
 	}
@@ -2169,7 +2165,7 @@ func TestRuntime_UsageHandle_429Cooldown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := reloaded.GetActiveCooldowns(clock.Now())["auth_429"]; !got.Equal(expectedUntil) {
+	if got, ok := activeCooldownUntil(reloaded, "auth_429", clock.Now()); !ok || !got.Equal(expectedUntil) {
 		t.Fatalf("repeated 429 extended cooldown to %v; want %v", got, expectedUntil)
 	}
 	diag, _ = r.Diagnostics(context.Background())
@@ -2915,8 +2911,7 @@ func TestRuntime_StatePersistenceConsolidation_DurabilityAndRecovery(t *testing.
 	if err != nil {
 		t.Fatalf("failed to load state after 429: %v", err)
 	}
-	cooldowns := storeAfter429.GetActiveCooldowns(clock.Now())
-	if _, inCooldown := cooldowns["auth_persist"]; !inCooldown {
+	if _, inCooldown := activeCooldownUntil(storeAfter429, "auth_persist", clock.Now()); !inCooldown {
 		t.Fatal("expected auth_persist to be in active cooldown in persisted state")
 	}
 
@@ -2931,7 +2926,7 @@ func TestRuntime_StatePersistenceConsolidation_DurabilityAndRecovery(t *testing.
 	if err != nil {
 		t.Fatalf("failed to load state after recovery: %v", err)
 	}
-	if _, inCooldown := storeAfterRecovery.GetActiveCooldowns(clock.Now())["auth_persist"]; inCooldown {
+	if _, inCooldown := activeCooldownUntil(storeAfterRecovery, "auth_persist", clock.Now()); inCooldown {
 		t.Fatal("expected auth_persist cooldown to be removed after recovery")
 	}
 }
@@ -3030,4 +3025,13 @@ func TestRuntime_SchedulePause_PersistsAcrossRestartAndReload(t *testing.T) {
 	if calls != 0 {
 		t.Fatalf("expected 0 auto-apply executions while paused after restart, got %d", calls)
 	}
+}
+
+func activeCooldownUntil(store *state.Store, authIndex string, now time.Time) (time.Time, bool) {
+	for _, entry := range store.GetCooldowns() {
+		if entry.AuthIndex == authIndex && now.Before(entry.CooldownUntil) {
+			return entry.CooldownUntil, true
+		}
+	}
+	return time.Time{}, false
 }

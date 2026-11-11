@@ -142,19 +142,10 @@ func TestProbeAndRecord_SummaryKeepsDualWindowEvidence(t *testing.T) {
 		t.Fatalf("unexpected remaining: %v", gemini.Remaining)
 	}
 
-	// Verify Gemini quota is recorded and fresh in state store
-	needsProbe, err := store.NeedsProbe(context.Background(), state.ProbeCheck{
-		AuthIndex:  "auth-gemini-1",
-		Provider:   core.ProviderAntigravity,
-		ModelGroup: string(antigravity.ModelGroupGemini),
-		Now:        now,
-		Policy:     state.ProbePolicy{TTL: 15 * time.Minute, ResetStaleAfter: time.Hour},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if needsProbe {
-		t.Fatalf("store still needs probe for Gemini after successful probe")
+	// Verify Gemini quota is recorded in the state store.
+	entry, ok := store.GetEntry("auth-gemini-1", string(antigravity.ModelGroupGemini))
+	if !ok || entry.ShortWindowRemaining == nil || *entry.ShortWindowRemaining != 85 {
+		t.Fatalf("Gemini quota was not persisted: %#v", entry)
 	}
 }
 

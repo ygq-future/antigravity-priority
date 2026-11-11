@@ -251,7 +251,6 @@ func credentialsFromAuthFiles(files []host.AuthFile) []core.Credential {
 				Type:            core.CredentialTypeAntigravity,
 				Status:          core.CredentialStatus(file.Status),
 				Disabled:        file.Disabled,
-				Unavailable:     file.Unavailable,
 				Priority:        file.Priority,
 				PriorityMissing: file.PriorityMissing,
 				Account:         file.Account,
