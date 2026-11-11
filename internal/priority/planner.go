@@ -113,6 +113,13 @@ type PlanItem struct {
 	CustomTier           int
 }
 
+// HasQuotaEvidence reports whether this item was planned from a quota
+// observation. Items without evidence keep the Host's current priority for
+// display only; routing must never treat that value as a scheduling tier.
+func (item PlanItem) HasQuotaEvidence() bool {
+	return item.hasQuotaEvidence
+}
+
 type quotaState uint8
 
 const (

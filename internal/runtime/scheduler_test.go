@@ -661,6 +661,129 @@ func TestScheduler_ZeroHostCallbacksDuringPick(t *testing.T) {
 	}
 }
 
+func TestScheduler_HostStaticPriorityNeverOverridesQuotaEvidence(t *testing.T) {
+	ctx := context.Background()
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	clock := &testClock{now: now}
+
+	mock := newMockHost()
+	mock.files = []host.AuthFile{
+		// Static Host priority must not become a routing tier.
+		{Name: "account-static", AuthIndex: "idx-static", Provider: "antigravity", Status: "active", Priority: 999},
+		{Name: "account-healthy", AuthIndex: "idx-healthy", Provider: "antigravity", Status: "active"},
+	}
+
+	store, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shortReset := now.Add(4 * time.Hour)
+	longReset := now.Add(120 * time.Hour)
+	rem90 := int64(90)
+	if err := store.MarkProbeSuccess(ctx, state.ProbeSuccess{
+		AuthIndex: "idx-healthy", Provider: core.ProviderAntigravity, ModelGroup: "gemini",
+		ObservedAt: now, ShortWindowResetAt: shortReset, ShortWindowRemaining: &rem90, LongWindowResetAt: longReset, LongWindowRemaining: &rem90,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveAtomic(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	r := runtime.New(runtime.Options{Host: mock, Clock: clock, StateCachePath: cachePath})
+	if _, err := r.Register(ctx, runtime.RegisterRequest{ConfigYAML: "enabled: true\nstate_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.SyncHost(ctx, config.AntigravityModelGroupGemini); err != nil {
+		t.Fatal(err)
+	}
+
+	res := pickSchedulerAuth(t, ctx, r, []runtime.SchedulerAuthCandidate{
+		{ID: "account-static", Provider: "antigravity"},
+		{ID: "account-healthy", Provider: "antigravity"},
+	})
+	if res.AuthID != "account-healthy" {
+		t.Errorf("static Host priority outranked quota evidence: picked %q", res.AuthID)
+	}
+}
+
+func TestScheduler_HostDisabledCredentialIsNeverRouted(t *testing.T) {
+	ctx := context.Background()
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	clock := &testClock{now: now}
+
+	mock := newMockHost()
+	mock.files = []host.AuthFile{
+		{Name: "account-disabled", AuthIndex: "idx-disabled", Provider: "antigravity", Status: "active", Priority: 999, Disabled: true},
+		{Name: "account-healthy", AuthIndex: "idx-healthy", Provider: "antigravity", Status: "active"},
+	}
+
+	store, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shortReset := now.Add(4 * time.Hour)
+	longReset := now.Add(120 * time.Hour)
+	rem90 := int64(90)
+	if err := store.MarkProbeSuccess(ctx, state.ProbeSuccess{
+		AuthIndex: "idx-healthy", Provider: core.ProviderAntigravity, ModelGroup: "gemini",
+		ObservedAt: now, ShortWindowResetAt: shortReset, ShortWindowRemaining: &rem90, LongWindowResetAt: longReset, LongWindowRemaining: &rem90,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveAtomic(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	r := runtime.New(runtime.Options{Host: mock, Clock: clock, StateCachePath: cachePath})
+	if _, err := r.Register(ctx, runtime.RegisterRequest{ConfigYAML: "enabled: true\nstate_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.SyncHost(ctx, config.AntigravityModelGroupGemini); err != nil {
+		t.Fatal(err)
+	}
+
+	res := pickSchedulerAuth(t, ctx, r, []runtime.SchedulerAuthCandidate{
+		{ID: "account-disabled", Provider: "antigravity"},
+		{ID: "account-healthy", Provider: "antigravity"},
+	})
+	if res.AuthID != "account-healthy" {
+		t.Errorf("Host-disabled credential was routed: picked %q", res.AuthID)
+	}
+
+	disabledOnly := pickSchedulerAuth(t, ctx, r, []runtime.SchedulerAuthCandidate{
+		{ID: "account-disabled", Provider: "antigravity"},
+	})
+	if disabledOnly.Handled {
+		t.Errorf("Host-disabled credential must not be handled, got %+v", disabledOnly)
+	}
+}
+
+func pickSchedulerAuth(t *testing.T, ctx context.Context, r *runtime.Runtime, candidates []runtime.SchedulerAuthCandidate) runtime.SchedulerPickResponse {
+	t.Helper()
+	request, err := json.Marshal(runtime.SchedulerPickRequest{
+		Model:      "gemini-3.8-flash-high",
+		Candidates: candidates,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := r.Handle(ctx, runtime.MethodSchedulerPick, request)
+	var envelope struct {
+		OK     bool                          `json:"ok"`
+		Result runtime.SchedulerPickResponse `json:"result"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		t.Fatalf("decode scheduler.pick response: %v", err)
+	}
+	if !envelope.OK {
+		t.Fatalf("scheduler.pick failed: %s", raw)
+	}
+	return envelope.Result
+}
+
 func TestScheduler_CustomTier_PrioritizesTier1_And_BalancesTier2(t *testing.T) {
 	ctx := context.Background()
 	cachePath := filepath.Join(t.TempDir(), "cache.json")

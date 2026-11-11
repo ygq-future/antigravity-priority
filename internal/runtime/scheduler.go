@@ -63,7 +63,19 @@ type sessionBinding struct {
 	ExpiresAt   time.Time
 }
 
-const sessionAffinityTTL = 30 * time.Minute
+const (
+	sessionAffinityTTL = 30 * time.Minute
+
+	// coldStartRoutingTier is the routing score for an active credential that
+	// has no quota evidence yet. It ranks below every healthy planned tier but
+	// above depleted or cooling candidates, so a new credential can serve
+	// traffic only after healthy peers are exhausted.
+	coldStartRoutingTier = 0
+
+	// disabledRoutingTier keeps a Host-disabled credential out of routing
+	// regardless of the static priority left on the Host.
+	disabledRoutingTier = -2
+)
 
 type historicalEvidenceSource struct {
 	historical []priority.QuotaEvidence
@@ -226,6 +238,20 @@ func (r *Runtime) updateModelInventoryLocked(files []host.AuthFile, models []hos
 	r.modelCatalog = mergedCatalog
 }
 
+// routingTier derives the in-memory routing score from the planned state.
+// The Host's static priority is user-owned display state; it must never stand
+// in for a routing decision when quota evidence is missing. A Host-disabled
+// credential is never routable, whatever priority the Host document carries.
+func routingTier(item priority.PlanItem) int {
+	if item.Disabled {
+		return disabledRoutingTier
+	}
+	if !item.HasQuotaEvidence() {
+		return coldStartRoutingTier
+	}
+	return item.Priority
+}
+
 // recomputePoolRoutingTableLocked computes a PoolRoutingTable for a single pool in pure memory.
 func (r *Runtime) recomputePoolRoutingTableLocked(pool config.AntigravityModelGroup, now time.Time, store *state.Store, credentials []core.Credential) PoolRoutingTable {
 	if store == nil {
@@ -282,17 +308,16 @@ func (r *Runtime) recomputePoolRoutingTableLocked(pool config.AntigravityModelGr
 			longReset = *item.LongWindowResetAt
 		}
 
-		score := item.Priority
+		score := priority.DepletedPriority
 		reason := item.Reason
 
 		if isCooling {
-			score = -1
 			reason = priority.Reason429Cooldown
 			if specific := cooldownReasons[authIdx]; specific != "" {
 				reason = specific
 			}
-		} else if item.Disabled && item.Priority == -1 {
-			score = -2
+		} else {
+			score = routingTier(item)
 		}
 
 		candidates[authIdx] = PrecomputedCandidate{
@@ -470,7 +495,7 @@ func (r *Runtime) handleSchedulerPick(_ context.Context, request []byte) []byte 
 
 	for _, c := range agCandidates {
 		authIdx := r.resolveAuthIndex(c.ID, c.Attributes)
-		candScore := 0 // default cold-start / unprobed
+		candScore := coldStartRoutingTier
 
 		pre, found := poolTable.ByAuthIndex[authIdx]
 		if found {
