@@ -48,7 +48,8 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
                 const a7d = qw.argon_7d || {};
                 const g7d = qw.gemini_7d || {};
                 const hasGemini = (g7d.remaining !== null && g7d.remaining !== undefined);
-                const hasArgon = (a7d.remaining !== null && a7d.remaining !== undefined);
+                const sharedArgon = qw.argon_shared_with_gemini === true;
+                const hasArgon = (a7d.remaining !== null && a7d.remaining !== undefined) || sharedArgon;
                 if (!hasArgon && hasGemini) {
                     return { eligible: false, reason: "unsupported_model" };
                 }
@@ -365,6 +366,7 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
 
                 // 5 Quota Progress Bars
                 const qw = item.quota_windows || {};
+                const sharedArgon = qw.argon_shared_with_gemini === true;
                 const argonData = (qw.argon_7d && qw.argon_7d.remaining !== null && qw.argon_7d.remaining !== undefined)
                     ? qw.argon_7d
                     : ((item.argon_window_remaining !== null && item.argon_window_remaining !== undefined)
@@ -372,10 +374,10 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
                         : qw.argon_7d);
                 const bars = [
                     { id: "gemini_5h", kind: "short", label: "Gemini 5h", windowType: t("shortWindow"), data: qw.gemini_5h || { remaining: item.short_window_remaining, reset_at: item.short_window_reset_at }, isActive: (pool === "gemini" || pool === "argon") },
-                    { id: "gemini_7d", kind: "weekly", label: "Gemini 7d", windowType: t("longWindow"), data: qw.gemini_7d || { remaining: item.long_window_remaining, reset_at: item.long_window_reset_at }, isActive: (pool === "gemini") },
+                    { id: "gemini_7d", kind: "weekly", label: "Gemini 7d", windowType: t("longWindow"), data: qw.gemini_7d || { remaining: item.long_window_remaining, reset_at: item.long_window_reset_at }, isActive: (pool === "gemini" || (pool === "argon" && sharedArgon)) },
                     { id: "claude_5h", kind: "short", label: "Claude 5h", windowType: t("shortWindow"), data: qw.claude_5h, isActive: (pool === "claude_gpt") },
                     { id: "claude_7d", kind: "weekly", label: "Claude 7d", windowType: t("longWindow"), data: qw.claude_7d, isActive: (pool === "claude_gpt") },
-                    { id: "argon_7d", kind: "weekly", label: "Argon 7d", windowType: t("argonWindow"), data: argonData, isActive: (pool === "argon") }
+                    { id: "argon_7d", kind: "weekly", label: "Argon 7d", windowType: t("argonWindow"), data: argonData, isActive: (pool === "argon" && !sharedArgon) }
                 ];
 
                 cardHtml += "<div class=\"quota-bars-grid\">";

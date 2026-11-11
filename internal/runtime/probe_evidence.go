@@ -259,6 +259,7 @@ func probeAndRecord(ctx context.Context, client *host.Client, store *state.Store
 			}
 		}
 	}
+	applySharedArgonFallback(results)
 	items := make([]antigravity.ProbeResult, 0, len(config.AllAntigravityModelGroups))
 	for _, group := range config.AllAntigravityModelGroups {
 		result, ok := results[antigravity.ModelGroup(group)]
@@ -271,6 +272,31 @@ func probeAndRecord(ctx context.Context, client *host.Client, store *state.Store
 		items = append(items, result)
 	}
 	return items, nil
+}
+
+// applySharedArgonFallback reuses the measured Gemini pool for Ultra and
+// Ultra-lite accounts. Those plans run Gemini 4 Argon against the shared Gemini
+// 5h/weekly buckets, so upstream omits an independent Argon bucket. Treating
+// that absence as a failed or unavailable pool would soft-downgrade Argon
+// routing even though the account can serve it. PlanType is supplied by the
+// loadCodeAssist overlay above; while it is unknown, the pool stays unavailable
+// and the next probe retries rather than guessing entitlement.
+func applySharedArgonFallback(results map[antigravity.ModelGroup]antigravity.ProbeResult) {
+	argon, hasArgon := results[antigravity.ModelGroupArgon]
+	gemini, hasGemini := results[antigravity.ModelGroupGemini]
+	if !hasArgon || argon.Status == antigravity.StatusReady || !hasGemini || gemini.Status != antigravity.StatusReady {
+		return
+	}
+	if gemini.PlanType != core.PlanTypeUltra && gemini.PlanType != core.PlanTypeUltraLite {
+		return
+	}
+
+	shared := gemini
+	shared.ModelGroup = antigravity.ModelGroupArgon
+	shared.ArgonWindowResetAt = nil
+	shared.ArgonWindowRemaining = nil
+	shared.Error = ""
+	results[antigravity.ModelGroupArgon] = shared
 }
 
 func recordAntigravityProbeResult(ctx context.Context, store *state.Store, result antigravity.ProbeResult, now time.Time, sampleCapacity int, roundID string) error {

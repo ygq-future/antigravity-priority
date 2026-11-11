@@ -35,7 +35,7 @@ func TestProjectModelGroups_AllPoolsAreActiveAndIndependent(t *testing.T) {
 			readyEvidence("auth-1", core.PlanTypePro, 92, now.Add(3*time.Hour)),
 		}},
 		config.AntigravityModelGroupArgon: {Eligible: []priority.QuotaEvidence{
-			readyEvidence("auth-1", core.PlanTypePro, 75, now.Add(5*time.Hour)),
+			readyArgonEvidence("auth-1", core.PlanTypePro, 75, now.Add(5*time.Hour)),
 		}},
 		config.AntigravityModelGroupClaudeGPT: {Eligible: []priority.QuotaEvidence{
 			readyEvidence("auth-1", core.PlanTypeFree, 61, now.Add(4*time.Hour)),
@@ -112,8 +112,8 @@ func TestProjectModelGroups_QuotaWindowsRemainPerCredentialWhenRedactedIndexesCo
 			readyEvidence("auth-beta", core.PlanTypePro, 47, now.Add(4*time.Hour)),
 		}},
 		config.AntigravityModelGroupArgon: {Eligible: []priority.QuotaEvidence{
-			readyEvidence("auth-alpha", core.PlanTypePro, 74, now.Add(5*time.Hour)),
-			readyEvidence("auth-beta", core.PlanTypePro, 38, now.Add(6*time.Hour)),
+			readyArgonEvidence("auth-alpha", core.PlanTypePro, 74, now.Add(5*time.Hour)),
+			readyArgonEvidence("auth-beta", core.PlanTypePro, 38, now.Add(6*time.Hour)),
 		}},
 	}
 
@@ -462,7 +462,80 @@ func TestProjectModelGroups_NoArgonBucketDoesNotFabricateArgon7d(t *testing.T) {
 		if qw.Argon7d.Remaining != nil {
 			t.Errorf("[%s] QuotaWindows Argon7d.Remaining = %v, want nil when no Argon bucket exists", group, *qw.Argon7d.Remaining)
 		}
+		if qw.ArgonSharedWithGemini {
+			t.Errorf("[%s] QuotaWindows ArgonSharedWithGemini = true, want false for a Pro account", group)
+		}
 	}
+}
+
+func TestProjectModelGroups_UltraSharedArgonMarksGeminiWindow(t *testing.T) {
+	now := time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)
+	credentials := []core.Credential{{
+		Name:      "ultra-shared-argon",
+		AuthIndex: "auth-ultra",
+		Provider:  core.ProviderAntigravity,
+		Type:      core.CredentialTypeAntigravity,
+		Priority:  100,
+	}}
+
+	reset5h := now.Add(4 * time.Hour)
+	reset7d := now.Add(120 * time.Hour)
+	rem5h := int64(90)
+	rem7d := int64(88)
+	sharedEvidence := func(group config.AntigravityModelGroup) priority.QuotaEvidence {
+		return priority.QuotaEvidence{
+			AuthIndex:            "auth-ultra",
+			Provider:             core.ProviderAntigravity,
+			ModelGroup:           group,
+			ObservedAt:           now,
+			ResetAt:              &reset5h,
+			Remaining:            &rem5h,
+			ShortWindowResetAt:   &reset5h,
+			ShortWindowRemaining: &rem5h,
+			LongWindowResetAt:    &reset7d,
+			LongWindowRemaining:  &rem7d,
+			PlanType:             core.PlanTypeUltra,
+		}
+	}
+
+	projection, err := runtime.ProjectModelGroups(runtime.ProjectionInput{
+		Credentials: credentials,
+		EvidenceByGroup: map[config.AntigravityModelGroup]evidence.Result{
+			config.AntigravityModelGroupGemini:    {Eligible: []priority.QuotaEvidence{sharedEvidence(config.AntigravityModelGroupGemini)}},
+			config.AntigravityModelGroupClaudeGPT: {Eligible: []priority.QuotaEvidence{sharedEvidence(config.AntigravityModelGroupClaudeGPT)}},
+			// Argon has no independent bucket; the probe copied the Gemini pool.
+			config.AntigravityModelGroupArgon: {Eligible: []priority.QuotaEvidence{sharedEvidence(config.AntigravityModelGroupArgon)}},
+		},
+		PlanningOptions: priority.Options{NormalStartPriority: 100},
+		ProjectionTime:  now,
+	})
+	if err != nil {
+		t.Fatalf("ProjectModelGroups failed: %v", err)
+	}
+
+	argon := projection.Snapshot.Groups["argon"].Items[0]
+	qw := argon.QuotaWindows
+	if !qw.ArgonSharedWithGemini {
+		t.Fatal("argon_shared_with_gemini = false; want true for an Ultra shared pool")
+	}
+	if qw.Argon7d.Remaining != nil {
+		t.Fatalf("Argon7d.Remaining = %v; want nil for an independent-bucket-free Ultra account", qw.Argon7d.Remaining)
+	}
+	if qw.Gemini7d.Remaining == nil || *qw.Gemini7d.Remaining != 88 {
+		t.Fatalf("Gemini7d.Remaining = %v; want 88 as the governing Argon weekly window", qw.Gemini7d.Remaining)
+	}
+	if argon.Target.Priority != 100 {
+		t.Fatalf("argon priority = %d; want 100 from shared Gemini evidence", argon.Target.Priority)
+	}
+}
+
+func readyArgonEvidence(authIndex string, planType core.PlanType, remaining int64, resetAt time.Time) priority.QuotaEvidence {
+	evidence := readyEvidence(authIndex, planType, remaining, resetAt)
+	evidence.ArgonWindowRemaining = &remaining
+	evidence.ArgonWindowResetAt = &resetAt
+	evidence.LongWindowRemaining = &remaining
+	evidence.LongWindowResetAt = &resetAt
+	return evidence
 }
 
 func readyEvidence(authIndex string, planType core.PlanType, remaining int64, resetAt time.Time) priority.QuotaEvidence {

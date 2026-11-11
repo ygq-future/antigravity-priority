@@ -78,6 +78,56 @@ func TestModelSelector_MarkupAndBuiltInCatalog(t *testing.T) {
 	}
 }
 
+func TestIsModelEligible_ArgonSharesGeminiForPaidPlans(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not available; Argon eligibility behavior is checked in the Node-enabled verification environment")
+	}
+
+	harness := `
+` + templateScriptOverviewRender + `
+function assert(cond, msg) {
+    if (!cond) {
+        console.error(msg);
+        process.exit(1);
+    }
+}
+
+const geminiOnly = { plan_type: "ultra", supported_models: ["gemini-4-argon-high"], quota_windows: { gemini_7d: { remaining: 8 }, argon_shared_with_gemini: true } };
+assert(isModelEligible(geminiOnly, "gemini-4-argon-high", "argon").eligible === true,
+    "Ultra without an independent Argon bucket must be eligible through the shared Gemini pool");
+
+const ultraLite = { plan_type: "ultra_lite", supported_models: ["gemini-4-argon-high"], quota_windows: { gemini_7d: { remaining: 8 }, argon_shared_with_gemini: true } };
+assert(isModelEligible(ultraLite, "gemini-4-argon-high", "argon").eligible === true,
+    "Ultra-lite without an independent Argon bucket must be eligible through the shared Gemini pool");
+
+const ultraNoList = { plan_type: "ultra", quota_windows: { gemini_7d: { remaining: 8 }, argon_shared_with_gemini: true } };
+assert(isModelEligible(ultraNoList, "gemini-4-argon-high", "argon").eligible === true,
+    "Ultra without a model list must still be eligible through the shared Gemini pool");
+
+const ultraNoFlag = { plan_type: "ultra", quota_windows: { gemini_7d: { remaining: 8 } } };
+assert(isModelEligible(ultraNoFlag, "gemini-4-argon-high", "argon").reason === "unsupported_model",
+    "eligibility must follow the backend shared-pool projection, not the plan label");
+
+const free = { plan_type: "free", quota_windows: { gemini_7d: { remaining: 30 } } };
+assert(isModelEligible(free, "gemini-4-argon-high", "argon").reason === "unsupported_model",
+    "Free without Argon quota must stay unsupported");
+
+const proUnlisted = { plan_type: "pro", quota_windows: { gemini_7d: { remaining: 20 } } };
+assert(isModelEligible(proUnlisted, "gemini-4-argon-high", "argon").reason === "unsupported_model",
+    "Pro without an Argon bucket must stay unsupported");
+
+const unsupported = { plan_type: "ultra", supported_models: ["gemini-3.8-flash-high"], quota_windows: { gemini_7d: { remaining: 8 } } };
+assert(isModelEligible(unsupported, "gemini-4-argon-high", "argon").reason === "unsupported_model",
+    "a paid plan that did not register the model must stay unsupported");
+
+const withArgon = { plan_type: "pro", supported_models: ["gemini-4-argon-high"], quota_windows: { gemini_7d: { remaining: 20 }, argon_7d: { remaining: 71 } } };
+assert(isModelEligible(withArgon, "gemini-4-argon-high", "argon").eligible === true,
+    "an independent Argon bucket must remain eligible");
+`
+	runNodeFixture(t, node, "argon-eligibility.js", harness)
+}
+
 func TestRoutingBoard_DynamicCallOrderAndFiveBars_NodeHarness(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {

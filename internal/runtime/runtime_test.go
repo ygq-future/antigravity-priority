@@ -703,7 +703,7 @@ func TestRuntime_ProbeProjectsAllPoolsFromOneQuotaResponse(t *testing.T) {
 	claudeGPT := snapshot.Groups[string(config.AntigravityModelGroupClaudeGPT)]
 	quotaCalls := 0
 	for _, call := range mock.httpCalls {
-		if call.URL == antigravity.RetrieveUserQuotaSummaryURL {
+		if call.URL == antigravity.RetrieveUserQuotaSummaryDailyURL {
 			quotaCalls++
 		}
 	}
@@ -738,7 +738,7 @@ func TestRuntime_ProbeKeepsDualWindowCountdownsAndPlanTier(t *testing.T) {
 	// needs for reset countdowns and the plan tier. Available models only reports
 	// per-model fractions without window names and must never shadow it.
 	mock.httpResponses = map[string]host.HTTPResponse{
-		antigravity.RetrieveUserQuotaSummaryURL: {
+		antigravity.RetrieveUserQuotaSummaryDailyURL: {
 			StatusCode: http.StatusOK,
 			Body: []byte(`{"groups":[{"displayName":"Gemini Models","buckets":[
 				{"window":"5h","remainingFraction":0.85,"resetTime":"2026-08-22T15:00:00Z"},
@@ -771,7 +771,7 @@ func TestRuntime_ProbeKeepsDualWindowCountdownsAndPlanTier(t *testing.T) {
 	}
 	quotaCalls := 0
 	for _, call := range mock.httpCalls {
-		if call.URL == antigravity.RetrieveUserQuotaSummaryURL {
+		if call.URL == antigravity.RetrieveUserQuotaSummaryDailyURL {
 			quotaCalls++
 		}
 	}
@@ -819,7 +819,7 @@ func TestRuntime_ProbeUsesLoadCodeAssistTierOverWindowInference(t *testing.T) {
 			StatusCode: http.StatusOK,
 			Body:       []byte(`{"currentTier":{"id":"free-tier"},"paidTier":{"id":"g1-ultra-tier","name":"Google AI Ultra"}}`),
 		},
-		antigravity.RetrieveUserQuotaSummaryURL: {
+		antigravity.RetrieveUserQuotaSummaryDailyURL: {
 			StatusCode: http.StatusOK,
 			Body:       quotaBody,
 		},

@@ -30,11 +30,12 @@ type QuotaWindowBar struct {
 
 // AllQuotaWindows aggregates the 5 quota progress bars for display across all views.
 type AllQuotaWindows struct {
-	Gemini5h QuotaWindowBar `json:"gemini_5h"`
-	Gemini7d QuotaWindowBar `json:"gemini_7d"`
-	Claude5h QuotaWindowBar `json:"claude_5h"`
-	Claude7d QuotaWindowBar `json:"claude_7d"`
-	Argon7d  QuotaWindowBar `json:"argon_7d"`
+	Gemini5h              QuotaWindowBar `json:"gemini_5h"`
+	Gemini7d              QuotaWindowBar `json:"gemini_7d"`
+	Claude5h              QuotaWindowBar `json:"claude_5h"`
+	Claude7d              QuotaWindowBar `json:"claude_7d"`
+	Argon7d               QuotaWindowBar `json:"argon_7d"`
+	ArgonSharedWithGemini bool           `json:"argon_shared_with_gemini,omitempty"`
 }
 
 // SnapshotItem is the audit view of a single planned item.

@@ -291,7 +291,7 @@ func TestProbeAndRecordUsesCachedAuthoritativeTier(t *testing.T) {
 			t.Fatalf("probe result plan type = %q; want ultra", result.PlanType)
 		}
 	}
-	if len(mock.httpCalls) != 1 || mock.httpCalls[0].URL != antigravity.RetrieveUserQuotaSummaryURL {
+	if len(mock.httpCalls) != 1 || mock.httpCalls[0].URL != antigravity.RetrieveUserQuotaSummaryDailyURL {
 		t.Fatalf("probe made unexpected HTTP calls: %+v", mock.httpCalls)
 	}
 }

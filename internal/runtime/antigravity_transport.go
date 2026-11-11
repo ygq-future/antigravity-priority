@@ -13,8 +13,8 @@ import (
 )
 
 var antigravityQuotaURLs = []string{
-	antigravity.RetrieveUserQuotaSummaryURL,
 	antigravity.RetrieveUserQuotaSummaryDailyURL,
+	antigravity.RetrieveUserQuotaSummaryURL,
 	antigravity.RetrieveUserQuotaSummarySandboxURL,
 }
 
@@ -41,10 +41,9 @@ func executeAntigravityQuotaRequest(ctx context.Context, doer quotaHTTPDoer, req
 	// reset countdowns and an inferable plan tier. Available models only carries
 	// per-model quotas without window names, so it may only supplement a group the
 	// summary omits.
-	results, lastStatus, lastErr := queryQuotaURLs(ctx, doer, antigravityQuotaURLs, request)
-
+	results, lastStatus, lastErr := queryQuotaURLs(ctx, doer, antigravityQuotaURLs, request, filterUnmeasuredProduction)
 	if !hasCompleteQuota(results) {
-		fallbackResults, fbStatus, fbErr := queryQuotaURLs(ctx, doer, antigravityAvailableModelsURLs, request)
+		fallbackResults, fbStatus, fbErr := queryQuotaURLs(ctx, doer, antigravityAvailableModelsURLs, request, nil)
 		if fbStatus != 0 {
 			lastStatus = fbStatus
 		}
@@ -85,7 +84,7 @@ func hasCompleteQuota(results map[antigravity.ModelGroup]antigravity.ProbeResult
 	return true
 }
 
-func queryQuotaURLs(ctx context.Context, doer quotaHTTPDoer, urls []string, request antigravityQuotaRequest) (map[antigravity.ModelGroup]antigravity.ProbeResult, int, error) {
+func queryQuotaURLs(ctx context.Context, doer quotaHTTPDoer, urls []string, request antigravityQuotaRequest, filter func(string, map[antigravity.ModelGroup]antigravity.ProbeResult)) (map[antigravity.ModelGroup]antigravity.ProbeResult, int, error) {
 	var lastStatus int
 	var lastErr error
 	var merged map[antigravity.ModelGroup]antigravity.ProbeResult
@@ -106,6 +105,9 @@ func queryQuotaURLs(ctx context.Context, doer quotaHTTPDoer, urls []string, requ
 			result.HTTPStatusCode = response.StatusCode
 			results[group] = result
 		}
+		if filter != nil {
+			filter(url, results)
+		}
 		merged = mergeQuotaResults(merged, results)
 		// A 200 is not proof of completeness: hosts have answered with only a
 		// subset of the model groups. Keep asking until every expected pool is
@@ -116,6 +118,53 @@ func queryQuotaURLs(ctx context.Context, doer quotaHTTPDoer, urls []string, requ
 	}
 
 	return merged, lastStatus, lastErr
+}
+
+// filterUnmeasuredProduction rejects production summary buckets that are all
+// 100%. For consumer accounts production returns these placeholders with a
+// rolling reset time instead of the usage measured on the daily host. A
+// partial daily response must fall through to available models rather than
+// merge those placeholders into the dashboard.
+func filterUnmeasuredProduction(url string, results map[antigravity.ModelGroup]antigravity.ProbeResult) {
+	if url != antigravity.RetrieveUserQuotaSummaryURL {
+		return
+	}
+	for group, result := range results {
+		if result.Status != antigravity.StatusReady || !allQuotaWindowsFull(result) {
+			continue
+		}
+		result.Status = antigravity.StatusProbeFailed
+		result.Error = "production quota is unmeasured"
+		result.ResetAt = nil
+		result.Remaining = nil
+		result.ShortWindowResetAt = nil
+		result.ShortWindowRemaining = nil
+		result.LongWindowResetAt = nil
+		result.LongWindowRemaining = nil
+		result.ArgonWindowResetAt = nil
+		result.ArgonWindowRemaining = nil
+		results[group] = result
+	}
+}
+
+func allQuotaWindowsFull(result antigravity.ProbeResult) bool {
+	values := [...]*int64{
+		result.Remaining,
+		result.ShortWindowRemaining,
+		result.LongWindowRemaining,
+		result.ArgonWindowRemaining,
+	}
+	found := false
+	for _, value := range values {
+		if value == nil {
+			continue
+		}
+		found = true
+		if *value != 100 {
+			return false
+		}
+	}
+	return found
 }
 
 func mergeQuotaResults(merged map[antigravity.ModelGroup]antigravity.ProbeResult, incoming map[antigravity.ModelGroup]antigravity.ProbeResult) map[antigravity.ModelGroup]antigravity.ProbeResult {
@@ -160,11 +209,11 @@ func antigravityQuotaBody(projectID string) []byte {
 	return body
 }
 
-// antigravityHubUserAgent identifies the desktop (hub) client. Google gates the
-// separate Gemini 4 Argon weekly bucket on the client identity: the IDE family and
-// older hub versions receive a summary without it, so the dashboard can never show
-// Argon quota while the probe advertises a legacy identity.
-const antigravityHubUserAgent = "antigravity/hub/2.23.0 darwin/arm64"
+// antigravityHubUserAgent identifies the desktop (hub) client. Google gates both
+// the measured Gemini windows and the separate Gemini 4 Argon weekly bucket on the
+// client identity: hub 1.0.0 receives only Claude/GPT on the daily host, while the
+// current 2.24.0 identity receives the measured Gemini, Argon, and Claude/GPT groups.
+const antigravityHubUserAgent = "antigravity/hub/2.24.0 darwin/arm64"
 
 // antigravityLegacyHubUserAgent is the previously used identity. It is retried only
 // after the current identity is rejected, so a hard upstream rejection cannot erase

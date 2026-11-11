@@ -19,15 +19,18 @@ const (
 	ModelGroupClaudeGPT = config.AntigravityModelGroupClaudeGPT
 )
 
-// RetrieveUserQuotaSummaryURL is the primary Antigravity quota summary endpoint.
+// RetrieveUserQuotaSummaryURL is the production Antigravity quota summary endpoint.
 //
-// Production must be asked first: the daily host has been observed answering 200
-// with only the Claude/GPT group, which silently hides the shared Gemini windows
-// and the separate Gemini 4 Argon weekly bucket.
+// It is a fallback, not the primary host. For consumer accounts production reports
+// every bucket as unmeasured (remainingFraction 1) with a rolling reset time, so
+// asking it first makes the dashboard read 100% with a full-window countdown.
 const RetrieveUserQuotaSummaryURL = "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary"
 
-// RetrieveUserQuotaSummaryDailyURL is the daily Antigravity quota summary endpoint,
-// kept as a fallback for when production is unreachable.
+// RetrieveUserQuotaSummaryDailyURL is the primary Antigravity quota summary endpoint.
+//
+// Consumer traffic runs against this host. With the current hub User-Agent it returns
+// the measured Gemini, Argon, and Claude/GPT buckets; older identities can receive
+// only the Claude/GPT group.
 const RetrieveUserQuotaSummaryDailyURL = "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary"
 
 // RetrieveUserQuotaSummarySandboxURL is the sandbox Antigravity quota summary endpoint.

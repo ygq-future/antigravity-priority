@@ -116,8 +116,8 @@ func TestProbeAndRecord_SummaryKeepsDualWindowEvidence(t *testing.T) {
 	if calls != 1 {
 		t.Fatalf("HTTP calls = %d; want 1 quota summary request", calls)
 	}
-	if calledURLs[0] != antigravity.RetrieveUserQuotaSummaryURL {
-		t.Fatalf("expected call to %q, got %q", antigravity.RetrieveUserQuotaSummaryURL, calledURLs[0])
+	if calledURLs[0] != antigravity.RetrieveUserQuotaSummaryDailyURL {
+		t.Fatalf("expected call to %q, got %q", antigravity.RetrieveUserQuotaSummaryDailyURL, calledURLs[0])
 	}
 
 	if len(results) != 3 {
@@ -146,6 +146,75 @@ func TestProbeAndRecord_SummaryKeepsDualWindowEvidence(t *testing.T) {
 	entry, ok := store.GetEntry("auth-gemini-1", string(antigravity.ModelGroupGemini))
 	if !ok || entry.ShortWindowRemaining == nil || *entry.ShortWindowRemaining != 85 {
 		t.Fatalf("Gemini quota was not persisted: %#v", entry)
+	}
+}
+
+func TestProbeAndRecord_SharedArgonFallbackOnlyForUltraPlans(t *testing.T) {
+	const quotaWithoutArgon = `{"groups":[
+		{"displayName":"Gemini Models","buckets":[
+			{"window":"5h","remainingFraction":0.8,"resetTime":"2026-11-11T17:00:00Z"},
+			{"window":"weekly","remainingFraction":0.6,"resetTime":"2026-11-18T00:00:00Z"}
+		]},
+		{"displayName":"Claude and GPT models","buckets":[
+			{"window":"5h","remainingFraction":0.5,"resetTime":"2026-11-11T17:00:00Z"},
+			{"window":"weekly","remainingFraction":0.4,"resetTime":"2026-11-18T00:00:00Z"}
+		]}
+	]}`
+	now := time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name       string
+		planType   core.PlanType
+		wantStatus antigravity.Status
+	}{
+		{name: "ultra shares the Gemini pool", planType: core.PlanTypeUltra, wantStatus: antigravity.StatusReady},
+		{name: "ultra-lite shares the Gemini pool", planType: core.PlanTypeUltraLite, wantStatus: antigravity.StatusReady},
+		{name: "pro stays unavailable", planType: core.PlanTypePro, wantStatus: antigravity.StatusUnavailable},
+		{name: "free stays unavailable", planType: core.PlanTypeFree, wantStatus: antigravity.StatusUnavailable},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &probeEvidenceMockHost{
+				httpResponse: host.HTTPResponse{StatusCode: http.StatusOK, Body: []byte(quotaWithoutArgon)},
+			}
+			store, err := state.Load(context.Background(), filepath.Join(t.TempDir(), "store.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			store.SetPlanTier("auth-shared", state.PlanTierRecord{PlanType: tt.planType, ObservedAt: now})
+
+			results, err := probeAndRecord(context.Background(), host.NewClient(mock), store, probeJob{
+				credential:   core.Credential{AuthIndex: "auth-shared", Provider: core.ProviderAntigravity},
+				authMaterial: authMaterial{accessToken: "token", projectID: "project"},
+			}, now, 10, "round-shared")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var argon antigravity.ProbeResult
+			for _, result := range results {
+				if result.ModelGroup == antigravity.ModelGroupArgon {
+					argon = result
+				}
+			}
+			if argon.Status != tt.wantStatus {
+				t.Fatalf("argon status = %v; want %v", argon.Status, tt.wantStatus)
+			}
+			if tt.wantStatus != antigravity.StatusReady {
+				return
+			}
+			if argon.PlanType != tt.planType {
+				t.Fatalf("argon plan type = %q; want %q", argon.PlanType, tt.planType)
+			}
+			if argon.ShortWindowRemaining == nil || *argon.ShortWindowRemaining != 80 {
+				t.Fatalf("argon shared 5h = %v; want 80", argon.ShortWindowRemaining)
+			}
+			if argon.LongWindowRemaining == nil || *argon.LongWindowRemaining != 60 {
+				t.Fatalf("argon shared weekly = %v; want 60", argon.LongWindowRemaining)
+			}
+			if argon.ArgonWindowRemaining != nil {
+				t.Fatalf("argon independent weekly = %v; want nil for a shared pool", argon.ArgonWindowRemaining)
+			}
+		})
 	}
 }
 
@@ -291,7 +360,7 @@ func TestCollectFreshEvidence_PartialSummaryContinuesProbe(t *testing.T) {
 	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
 	mock := &probeEvidenceMockHost{
 		doFn: func(_ context.Context, request host.HTTPRequest) (host.HTTPResponse, error) {
-			if request.URL == antigravity.RetrieveUserQuotaSummaryURL {
+			if request.URL == antigravity.RetrieveUserQuotaSummaryDailyURL {
 				return host.HTTPResponse{
 					StatusCode: http.StatusOK,
 					Body: []byte(`{
@@ -340,10 +409,10 @@ func TestCollectFreshEvidence_PartialSummaryContinuesProbe(t *testing.T) {
 	mock.mu.Unlock()
 
 	if calls != 2 {
-		t.Fatalf("total HTTP calls = %d; want 2 (partial summary + complete daily)", calls)
+		t.Fatalf("total HTTP calls = %d; want 2 (partial daily + complete production)", calls)
 	}
-	if calledURLs[0] != antigravity.RetrieveUserQuotaSummaryURL || calledURLs[1] != antigravity.RetrieveUserQuotaSummaryDailyURL {
-		t.Fatalf("called URLs = %v; want production then daily", calledURLs)
+	if calledURLs[0] != antigravity.RetrieveUserQuotaSummaryDailyURL || calledURLs[1] != antigravity.RetrieveUserQuotaSummaryURL {
+		t.Fatalf("called URLs = %v; want daily then production", calledURLs)
 	}
 
 	for _, group := range config.AllAntigravityModelGroups {
