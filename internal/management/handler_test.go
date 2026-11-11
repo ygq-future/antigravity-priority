@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"antigravity-priority/internal/apply"
-	"antigravity-priority/internal/config"
 	"antigravity-priority/internal/management"
 	"antigravity-priority/internal/state"
 )
@@ -49,7 +48,7 @@ func (m *mockRunner) LatestSnapshot(ctx context.Context) (apply.DualGroupSnapsho
 	return apply.DualGroupSnapshot{}, nil
 }
 
-func (m *mockRunner) SyncHost(ctx context.Context, modelGroup config.AntigravityModelGroup) (apply.DualGroupSnapshot, error) {
+func (m *mockRunner) SyncHost(ctx context.Context) (apply.DualGroupSnapshot, error) {
 	if m.snapshotFunc != nil {
 		return m.snapshotFunc(ctx)
 	}
@@ -141,9 +140,6 @@ func TestHandler_Run_Probe_Success(t *testing.T) {
 	runner := &mockRunner{
 		runFunc: func(ctx context.Context, req management.RunRequest) (apply.Result, error) {
 			called = true
-			if req.AntigravityModelGroup != config.AntigravityModelGroupClaudeGPT {
-				t.Errorf("expected model group 'claude_gpt', got %q", req.AntigravityModelGroup)
-			}
 			return apply.Result{
 				Attempted: 2,
 				Succeeded: 2,
@@ -156,7 +152,7 @@ func TestHandler_Run_Probe_Success(t *testing.T) {
 	}
 
 	handler := management.NewHandler(runner)
-	req := httptest.NewRequest(http.MethodPost, "/run?mode=probe&antigravity_model_group=claude_gpt", nil)
+	req := httptest.NewRequest(http.MethodPost, "/run?mode=probe", nil)
 	rec := httptest.NewRecorder()
 
 	handler.ServeHTTP(rec, req)

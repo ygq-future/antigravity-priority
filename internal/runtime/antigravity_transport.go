@@ -29,7 +29,6 @@ type antigravityQuotaRequest struct {
 	AccessToken string
 	ProjectID   string
 	ObservedAt  time.Time
-	TargetGroup antigravity.ModelGroup
 }
 
 type quotaHTTPDoer interface {
@@ -44,7 +43,7 @@ func executeAntigravityQuotaRequest(ctx context.Context, doer quotaHTTPDoer, req
 	// summary omits.
 	results, lastStatus, lastErr := queryQuotaURLs(ctx, doer, antigravityQuotaURLs, request)
 
-	if !hasRequestedQuota(results, request.TargetGroup) {
+	if !hasCompleteQuota(results) {
 		fallbackResults, fbStatus, fbErr := queryQuotaURLs(ctx, doer, antigravityAvailableModelsURLs, request)
 		if fbStatus != 0 {
 			lastStatus = fbStatus
@@ -65,19 +64,25 @@ func executeAntigravityQuotaRequest(ctx context.Context, doer quotaHTTPDoer, req
 	return failedAntigravityQuotaResults(request, message, lastStatus)
 }
 
-func hasRequestedQuota(results map[antigravity.ModelGroup]antigravity.ProbeResult, target antigravity.ModelGroup) bool {
+// hasCompleteQuota reports whether a probe response covers the pools that are
+// universally present for Antigravity accounts. Gemini and Claude/GPT are always
+// required. Argon is entitlement-gated: it can be absent even on a Pro plan, so
+// its presence is captured opportunistically but presence is never required to
+// finalize the probe. Treating plan type as proof of Argon entitlement would
+// make every probe fan out across all fallback hosts for such accounts.
+func hasCompleteQuota(results map[antigravity.ModelGroup]antigravity.ProbeResult) bool {
 	if results == nil {
 		return false
 	}
-	switch target {
-	case antigravity.ModelGroupGemini:
-		return results[antigravity.ModelGroupGemini].Status == antigravity.StatusReady
-	case antigravity.ModelGroupClaudeGPT:
-		return results[antigravity.ModelGroupClaudeGPT].Status == antigravity.StatusReady
-	default:
-		return results[antigravity.ModelGroupGemini].Status == antigravity.StatusReady &&
-			results[antigravity.ModelGroupClaudeGPT].Status == antigravity.StatusReady
+	gemini, geminiOK := results[antigravity.ModelGroupGemini]
+	claude, claudeOK := results[antigravity.ModelGroupClaudeGPT]
+	if !geminiOK || gemini.Status != antigravity.StatusReady {
+		return false
 	}
+	if !claudeOK || claude.Status != antigravity.StatusReady {
+		return false
+	}
+	return true
 }
 
 func queryQuotaURLs(ctx context.Context, doer quotaHTTPDoer, urls []string, request antigravityQuotaRequest) (map[antigravity.ModelGroup]antigravity.ProbeResult, int, error) {
@@ -103,9 +108,9 @@ func queryQuotaURLs(ctx context.Context, doer quotaHTTPDoer, urls []string, requ
 		}
 		merged = mergeQuotaResults(merged, results)
 		// A 200 is not proof of completeness: hosts have answered with only a
-		// subset of the model groups. Keep asking until the requested group is
+		// subset of the model groups. Keep asking until every expected pool is
 		// covered so a partial answer cannot silently hide a group's quota.
-		if hasRequestedQuota(merged, request.TargetGroup) {
+		if hasCompleteQuota(merged) {
 			return merged, response.StatusCode, nil
 		}
 	}
@@ -129,11 +134,12 @@ func mergeQuotaResults(merged map[antigravity.ModelGroup]antigravity.ProbeResult
 }
 
 func failedAntigravityQuotaResults(request antigravityQuotaRequest, message string, statusCode int) map[antigravity.ModelGroup]antigravity.ProbeResult {
+	// Only the universal pools are synthesized here. Argon is entitlement-gated:
+	// a total transport failure does not prove the account lacks Argon, so it must
+	// not fabricate an Argon failure record. Distinguishing "no Argon entitlement"
+	// from "Argon probe failed" is a separate status/semantic change.
 	results := make(map[antigravity.ModelGroup]antigravity.ProbeResult, 2)
 	for _, group := range []antigravity.ModelGroup{antigravity.ModelGroupGemini, antigravity.ModelGroupClaudeGPT} {
-		if request.TargetGroup != "" && group != request.TargetGroup {
-			continue
-		}
 		result := antigravity.ParseAvailableModels(nil, request.ObservedAt.UTC(), group)
 		result.AuthIndex = request.AuthIndex
 		result.Error = message
@@ -142,7 +148,6 @@ func failedAntigravityQuotaResults(request antigravityQuotaRequest, message stri
 	}
 	return results
 }
-
 
 func antigravityQuotaBody(projectID string) []byte {
 	projectID = strings.TrimSpace(projectID)
@@ -208,4 +213,3 @@ func antigravityQuotaHeadersForUserAgent(accessToken string, userAgent string) h
 		"User-Agent":    []string{userAgent},
 	}
 }
-

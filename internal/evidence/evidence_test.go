@@ -72,6 +72,58 @@ func TestClassify_CurrentRoundEvidenceAuthority(t *testing.T) {
 	}
 }
 
+func TestClassify_UnavailableProbeIsNotFailure(t *testing.T) {
+	now := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
+	result := evidence.Classify(evidence.Input{
+		Round:       evidence.Round{ID: "round-current", ModelGroup: config.AntigravityModelGroupArgon},
+		Credentials: []core.Credential{{AuthIndex: "no-argon", Provider: core.ProviderAntigravity}},
+		Probes: []evidence.ProbeObservation{{
+			RoundID: "round-current",
+			Result: antigravity.ProbeResult{
+				Provider:   core.ProviderAntigravity,
+				AuthIndex:  "no-argon",
+				ModelGroup: antigravity.ModelGroupArgon,
+				ObservedAt: now,
+				Status:     antigravity.StatusUnavailable,
+				Error:      "target model group not entitled",
+			},
+		}},
+	})
+
+	if len(result.Eligible) != 0 {
+		t.Fatalf("unavailable probe must not produce eligible evidence: %#v", result.Eligible)
+	}
+	observation := result.Observations[0]
+	if observation.Kind != evidence.ObservationUnavailable {
+		t.Fatalf("kind = %q; want %q", observation.Kind, evidence.ObservationUnavailable)
+	}
+	if observation.Failure != "target model group not entitled" {
+		t.Fatalf("failure = %q; want entitlement reason", observation.Failure)
+	}
+}
+
+func TestClassify_HistoricalUnavailableIsNotFailure(t *testing.T) {
+	now := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
+	result := evidence.Classify(evidence.Input{
+		Round:       evidence.Round{ID: "historical", ModelGroup: config.AntigravityModelGroupArgon},
+		Credentials: []core.Credential{{AuthIndex: "no-argon", Provider: core.ProviderAntigravity}},
+		Historical: []evidence.HistoricalObservation{{
+			AuthIndex:         "no-argon",
+			ModelGroup:        config.AntigravityModelGroupArgon,
+			Unavailable:       true,
+			UnavailableAt:     now,
+			UnavailableReason: "target model group not entitled",
+		}},
+	})
+
+	if len(result.Eligible) != 0 {
+		t.Fatalf("historical unavailable must not produce eligible evidence: %#v", result.Eligible)
+	}
+	if len(result.Observations) != 1 || result.Observations[0].Kind != evidence.ObservationUnavailable {
+		t.Fatalf("observations = %#v; want one unavailable observation", result.Observations)
+	}
+}
+
 func TestClassify_FailedProbePreservesHistoricalObservationSeparately(t *testing.T) {
 	now := time.Date(2026, 8, 22, 11, 0, 0, 0, time.UTC)
 	reset5h := now.Add(4 * time.Hour)

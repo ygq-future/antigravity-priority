@@ -42,18 +42,27 @@ const templateScriptProbeSchedule = `        function setListProbeLoading(loadin
             try {
                 var groupSelect = document.getElementById("modelGroupSelect");
                 var group = groupSelect ? groupSelect.value : "gemini";
-                var path = RUN_PATH + "?mode=probe&antigravity_model_group=" + encodeURIComponent(group);
+                var path = RUN_PATH + "?mode=probe";
                 var data = await apiFetch(path, { method: "POST" });
                 var outcomes = (data && Array.isArray(data.probe_outcomes)) ? data.probe_outcomes : [];
                 var failedCount = 0;
+                var successCount = 0;
+                var unavailableCount = 0;
                 for (var i = 0; i < outcomes.length; i++) {
                     var o = outcomes[i];
-                    if (o && o.status !== "success" && (!group || o.model_group === group)) {
+                    if (!o || (group && o.model_group !== group)) continue;
+                    if (o.status === "success") {
+                        successCount++;
+                    } else if (o.status === "unavailable") {
+                        unavailableCount++;
+                    } else {
                         failedCount++;
                     }
                 }
                 if (failedCount > 0) {
                     showToast(t("probeBatchFailed") + " (" + failedCount + ")", "error");
+                } else if (successCount === 0 && unavailableCount > 0) {
+                    showToast(t("probeUnavailable"), "info");
                 } else {
                     showToast(t("probeSuccess"), "success");
                 }

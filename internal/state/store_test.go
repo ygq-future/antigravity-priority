@@ -840,6 +840,63 @@ func TestStore_GetHistoricalEvidence_And_BuildHistoricalEvidence(t *testing.T) {
 	}
 }
 
+func TestStore_MarkProbeUnavailableSuppressesHistoricalEvidence(t *testing.T) {
+	ctx := context.Background()
+	store, _ := state.Load(ctx, filepath.Join(t.TempDir(), "unavailable_cache.json"))
+	now := time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)
+	shortRem := int64(70)
+	_ = store.MarkProbeSuccess(ctx, state.ProbeSuccess{
+		AuthIndex:            "acc-argon",
+		Provider:             core.ProviderAntigravity,
+		ModelGroup:           "argon",
+		ObservedAt:           now,
+		ResetAt:              now.Add(5 * 24 * time.Hour),
+		Remaining:            70,
+		ArgonWindowResetAt:   now.Add(5 * 24 * time.Hour),
+		ArgonWindowRemaining: &shortRem,
+	})
+	if _, ok := store.GetHistoricalEvidence("acc-argon", "argon"); !ok {
+		t.Fatal("expected Argon evidence before it becomes unavailable")
+	}
+
+	err := store.MarkProbeUnavailable(ctx, state.ProbeUnavailable{
+		AuthIndex:  "acc-argon",
+		Provider:   core.ProviderAntigravity,
+		ModelGroup: "argon",
+		ObservedAt: now.Add(time.Hour),
+		Reason:     "target model group not entitled",
+	})
+	if err != nil {
+		t.Fatalf("MarkProbeUnavailable failed: %v", err)
+	}
+	entry, ok := store.GetEntry("acc-argon", "argon")
+	if !ok || !entry.Unavailable || entry.LastError != "" || !entry.LastFailureAt.IsZero() {
+		t.Fatalf("unavailable entry must not carry a failure diagnostic: %#v", entry)
+	}
+	if _, ok := store.GetHistoricalEvidence("acc-argon", "argon"); ok {
+		t.Fatal("stale Argon evidence must be suppressed while unavailable")
+	}
+
+	// A later successful probe clears the unavailable marker.
+	_ = store.MarkProbeSuccess(ctx, state.ProbeSuccess{
+		AuthIndex:            "acc-argon",
+		Provider:             core.ProviderAntigravity,
+		ModelGroup:           "argon",
+		ObservedAt:           now.Add(2 * time.Hour),
+		ResetAt:              now.Add(5 * 24 * time.Hour),
+		Remaining:            60,
+		ArgonWindowResetAt:   now.Add(5 * 24 * time.Hour),
+		ArgonWindowRemaining: &shortRem,
+	})
+	entry, ok = store.GetEntry("acc-argon", "argon")
+	if !ok || entry.Unavailable {
+		t.Fatalf("successful probe must clear unavailable state: %#v", entry)
+	}
+	if _, ok := store.GetHistoricalEvidence("acc-argon", "argon"); !ok {
+		t.Fatal("successful probe must restore Argon evidence")
+	}
+}
+
 func TestStore_GetPlanType(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()

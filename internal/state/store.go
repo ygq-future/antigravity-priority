@@ -62,6 +62,9 @@ type Entry struct {
 	AuthInvalid              bool          `json:"auth_invalid,omitempty"`
 	PlanType                 core.PlanType `json:"plan_type,omitempty"`
 	Source                   Source        `json:"source,omitempty"`
+	Unavailable              bool          `json:"unavailable,omitempty"`
+	UnavailableAt            time.Time     `json:"unavailable_at,omitzero"`
+	UnavailableReason        string        `json:"unavailable_reason,omitempty"`
 }
 
 // ProbePolicy defines cache staleness and expiration thresholds.
@@ -118,6 +121,16 @@ type ProbeFailure struct {
 	ObservedAt  time.Time
 	Err         error
 	NextProbeAt time.Time
+}
+
+// ProbeUnavailable records that the upstream does not expose a model group for
+// this account. It is distinct from a probe failure and carries no quota.
+type ProbeUnavailable struct {
+	AuthIndex  string
+	Provider   core.Provider
+	ModelGroup string
+	ObservedAt time.Time
+	Reason     string
 }
 
 // ProbeSchedule contains scheduling timing for a deferred probe.
@@ -790,6 +803,55 @@ func (s *Store) MarkProbeFailure(ctx context.Context, failure ProbeFailure) erro
 	entry.LastError = sanitizeProbeError(failure.Err)
 	entry.LastFailureAt = failure.ObservedAt.UTC()
 	entry.NextProbeAt = utcOrZero(failure.NextProbeAt)
+	entry.Unavailable = false
+	entry.UnavailableAt = time.Time{}
+	entry.UnavailableReason = ""
+
+	s.entries[key] = entry
+	return nil
+}
+
+// MarkProbeUnavailable records that the upstream does not expose a model group
+// for this account. It is not a probe failure: the group has no quota because
+// the account is not entitled to it. Stale quota evidence is cleared and
+// GetHistoricalEvidence suppresses the entry until a successful probe returns.
+func (s *Store) MarkProbeUnavailable(ctx context.Context, unavailable ProbeUnavailable) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("mark probe unavailable context: %w", err)
+	}
+	key := entryKey(unavailable.AuthIndex, unavailable.ModelGroup)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	entry := s.entries[key]
+	entry.SchemaVersion = SchemaVersion
+	entry.Provider = unavailable.Provider
+	entry.ModelGroup = entryModelGroup(unavailable.ModelGroup)
+	entry.AuthIndex = authIndexKey(unavailable.AuthIndex)
+	entry.ObservedAt = unavailable.ObservedAt.UTC()
+	entry.Unavailable = true
+	entry.UnavailableAt = unavailable.ObservedAt.UTC()
+	entry.UnavailableReason = strings.TrimSpace(unavailable.Reason)
+	entry.LastError = ""
+	entry.LastFailureAt = time.Time{}
+	entry.NextProbeAt = time.Time{}
+	entry.ResetAt = time.Time{}
+	entry.Remaining = 0
+	entry.ShortWindowResetAt = time.Time{}
+	entry.ShortWindowRemaining = nil
+	entry.LongWindowResetAt = time.Time{}
+	entry.LongWindowRemaining = nil
+	entry.ArgonWindowResetAt = time.Time{}
+	entry.ArgonWindowRemaining = nil
+	entry.CycleBurnRate = 0
+	entry.Samples = nil
+	entry.LearningBaselineSequence = 0
+	entry.PendingWeightedTokens = 0
+	entry.EstimatedShortBurnPct = 0
+	entry.EstimatedLongBurnPct = 0
+	entry.TokensPerShortPct = 0
+	entry.PlanType = core.PlanTypeUnknown
 
 	s.entries[key] = entry
 	return nil
@@ -982,6 +1044,11 @@ func (s *Store) NeedsProbe(ctx context.Context, check ProbeCheck) (bool, error) 
 		return true, nil
 	}
 	if entry.ModelGroup != entryModelGroup(check.ModelGroup) {
+		return true, nil
+	}
+	// An unavailable group has no quota window to expire. Re-probe on the next
+	// scheduling opportunity so a newly granted entitlement is discovered.
+	if entry.Unavailable {
 		return true, nil
 	}
 	// Window reset reached -> must re-probe
@@ -1232,6 +1299,9 @@ func (s *Store) GetHistoricalEvidence(authIndex, modelGroup string) (priority.Qu
 	}
 	s.mu.RUnlock()
 	if !ok || entry.SchemaVersion != SchemaVersion {
+		return priority.QuotaEvidence{}, false
+	}
+	if entry.Unavailable {
 		return priority.QuotaEvidence{}, false
 	}
 

@@ -20,7 +20,7 @@ type Runner interface {
 	Run(ctx context.Context, request RunRequest) (apply.Result, error)
 	Reset(ctx context.Context) (map[string]any, error)
 	LatestSnapshot(ctx context.Context) (apply.DualGroupSnapshot, error)
-	SyncHost(ctx context.Context, modelGroup config.AntigravityModelGroup) (apply.DualGroupSnapshot, error)
+	SyncHost(ctx context.Context) (apply.DualGroupSnapshot, error)
 	Diagnostics(ctx context.Context) (map[string]any, error)
 	GetScheduleConfig(ctx context.Context) (config.ScheduleConfig, error)
 	SetScheduleConfig(ctx context.Context, cfg config.ScheduleConfig) error
@@ -47,8 +47,7 @@ type ProbeOutcome struct {
 
 // RunRequest encapsulates parameters for a manual quota probe run.
 type RunRequest struct {
-	AntigravityModelGroup config.AntigravityModelGroup
-	AuthIndexes           []string
+	AuthIndexes []string
 }
 
 // Handler handles management HTTP API requests.
@@ -182,21 +181,10 @@ func (h *Handler) handleRun(w http.ResponseWriter, r *http.Request) {
 	}
 	defer h.release()
 
-	var modelGroup config.AntigravityModelGroup
-	if mgStr := r.URL.Query().Get("antigravity_model_group"); mgStr != "" {
-		mg, err := config.ParseAntigravityModelGroup(mgStr)
-		if err != nil {
-			h.writeJSONError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		modelGroup = mg
-	}
-
 	authIndexes := r.URL.Query()["auth_index"]
 
 	result, err := h.runner.Run(r.Context(), RunRequest{
-		AntigravityModelGroup: modelGroup,
-		AuthIndexes:           authIndexes,
+		AuthIndexes: authIndexes,
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "run already in progress") {
@@ -354,17 +342,7 @@ func (h *Handler) handleSync(w http.ResponseWriter, r *http.Request) {
 	}
 	defer h.release()
 
-	var modelGroup config.AntigravityModelGroup
-	if mgStr := r.URL.Query().Get("antigravity_model_group"); mgStr != "" {
-		mg, err := config.ParseAntigravityModelGroup(mgStr)
-		if err != nil {
-			h.writeJSONError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		modelGroup = mg
-	}
-
-	snap, err := h.runner.SyncHost(r.Context(), modelGroup)
+	snap, err := h.runner.SyncHost(r.Context())
 	if err != nil {
 		h.writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return

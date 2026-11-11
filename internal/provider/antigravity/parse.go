@@ -91,6 +91,11 @@ func ParseAllModelGroups(raw []byte, observedAt time.Time) map[ModelGroup]ProbeR
 
 func parseGroupFromResponse(response availableModelsResponse, observedAt time.Time, group ModelGroup) ProbeResult {
 	windows := collectGroupWindows(response, group)
+	if group == ModelGroupArgon && !hasArgonData(response) {
+		// Argon is entitlement-gated. Its absence is not a probe failure; there is
+		// simply no Argon pool on this account.
+		return unavailableResult(observedAt, group, "target model group not entitled")
+	}
 	if len(windows) == 0 {
 		return failedResult(observedAt, group, "target model group quota unavailable")
 	}
@@ -531,6 +536,47 @@ func toFloat64(raw any) (float64, bool) {
 		return parsed, err == nil
 	default:
 		return 0, false
+	}
+}
+
+// hasArgonData reports whether the response contains any Argon-specific group,
+// bucket, or model. It distinguishes "the account has no Argon pool" from "the
+// Argon pool exists but its buckets are malformed".
+func hasArgonData(response availableModelsResponse) bool {
+	for _, quotaGroup := range response.Groups {
+		if isArgonIdentifier(quotaGroup.DisplayName + " " + quotaGroup.Description) {
+			return true
+		}
+		for _, bucket := range quotaGroup.Buckets {
+			if isArgonIdentifier(bucket.BucketID + " " + bucket.DisplayName + " " + bucket.Description) {
+				return true
+			}
+		}
+	}
+	for modelID := range response.Models {
+		if isArgonIdentifier(modelID) {
+			return true
+		}
+	}
+	for _, bucket := range response.Buckets {
+		if isArgonIdentifier(bucket.BucketID + " " + bucket.DisplayName + " " + bucket.Description) {
+			return true
+		}
+	}
+	return false
+}
+
+// unavailableResult describes a model group the upstream does not expose for
+// this account. It carries no quota evidence and must not be treated as failure.
+func unavailableResult(observedAt time.Time, group ModelGroup, message string) ProbeResult {
+	return ProbeResult{
+		Provider:   core.ProviderAntigravity,
+		ModelGroup: group,
+		ObservedAt: observedAt.UTC(),
+		Window:     WindowUnknown,
+		Status:     StatusUnavailable,
+		PlanType:   core.PlanTypeUnknown,
+		Error:      message,
 	}
 }
 

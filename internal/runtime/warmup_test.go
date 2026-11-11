@@ -426,9 +426,13 @@ func TestRuntime_WarmupSweepBoundsRetriesWhenWindowDoesNotConverge(t *testing.T)
 	// so the warm-up cannot land until the window actually converges.
 	stub.setBody(fmt.Appendf(nil,
 		`{"models":{"gemini-2.5-pro":{"quotaInfo":{"windows":[{"name":"5h","remainingFraction":0.0,"resetTime":%q}]}},`+
-			`"gemini-2.5-flash":{"quotaInfo":{"windows":[{"name":"7d","remainingFraction":1.0,"resetTime":%q}]}}}}`,
+			`"gemini-2.5-flash":{"quotaInfo":{"windows":[{"name":"7d","remainingFraction":1.0,"resetTime":%q}]}},`+
+			`"gemini-argon":{"quotaInfo":{"windows":[{"name":"7d","remainingFraction":1.0,"resetTime":%q}]}},`+
+			`"claude-3-5-sonnet":{"quotaInfo":{"windows":[{"name":"5h","remainingFraction":1.0,"resetTime":%q}]}}}}`,
 		now.Add(-30*time.Minute).UTC().Format(time.RFC3339),
 		now.Add(7*24*time.Hour).UTC().Format(time.RFC3339),
+		now.Add(7*24*time.Hour).UTC().Format(time.RFC3339),
+		now.Add(5*time.Hour).UTC().Format(time.RFC3339),
 	))
 
 	for range 7 {

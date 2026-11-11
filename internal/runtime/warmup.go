@@ -512,7 +512,7 @@ func warmupRetryDelay(attempts int) time.Duration {
 // probeWarmupCandidate runs the targeted probe that refreshes evidence and
 // performs the warm-up, then clears retry state once the warm-up landed.
 func (r *Runtime) probeWarmupCandidate(ctx context.Context, cfg config.Config, candidate warmupCandidate) error {
-	if err := r.Probe(ctx, candidate.group, []string{candidate.authIndex}); err != nil {
+	if err := r.Probe(ctx, []string{candidate.authIndex}); err != nil {
 		return err
 	}
 	store, err := state.Load(ctx, warmupStatePath(cfg))

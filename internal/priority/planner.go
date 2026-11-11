@@ -13,6 +13,7 @@ const (
 	// Decision Reasons
 	ReasonKeepCurrentState         = "keep current state"
 	ReasonDisabledOnHost           = "disabled on host"
+	ReasonQuotaUnavailable         = "quota unavailable"
 	ReasonFreshWeeklyDepleted      = "fresh weekly depleted"
 	ReasonFreshShortWindowDepleted = "fresh short window depleted"
 	ReasonFreshBoosted             = "fresh boosted"

@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"antigravity-priority/internal/config"
 	"antigravity-priority/internal/host"
 	"antigravity-priority/internal/management"
 	"antigravity-priority/internal/provider/antigravity"
@@ -211,7 +210,7 @@ func TestDevRuntimeUsesProductionPathForProbeAndManagement(t *testing.T) {
 		}
 	}()
 
-	if err := dev.runtime.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
+	if err := dev.runtime.Probe(context.Background(), nil); err != nil {
 		t.Fatal(err)
 	}
 	snapshot, err := dev.runtime.LatestSnapshot(context.Background())
@@ -277,7 +276,7 @@ func TestDevRuntimeUsesProductionPathForProbeAndManagement(t *testing.T) {
 	}
 
 	clock.now = clock.now.Add(time.Minute)
-	if err := dev.runtime.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
+	if err := dev.runtime.Probe(context.Background(), nil); err != nil {
 		t.Fatal(err)
 	}
 	updatedSamples, err := dev.runtime.GetSamples(context.Background(), "dev-auth-001", "gemini")
@@ -472,7 +471,7 @@ func TestDevServer_FreeAccountSimulation(t *testing.T) {
 	}
 
 	// Probe all accounts
-	if err := dev.runtime.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
+	if err := dev.runtime.Probe(context.Background(), nil); err != nil {
 		t.Fatal(err)
 	}
 

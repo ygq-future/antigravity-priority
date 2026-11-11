@@ -257,12 +257,16 @@ func itemArgonWindowBar(item apply.SnapshotItem) apply.QuotaWindowBar {
 
 func annotatePlanObservations(plan *priority.Plan, observations []evidence.Observation) {
 	for _, observation := range observations {
-		if observation.Kind != evidence.ObservationFailed && observation.Kind != evidence.ObservationInvalid {
-			continue
-		}
-		reason := "probe failed"
-		if observation.Kind == evidence.ObservationInvalid {
+		var reason string
+		switch observation.Kind {
+		case evidence.ObservationFailed:
+			reason = "probe failed"
+		case evidence.ObservationInvalid:
 			reason = "probe invalid"
+		case evidence.ObservationUnavailable:
+			reason = priority.ReasonQuotaUnavailable
+		default:
+			continue
 		}
 		if failure := strings.TrimSpace(observation.Failure); failure != "" {
 			reason += ": " + failure
@@ -270,6 +274,9 @@ func annotatePlanObservations(plan *priority.Plan, observations []evidence.Obser
 		for index := range plan.Items {
 			if plan.Items[index].Credential.AuthIndex != observation.AuthIndex {
 				continue
+			}
+			if observation.Kind == evidence.ObservationUnavailable {
+				plan.Items[index].Priority = priority.DepletedPriority
 			}
 			if plan.Items[index].Reason != priority.ReasonKeepCurrentState && plan.Items[index].Reason != priority.ReasonDisabledOnHost {
 				reason += "; " + plan.Items[index].Reason

@@ -13,6 +13,7 @@ import (
 	"antigravity-priority/internal/evidence"
 	"antigravity-priority/internal/host"
 	"antigravity-priority/internal/priority"
+	"antigravity-priority/internal/provider/antigravity"
 	"antigravity-priority/internal/state"
 )
 
@@ -140,7 +141,7 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 			Trigger:      string(request.Trigger),
 			ProbeRoundID: evidence.RoundID,
 			Attempted:    evidence.Probed,
-			Succeeded:    len(evidence.ByGroup[request.Config.AntigravityModelGroup].Eligible),
+			Succeeded:    readyProbeCredentialCount(evidence.Probes),
 			Message:      audit,
 			Snapshot:     &snap,
 		})
@@ -159,6 +160,8 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 			Kind:         KindAutoApply,
 			Trigger:      string(request.Trigger),
 			ProbeRoundID: evidence.RoundID,
+			Attempted:    evidence.Probed,
+			Succeeded:    readyProbeCredentialCount(evidence.Probes),
 			Message:      summary,
 			Snapshot:     &primarySnapshot,
 		})
@@ -214,7 +217,7 @@ func (r *Runtime) collectEvidenceForTrigger(ctx context.Context, input collectIn
 			return collectedEvidence{}, err
 		}
 		collected = current
-		if !hasProbeFailure(current, input.modelGroup) || attempt == autoQuotaProbeAttempts {
+		if !hasRetryableProbeFailure(current) || attempt == autoQuotaProbeAttempts {
 			return collected, nil
 		}
 		input.forceProbe = true
@@ -225,9 +228,26 @@ func (r *Runtime) collectEvidenceForTrigger(ctx context.Context, input collectIn
 	return collected, nil
 }
 
-func hasProbeFailure(collected collectedEvidence, modelGroup config.AntigravityModelGroup) bool {
-	for _, observation := range collected.Observations {
-		if observation.ModelGroup == modelGroup && (observation.Kind == evidence.ObservationFailed || observation.Kind == evidence.ObservationInvalid) {
+func readyProbeCredentialCount(probes []evidence.ProbeObservation) int {
+	ready := make(map[string]struct{}, len(probes))
+	for _, probe := range probes {
+		if probe.Result.AuthIndex != "" && probe.Result.Status == antigravity.StatusReady {
+			ready[probe.Result.AuthIndex] = struct{}{}
+		}
+	}
+	return len(ready)
+}
+
+// hasRetryableProbeFailure reports whether the current round produced a fresh
+// failure in a pool that every account exposes. Argon is excluded because it is
+// a paid-plan pool: Free accounts legitimately have no Argon quota, and treating
+// that absence as retryable would hammer upstream on every scheduled run.
+func hasRetryableProbeFailure(collected collectedEvidence) bool {
+	for _, probe := range collected.Probes {
+		if probe.Result.ModelGroup == antigravity.ModelGroupArgon {
+			continue
+		}
+		if probe.Result.Status != antigravity.StatusReady {
 			return true
 		}
 	}

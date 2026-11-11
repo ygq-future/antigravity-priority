@@ -17,11 +17,12 @@ import (
 type ObservationKind string
 
 const (
-	ObservationFresh      ObservationKind = "fresh"
-	ObservationHistorical ObservationKind = "historical"
-	ObservationFailed     ObservationKind = "failed"
-	ObservationInvalid    ObservationKind = "invalid"
-	ObservationWrongGroup ObservationKind = "wrong_group"
+	ObservationFresh       ObservationKind = "fresh"
+	ObservationHistorical  ObservationKind = "historical"
+	ObservationFailed      ObservationKind = "failed"
+	ObservationInvalid     ObservationKind = "invalid"
+	ObservationUnavailable ObservationKind = "unavailable"
+	ObservationWrongGroup  ObservationKind = "wrong_group"
 )
 
 // Round identifies one scheduling round and the model group being classified.
@@ -41,11 +42,14 @@ type ProbeObservation struct {
 // HistoricalObservation is a persisted successful observation plus the
 // independent diagnostic state of its most recent failure.
 type HistoricalObservation struct {
-	AuthIndex  string
-	ModelGroup config.AntigravityModelGroup
-	Evidence   priority.QuotaEvidence
-	LastError  string
-	FailureAt  time.Time
+	AuthIndex         string
+	ModelGroup        config.AntigravityModelGroup
+	Evidence          priority.QuotaEvidence
+	LastError         string
+	FailureAt         time.Time
+	Unavailable       bool
+	UnavailableAt     time.Time
+	UnavailableReason string
 }
 
 // Observation is the read-only diagnostic projection returned by Classify.
@@ -160,8 +164,11 @@ func Classify(input Input) Result {
 				}
 			}
 			kind := ObservationFailed
-			if observed.Status == antigravity.StatusReady {
+			switch observed.Status {
+			case antigravity.StatusReady:
 				kind = ObservationInvalid
+			case antigravity.StatusUnavailable:
+				kind = ObservationUnavailable
 			}
 			result.Observations = append(result.Observations, failedObservation(observed, kind))
 			currentAuthIndexes[observed.AuthIndex] = kind
@@ -178,8 +185,11 @@ func Classify(input Input) Result {
 		}
 
 		kind := ObservationFailed
-		if observed.Status == antigravity.StatusReady {
+		switch observed.Status {
+		case antigravity.StatusReady:
 			kind = ObservationInvalid
+		case antigravity.StatusUnavailable:
+			kind = ObservationUnavailable
 		}
 		result.Observations = append(result.Observations, failedObservation(observed, kind))
 		currentAuthIndexes[observed.AuthIndex] = kind
@@ -187,13 +197,26 @@ func Classify(input Input) Result {
 
 	for _, historical := range input.Historical {
 		authIndex, modelGroup := historicalIdentity(historical)
-		if historical.LastError == "" || authIndex == "" || modelGroup != input.Round.ModelGroup {
+		if authIndex == "" || modelGroup != input.Round.ModelGroup {
 			continue
 		}
 		if _, known := knownCredentials[authIndex]; !known {
 			continue
 		}
 		if _, hasCurrent := currentAuthIndexes[authIndex]; hasCurrent {
+			continue
+		}
+		if historical.Unavailable {
+			result.Observations = append(result.Observations, Observation{
+				AuthIndex:  authIndex,
+				ModelGroup: modelGroup,
+				Kind:       ObservationUnavailable,
+				ObservedAt: historical.UnavailableAt,
+				Failure:    historical.UnavailableReason,
+			})
+			continue
+		}
+		if historical.LastError == "" {
 			continue
 		}
 		result.Observations = append(result.Observations, Observation{

@@ -504,12 +504,12 @@ func TestRuntime_SingleFlight_Conflict(t *testing.T) {
 	})
 
 	go func() {
-		_ = r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil)
+		_ = r.Probe(context.Background(), nil)
 	}()
 
 	<-enteredChan
 
-	if err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); !errors.Is(err, runtime.ErrRunInProgress) {
+	if err := r.Probe(context.Background(), nil); !errors.Is(err, runtime.ErrRunInProgress) {
 		t.Errorf("expected ErrRunInProgress on Probe, got %v", err)
 	}
 	if err := r.AutoApply(context.Background()); !errors.Is(err, runtime.ErrRunInProgress) {
@@ -648,7 +648,7 @@ func TestRuntime_ProductionRunner_ConcurrentProbes(t *testing.T) {
 		Sleeper: testSleeper{},
 	})
 
-	err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil)
+	err := r.Probe(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("probe failed: %v", err)
 	}
@@ -662,7 +662,7 @@ func TestRuntime_ProductionRunner_ConcurrentProbes(t *testing.T) {
 	}
 }
 
-func TestRuntime_ProbeProjectsBothGroupsFromOneQuotaResponse(t *testing.T) {
+func TestRuntime_ProbeProjectsAllPoolsFromOneQuotaResponse(t *testing.T) {
 	cachePath := filepath.Join(t.TempDir(), "cache.json")
 	mock := newMockHost()
 	mock.files = []host.AuthFile{{
@@ -681,6 +681,9 @@ func TestRuntime_ProbeProjectsBothGroupsFromOneQuotaResponse(t *testing.T) {
 			"claude-3-5-sonnet": {"modelProvider":"anthropic","quotaInfo":{"windows":[
 				{"name":"5hr","remainingFraction":0.40,"resetTime":"2026-08-22T16:00:00Z"},
 				{"name":"7d","remainingFraction":0.60,"resetTime":"2026-08-29T00:00:00Z"}
+			]}},
+			"gemini-argon": {"modelProvider":"google","quotaInfo":{"windows":[
+				{"name":"7d","remainingFraction":0.71,"resetTime":"2026-08-29T00:00:00Z"}
 			]}}
 		}
 	}`)
@@ -688,7 +691,7 @@ func TestRuntime_ProbeProjectsBothGroupsFromOneQuotaResponse(t *testing.T) {
 	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
+	if err := r.Probe(context.Background(), nil); err != nil {
 		t.Fatal(err)
 	}
 	snapshot, err := r.LatestSnapshot(context.Background())
@@ -696,12 +699,16 @@ func TestRuntime_ProbeProjectsBothGroupsFromOneQuotaResponse(t *testing.T) {
 		t.Fatal(err)
 	}
 	gemini := snapshot.Groups[string(config.AntigravityModelGroupGemini)]
+	argon := snapshot.Groups[string(config.AntigravityModelGroupArgon)]
 	claudeGPT := snapshot.Groups[string(config.AntigravityModelGroupClaudeGPT)]
 	if len(mock.httpCalls) != 1 {
-		t.Fatalf("quota HTTP calls = %d, want one response for both groups", len(mock.httpCalls))
+		t.Fatalf("quota HTTP calls = %d, want one response for all pools", len(mock.httpCalls))
 	}
 	if len(gemini.Items) != 1 || gemini.Items[0].R7d != 0.7 {
 		t.Fatalf("gemini projection = %#v, want fresh quota data", gemini)
+	}
+	if len(argon.Items) != 1 || argon.Items[0].R7d != 0.71 {
+		t.Fatalf("argon projection = %#v, want fresh quota data", argon)
 	}
 	if len(claudeGPT.Items) != 1 || claudeGPT.Items[0].R7d != 0.6 || claudeGPT.Items[0].IsPredicted {
 		t.Fatalf("claude/gpt projection = %#v, want fresh live quota data", claudeGPT)
@@ -730,6 +737,10 @@ func TestRuntime_ProbeKeepsDualWindowCountdownsAndPlanTier(t *testing.T) {
 			Body: []byte(`{"groups":[{"displayName":"Gemini Models","buckets":[
 				{"window":"5h","remainingFraction":0.85,"resetTime":"2026-08-22T15:00:00Z"},
 				{"window":"weekly","remainingFraction":0.70,"resetTime":"2026-08-29T00:00:00Z"}
+			]},{"displayName":"Gemini 4 Argon","buckets":[
+				{"bucketId":"gemini-argon-wtu-weekly","window":"weekly","remainingFraction":0.71,"resetTime":"2026-08-29T00:00:00Z"}
+			]},{"displayName":"Claude and GPT models","buckets":[
+				{"window":"5h","remainingFraction":0.6,"resetTime":"2026-08-22T16:00:00Z"}
 			]}]}`),
 		},
 		antigravity.FetchAvailableModelsURL: {
@@ -741,7 +752,7 @@ func TestRuntime_ProbeKeepsDualWindowCountdownsAndPlanTier(t *testing.T) {
 	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
+	if err := r.Probe(context.Background(), nil); err != nil {
 		t.Fatal(err)
 	}
 	snapshot, err := r.LatestSnapshot(context.Background())
@@ -828,7 +839,7 @@ func TestRuntime_ProbeAndSyncHostUseTheSameLearnedCycleBurnRate(t *testing.T) {
 	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "enabled: true\nstate_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
+	if err := r.Probe(context.Background(), nil); err != nil {
 		t.Fatal(err)
 	}
 	probeSnapshot, err := r.LatestSnapshot(context.Background())
@@ -837,7 +848,7 @@ func TestRuntime_ProbeAndSyncHostUseTheSameLearnedCycleBurnRate(t *testing.T) {
 	}
 	probeTarget := probeSnapshot.Groups["gemini"].Items[0].Target.Priority
 
-	syncSnapshot, err := r.SyncHost(context.Background(), config.AntigravityModelGroupGemini)
+	syncSnapshot, err := r.SyncHost(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -876,7 +887,7 @@ func TestRuntime_SyncHostPreservesPlanType(t *testing.T) {
 	}
 
 	// 1. Probe establishes Pro plan type
-	if err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
+	if err := r.Probe(context.Background(), nil); err != nil {
 		t.Fatal(err)
 	}
 	probeSnapshot, err := r.LatestSnapshot(context.Background())
@@ -888,7 +899,7 @@ func TestRuntime_SyncHostPreservesPlanType(t *testing.T) {
 	}
 
 	// 2. SyncHost (which simulates page reload / refresh) preserves Pro plan type
-	syncSnapshot, err := r.SyncHost(context.Background(), config.AntigravityModelGroupGemini)
+	syncSnapshot, err := r.SyncHost(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -923,7 +934,7 @@ func TestRuntime_ProductionRunner_FilteredAuthIndexes(t *testing.T) {
 	})
 
 	// Run with only auth_1
-	err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, []string{"auth_1"})
+	err := r.Probe(context.Background(), []string{"auth_1"})
 	if err != nil {
 		t.Fatalf("probe failed: %v", err)
 	}
@@ -973,6 +984,18 @@ func TestRuntime_ProductionRunner_CachedEvidence(t *testing.T) {
 			Priority:  100,
 		},
 	}
+	mock.httpResponse = host.HTTPResponse{StatusCode: http.StatusOK, Body: []byte(`{"groups":[
+		{"displayName":"Gemini Models","buckets":[
+			{"window":"5h","remainingFraction":0.8,"resetTime":"2026-08-18T17:00:00Z"},
+			{"window":"weekly","remainingFraction":0.9,"resetTime":"2026-08-25T12:00:00Z"}
+		]},
+		{"displayName":"Gemini 4 Argon","buckets":[
+			{"bucketId":"gemini-argon-wtu-weekly","window":"weekly","remainingFraction":0.7,"resetTime":"2026-08-25T12:00:00Z"}
+		]},
+		{"displayName":"Claude and GPT models","buckets":[
+			{"window":"5h","remainingFraction":0.6,"resetTime":"2026-08-18T17:00:00Z"}
+		]}
+	]}`)}
 
 	r := newTestRuntime(t, runtime.Options{
 		Host:    mock,
@@ -1048,7 +1071,7 @@ func TestRuntime_ProbeReconcilesHostChangesBeforePlanning(t *testing.T) {
 	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
+	if err := r.Probe(context.Background(), nil); err != nil {
 		t.Fatal(err)
 	}
 	snapshot, err := r.LatestSnapshot(context.Background())
@@ -1076,7 +1099,7 @@ func TestRuntime_ProbeUsesPostProbePriorityAndDisabledState(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
+	if err := r.Probe(context.Background(), nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1105,7 +1128,7 @@ func TestRuntime_ProbeStillPerformsSecondHostSyncWhenInitialInventoryIsEmpty(t *
 		t.Fatal(err)
 	}
 
-	if err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
+	if err := r.Probe(context.Background(), nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1148,7 +1171,7 @@ func TestRuntime_ProductionRunner_PhysicalAuthJSONPath(t *testing.T) {
 		Sleeper: testSleeper{},
 	})
 
-	err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil)
+	err := r.Probe(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("probe with auth path failed: %v", err)
 	}
@@ -1171,7 +1194,7 @@ func TestRuntime_DiagnosticsWithProbeOnlyHistoryHasNoLatestApply(t *testing.T) {
 	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
+	if err := r.Probe(context.Background(), nil); err != nil {
 		t.Fatal(err)
 	}
 	diagnostics, _ := r.Diagnostics(context.Background())
@@ -1190,7 +1213,7 @@ func TestRuntime_SyncHostPreservesConfiguredControlGroup(t *testing.T) {
 		t.Fatal(err)
 	}
 	httpCallsBefore := len(mock.httpCalls)
-	snapshot, err := r.SyncHost(context.Background(), config.AntigravityModelGroupClaudeGPT)
+	snapshot, err := r.SyncHost(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1219,7 +1242,7 @@ func TestRuntime_SyncHostUsesUpdatedDynamicControlGroup(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	snapshot, err := r.SyncHost(context.Background(), config.AntigravityModelGroupGemini)
+	snapshot, err := r.SyncHost(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1257,7 +1280,7 @@ func TestRuntime_ProductionRunner_ProbeFailure(t *testing.T) {
 		Sleeper: testSleeper{},
 	})
 
-	err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil)
+	err := r.Probe(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("probe failed: %v", err)
 	}
@@ -1357,7 +1380,7 @@ func TestRuntime_LastProbeOutcomes_SuccessAndFailure(t *testing.T) {
 	})
 
 	// 1. Success probe
-	if err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
+	if err := r.Probe(context.Background(), nil); err != nil {
 		t.Fatalf("probe failed: %v", err)
 	}
 	successOutcomes := r.LastProbeOutcomes(context.Background())
@@ -1383,7 +1406,7 @@ func TestRuntime_LastProbeOutcomes_SuccessAndFailure(t *testing.T) {
 		StatusCode: http.StatusForbidden,
 		Body:       []byte(`{"error": "forbidden"}`),
 	}
-	if err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
+	if err := r.Probe(context.Background(), nil); err != nil {
 		t.Fatalf("probe failed: %v", err)
 	}
 	failOutcomes := r.LastProbeOutcomes(context.Background())
@@ -1404,6 +1427,37 @@ func TestRuntime_LastProbeOutcomes_SuccessAndFailure(t *testing.T) {
 	}
 	if !found403 {
 		t.Fatalf("did not find 403 outcome for auth_success: %+v", failOutcomes)
+	}
+
+	// 3. Account without an Argon pool: the group is unavailable, not failed.
+	mock.httpResponse = host.HTTPResponse{
+		StatusCode: http.StatusOK,
+		Body: []byte(`{
+			"models": {
+				"gemini-2.5-pro": {"quotaInfo": {"windows": [{"name": "5h", "remainingFraction": 0.8, "resetTime": "2026-08-18T17:00:00Z"}]}},
+				"claude-3-5-sonnet": {"modelProvider": "anthropic", "quotaInfo": {"windows": [{"name": "5hr", "remainingFraction": 0.5, "resetTime": "2026-08-18T17:00:00Z"}]}}
+			}
+		}`),
+	}
+	if err := r.Probe(context.Background(), nil); err != nil {
+		t.Fatalf("probe failed: %v", err)
+	}
+	unavailableOutcomes := r.LastProbeOutcomes(context.Background())
+	foundUnavailable := false
+	for _, o := range unavailableOutcomes {
+		if o.AuthIndex != "auth_success" || o.ModelGroup != "argon" {
+			continue
+		}
+		if o.Status != "unavailable" {
+			t.Errorf("Argon status = %q; want unavailable", o.Status)
+		}
+		if !strings.Contains(o.Error, "not entitled") {
+			t.Errorf("Argon error = %q; want entitlement reason", o.Error)
+		}
+		foundUnavailable = true
+	}
+	if !foundUnavailable {
+		t.Fatalf("did not find unavailable Argon outcome: %+v", unavailableOutcomes)
 	}
 }
 
@@ -2017,7 +2071,7 @@ func TestRuntime_ProductionRunner_RespectsManuallyDisabledAccounts(t *testing.T)
 		Sleeper: testSleeper{},
 	})
 
-	if err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
+	if err := r.Probe(context.Background(), nil); err != nil {
 		t.Fatalf("probe failed: %v", err)
 	}
 
@@ -2306,10 +2360,10 @@ func TestRuntime_Probe429TriggersCooldown(t *testing.T) {
 	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
+	if err := r.Probe(context.Background(), nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
+	if err := r.Probe(context.Background(), nil); err != nil {
 		t.Fatal(err)
 	}
 	document, err := os.ReadFile(authFilePath)
@@ -2376,7 +2430,7 @@ func TestRuntime_UsageHandle_429WaitsForSingleFlightBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	applyDone := make(chan error, 1)
-	go func() { applyDone <- r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil) }()
+	go func() { applyDone <- r.Probe(context.Background(), nil) }()
 	<-started
 	filterDone := make(chan []byte, 1)
 	go func() {
@@ -2478,7 +2532,7 @@ func TestRuntime_429CooldownUpdatesLatestSnapshotInPlace(t *testing.T) {
 	}
 
 	// Prime initial snapshot
-	snap, err := r.SyncHost(context.Background(), config.AntigravityModelGroupGemini)
+	snap, err := r.SyncHost(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2730,7 +2784,7 @@ func TestRuntime_Diagnostics_LatestApplyTracksAutoApplyOnly(t *testing.T) {
 
 	// 3. Probe should not overwrite latest_apply
 	clock.Advance(5 * time.Minute)
-	if err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
+	if err := r.Probe(context.Background(), nil); err != nil {
 		t.Fatalf("probe failed: %v", err)
 	}
 	diag3, err := r.Diagnostics(context.Background())
@@ -2781,7 +2835,7 @@ func TestRuntime_DisabledAccount_ProbeBypassAndSingleProbe(t *testing.T) {
 	}
 
 	// 2. Batch "Probe All" (nil authIndexes) must NOT probe disabled accounts
-	if err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
+	if err := r.Probe(context.Background(), nil); err != nil {
 		t.Fatalf("batch probe failed: %v", err)
 	}
 	if len(mock.httpCalls) != 0 {
@@ -2789,7 +2843,7 @@ func TestRuntime_DisabledAccount_ProbeBypassAndSingleProbe(t *testing.T) {
 	}
 
 	// 3. Explicit targeted single-credential probe allows probing on demand
-	if err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, []string{"auth_manual"}); err != nil {
+	if err := r.Probe(context.Background(), []string{"auth_manual"}); err != nil {
 		t.Fatalf("single probe failed: %v", err)
 	}
 	if len(mock.httpCalls) == 0 {

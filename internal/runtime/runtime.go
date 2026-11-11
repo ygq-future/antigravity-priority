@@ -249,7 +249,7 @@ func (r *Runtime) applyStateCacheOverride(cfg config.Config) config.Config {
 }
 
 // Probe triggers a probe-only execution: fetches fresh quota and updates the cache without planning or applying.
-func (r *Runtime) Probe(ctx context.Context, _ config.AntigravityModelGroup, authIndexes []string) error {
+func (r *Runtime) Probe(ctx context.Context, authIndexes []string) error {
 	return r.run(ctx, TriggerProbe, authIndexes)
 }
 
@@ -369,7 +369,7 @@ func (r *Runtime) ResetAllPriorities(ctx context.Context) (map[string]any, error
 }
 
 // SyncHost re-reads credentials from CPA host, re-evaluates cached evidence, and updates the dual-group snapshot.
-func (r *Runtime) SyncHost(ctx context.Context, modelGroup config.AntigravityModelGroup) (apply.DualGroupSnapshot, error) {
+func (r *Runtime) SyncHost(ctx context.Context) (apply.DualGroupSnapshot, error) {
 	if !r.runMu.TryLock() {
 		return apply.DualGroupSnapshot{}, ErrRunInProgress
 	}
@@ -382,8 +382,6 @@ func (r *Runtime) SyncHost(ctx context.Context, modelGroup config.AntigravityMod
 	if r.hostCallbacks == nil {
 		return apply.DualGroupSnapshot{}, errMissingHostCallbacks
 	}
-	// The dashboard selector is view-only; Dynamic Config is the control authority.
-	_ = modelGroup
 
 	client := host.NewClient(r.hostCallbacks)
 	files, err := client.ListAuthFiles(ctx)

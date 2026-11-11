@@ -299,6 +299,10 @@ func (r *Runtime) recomputePoolRoutingTableLocked(pool config.AntigravityModelGr
 	for _, item := range plan.Items {
 		authIdx := item.Credential.AuthIndex
 		cdUntil, isCooling := cooldowns[authIdx]
+		unavailable := false
+		if entry, ok := store.GetEntry(authIdx, string(pool)); ok && entry.Unavailable {
+			unavailable = true
+		}
 
 		var shortReset, longReset time.Time
 		if item.ShortWindowResetAt != nil {
@@ -316,6 +320,8 @@ func (r *Runtime) recomputePoolRoutingTableLocked(pool config.AntigravityModelGr
 			if specific := cooldownReasons[authIdx]; specific != "" {
 				reason = specific
 			}
+		} else if unavailable {
+			reason = priority.ReasonQuotaUnavailable
 		} else {
 			score = routingTier(item)
 		}

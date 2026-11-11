@@ -54,6 +54,10 @@ type Status string
 const (
 	// StatusReady indicates the probe produced actionable quota evidence.
 	StatusReady Status = "ready"
+	// StatusUnavailable indicates the upstream did not expose this model group's
+	// quota at all (for example, an Argon pool the account is not entitled to).
+	// It is not a probe failure: the group is simply absent from the account.
+	StatusUnavailable Status = "unavailable"
 	// StatusProbeFailed indicates the probe failed to produce valid quota evidence.
 	StatusProbeFailed Status = "probe_failed"
 )

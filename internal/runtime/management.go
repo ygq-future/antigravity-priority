@@ -239,7 +239,7 @@ func envelopeManagement(result any, err error) []byte {
 }
 
 func (r managementRunner) Run(ctx context.Context, request management.RunRequest) (apply.Result, error) {
-	if err := r.runtime.Probe(ctx, request.AntigravityModelGroup, request.AuthIndexes); err != nil {
+	if err := r.runtime.Probe(ctx, request.AuthIndexes); err != nil {
 		return apply.Result{}, err
 	}
 	result, _ := r.runtime.currentRunSnapshot()
@@ -254,8 +254,8 @@ func (r managementRunner) LatestSnapshot(ctx context.Context) (apply.DualGroupSn
 	return r.runtime.LatestSnapshot(ctx)
 }
 
-func (r managementRunner) SyncHost(ctx context.Context, modelGroup config.AntigravityModelGroup) (apply.DualGroupSnapshot, error) {
-	return r.runtime.SyncHost(ctx, modelGroup)
+func (r managementRunner) SyncHost(ctx context.Context) (apply.DualGroupSnapshot, error) {
+	return r.runtime.SyncHost(ctx)
 }
 
 func (r managementRunner) Diagnostics(ctx context.Context) (map[string]any, error) {
@@ -446,6 +446,9 @@ func probeOutcomes(probes []evidence.ProbeObservation, byGroup map[config.Antigr
 			continue
 		}
 		status := "failed"
+		if res.Status == antigravity.StatusUnavailable {
+			status = "unavailable"
+		}
 		errMsg := res.Error
 		if groupResult, ok := byGroup[groupConfig]; ok {
 			for _, obs := range groupResult.Observations {
@@ -456,6 +459,11 @@ func probeOutcomes(probes []evidence.ProbeObservation, byGroup map[config.Antigr
 						errMsg = ""
 					case evidence.ObservationInvalid:
 						status = "invalid"
+						if errMsg == "" {
+							errMsg = obs.Failure
+						}
+					case evidence.ObservationUnavailable:
+						status = "unavailable"
 						if errMsg == "" {
 							errMsg = obs.Failure
 						}

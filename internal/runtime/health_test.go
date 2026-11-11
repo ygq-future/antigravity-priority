@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"antigravity-priority/internal/config"
 	"antigravity-priority/internal/core"
 	"antigravity-priority/internal/host"
 	"antigravity-priority/internal/runtime"
@@ -158,7 +157,7 @@ func TestHealth_403DemotesAccountWithoutProbe(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
 	r, _, mock, cachePath, paths := newHealthRuntime(t, now, "idx-a", "idx-b")
-	if _, err := r.SyncHost(ctx, config.AntigravityModelGroupGemini); err != nil {
+	if _, err := r.SyncHost(ctx); err != nil {
 		t.Fatal(err)
 	}
 	seedHealthEvidence(t, ctx, cachePath, now, "idx-a", "idx-b")
@@ -248,7 +247,7 @@ func TestHealth_5xxDemotesPoolAndFailsOver(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
 	r, _, _, cachePath, paths := newHealthRuntime(t, now, "idx-a", "idx-b")
-	if _, err := r.SyncHost(ctx, config.AntigravityModelGroupGemini); err != nil {
+	if _, err := r.SyncHost(ctx); err != nil {
 		t.Fatal(err)
 	}
 	seedHealthEvidence(t, ctx, cachePath, now, "idx-a", "idx-b")

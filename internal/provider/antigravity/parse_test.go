@@ -752,10 +752,30 @@ func TestParseAllModelGroups_NoArgonBucketReturnsUnavailableForArgon(t *testing.
 	}
 
 	argon := results[ModelGroupArgon]
-	if argon.Status != StatusProbeFailed {
-		t.Fatalf("argon status = %v, want probe failed when no Argon bucket exists", argon.Status)
+	if argon.Status != StatusUnavailable {
+		t.Fatalf("argon status = %v, want unavailable when no Argon bucket exists", argon.Status)
 	}
-	if argon.Error != "target model group quota unavailable" {
-		t.Errorf("argon error = %q, want 'target model group quota unavailable'", argon.Error)
+	if argon.Error != "target model group not entitled" {
+		t.Errorf("argon error = %q, want 'target model group not entitled'", argon.Error)
+	}
+}
+
+func TestParseAllModelGroups_MalformedArgonBucketFails(t *testing.T) {
+	raw := []byte(`{"groups":[
+		{"displayName":"Gemini Models","description":"Shared quota for Gemini models","buckets":[
+			{"bucketId":"gemini-5h","displayName":"Five Hour Limit","window":"5h","remainingFraction":0.99,"resetTime":"2026-10-28T17:00:00Z"}
+		]},
+		{"displayName":"Gemini 4 Argon","description":"Separate Argon weekly pool","buckets":[
+			{"bucketId":"gemini-argon-wtu-weekly","displayName":"Argon Weekly Limit","window":"weekly"}
+		]},
+		{"displayName":"Claude and GPT Models","description":"Shared quota for Claude and GPT models","buckets":[
+			{"bucketId":"claude-5h","displayName":"Five Hour Limit","window":"5h","remainingFraction":0.80,"resetTime":"2026-10-28T17:00:00Z"}
+		]}
+	]}`)
+	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+
+	argon := ParseAllModelGroups(raw, now)[ModelGroupArgon]
+	if argon.Status != StatusProbeFailed {
+		t.Fatalf("argon status = %v, want probe failed when the Argon bucket is malformed", argon.Status)
 	}
 }

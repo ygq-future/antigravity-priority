@@ -17,17 +17,17 @@ import (
 )
 
 type collectInput struct {
-	client         *host.Client
-	store          *state.Store
-	credentials    []core.Credential
-	authMaterials  map[string]authMaterial
-	now            time.Time
-	cacheTTL       time.Duration
+	client             *host.Client
+	store              *state.Store
+	credentials        []core.Credential
+	authMaterials      map[string]authMaterial
+	now                time.Time
+	cacheTTL           time.Duration
 	forceProbe         bool
 	targetedSingleAuth bool
 	maxConcurrency     int
-	modelGroup     config.AntigravityModelGroup
-	sampleCapacity int
+	modelGroup         config.AntigravityModelGroup
+	sampleCapacity     int
 }
 
 type collectedEvidence struct {
@@ -42,7 +42,6 @@ type collectedEvidence struct {
 type probeJob struct {
 	credential   core.Credential
 	authMaterial authMaterial
-	targetGroup  antigravity.ModelGroup
 }
 
 var probeRoundSequence atomic.Uint64
@@ -59,7 +58,6 @@ func collectFreshEvidence(ctx context.Context, input collectInput) (collectedEvi
 			jobs = append(jobs, probeJob{
 				credential:   cred,
 				authMaterial: input.authMaterials[cred.AuthIndex],
-				targetGroup:  antigravity.ModelGroup(input.modelGroup),
 			})
 		}
 	}
@@ -272,7 +270,6 @@ func probeAndRecord(ctx context.Context, client *host.Client, store *state.Store
 		AccessToken: job.authMaterial.accessToken,
 		ProjectID:   job.authMaterial.projectID,
 		ObservedAt:  now,
-		TargetGroup: job.targetGroup,
 	})
 	items := make([]antigravity.ProbeResult, 0, len(config.AllAntigravityModelGroups))
 	for _, group := range config.AllAntigravityModelGroups {
@@ -289,7 +286,16 @@ func probeAndRecord(ctx context.Context, client *host.Client, store *state.Store
 }
 
 func recordAntigravityProbeResult(ctx context.Context, store *state.Store, result antigravity.ProbeResult, now time.Time, sampleCapacity int, roundID string) error {
-	if result.Status != antigravity.StatusReady || result.ResetAt == nil || result.Remaining == nil {
+	switch {
+	case result.Status == antigravity.StatusUnavailable:
+		return store.MarkProbeUnavailable(ctx, state.ProbeUnavailable{
+			AuthIndex:  result.AuthIndex,
+			Provider:   core.ProviderAntigravity,
+			ModelGroup: string(result.ModelGroup),
+			ObservedAt: now,
+			Reason:     result.Error,
+		})
+	case result.Status != antigravity.StatusReady || result.ResetAt == nil || result.Remaining == nil:
 		return store.MarkProbeFailure(ctx, state.ProbeFailure{
 			AuthIndex:   result.AuthIndex,
 			Provider:    core.ProviderAntigravity,
@@ -333,16 +339,19 @@ func historicalObservations(store *state.Store, credentials []core.Credential) [
 				continue
 			}
 			historical := evidence.HistoricalObservation{
-				AuthIndex:  credential.AuthIndex,
-				ModelGroup: group,
-				LastError:  entry.LastError,
-				FailureAt:  entry.LastFailureAt,
+				AuthIndex:         credential.AuthIndex,
+				ModelGroup:        group,
+				LastError:         entry.LastError,
+				FailureAt:         entry.LastFailureAt,
+				Unavailable:       entry.Unavailable,
+				UnavailableAt:     entry.UnavailableAt,
+				UnavailableReason: entry.UnavailableReason,
 			}
 			quota, ok := store.GetHistoricalEvidence(credential.AuthIndex, string(group))
 			if ok {
 				historical.Evidence = quota
 			}
-			if !ok && historical.LastError == "" {
+			if !ok && historical.LastError == "" && !historical.Unavailable {
 				continue
 			}
 			result = append(result, historical)

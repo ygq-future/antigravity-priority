@@ -42,6 +42,7 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
                 return currentLang === "zh-CN" ? "正常活跃" : "Active";
             }
             var lower = reason.toLowerCase();
+            if (lower.indexOf("quota unavailable") >= 0 || lower.indexOf("not entitled") >= 0) return currentLang === "zh-CN" ? "未开通该模型组" : "Model group unavailable";
             if (lower.indexOf("probe failed") >= 0 || lower.indexOf("probe invalid") >= 0) {
                 var prefix = lower.indexOf("probe invalid") >= 0
                     ? (currentLang === "zh-CN" ? "探测异常: " : "Probe invalid: ")
@@ -240,7 +241,7 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
             try {
                 const groupSelect = document.getElementById("modelGroupSelect");
                 const modelGroup = groupSelect ? groupSelect.value : "gemini";
-                const url = RUN_PATH + "?mode=probe&antigravity_model_group=" + encodeURIComponent(modelGroup) + "&auth_index=" + encodeURIComponent(authIndex);
+                const url = RUN_PATH + "?mode=probe&auth_index=" + encodeURIComponent(authIndex);
                 const data = await apiFetch(url, { method: "POST" });
                 await fetchSnapshot({ silent: true });
 
@@ -248,7 +249,10 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
                 const targetOutcome = outcomes.find(function(o) { return o && o.auth_index === authIndex && (!modelGroup || o.model_group === modelGroup); }) ||
                     outcomes.find(function(o) { return o && o.auth_index === authIndex; }) || null;
 
-                if (targetOutcome && targetOutcome.status !== "success") {
+                if (targetOutcome && targetOutcome.status === "unavailable") {
+                    var unavailableDetail = targetOutcome.error ? " · " + targetOutcome.error : "";
+                    showToast(t("probeUnavailable") + unavailableDetail, "info");
+                } else if (targetOutcome && targetOutcome.status !== "success") {
                     let detail = targetOutcome.error || (currentLang === "zh-CN" ? "探测未成功" : "Probe unsuccessful");
                     if (targetOutcome.http_status_code && detail.indexOf(String(targetOutcome.http_status_code)) < 0) {
                         detail += " (HTTP " + targetOutcome.http_status_code + ")";

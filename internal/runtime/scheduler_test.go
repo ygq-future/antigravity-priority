@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"antigravity-priority/internal/config"
 	"antigravity-priority/internal/core"
 	"antigravity-priority/internal/host"
 	"antigravity-priority/internal/runtime"
@@ -155,7 +154,7 @@ func TestScheduler_DynamicModelSelection_AcrossQuotaPools(t *testing.T) {
 	if _, err := r.Register(ctx, runtime.RegisterRequest{ConfigYAML: "enabled: true\nstate_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
 		t.Fatal(err)
 	}
-	_, _ = r.SyncHost(ctx, config.AntigravityModelGroupGemini)
+	_, _ = r.SyncHost(ctx)
 
 	candidates := []runtime.SchedulerAuthCandidate{
 		{ID: "cred-gemini-rich", Provider: "antigravity"},
@@ -244,7 +243,7 @@ func TestScheduler_RoundRobin_And_SessionAffinity(t *testing.T) {
 	if _, err := r.Register(ctx, runtime.RegisterRequest{ConfigYAML: "enabled: true\nstate_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
 		t.Fatal(err)
 	}
-	_, _ = r.SyncHost(ctx, config.AntigravityModelGroupGemini)
+	_, _ = r.SyncHost(ctx)
 
 	candidates := []runtime.SchedulerAuthCandidate{
 		{ID: "account-alpha", Provider: "antigravity"},
@@ -320,7 +319,7 @@ func TestScheduler_PoolScoped429Cooldown_Isolation(t *testing.T) {
 	if _, err := r.Register(ctx, runtime.RegisterRequest{ConfigYAML: "enabled: true\nstate_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
 		t.Fatal(err)
 	}
-	_, _ = r.SyncHost(ctx, config.AntigravityModelGroupGemini)
+	_, _ = r.SyncHost(ctx)
 
 	// Trigger 429 on account-1 for claude-sonnet-5-5-high
 	eventPayload := []byte(`{"Provider":"antigravity","Model":"claude-sonnet-5-5-high","AuthIndex":"idx-1","Failed":true,"Failure":{"StatusCode":429}}`)
@@ -424,7 +423,7 @@ func TestScheduler_DepletedFailover_MixedProvider_And_AntigravityOnly(t *testing
 	if _, err := r.Register(ctx, runtime.RegisterRequest{ConfigYAML: "enabled: true\nstate_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.SyncHost(ctx, config.AntigravityModelGroupGemini); err != nil {
+	if _, err := r.SyncHost(ctx); err != nil {
 		t.Fatalf("SyncHost failed: %v", err)
 	}
 
@@ -497,7 +496,7 @@ func TestScheduler_LazyTransitionRefresh(t *testing.T) {
 	if _, err := r.Register(ctx, runtime.RegisterRequest{ConfigYAML: "enabled: true\nstate_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
 		t.Fatal(err)
 	}
-	_, _ = r.SyncHost(ctx, config.AntigravityModelGroupGemini)
+	_, _ = r.SyncHost(ctx)
 
 	candidates := []runtime.SchedulerAuthCandidate{
 		{ID: "account-resetting", Provider: "antigravity"},
@@ -566,7 +565,7 @@ func TestScheduler_UsageDeduction_RealTimeUpdate(t *testing.T) {
 	if _, err := r.Register(ctx, runtime.RegisterRequest{ConfigYAML: "enabled: true\nurgency_tolerance: 0.0\nstate_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
 		t.Fatal(err)
 	}
-	_, _ = r.SyncHost(ctx, config.AntigravityModelGroupGemini)
+	_, _ = r.SyncHost(ctx)
 
 	candidates := []runtime.SchedulerAuthCandidate{
 		{ID: "account-A", Provider: "antigravity"},
@@ -635,7 +634,7 @@ func TestScheduler_ZeroHostCallbacksDuringPick(t *testing.T) {
 	if _, err := r.Register(ctx, runtime.RegisterRequest{ConfigYAML: "enabled: true\nstate_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
 		t.Fatal(err)
 	}
-	_, _ = r.SyncHost(ctx, config.AntigravityModelGroupGemini)
+	_, _ = r.SyncHost(ctx)
 
 	// Reset host call counter
 	mock.callCount.Store(0)
@@ -695,7 +694,7 @@ func TestScheduler_HostStaticPriorityNeverOverridesQuotaEvidence(t *testing.T) {
 	if _, err := r.Register(ctx, runtime.RegisterRequest{ConfigYAML: "enabled: true\nstate_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.SyncHost(ctx, config.AntigravityModelGroupGemini); err != nil {
+	if _, err := r.SyncHost(ctx); err != nil {
 		t.Fatal(err)
 	}
 
@@ -741,7 +740,7 @@ func TestScheduler_HostDisabledCredentialIsNeverRouted(t *testing.T) {
 	if _, err := r.Register(ctx, runtime.RegisterRequest{ConfigYAML: "enabled: true\nstate_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.SyncHost(ctx, config.AntigravityModelGroupGemini); err != nil {
+	if _, err := r.SyncHost(ctx); err != nil {
 		t.Fatal(err)
 	}
 
@@ -763,8 +762,13 @@ func TestScheduler_HostDisabledCredentialIsNeverRouted(t *testing.T) {
 
 func pickSchedulerAuth(t *testing.T, ctx context.Context, r *runtime.Runtime, candidates []runtime.SchedulerAuthCandidate) runtime.SchedulerPickResponse {
 	t.Helper()
+	return pickSchedulerAuthForModel(t, ctx, r, "gemini-3.8-flash-high", candidates)
+}
+
+func pickSchedulerAuthForModel(t *testing.T, ctx context.Context, r *runtime.Runtime, model string, candidates []runtime.SchedulerAuthCandidate) runtime.SchedulerPickResponse {
+	t.Helper()
 	request, err := json.Marshal(runtime.SchedulerPickRequest{
-		Model:      "gemini-3.8-flash-high",
+		Model:      model,
 		Candidates: candidates,
 	})
 	if err != nil {
@@ -784,6 +788,76 @@ func pickSchedulerAuth(t *testing.T, ctx context.Context, r *runtime.Runtime, ca
 	return envelope.Result
 }
 
+func TestScheduler_UnavailablePoolIsNotRouted(t *testing.T) {
+	ctx := context.Background()
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	clock := &testClock{now: now}
+
+	mock := newMockHost()
+	mock.files = []host.AuthFile{
+		{Name: "account-noargon", AuthIndex: "idx-noargon", Provider: "antigravity", Status: "active", Priority: 999},
+		{Name: "account-depleted", AuthIndex: "idx-depleted", Provider: "antigravity", Status: "active"},
+	}
+
+	store, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkProbeUnavailable(ctx, state.ProbeUnavailable{
+		AuthIndex:  "idx-noargon",
+		Provider:   core.ProviderAntigravity,
+		ModelGroup: "argon",
+		ObservedAt: now,
+		Reason:     "target model group not entitled",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	zero := int64(0)
+	reset := now.Add(24 * time.Hour)
+	if err := store.MarkProbeSuccess(ctx, state.ProbeSuccess{
+		AuthIndex:            "idx-depleted",
+		Provider:             core.ProviderAntigravity,
+		ModelGroup:           "argon",
+		ObservedAt:           now,
+		ResetAt:              reset,
+		Remaining:            0,
+		LongWindowResetAt:    reset,
+		LongWindowRemaining:  &zero,
+		ArgonWindowResetAt:   reset,
+		ArgonWindowRemaining: &zero,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveAtomic(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	r := runtime.New(runtime.Options{Host: mock, Clock: clock, StateCachePath: cachePath})
+	if _, err := r.Register(ctx, runtime.RegisterRequest{ConfigYAML: "enabled: true\nstate_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.SyncHost(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	model := "gemini-4-argon-high"
+	res := pickSchedulerAuthForModel(t, ctx, r, model, []runtime.SchedulerAuthCandidate{
+		{ID: "account-noargon", Provider: "antigravity"},
+		{ID: "account-depleted", Provider: "antigravity"},
+	})
+	if res.Handled {
+		t.Fatalf("unavailable pool must not be routed; picked %q", res.AuthID)
+	}
+
+	onlyUnavailable := pickSchedulerAuthForModel(t, ctx, r, model, []runtime.SchedulerAuthCandidate{
+		{ID: "account-noargon", Provider: "antigravity"},
+	})
+	if onlyUnavailable.Handled {
+		t.Fatalf("unavailable pool must not be handled; picked %q", onlyUnavailable.AuthID)
+	}
+}
+
 func TestScheduler_CustomTier_PrioritizesTier1_And_BalancesTier2(t *testing.T) {
 	ctx := context.Background()
 	cachePath := filepath.Join(t.TempDir(), "cache.json")
@@ -801,7 +875,7 @@ func TestScheduler_CustomTier_PrioritizesTier1_And_BalancesTier2(t *testing.T) {
 	if _, err := r.Register(ctx, runtime.RegisterRequest{ConfigYAML: "enabled: true\nstate_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
 		t.Fatal(err)
 	}
-	_, _ = r.SyncHost(ctx, config.AntigravityModelGroupGemini)
+	_, _ = r.SyncHost(ctx)
 
 
 	// Setup healthy quotas for all three in state store
@@ -946,7 +1020,7 @@ func TestScheduler_UpdateModelInventory_FiltersNonAntigravityModels(t *testing.T
 		t.Fatal(err)
 	}
 
-	snap, err := r.SyncHost(ctx, config.AntigravityModelGroupGemini)
+	snap, err := r.SyncHost(ctx)
 	if err != nil {
 		t.Fatalf("SyncHost failed: %v", err)
 	}

@@ -61,7 +61,7 @@ func (m *probeEvidenceMockHost) ListAuthModels(ctx context.Context) ([]host.Auth
 	return nil, nil
 }
 
-func TestProbeAndRecord_GeminiTargetKeepsDualWindowEvidence(t *testing.T) {
+func TestProbeAndRecord_SummaryKeepsDualWindowEvidence(t *testing.T) {
 	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
 	mock := &probeEvidenceMockHost{
 		httpResponse: host.HTTPResponse{
@@ -71,6 +71,9 @@ func TestProbeAndRecord_GeminiTargetKeepsDualWindowEvidence(t *testing.T) {
 					{"displayName": "Gemini Models", "buckets": [
 						{"window": "5h", "remainingFraction": 0.85, "resetTime": "2026-08-21T17:00:00Z"},
 						{"window": "weekly", "remainingFraction": 0.62, "resetTime": "2026-08-28T00:00:00Z"}
+					]},
+					{"displayName": "Gemini 4 Argon", "buckets": [
+						{"bucketId": "gemini-argon-wtu-weekly", "window": "weekly", "remainingFraction": 0.71, "resetTime": "2026-08-29T00:00:00Z"}
 					]},
 					{"displayName": "Claude and GPT models", "buckets": [
 						{"window": "5h", "remainingFraction": 0.4, "resetTime": "2026-08-21T16:00:00Z"}
@@ -95,7 +98,6 @@ func TestProbeAndRecord_GeminiTargetKeepsDualWindowEvidence(t *testing.T) {
 			accessToken: "secret-token",
 			projectID:   "test-project",
 		},
-		targetGroup: antigravity.ModelGroupGemini,
 	}
 
 	results, err := probeAndRecord(context.Background(), client, store, job, now, 10, "round-1")
@@ -156,7 +158,7 @@ func TestProbeAndRecord_GeminiTargetKeepsDualWindowEvidence(t *testing.T) {
 	}
 }
 
-func TestCollectFreshEvidence_GeminiControlGroupUsesOneSummaryCallPerAccount(t *testing.T) {
+func TestCollectFreshEvidence_SummaryUsesOneCallPerAccount(t *testing.T) {
 	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
 	mock := &probeEvidenceMockHost{
 		httpResponse: host.HTTPResponse{
@@ -166,6 +168,9 @@ func TestCollectFreshEvidence_GeminiControlGroupUsesOneSummaryCallPerAccount(t *
 					{"displayName": "Gemini Models", "buckets": [
 						{"window": "5h", "remainingFraction": 0.9, "resetTime": "2026-08-21T17:00:00Z"},
 						{"window": "weekly", "remainingFraction": 0.7, "resetTime": "2026-08-28T00:00:00Z"}
+					]},
+					{"displayName": "Gemini 4 Argon", "buckets": [
+						{"bucketId": "gemini-argon-wtu-weekly", "window": "weekly", "remainingFraction": 0.71, "resetTime": "2026-08-29T00:00:00Z"}
 					]},
 					{"displayName": "Claude and GPT models", "buckets": [
 						{"window": "5h", "remainingFraction": 0.6, "resetTime": "2026-08-21T17:00:00Z"}
@@ -297,16 +302,21 @@ func TestCollectFreshEvidence_FallsBackToAvailableModelsWhenSummaryFails(t *test
 	}
 }
 
-func TestCollectFreshEvidence_ClaudeControlGroupDirectRouting(t *testing.T) {
+func TestCollectFreshEvidence_PartialSummaryContinuesProbe(t *testing.T) {
 	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
 	mock := &probeEvidenceMockHost{
-		httpResponse: host.HTTPResponse{
-			StatusCode: http.StatusOK,
-			Body: []byte(`{
-				"groups": [
-					{"displayName": "Claude and GPT models", "buckets": [{"window": "5h", "remainingFraction": 0.82, "resetTime": "2026-08-21T17:00:00Z"}]}
-				]
-			}`),
+		doFn: func(_ context.Context, request host.HTTPRequest) (host.HTTPResponse, error) {
+			if request.URL == antigravity.RetrieveUserQuotaSummaryURL {
+				return host.HTTPResponse{
+					StatusCode: http.StatusOK,
+					Body: []byte(`{
+						"groups": [
+							{"displayName": "Claude and GPT models", "buckets": [{"window": "5h", "remainingFraction": 0.82, "resetTime": "2026-08-21T17:00:00Z"}]}
+						]
+					}`),
+				}, nil
+			}
+			return host.HTTPResponse{StatusCode: http.StatusOK, Body: []byte(quotaSummaryWithArgon)}, nil
 		},
 	}
 
@@ -332,7 +342,6 @@ func TestCollectFreshEvidence_ClaudeControlGroupDirectRouting(t *testing.T) {
 		cacheTTL:       15 * time.Minute,
 		forceProbe:     true,
 		maxConcurrency: 1,
-		modelGroup:     config.AntigravityModelGroupClaudeGPT,
 		sampleCapacity: 10,
 	})
 	if err != nil {
@@ -341,20 +350,26 @@ func TestCollectFreshEvidence_ClaudeControlGroupDirectRouting(t *testing.T) {
 
 	mock.mu.Lock()
 	calls := len(mock.httpCalls)
-	calledURL := mock.httpCalls[0].URL
+	calledURLs := make([]string, 0, calls)
+	for _, call := range mock.httpCalls {
+		calledURLs = append(calledURLs, call.URL)
+	}
 	mock.mu.Unlock()
 
-	if calls != 1 {
-		t.Fatalf("total HTTP calls = %d; want 1 for Claude direct routing", calls)
+	if calls != 2 {
+		t.Fatalf("total HTTP calls = %d; want 2 (partial summary + complete daily)", calls)
 	}
-	if calledURL != antigravity.RetrieveUserQuotaSummaryURL {
-		t.Fatalf("expected call to %q, got %q", antigravity.RetrieveUserQuotaSummaryURL, calledURL)
+	if calledURLs[0] != antigravity.RetrieveUserQuotaSummaryURL || calledURLs[1] != antigravity.RetrieveUserQuotaSummaryDailyURL {
+		t.Fatalf("called URLs = %v; want production then daily", calledURLs)
 	}
 
-	claudeResult := collected.ByGroup[config.AntigravityModelGroupClaudeGPT]
-	if len(claudeResult.Eligible) != 1 {
-		t.Fatalf("expected 1 eligible credential, got %d", len(claudeResult.Eligible))
+	for _, group := range config.AllAntigravityModelGroups {
+		result := collected.ByGroup[group]
+		if len(result.Eligible) != 1 {
+			t.Fatalf("group %s: expected 1 eligible credential, got %d", group, len(result.Eligible))
+		}
 	}
+	claudeResult := collected.ByGroup[config.AntigravityModelGroupClaudeGPT]
 	if claudeResult.Eligible[0].Remaining == nil || *claudeResult.Eligible[0].Remaining != 82 {
 		t.Fatalf("expected remaining 82, got %v", claudeResult.Eligible[0].Remaining)
 	}
