@@ -33,12 +33,11 @@ func TestSnapshot_And_AuditEvent_Redaction(t *testing.T) {
 					Priority:  20,
 					Disabled:  false,
 				},
-				Priority:      90,
-				Disabled:      false,
-				EvidenceFresh: true,
-				ResetAt:       &resetAt,
-				Remaining:     &rem,
-				Reason:        "reason containing token=supersecret",
+				Priority:  90,
+				Disabled:  false,
+				ResetAt:   &resetAt,
+				Remaining: &rem,
+				Reason:    "reason containing token=supersecret",
 			},
 			{
 				Credential: core.Credential{
@@ -47,10 +46,9 @@ func TestSnapshot_And_AuditEvent_Redaction(t *testing.T) {
 					Priority:  10,
 					Disabled:  false,
 				},
-				Priority:      10,
-				Disabled:      false,
-				EvidenceFresh: false,
-				Reason:        "keep current state",
+				Priority: 10,
+				Disabled: false,
+				Reason:   "keep current state",
 			},
 		},
 		Changes: []priority.Change{
@@ -63,10 +61,9 @@ func TestSnapshot_And_AuditEvent_Redaction(t *testing.T) {
 					Priority:  20,
 					Disabled:  false,
 				},
-				Priority:      90,
-				Disabled:      false,
-				EvidenceFresh: true,
-				Reason:        "change with token=supersecret",
+				Priority: 90,
+				Disabled: false,
+				Reason:   "change with token=supersecret",
 			},
 			{
 				Credential: core.Credential{
@@ -74,9 +71,8 @@ func TestSnapshot_And_AuditEvent_Redaction(t *testing.T) {
 					AuthIndex: "idx-stale-456",
 					Priority:  10,
 				},
-				Priority:      10,
-				EvidenceFresh: false,
-				Reason:        "stale change",
+				Priority: 10,
+				Reason:   "stale change",
 			},
 		},
 	}
@@ -111,27 +107,21 @@ func TestSnapshot_And_AuditEvent_Redaction(t *testing.T) {
 		"idx-auth-123":  `{"priority":20,"disabled":false}`,
 		"idx-stale-456": `{"priority":10,"disabled":false}`,
 	})
-	result, err := apply.Apply(context.Background(), apply.Request{
-		Transition:        apply.NewHostTransition(transitionStore),
-		Plan:              plan,
-		ReportSkippedPlan: true,
+	result, err := apply.ExecuteRound(context.Background(), apply.NewHostTransition(transitionStore), apply.TransitionRound{
+		Intents: []apply.TransitionIntent{
+			apply.ResetIntent(core.Credential{Name: "secret-acc", AuthIndex: "idx-auth-123", Priority: 20}, "reset token=supersecret"),
+		},
 	})
 	if err != nil {
-		t.Fatalf("apply error: %v", err)
+		t.Fatalf("execute round error: %v", err)
 	}
 
 	event := result.Event
 	if event.Action != "host.transition" {
 		t.Errorf("expected action 'host.transition', got %s", event.Action)
 	}
-	if event.TotalChanges != 1 {
-		t.Errorf("expected TotalChanges=1 for executable transitions, got %d", event.TotalChanges)
-	}
-	if event.FreshChanges != 1 {
-		t.Errorf("expected FreshChanges=1, got %d", event.FreshChanges)
-	}
-	if event.SkippedChanges != 0 {
-		t.Errorf("expected SkippedChanges=0 for executable transitions, got %d", event.SkippedChanges)
+	if event.TotalChanges != 1 || len(event.Changes) != 1 {
+		t.Errorf("expected one transitioned change, got %#v", event)
 	}
 
 	eventJSON, err := json.Marshal(event)
@@ -147,87 +137,15 @@ func TestSnapshot_And_AuditEvent_Redaction(t *testing.T) {
 	}
 }
 
-func TestResultName_FallbackHierarchy(t *testing.T) {
-	// Test resultName fallback: Account -> Email -> Name -> AuthIndex
-	plan := priority.Plan{
-		Changes: []priority.Change{
-			{
-				Credential: core.Credential{
-					Account:   "my-account",
-					Email:     "my-email@example.com",
-					Name:      "my-name",
-					AuthIndex: "my-idx",
-				},
-				Priority:      50,
-				EvidenceFresh: true,
-			},
-			{
-				Credential: core.Credential{
-					Email:     "my-email2@example.com",
-					Name:      "my-name2",
-					AuthIndex: "my-idx2",
-				},
-				Priority:      50,
-				EvidenceFresh: true,
-			},
-			{
-				Credential: core.Credential{
-					Name:      "my-name3",
-					AuthIndex: "my-idx3",
-				},
-				Priority:      50,
-				EvidenceFresh: true,
-			},
-			{
-				Credential: core.Credential{
-					AuthIndex: "my-idx4",
-				},
-				Priority:      50,
-				EvidenceFresh: true,
-			},
-			{
-				Credential: core.Credential{},
-				Priority:   50,
-			},
-		},
-	}
-
-	res, err := apply.Apply(context.Background(), apply.Request{
-		Transition: apply.NewHostTransition(&documentFixture{paths: map[string]string{}}),
-		Plan:       plan,
-	})
-	if err != nil {
-		t.Fatalf("apply error: %v", err)
-	}
-
-	if res.Changes[0].Name != "my-a***" {
-		t.Errorf("expected redacted account identity, got %s", res.Changes[0].Name)
-	}
-	if res.Changes[1].Name != "my-e***" {
-		t.Errorf("expected redacted email identity, got %s", res.Changes[1].Name)
-	}
-	if res.Changes[2].Name != "my-n***" {
-		t.Errorf("expected redacted name identity, got %s", res.Changes[2].Name)
-	}
-	if res.Changes[3].Name != "my-i***" {
-		t.Errorf("expected redacted auth identity, got %s", res.Changes[3].Name)
-	}
-	if res.Changes[4].Name != "" {
-		t.Errorf("expected Name '', got %s", res.Changes[4].Name)
-	}
-}
-
 func TestRedactedErrors(t *testing.T) {
-	// Test error redaction helpers through plan error simulation
-	res := apply.FailureResult(priority.PlanItem{
-		Credential: core.Credential{AuthIndex: "idx-err"},
-	}, errors.New("authorization: Bearer super-secret-key-123"))
+	// Test error redaction helper
+	res := apply.RedactedError(errors.New("authorization: Bearer super-secret-key-123"))
 
-	if strings.Contains(res.Error, "super-secret-key-123") {
-		t.Errorf("error contains secret key: %s", res.Error)
+	if strings.Contains(res, "super-secret-key-123") {
+		t.Errorf("error contains secret key: %s", res)
 	}
-	if !strings.Contains(res.Error, host.RedactedValue) {
-		t.Errorf("error expected to contain REDACTED: %s", res.Error)
+	if !strings.Contains(res, host.RedactedValue) {
+		t.Errorf("error expected to contain REDACTED: %s", res)
 	}
 
 	// Test nil error

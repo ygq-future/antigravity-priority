@@ -235,12 +235,12 @@ func TestRuntime_TriggerWarmupForEligibleCredentials(t *testing.T) {
 }
 
 func warmupQuotaBody(reset5h, reset7d time.Time) []byte {
-	return []byte(fmt.Sprintf(
+	return fmt.Appendf(nil,
 		`{"models":{"gemini-2.5-pro":{"quotaInfo":{"windows":[{"name":"5h","remainingFraction":1.0,"resetTime":%q}]}},`+
 			`"gemini-2.5-flash":{"quotaInfo":{"windows":[{"name":"7d","remainingFraction":1.0,"resetTime":%q}]}}}}`,
 		reset5h.UTC().Format(time.RFC3339),
 		reset7d.UTC().Format(time.RFC3339),
-	))
+	)
 }
 
 // warmupStubHost is the minimal host surface the warm-up sweep needs: auth
@@ -424,12 +424,12 @@ func TestRuntime_WarmupSweepBoundsRetriesWhenWindowDoesNotConverge(t *testing.T)
 
 	// Upstream keeps reporting an exhausted 5h window whose reset already passed,
 	// so the warm-up cannot land until the window actually converges.
-	stub.setBody([]byte(fmt.Sprintf(
+	stub.setBody(fmt.Appendf(nil,
 		`{"models":{"gemini-2.5-pro":{"quotaInfo":{"windows":[{"name":"5h","remainingFraction":0.0,"resetTime":%q}]}},`+
 			`"gemini-2.5-flash":{"quotaInfo":{"windows":[{"name":"7d","remainingFraction":1.0,"resetTime":%q}]}}}}`,
 		now.Add(-30*time.Minute).UTC().Format(time.RFC3339),
 		now.Add(7*24*time.Hour).UTC().Format(time.RFC3339),
-	)))
+	))
 
 	for range 7 {
 		rt.sweepWarmupResets(ctx)

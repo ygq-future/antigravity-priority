@@ -15,7 +15,6 @@ import (
 	"antigravity-priority/internal/state"
 )
 
-
 // Runner defines the application layer contract required by the management HTTP API.
 type Runner interface {
 	Run(ctx context.Context, request RunRequest) (apply.Result, error)
@@ -46,12 +45,10 @@ type ProbeOutcome struct {
 	ObservedAt     time.Time `json:"observed_at"`
 }
 
-// RunRequest encapsulates parameters for a manual scheduling run.
+// RunRequest encapsulates parameters for a manual quota probe run.
 type RunRequest struct {
-	Mode                  string
 	AntigravityModelGroup config.AntigravityModelGroup
 	AuthIndexes           []string
-	PreviewID             string
 }
 
 // Handler handles management HTTP API requests.
@@ -78,15 +75,15 @@ const (
 	SourceManagement = "management"
 
 	// Management API Paths
-	PathStatus         = "/status"
-	PathRun            = "/run"
-	PathSync           = "/sync"
-	PathReset          = "/reset"
-	PathDiagnostics    = "/diagnostics"
-	PathSnapshotLatest = "/snapshot/latest"
-	PathScheduleConfig = "/schedule/config"
-	PathRuntimeConfig  = "/runtime-config"
-	PathSamples        = "/samples"
+	PathStatus              = "/status"
+	PathRun                 = "/run"
+	PathSync                = "/sync"
+	PathReset               = "/reset"
+	PathDiagnostics         = "/diagnostics"
+	PathSnapshotLatest      = "/snapshot/latest"
+	PathScheduleConfig      = "/schedule/config"
+	PathRuntimeConfig       = "/runtime-config"
+	PathSamples             = "/samples"
 	PathRequestHistory      = "/request-history"
 	PathRequestHistoryClear = "/request-history/clear"
 	PathCustomTier          = "/custom-tier"
@@ -174,9 +171,8 @@ func (h *Handler) handleStatus(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (h *Handler) handleRun(w http.ResponseWriter, r *http.Request) {
-	mode := r.URL.Query().Get("mode")
-	if mode != "apply" && mode != "probe" {
-		h.writeJSONError(w, http.StatusBadRequest, "invalid mode: must be 'apply' or 'probe'")
+	if r.URL.Query().Get("mode") != "probe" {
+		h.writeJSONError(w, http.StatusBadRequest, "invalid mode: must be 'probe'")
 		return
 	}
 
@@ -199,10 +195,8 @@ func (h *Handler) handleRun(w http.ResponseWriter, r *http.Request) {
 	authIndexes := r.URL.Query()["auth_index"]
 
 	result, err := h.runner.Run(r.Context(), RunRequest{
-		Mode:                  mode,
 		AntigravityModelGroup: modelGroup,
 		AuthIndexes:           authIndexes,
-		PreviewID:             strings.TrimSpace(r.URL.Query().Get("preview_id")),
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "run already in progress") {
@@ -215,22 +209,18 @@ func (h *Handler) handleRun(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	if mode == "probe" {
-		type runProbeResponse struct {
-			apply.Result
-			ProbeOutcomes []ProbeOutcome `json:"probe_outcomes"`
-		}
-		outcomes := h.runner.LastProbeOutcomes(r.Context())
-		if outcomes == nil {
-			outcomes = []ProbeOutcome{}
-		}
-		_ = json.NewEncoder(w).Encode(runProbeResponse{
-			Result:        result,
-			ProbeOutcomes: outcomes,
-		})
-		return
+	type runProbeResponse struct {
+		apply.Result
+		ProbeOutcomes []ProbeOutcome `json:"probe_outcomes"`
 	}
-	_ = json.NewEncoder(w).Encode(result)
+	outcomes := h.runner.LastProbeOutcomes(r.Context())
+	if outcomes == nil {
+		outcomes = []ProbeOutcome{}
+	}
+	_ = json.NewEncoder(w).Encode(runProbeResponse{
+		Result:        result,
+		ProbeOutcomes: outcomes,
+	})
 }
 
 func (h *Handler) handleDiagnostics(w http.ResponseWriter, r *http.Request) {

@@ -1,6 +1,6 @@
-// Package evidence owns the Fresh Evidence boundary for quota scheduling.
-// Callers provide probe outcomes and persisted observations; this package is
-// the only place that classifies round membership, validation, and history.
+// Package evidence classifies quota observations for scheduling. Callers
+// provide probe outcomes and persisted observations; this package is the only
+// place that classifies round membership, validation, and source precedence.
 package evidence
 
 import (
@@ -13,8 +13,7 @@ import (
 	"antigravity-priority/internal/provider/antigravity"
 )
 
-// ObservationKind describes the diagnostic truth of an observation without
-// granting it Host write authority.
+// ObservationKind describes the diagnostic truth of an observation.
 type ObservationKind string
 
 const (
@@ -23,7 +22,6 @@ const (
 	ObservationFailed     ObservationKind = "failed"
 	ObservationInvalid    ObservationKind = "invalid"
 	ObservationWrongGroup ObservationKind = "wrong_group"
-	ObservationUnknown    ObservationKind = "unknown"
 )
 
 // Round identifies one scheduling round and the model group being classified.

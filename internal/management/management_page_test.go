@@ -637,8 +637,7 @@ async function fetchDiagnostics() {}
                     {
                         auth_index: "fail-403",
                         email: "test-403@example.com",
-                        reason: "probe failed: retrieve quota summary status 403; historical: fresh remaining positive",
-                        evidence_fresh: false,
+                        reason: "probe failed: retrieve quota summary status 403; fresh remaining positive",
                         current: { priority: 99, disabled: false },
                         target: { priority: 99, disabled: false },
                         r5h: 1.0,
@@ -649,8 +648,7 @@ async function fetchDiagnostics() {}
                     {
                         auth_index: "cooldown-429",
                         email: "test-429@example.com",
-                        reason: "probe failed: retrieve quota summary status 429; historical: 429 rate limit cooldown",
-                        evidence_fresh: false,
+                        reason: "probe failed: retrieve quota summary status 429; 429 rate limit cooldown",
                         current: { priority: -1, disabled: false },
                         target: { priority: -1, disabled: false },
                         r5h: 0.8,
@@ -661,8 +659,7 @@ async function fetchDiagnostics() {}
                     {
                         auth_index: "healthy-cached",
                         email: "cached@example.com",
-                        reason: "historical: fresh remaining positive",
-                        evidence_fresh: false,
+                        reason: "fresh remaining positive",
                         short_window_reset_at: "2026-10-16T08:00:00Z",
                         long_window_reset_at: "2026-10-23T08:00:00Z",
                         current: { priority: 98, disabled: false },

@@ -100,8 +100,8 @@ const templateScriptModals = `        function historyIdentity(value) {
             return {quotaRecordCount: quotaRecordCount, rowCount: rowKeys.length};
         }
 
-        // Show Modal: Apply Confirm vs History Details Snapshot
-        function showModal(mode, result, isFromHistory) {
+        // Show Modal: Probe/Auto History vs Execution Details Snapshot
+        function showModal(mode, result) {
             const modal = document.getElementById("diffModal");
             const modalPanel = document.getElementById("diffModalPanel");
             const title = document.getElementById("modalTitle");

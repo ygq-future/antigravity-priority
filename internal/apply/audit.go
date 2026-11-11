@@ -5,7 +5,6 @@ import (
 	"strconv"
 	"time"
 
-	"antigravity-priority/internal/core"
 	"antigravity-priority/internal/host"
 	"antigravity-priority/internal/priority"
 )
@@ -53,7 +52,6 @@ type SnapshotItem struct {
 	PlanType              string           `json:"plan_type,omitempty"`
 	Current               Target           `json:"current"`
 	Target                Target           `json:"target"`
-	EvidenceFresh         bool             `json:"evidence_fresh"`
 	Reason                string           `json:"reason"`
 	IsBoosted             bool             `json:"is_boosted"`
 	IsPredicted           bool             `json:"is_predicted"`
@@ -80,16 +78,15 @@ type SnapshotItem struct {
 
 // SnapshotChange is the audit view of a single candidate change.
 type SnapshotChange struct {
-	Identity      SnapshotIdentity `json:"-"`
-	Name          string           `json:"name"`
-	AuthIndex     string           `json:"auth_index"`
-	Account       string           `json:"account,omitempty"`
-	Email         string           `json:"email,omitempty"`
-	Current       Target           `json:"current"`
-	Target        Target           `json:"target"`
-	EvidenceFresh bool             `json:"evidence_fresh"`
-	Reason        string           `json:"reason"`
-	IsBoosted     bool             `json:"is_boosted"`
+	Identity  SnapshotIdentity `json:"-"`
+	Name      string           `json:"name"`
+	AuthIndex string           `json:"auth_index"`
+	Account   string           `json:"account,omitempty"`
+	Email     string           `json:"email,omitempty"`
+	Current   Target           `json:"current"`
+	Target    Target           `json:"target"`
+	Reason    string           `json:"reason"`
+	IsBoosted bool             `json:"is_boosted"`
 }
 
 // SnapshotIdentity carries raw CPA Host identity only across the trusted in-memory adapter boundary.
@@ -108,21 +105,18 @@ type Target struct {
 
 // AuditEvent is the redacted audit event for a Host transition round.
 type AuditEvent struct {
-	Action         string        `json:"action"`
-	TotalChanges   int           `json:"total_changes"`
-	FreshChanges   int           `json:"fresh_changes"`
-	SkippedChanges int           `json:"skipped_changes"`
-	Changes        []AuditChange `json:"changes"`
+	Action       string        `json:"action"`
+	TotalChanges int           `json:"total_changes"`
+	Changes      []AuditChange `json:"changes"`
 }
 
 // AuditChange is a single change summary within an AuditEvent.
 type AuditChange struct {
-	Name          string  `json:"name"`
-	AuthIndex     string  `json:"auth_index"`
-	EvidenceFresh bool    `json:"evidence_fresh"`
-	Reason        string  `json:"reason"`
-	Outcome       Outcome `json:"outcome,omitempty"`
-	Cause         string  `json:"cause,omitempty"`
+	Name      string  `json:"name"`
+	AuthIndex string  `json:"auth_index"`
+	Reason    string  `json:"reason"`
+	Outcome   Outcome `json:"outcome,omitempty"`
+	Cause     string  `json:"cause,omitempty"`
 }
 
 func newPlanSnapshot(plan priority.Plan) PlanSnapshot {
@@ -156,7 +150,6 @@ func snapshotItem(item priority.PlanItem) SnapshotItem {
 		PlanType:             redactString(string(item.PlanType)),
 		Current:              currentTarget(credential.Priority, credential.PriorityMissing, credential.Disabled),
 		Target:               target(item.Priority, item.Disabled),
-		EvidenceFresh:        item.EvidenceFresh || item.ForceWrite,
 		Reason:               redactString(item.Reason),
 		IsBoosted:            item.IsBoosted,
 		CustomTier:           item.CustomTier,
@@ -180,26 +173,16 @@ func snapshotItem(item priority.PlanItem) SnapshotItem {
 func snapshotChange(change priority.Change) SnapshotChange {
 	credential := change.Credential
 	return SnapshotChange{
-		Identity:      SnapshotIdentity{Email: credential.Email, AuthIndex: credential.AuthIndex},
-		Name:          redactIdentifier(credential.Name),
-		AuthIndex:     redactIdentifier(credential.AuthIndex),
-		Account:       redactIdentifier(credential.Account),
-		Email:         redactIdentifier(credential.Email),
-		Current:       currentTarget(credential.Priority, credential.PriorityMissing, credential.Disabled),
-		Target:        target(change.Priority, change.Disabled),
-		EvidenceFresh: change.EvidenceFresh,
-		Reason:        redactString(change.Reason),
-		IsBoosted:     change.IsBoosted,
+		Identity:  SnapshotIdentity{Email: credential.Email, AuthIndex: credential.AuthIndex},
+		Name:      redactIdentifier(credential.Name),
+		AuthIndex: redactIdentifier(credential.AuthIndex),
+		Account:   redactIdentifier(credential.Account),
+		Email:     redactIdentifier(credential.Email),
+		Current:   currentTarget(credential.Priority, credential.PriorityMissing, credential.Disabled),
+		Target:    target(change.Priority, change.Disabled),
+		Reason:    redactString(change.Reason),
+		IsBoosted: change.IsBoosted,
 	}
-}
-
-func resultName(credential core.Credential) string {
-	for _, value := range []string{credential.Account, credential.Email, credential.Name, credential.AuthIndex} {
-		if value != "" {
-			return redactString(value)
-		}
-	}
-	return ""
 }
 
 func currentTarget(priority int, priorityMissing bool, disabled bool) Target {
@@ -260,7 +243,6 @@ type ModelOption struct {
 type DualGroupSnapshot struct {
 	ActiveModelGroup string                   `json:"active_model_group"`
 	ObservedAt       time.Time                `json:"observed_at,omitzero"`
-	PreviewID        string                   `json:"preview_id,omitempty"`
 	Groups           map[string]GroupSnapshot `json:"groups"`
 	Models           []ModelOption            `json:"models,omitempty"`
 }

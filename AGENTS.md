@@ -25,7 +25,8 @@
 1. **版本号 4 处一致性核对**：`registry.json`、`internal/runtime/runtime.go`、`internal/management/feature_shell_assets.go` 以及 `.github/release-notes/vX.Y.Z.md` 中的版本号必须 100% 同步一致；
 2. **公开文档与双语规范**：`README.md` 与 `README.en.md` 保持中英双语对齐，聚焦核心价值，**严禁在面向用户的文档和 Release Notes 中出现 `(REQ-xx)` 内部研发标签**；每次起草 Release Notes 必须执行 `git log <last-tag>..HEAD --oneline` 完整回溯自上一次发布以来的全部提交，严禁遗漏任何中间 commit；
 3. **架构与元数据契约**：确保 CPA 宿主 `config.yaml` 极简无扰、`buildMetadata()` 不暴露多余抽屉字段、`config.Default()` 作为基石兜底与 UI 配置中心保持一致；
-4. **全套质量验证**：每完成一项功能或缺陷修复，必须先执行与 release workflow 一致的 `golangci-lint v2.12.2`，通过后再执行 `go test ./...`；提交或发布前必须再次执行 `golangci-lint run --timeout=5m`，并执行 `go build ./...`、`go vet ./...`、`go test ./...`、`go test -race ./...`，确保零告警与零数据竞争（默认不带 `-v`，避免冗余刷屏，失败时 Go 会自动打印失败详情）。
+4. **全套质量验证**：每完成一项功能或缺陷修复，必须先执行与 release workflow 一致的 `golangci-lint v2.12.2`，通过后再执行 `go test ./...`；提交或发布前必须再次执行 `golangci-lint run --timeout=5m`，并执行 `go build ./...`、`go vet ./...`、`go test ./...`、`go test -race ./...`，确保零告警与零数据竞争（默认不带 `-v`，避免冗余刷屏，失败时 Go 会自动打印失败详情）；
+5. **gopls 提交门禁**：每次提交前必须对本次新增/改动的 Go 文件执行 `scripts/gopls-gate.sh`，确保 `gopls check -severity=hint` **零输出**；任何 warning 或语法糖建议必须修复后再提交。新克隆仓库需执行一次 `scripts/gopls-gate.sh --install-hook` 安装 `pre-commit` 钩子（脚本已自带安装能力，默认扫描暂存区的 `.go` 文件）。
 
 ---
 
@@ -35,9 +36,10 @@
   - `priority.Planner` 必须为**无副作用纯函数**，只输出不可变 `Plan` 对象；
   - 严禁在领域核心层调用 CPA 宿主写回或外部网络请求。
 - **Apply Layer (`internal/apply`, `internal/host`)**：
-  - 仅负责根据 `Plan` 门禁（Fresh Evidence、`ForceWrite` 与 `min_change`）执行宿主 `PatchPriority` / `PatchDisabled` 及全脱敏审计落盘。
+  - 仅负责通过统一 Host Transition 执行显式运维意图（429 冷却、优先级重置）并落盘全脱敏审计；
+  - 调度计划只驱动内存路由与展示，**严禁依据 `Plan` 写回宿主优先级**。
 - **Application Layer (`internal/runtime`)**：
-  - 唯一拥有调度用例执行所有权（`ManualApply` / `AutoApply` / `Probe` / `SyncHost` / `ResetAllPriorities`）；
+  - 唯一拥有调度用例执行所有权（`AutoApply` / `Probe` / `SyncHost` / `ResetAllPriorities`）；
   - 统一协调 Ticker 定时器与单飞互斥锁（`runMu`）。
 - **Adapters (`main.go`, `internal/management`)**：
   - CGO ABI 导出与 HTTP Management API 仅作为薄适配器层透传调用 Runtime 用例，**严禁自行计算或改写优先级逻辑**；

@@ -228,7 +228,7 @@ func TestProjectDualModelGroups_MissingGroupRemainsStableAndUnknown(t *testing.T
 	}
 }
 
-func TestProjectDualModelGroups_HistoricalEvidenceIsReadOnly(t *testing.T) {
+func TestProjectDualModelGroups_HistoricalEvidenceProjectsStoredQuota(t *testing.T) {
 	now := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
 	credentials := []core.Credential{{AuthIndex: "auth-1", Priority: 42}}
 	projection, err := runtime.ProjectDualModelGroups(runtime.ProjectionInput{
@@ -244,11 +244,11 @@ func TestProjectDualModelGroups_HistoricalEvidenceIsReadOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	control := projection.Snapshot.Groups[string(config.AntigravityModelGroupGemini)]
-	if len(control.Items) != 1 || control.Items[0].EvidenceFresh {
-		t.Fatalf("historical control item = %#v; want read-only evidence", control.Items)
+	if len(control.Items) != 1 || control.Items[0].Target.Priority != 100 {
+		t.Fatalf("historical control item = %#v; want stored-quota target 100", control.Items)
 	}
-	if len(control.Changes) != 0 || control.Items[0].Target.Priority != 100 {
-		t.Fatalf("historical control projection = %#v; want predicted target without write change", control)
+	if len(control.Changes) != 1 || control.Changes[0].Target.Priority != 100 {
+		t.Fatalf("historical control projection = %#v; want one target diff", control)
 	}
 }
 

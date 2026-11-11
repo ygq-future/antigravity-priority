@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"antigravity-priority/internal/apply"
 	"antigravity-priority/internal/config"
 	"antigravity-priority/internal/core"
 	"antigravity-priority/internal/host"
@@ -173,20 +172,6 @@ func newTestRuntime(t *testing.T, options runtime.Options) *runtime.Runtime {
 		options.StateCachePath = filepath.Join(t.TempDir(), "startup-cache.json")
 	}
 	return runtime.New(options)
-}
-
-func prepareManualApply(t *testing.T, r *runtime.Runtime, modelGroup config.AntigravityModelGroup, authIndexes []string) {
-	t.Helper()
-	if err := r.Probe(context.Background(), modelGroup, authIndexes); err != nil {
-		t.Fatalf("quota probe before manual apply failed: %v", err)
-	}
-	snapshot, err := r.LatestSnapshot(context.Background())
-	if err != nil {
-		t.Fatalf("read quota preview before manual apply failed: %v", err)
-	}
-	if snapshot.PreviewID == "" {
-		t.Fatal("quota probe before manual apply did not publish a preview id")
-	}
 }
 
 func TestRuntime_Handle_Register(t *testing.T) {
@@ -471,16 +456,12 @@ func TestRuntime_Handle_ManagementHandle(t *testing.T) {
 	if envelope.Result.StatusCode != http.StatusOK {
 		t.Errorf("expected status code 200, got %d", envelope.Result.StatusCode)
 	}
-	previewSnapshot, err := r.LatestSnapshot(context.Background())
-	if err != nil {
-		t.Fatalf("read management preview failed: %v", err)
-	}
 
-	// 2. POST /plugins/antigravity-priority/run with mode=apply
+	// 2. mode=apply is no longer a supported run mode
 	mgmtReqApply := map[string]any{
 		"Method": "POST",
 		"Path":   "/plugins/antigravity-priority/run",
-		"query":  "mode=apply&preview_id=" + previewSnapshot.PreviewID,
+		"query":  "mode=apply",
 	}
 	reqApplyBytes, _ := json.Marshal(mgmtReqApply)
 	respApplyBytes := r.Handle(context.Background(), "management.handle", reqApplyBytes)
@@ -489,8 +470,8 @@ func TestRuntime_Handle_ManagementHandle(t *testing.T) {
 		OK     bool                       `json:"ok"`
 		Result runtime.ManagementResponse `json:"result"`
 	}
-	if err := json.Unmarshal(respApplyBytes, &envApply); err != nil || !envApply.OK || envApply.Result.StatusCode != http.StatusOK {
-		t.Errorf("apply request failed: %s", string(respApplyBytes))
+	if err := json.Unmarshal(respApplyBytes, &envApply); err != nil || !envApply.OK || envApply.Result.StatusCode != http.StatusBadRequest {
+		t.Errorf("apply mode was not rejected: %s", string(respApplyBytes))
 	}
 
 	// 3. GET /status under resource route
@@ -530,9 +511,6 @@ func TestRuntime_SingleFlight_Conflict(t *testing.T) {
 
 	if err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); !errors.Is(err, runtime.ErrRunInProgress) {
 		t.Errorf("expected ErrRunInProgress on Probe, got %v", err)
-	}
-	if err := r.ManualApply(context.Background(), config.AntigravityModelGroupGemini, nil); !errors.Is(err, runtime.ErrRunInProgress) {
-		t.Errorf("expected ErrRunInProgress on ManualApply, got %v", err)
 	}
 	if err := r.AutoApply(context.Background()); !errors.Is(err, runtime.ErrRunInProgress) {
 		t.Errorf("expected ErrRunInProgress on AutoApply, got %v", err)
@@ -722,10 +700,10 @@ func TestRuntime_ProbeProjectsBothGroupsFromOneQuotaResponse(t *testing.T) {
 	if len(mock.httpCalls) != 1 {
 		t.Fatalf("quota HTTP calls = %d, want one response for both groups", len(mock.httpCalls))
 	}
-	if len(gemini.Items) != 1 || !gemini.Items[0].EvidenceFresh || gemini.Items[0].R7d != 0.7 {
+	if len(gemini.Items) != 1 || gemini.Items[0].R7d != 0.7 {
 		t.Fatalf("gemini projection = %#v, want fresh quota data", gemini)
 	}
-	if len(claudeGPT.Items) != 1 || !claudeGPT.Items[0].EvidenceFresh || claudeGPT.Items[0].R7d != 0.6 || claudeGPT.Items[0].IsPredicted {
+	if len(claudeGPT.Items) != 1 || claudeGPT.Items[0].R7d != 0.6 || claudeGPT.Items[0].IsPredicted {
 		t.Fatalf("claude/gpt projection = %#v, want fresh live quota data", claudeGPT)
 	}
 	if mock.saveCalls != 0 {
@@ -870,12 +848,6 @@ func TestRuntime_ProbeAndSyncHostUseTheSameLearnedCycleBurnRate(t *testing.T) {
 	if probeTarget != 100 {
 		t.Fatalf("consistent learned-rate target=%d, want regular 100", probeTarget)
 	}
-	if syncSnapshot.PreviewID == "" {
-		t.Fatal("SyncHost cleared the unused quota preview")
-	}
-	if err := r.ManualApplyWithPreview(context.Background(), config.AntigravityModelGroupGemini, nil, syncSnapshot.PreviewID); err != nil {
-		t.Fatalf("manual apply after an unchanged Host sync failed: %v", err)
-	}
 }
 func TestRuntime_SyncHostPreservesPlanType(t *testing.T) {
 	cachePath := filepath.Join(t.TempDir(), "cache.json")
@@ -951,10 +923,9 @@ func TestRuntime_ProductionRunner_FilteredAuthIndexes(t *testing.T) {
 	})
 
 	// Run with only auth_1
-	prepareManualApply(t, r, config.AntigravityModelGroupGemini, []string{"auth_1"})
-	err := r.ManualApply(context.Background(), config.AntigravityModelGroupGemini, []string{"auth_1"})
+	err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, []string{"auth_1"})
 	if err != nil {
-		t.Fatalf("manual apply failed: %v", err)
+		t.Fatalf("probe failed: %v", err)
 	}
 
 	snap, err := r.LatestSnapshot(context.Background())
@@ -1061,115 +1032,6 @@ func TestRuntime_ProductionRunner_CachedEvidence(t *testing.T) {
 	}
 	if latestApply.Kind != runtime.KindAutoApply {
 		t.Fatalf("latest_apply kind = %q; want %q", latestApply.Kind, runtime.KindAutoApply)
-	}
-}
-
-func TestRuntime_ManualApplyReusesRecentProbeEvidence(t *testing.T) {
-	cachePath := filepath.Join(t.TempDir(), "cache.json")
-	mock := newMockHost()
-	mock.files = []host.AuthFile{{
-		Name:      "manual-preview",
-		AuthIndex: "auth-manual-preview",
-		Provider:  string(core.ProviderAntigravity),
-		Type:      string(core.CredentialTypeAntigravity),
-		Priority:  50,
-	}}
-	clock := &testClock{now: time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)}
-	r := newTestRuntime(t, runtime.Options{
-		Host:    mock,
-		Clock:   clock,
-		Sleeper: testSleeper{},
-	})
-	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
-		t.Fatalf("quota probe failed: %v", err)
-	}
-	snapshot, err := r.LatestSnapshot(context.Background())
-	if err != nil {
-		t.Fatalf("read quota preview failed: %v", err)
-	}
-	if snapshot.PreviewID == "" {
-		t.Fatal("probe did not publish a preview id")
-	}
-	mock.mu.Lock()
-	probeCalls := len(mock.httpCalls)
-	mock.mu.Unlock()
-	if probeCalls != 1 {
-		t.Fatalf("quota HTTP calls after preview probe = %d; want 1", probeCalls)
-	}
-
-	clock.Advance(2 * time.Hour)
-	if err := r.ManualApplyWithPreview(context.Background(), config.AntigravityModelGroupGemini, nil, snapshot.PreviewID); err != nil {
-		t.Fatalf("manual apply failed: %v", err)
-	}
-	mock.mu.Lock()
-	applyCalls := len(mock.httpCalls)
-	mock.mu.Unlock()
-	if applyCalls != probeCalls {
-		t.Fatalf("quota HTTP calls after manual apply = %d; want reuse of %d preview call", applyCalls, probeCalls)
-	}
-	finalSnapshot, err := r.LatestSnapshot(context.Background())
-	if err != nil {
-		t.Fatalf("read post-apply snapshot failed: %v", err)
-	}
-	if finalSnapshot.PreviewID != "" {
-		t.Fatalf("post-apply preview id = %q; want it consumed", finalSnapshot.PreviewID)
-	}
-	if err := r.ManualApplyWithPreview(context.Background(), config.AntigravityModelGroupGemini, nil, ""); err == nil || !strings.Contains(err.Error(), "no pending quota preview") {
-		t.Fatalf("second manual apply without refresh error = %v; want refresh-required error", err)
-	}
-	if err := r.ManualApplyWithPreview(context.Background(), config.AntigravityModelGroupGemini, nil, snapshot.PreviewID); err == nil || !strings.Contains(err.Error(), "unavailable") {
-		t.Fatalf("second manual apply with consumed preview error = %v; want unavailable preview", err)
-	}
-	mock.mu.Lock()
-	finalCalls := len(mock.httpCalls)
-	mock.mu.Unlock()
-	if finalCalls != probeCalls {
-		t.Fatalf("quota HTTP calls after consumed preview reuse = %d; want %d", finalCalls, probeCalls)
-	}
-}
-
-func TestRuntime_ManualApplyWithPreviewRejectsHostMutation(t *testing.T) {
-	cachePath := filepath.Join(t.TempDir(), "cache.json")
-	mock := newMockHost()
-	mock.files = []host.AuthFile{{
-		Name:      "preview-host-change",
-		AuthIndex: "auth-preview-host-change",
-		Provider:  string(core.ProviderAntigravity),
-		Type:      string(core.CredentialTypeAntigravity),
-		Priority:  50,
-	}}
-	r := newTestRuntime(t, runtime.Options{
-		Host:    mock,
-		Clock:   &testClock{now: time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)},
-		Sleeper: testSleeper{},
-	})
-	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
-		t.Fatal(err)
-	}
-	snapshot, err := r.LatestSnapshot(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	mock.mu.Lock()
-	mock.files[0].Priority = 51
-	mock.mu.Unlock()
-
-	err = r.ManualApplyWithPreview(context.Background(), config.AntigravityModelGroupGemini, nil, snapshot.PreviewID)
-	if err == nil || !strings.Contains(err.Error(), "host state changed") {
-		t.Fatalf("manual apply after Host mutation error = %v; want stale preview rejection", err)
-	}
-	mock.mu.Lock()
-	calls := len(mock.httpCalls)
-	mock.mu.Unlock()
-	if calls != 1 {
-		t.Fatalf("quota HTTP calls after stale preview rejection = %d; want no second probe", calls)
 	}
 }
 
@@ -1292,126 +1154,6 @@ func TestRuntime_ProductionRunner_PhysicalAuthJSONPath(t *testing.T) {
 	}
 }
 
-func TestRuntime_ProductionRunner_Apply_Full(t *testing.T) {
-	tempDir := t.TempDir()
-	authFilePath := filepath.Join(tempDir, "auth_1.json")
-	_ = os.WriteFile(authFilePath, []byte(`{"access_token":"token_123","project_id":"proj_123","priority":50}`), 0o600)
-
-	mock := newMockHost()
-	mock.files = []host.AuthFile{
-		{
-			Name:      "test-account-1",
-			AuthIndex: "auth_1",
-			Provider:  string(core.ProviderAntigravity),
-			Type:      string(core.CredentialTypeAntigravity),
-			Priority:  50,
-		},
-	}
-	mock.authDocs["auth_1"] = host.AuthDocument{
-		AuthIndex: "auth_1",
-		Path:      authFilePath,
-	}
-
-	r := newTestRuntime(t, runtime.Options{
-		Host:    mock,
-		Clock:   &testClock{now: time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)},
-		Sleeper: testSleeper{},
-	})
-
-	cachePath := filepath.Join(tempDir, "state_apply_full.json")
-	req := fmt.Appendf(nil, `{"config_yaml":"enabled: true\nstate_cache_path: %q\n"}`, cachePath)
-	r.Handle(context.Background(), "plugin.register", req)
-
-	prepareManualApply(t, r, config.AntigravityModelGroupGemini, nil)
-	err := r.ManualApply(context.Background(), config.AntigravityModelGroupGemini, nil)
-	if err != nil {
-		t.Fatalf("manual apply failed: %v", err)
-	}
-	latest, err := r.LatestSnapshot(context.Background())
-	if err != nil {
-		t.Fatalf("latest snapshot failed: %v", err)
-	}
-	active := latest.Groups[latest.ActiveModelGroup]
-	if len(active.Items) != 1 {
-		t.Fatalf("latest active snapshot items = %d; want 1", len(active.Items))
-	}
-	if active.Items[0].Current.Priority != active.Items[0].Target.Priority {
-		t.Fatalf("latest snapshot remained pending after committed apply: current=%d target=%d", active.Items[0].Current.Priority, active.Items[0].Target.Priority)
-	}
-	if len(active.Changes) != 0 {
-		t.Fatalf("latest snapshot changes = %#v; want no pending write after commit", active.Changes)
-	}
-
-	diag, err := r.Diagnostics(context.Background())
-	if err != nil {
-		t.Fatalf("diagnostics failed: %v", err)
-	}
-	lastResult, ok := diag["last_result"].(apply.Result)
-	if !ok {
-		t.Fatalf("expected last_result in diagnostics")
-	}
-	if lastResult.Succeeded == 0 {
-		t.Errorf("expected at least 1 succeeded apply change, got %+v", lastResult)
-	}
-	latestApply, ok := diag["latest_apply"].(*runtime.RunHistoryEntry)
-	if !ok || latestApply == nil || latestApply.Succeeded == 0 {
-		t.Fatalf("expected latest_apply diagnostics record, got %#v", diag["latest_apply"])
-	}
-	applyAt := latestApply.At
-	if err := r.Probe(context.Background(), config.AntigravityModelGroupClaudeGPT, nil); err != nil {
-		t.Fatal(err)
-	}
-	diagAfterProbe, _ := r.Diagnostics(context.Background())
-	latestAfterProbe := diagAfterProbe["latest_apply"].(*runtime.RunHistoryEntry)
-	if !latestAfterProbe.At.Equal(applyAt) || latestAfterProbe.Succeeded != latestApply.Succeeded || latestAfterProbe.Message != latestApply.Message {
-		t.Fatalf("probe replaced latest Apply health: before=%#v after=%#v", latestApply, latestAfterProbe)
-	}
-
-	// Verify file content was patched
-	updatedData, err := os.ReadFile(authFilePath)
-	if err != nil {
-		t.Fatalf("read patched file failed: %v", err)
-	}
-	var updatedMap map[string]any
-	_ = json.Unmarshal(updatedData, &updatedMap)
-	if updatedMap["priority"] == float64(50) {
-		t.Errorf("expected priority to be changed from 50, got %v", updatedMap["priority"])
-	}
-}
-
-func TestRuntime_DiagnosticsPreservesFailedApplyAfterProbe(t *testing.T) {
-	cachePath := filepath.Join(t.TempDir(), "cache.json")
-	mock := newMockHost()
-	mock.files = []host.AuthFile{{Name: "broken", AuthIndex: "auth-broken", Provider: "antigravity", Priority: 50, PriorityMissing: true}}
-	// Authentication can be probed, but the callback cannot prove a complete
-	// replacement after reporting success, so the Host outcome is uncertain.
-	mock.authDocs["auth-broken"] = host.AuthDocument{
-		AuthIndex: "auth-broken",
-		JSON:      json.RawMessage(`{"access_token":"token","project_id":"project"}`),
-	}
-	r := newTestRuntime(t, runtime.Options{Host: mock, Clock: &testClock{now: time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)}, Sleeper: testSleeper{}})
-	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
-		t.Fatal(err)
-	}
-	prepareManualApply(t, r, config.AntigravityModelGroupGemini, nil)
-	if err := r.ManualApply(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
-		t.Fatal(err)
-	}
-	diagnostics, _ := r.Diagnostics(context.Background())
-	failedApply := diagnostics["latest_apply"].(*runtime.RunHistoryEntry)
-	if failedApply == nil || failedApply.Failed != 0 || !strings.Contains(failedApply.Message, "uncertain=1") {
-		t.Fatalf("latest_apply = %#v; want one uncertain write", failedApply)
-	}
-	if err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
-		t.Fatal(err)
-	}
-	afterProbe, _ := r.Diagnostics(context.Background())
-	latest := afterProbe["latest_apply"].(*runtime.RunHistoryEntry)
-	if latest == nil || latest.Failed != failedApply.Failed || !strings.Contains(latest.Message, "uncertain=1") || !latest.At.Equal(failedApply.At) || latest.Message != failedApply.Message {
-		t.Fatalf("Probe replaced uncertain Apply health: before=%#v after=%#v", failedApply, latest)
-	}
-}
-
 func TestRuntime_DiagnosticsWithProbeOnlyHistoryHasNoLatestApply(t *testing.T) {
 	previousDir, err := os.Getwd()
 	if err != nil {
@@ -1489,91 +1231,6 @@ func TestRuntime_SyncHostUsesUpdatedDynamicControlGroup(t *testing.T) {
 	}
 	if mock.saveCalls != 0 {
 		t.Fatalf("SyncHost or config change wrote Host documents: %d saves", mock.saveCalls)
-	}
-}
-
-func TestRuntime_ProductionRunner_ZeroChange_Apply_Omitted(t *testing.T) {
-	tempDir := t.TempDir()
-	authFilePath := filepath.Join(tempDir, "auth_zero_change.json")
-	// This low-urgency weekly account remains at the regular starting priority.
-	_ = os.WriteFile(authFilePath, []byte(`{"access_token":"token_123","project_id":"proj_123","priority":100}`), 0o600)
-
-	mock := newMockHost()
-	mock.files = []host.AuthFile{
-		{
-			Name:            "test-account-zero-1",
-			AuthIndex:       "auth_zero_1",
-			Provider:        string(core.ProviderAntigravity),
-			Type:            string(core.CredentialTypeAntigravity),
-			Priority:        100,
-			PriorityMissing: false,
-		},
-	}
-	mock.authDocs["auth_zero_1"] = host.AuthDocument{
-		AuthIndex: "auth_zero_1",
-		Path:      authFilePath,
-		JSON:      json.RawMessage(`{"access_token":"token_123","project_id":"proj_123","priority":100}`),
-	}
-
-	r := newTestRuntime(t, runtime.Options{
-		Host:    mock,
-		Clock:   &testClock{now: time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)},
-		Sleeper: testSleeper{},
-	})
-
-	cachePath := filepath.Join(tempDir, "state_zero.json")
-	store, _ := state.Load(context.Background(), cachePath)
-	_ = store.MarkProbeSuccess(context.Background(), state.ProbeSuccess{
-		AuthIndex:            "auth_zero_1",
-		Provider:             core.ProviderAntigravity,
-		ModelGroup:           "gemini",
-		ObservedAt:           time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC),
-		ResetAt:              time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC),
-		Remaining:            80,
-		ShortWindowResetAt:   time.Date(2026, 8, 18, 17, 0, 0, 0, time.UTC),
-		ShortWindowRemaining: ptrInt64(90),
-		LongWindowResetAt:    time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC),
-		LongWindowRemaining:  ptrInt64(80),
-		NextProbeAt:          time.Date(2026, 8, 18, 13, 0, 0, 0, time.UTC),
-		Source:               state.SourceFreshProbe,
-	})
-	_ = store.SaveAtomic(context.Background())
-
-	req := fmt.Appendf(nil, `{"config_yaml":"enabled: true\nstate_cache_path: %q\n"}`, cachePath)
-	r.Handle(context.Background(), "plugin.register", req)
-
-	// First run: all credentials already in sync (Priority 100 == Target 100)
-	prepareManualApply(t, r, config.AntigravityModelGroupGemini, nil)
-	initialDiag, _ := r.Diagnostics(context.Background())
-	initialHistLen := len(initialDiag["run_history"].([]runtime.RunHistoryEntry))
-	err := r.ManualApply(context.Background(), config.AntigravityModelGroupGemini, nil)
-	if err != nil {
-		t.Fatalf("manual apply failed: %v", err)
-	}
-
-	diag, err := r.Diagnostics(context.Background())
-	if err != nil {
-		t.Fatalf("diagnostics failed: %v", err)
-	}
-
-	// Verify audit summary indicates in sync
-	latestAudit, _ := diag["latest_audit"].(string)
-	if !strings.Contains(latestAudit, "in sync") {
-		t.Errorf("expected latest_audit to contain 'in sync', got %q", latestAudit)
-	}
-
-	// Verify no complete Host document replacements were executed
-	if mock.saveCalls != 0 {
-		t.Errorf("expected 0 Host document replacements for zero-change apply, got %d", mock.saveCalls)
-	}
-
-	// Verify runHistory does NOT contain useless 0-change apply entries
-	runHistory, ok := diag["run_history"].([]runtime.RunHistoryEntry)
-	if !ok {
-		t.Fatalf("expected run_history in diagnostics")
-	}
-	if len(runHistory) != initialHistLen {
-		t.Errorf("expected run_history length %d for zero-change apply, got %d entries: %+v", initialHistLen, len(runHistory), runHistory)
 	}
 }
 
@@ -2360,10 +2017,8 @@ func TestRuntime_ProductionRunner_RespectsManuallyDisabledAccounts(t *testing.T)
 		Sleeper: testSleeper{},
 	})
 
-	prepareManualApply(t, r, config.AntigravityModelGroupGemini, nil)
-	err := r.ManualApply(context.Background(), config.AntigravityModelGroupGemini, nil)
-	if err != nil {
-		t.Fatalf("manual apply failed: %v", err)
+	if err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
+		t.Fatalf("probe failed: %v", err)
 	}
 
 	// Verify file remains disabled
@@ -2721,7 +2376,7 @@ func TestRuntime_UsageHandle_429WaitsForSingleFlightBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	applyDone := make(chan error, 1)
-	go func() { applyDone <- r.ManualApply(context.Background(), config.AntigravityModelGroupGemini, nil) }()
+	go func() { applyDone <- r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil) }()
 	<-started
 	filterDone := make(chan []byte, 1)
 	go func() {
@@ -3005,7 +2660,7 @@ func TestRuntime_ResetAllPriorities_ContinuesAfterCredentialFailure(t *testing.T
 	}
 }
 
-func TestRuntime_Diagnostics_LatestApply_AutoApplyAndManualApply(t *testing.T) {
+func TestRuntime_Diagnostics_LatestApplyTracksAutoApplyOnly(t *testing.T) {
 	tempDir := t.TempDir()
 	cachePath := filepath.Join(tempDir, "cache.json")
 	authFilePath := filepath.Join(tempDir, "auth.json")
@@ -3088,28 +2743,6 @@ func TestRuntime_Diagnostics_LatestApply_AutoApplyAndManualApply(t *testing.T) {
 	}
 	if latest3.Kind != runtime.KindAutoApply || !latest3.At.Equal(latest2.At) {
 		t.Fatalf("Probe unexpectedly modified latest_apply: was %#v, now %#v", latest2, latest3)
-	}
-
-	// 4. Run ManualApply with changes -> latest_apply should now be the manual apply
-	clock.Advance(5 * time.Minute)
-	_ = os.WriteFile(authFilePath, []byte(`{"access_token":"token_123","project_id":"proj_123","priority":50}`), 0o600)
-	mock.mu.Lock()
-	mock.files[0].Priority = 50
-	mock.mu.Unlock()
-	prepareManualApply(t, r, config.AntigravityModelGroupGemini, nil)
-	if err := r.ManualApply(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
-		t.Fatalf("manual apply failed: %v", err)
-	}
-	diag4, err := r.Diagnostics(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	latest4, ok := diag4["latest_apply"].(*runtime.RunHistoryEntry)
-	if !ok || latest4 == nil {
-		t.Fatalf("expected latest_apply to be populated after ManualApply, got %#v", diag4["latest_apply"])
-	}
-	if latest4.Kind != runtime.KindApply {
-		t.Fatalf("expected latest_apply.Kind == %q, got %q", runtime.KindApply, latest4.Kind)
 	}
 }
 
@@ -3269,28 +2902,6 @@ func TestRuntime_StatePersistenceConsolidation_DurabilityAndRecovery(t *testing.
 	}
 	if _, inCooldown := storeAfterRecovery.GetActiveCooldowns(clock.Now())["auth_persist"]; inCooldown {
 		t.Fatal("expected auth_persist cooldown to be removed after recovery")
-	}
-
-	// 5. Test preview apply: probe to generate preview, then manual apply
-	if err := r.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
-		t.Fatalf("Probe failed: %v", err)
-	}
-	snap, err := r.LatestSnapshot(context.Background())
-	if err != nil {
-		t.Fatalf("LatestSnapshot failed: %v", err)
-	}
-	if snap.PreviewID == "" {
-		t.Fatal("expected non-empty preview ID after probe")
-	}
-	if err := r.ManualApplyWithPreview(context.Background(), config.AntigravityModelGroupGemini, nil, snap.PreviewID); err != nil {
-		t.Fatalf("ManualApply with preview failed: %v", err)
-	}
-	storeAfterManual, err := state.Load(context.Background(), cachePath)
-	if err != nil {
-		t.Fatalf("failed to load state after manual apply: %v", err)
-	}
-	if audit, _, _ := storeAfterManual.GetRuntimeSnapshot(); audit == "" {
-		t.Fatal("expected runtime snapshot audit to be non-empty after manual apply")
 	}
 }
 

@@ -99,8 +99,6 @@ type PlanItem struct {
 	LongWindowRemaining  *int64
 	ArgonWindowResetAt   *time.Time
 	ArgonWindowRemaining *int64
-	EvidenceFresh        bool
-	ForceWrite           bool
 	Reason               string
 	IsBoosted            bool
 	Urgency              float64
@@ -124,14 +122,15 @@ const (
 	quotaStateWeeklyDepleted
 )
 
-// Change represents a required host write-back modification.
+// Change represents a credential whose planned target differs from its current
+// Host state. It drives display and diagnostics only; the planner never writes
+// to the Host.
 type Change struct {
-	Credential    core.Credential
-	Priority      int
-	Disabled      bool
-	EvidenceFresh bool
-	Reason        string
-	IsBoosted     bool
+	Credential core.Credential
+	Priority   int
+	Disabled   bool
+	Reason     string
+	IsBoosted  bool
 }
 
 // Plan encapsulates the complete immutable priority scheduling decision and change set.
@@ -142,8 +141,9 @@ type Plan struct {
 }
 
 // PlanWithEvidence produces a plan from the Evidence authority's two
-// semantically separate sets. Historical observations can shape targets for
-// display or prediction, but their changes are never marked write-qualified.
+// semantically separate sets. Fresh probe observations take precedence over
+// persisted historical ones; neither set authorizes a Host write because the
+// plan only drives in-memory routing and display.
 func PlanWithEvidence(credentials []core.Credential, source EvidenceSource, options Options) Plan {
 	if options.Now.IsZero() {
 		panic("priority: explicit decision time is required")
@@ -162,21 +162,11 @@ func PlanWithEvidence(credentials []core.Credential, source EvidenceSource, opti
 func planWithEvidence(credentials []core.Credential, evidence plannerEvidence, options Options) Plan {
 	items := planItems(credentials, evidence, options)
 	planPositive(items, options)
-	markHistoricalReasons(items)
 	SortPlanItems(items)
 	return Plan{
 		DecidedAt: options.Now.UTC(),
 		Items:     items,
 		Changes:   changes(items, options),
-	}
-}
-
-func markHistoricalReasons(items []PlanItem) {
-	for index, item := range items {
-		if item.EvidenceFresh || !item.hasQuotaEvidence || item.Reason == ReasonDisabledOnHost {
-			continue
-		}
-		items[index].Reason = "historical: " + item.Reason
 	}
 }
 
@@ -221,13 +211,10 @@ func planItems(credentials []core.Credential, evidence plannerEvidence, options 
 		}
 
 		evidence, hasEvidence := freshByAuthIndex[credential.AuthIndex]
-		evidenceFresh := true
 		if !hasEvidence {
 			evidence, hasEvidence = historicalByAuthIndex[credential.AuthIndex]
-			evidenceFresh = false
 		}
 		if hasEvidence {
-			item.EvidenceFresh = evidenceFresh
 			item.hasQuotaEvidence = true
 			if evidence.PlanType != "" && evidence.PlanType != core.PlanTypeUnknown {
 				item.PlanType = evidence.PlanType
@@ -262,7 +249,6 @@ func planItems(credentials []core.Credential, evidence plannerEvidence, options 
 				item.Reason = ReasonDisabledOnHost
 				item.Priority = credential.Priority
 				item.Disabled = true
-				item.EvidenceFresh = false
 				item.quotaState = quotaStateUnknown
 			} else {
 				// Active on host: the plugin manages dynamic priorities purely in memory and
@@ -468,24 +454,20 @@ func planPositive(items []PlanItem, options Options) {
 func changes(items []PlanItem, options Options) []Change {
 	result := make([]Change, 0)
 	for _, item := range items {
-		if shouldChange(item, options) {
+		if targetDiffers(item, options) {
 			result = append(result, Change{
-				Credential:    item.Credential,
-				Priority:      item.Priority,
-				Disabled:      item.Disabled,
-				EvidenceFresh: item.EvidenceFresh,
-				Reason:        item.Reason,
-				IsBoosted:     item.IsBoosted,
+				Credential: item.Credential,
+				Priority:   item.Priority,
+				Disabled:   item.Disabled,
+				Reason:     item.Reason,
+				IsBoosted:  item.IsBoosted,
 			})
 		}
 	}
 	return result
 }
 
-func shouldChange(item PlanItem, options Options) bool {
-	if !item.EvidenceFresh {
-		return false
-	}
+func targetDiffers(item PlanItem, options Options) bool {
 	if item.Credential.PriorityMissing {
 		return true
 	}

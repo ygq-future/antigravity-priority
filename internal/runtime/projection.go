@@ -203,11 +203,11 @@ func snapshotAuthIndex(item apply.SnapshotItem) string {
 func itemShortWindowBar(item apply.SnapshotItem) apply.QuotaWindowBar {
 	rem := item.ShortWindowRemaining
 	resetAt := item.ShortWindowResetAt
-	if rem == nil && item.EvidenceFresh && item.R5h > 0 {
+	if rem == nil && item.R5h > 0 {
 		val := int64(math.Round(item.R5h * 100.0))
 		rem = &val
 	}
-	if resetAt == nil && item.EvidenceFresh {
+	if resetAt == nil {
 		resetAt = item.ResetAt
 	}
 	return apply.QuotaWindowBar{
@@ -219,11 +219,11 @@ func itemShortWindowBar(item apply.SnapshotItem) apply.QuotaWindowBar {
 func itemLongWindowBar(item apply.SnapshotItem) apply.QuotaWindowBar {
 	rem := item.LongWindowRemaining
 	resetAt := item.LongWindowResetAt
-	if rem == nil && item.EvidenceFresh && item.R7d > 0 {
+	if rem == nil && item.R7d > 0 {
 		val := int64(math.Round(item.R7d * 100.0))
 		rem = &val
 	}
-	if resetAt == nil && item.EvidenceFresh {
+	if resetAt == nil {
 		resetAt = item.ResetAt
 	}
 	return apply.QuotaWindowBar{
@@ -242,11 +242,11 @@ func itemArgonWindowBar(item apply.SnapshotItem) apply.QuotaWindowBar {
 		rem = item.LongWindowRemaining
 		resetAt = item.LongWindowResetAt
 	}
-	if rem == nil && item.EvidenceFresh && item.R7d > 0 {
+	if rem == nil && item.R7d > 0 {
 		val := int64(math.Round(item.R7d * 100.0))
 		rem = &val
 	}
-	if resetAt == nil && item.EvidenceFresh {
+	if resetAt == nil {
 		resetAt = item.ResetAt
 	}
 	return apply.QuotaWindowBar{
@@ -271,7 +271,7 @@ func annotatePlanObservations(plan *priority.Plan, observations []evidence.Obser
 			if plan.Items[index].Credential.AuthIndex != observation.AuthIndex {
 				continue
 			}
-			if strings.HasPrefix(plan.Items[index].Reason, "historical: ") {
+			if plan.Items[index].Reason != priority.ReasonKeepCurrentState && plan.Items[index].Reason != priority.ReasonDisabledOnHost {
 				reason += "; " + plan.Items[index].Reason
 			}
 			plan.Items[index].Reason = reason
@@ -298,9 +298,6 @@ func snapshotForProjectionRoleSnapshot(snapshot apply.PlanSnapshot, predicted bo
 	}
 	for index := range snapshot.Changes {
 		snapshot.Changes[index].Reason = roleReason(snapshot.Changes[index].Reason, predicted)
-		if predicted {
-			snapshot.Changes[index].EvidenceFresh = false
-		}
 	}
 	return snapshot
 }

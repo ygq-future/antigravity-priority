@@ -9,7 +9,6 @@ import (
 
 	"antigravity-priority/internal/core"
 	"antigravity-priority/internal/host"
-	"antigravity-priority/internal/priority"
 )
 
 // Outcome is the only Host outcome vocabulary exposed by a Host Transition.
@@ -115,26 +114,6 @@ func ExpectedState(credential core.Credential) CredentialState {
 		PriorityPresent: !credential.PriorityMissing,
 		Disabled:        credential.Disabled,
 		DisabledKnown:   true,
-	}
-}
-
-// IntentFromChange converts an immutable Planner change into an explicit
-// transition intent without moving any scheduling decisions into Apply.
-func IntentFromChange(change priority.Change) TransitionIntent {
-	target := CredentialTarget{
-		Priority: PriorityTarget{Operation: FieldUnchanged},
-		Disabled: DisabledTarget{Operation: FieldUnchanged},
-	}
-	if change.Priority != change.Credential.Priority || change.Credential.PriorityMissing {
-		target.Priority = PriorityTarget{Operation: FieldSet, Value: change.Priority}
-	}
-	// Disabled remains FieldUnchanged: host credential disabled state is strictly owned by the host/user.
-	return TransitionIntent{
-		AuthIndex: change.Credential.AuthIndex,
-		Name:      firstNonEmpty(change.Credential.Name, change.Credential.Account, change.Credential.Email, change.Credential.AuthIndex),
-		Expected:  ExpectedState(change.Credential),
-		Target:    target,
-		Cause:     change.Reason,
 	}
 }
 

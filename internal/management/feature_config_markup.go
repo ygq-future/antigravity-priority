@@ -99,7 +99,7 @@ const configMarkup = `
                 <div class="config-card">
                     <h3 class="config-card-title">
                         <span>⚡</span>
-                        <span data-i18n="cfgCardPerfTitle">探测与写回性能</span>
+                        <span data-i18n="cfgCardPerfTitle">探测与调度性能</span>
                     </h3>
 
                     <div class="config-form-grid">

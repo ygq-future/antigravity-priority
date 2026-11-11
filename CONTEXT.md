@@ -59,14 +59,10 @@ _Avoid_: Random priority, flat priority, forced unique decrement
 The numerical delta threshold $\Delta \text{Urgency}$ (default 0.05) below which adjacent credentials are assigned identical priority scores.
 _Avoid_: Margin of error, floating threshold, priority gap
 
-**Fresh Evidence**:
-Verified quota observation data obtained from a successful probe in the current scheduling round. A failed probe is unknown rather than quota depletion and cannot authorize a quota-driven Host Transition.
-_Avoid_: Cached state, stale data, fallback record
-
 ### Quota Depletion & Cooldown States
 
 **Host Transition**:
-A deliberate change to one credential's persisted priority and/or disabled state in CPA Host, including scheduled Apply, 429 Reactive Cooldown, and priority reset. All target fields belong to one transition outcome, whose success is determined by the resulting credential state rather than request completion alone.
+A deliberate change to one credential's persisted priority and/or disabled state in CPA Host, limited to 429 Reactive Cooldown and explicit priority reset. Scheduling plans never write to the Host; they only drive in-memory routing and display. All target fields belong to one transition outcome, whose success is determined by the resulting credential state rather than request completion alone.
 _Avoid_: Host write, patch operation, mutation
 
 **Pool-Scoped 429 Reactive Cooldown (Circuit Breaker)**:

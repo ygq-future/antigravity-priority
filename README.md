@@ -172,9 +172,7 @@ plugins:
 ### 管理 API（动态接口，需 Management Key 鉴权）
 
 - `POST /v0/management/plugins/antigravity-priority/run?mode=probe`
-  - 触发一次向 Google API 的全量配额探测并更新本地缓存与快照，**不执行写回**。
-- `POST /v0/management/plugins/antigravity-priority/run?mode=apply`
-  - 触发全量探测计算，通过统一 Host Transition 将最新目标**一次性写回并校验 CPA 宿主**，返回脱敏执行结果。
+  - 触发一次向 Google API 的全量配额探测并更新本地缓存与快照，仅校准内存路由表，**不写回 CPA 宿主**。
 - `GET /v0/management/plugins/antigravity-priority/runtime-config`
   - 获取当前完整运行时配置。
 - `POST /v0/management/plugins/antigravity-priority/runtime-config`

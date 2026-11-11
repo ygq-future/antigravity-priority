@@ -172,9 +172,7 @@ The plugin registers **resources** (static management dashboard) and **routes** 
 ### Management API (Dynamic, Key Required)
 
 - `POST /v0/management/plugins/antigravity-priority/run?mode=probe`
-  - Triggers a fresh network quota probe against Google API and updates local cache and snapshot, **no priority write-back**.
-- `POST /v0/management/plugins/antigravity-priority/run?mode=apply`
-  - Runs fresh probe/planning, **commits each credential's target through the unified Host Transition, verifies CPA host state, and returns redacted outcomes**.
+  - Triggers a fresh network quota probe against Google API and updates local cache and snapshot, calibrating in-memory routing tables only, **with no CPA Host write-back**.
 - `GET /v0/management/plugins/antigravity-priority/runtime-config`
   - Retrieves current full runtime configuration.
 - `POST /v0/management/plugins/antigravity-priority/runtime-config`

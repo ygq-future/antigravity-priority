@@ -51,10 +51,6 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
                 if (colonIdx >= 0) {
                     detail = reason.substring(colonIdx + 1).trim();
                 }
-                var histIdx = detail.indexOf("; historical:");
-                if (histIdx >= 0) {
-                    detail = detail.substring(0, histIdx).trim();
-                }
                 return detail ? prefix + detail : (currentLang === "zh-CN" ? "探测失败" : "Probe failed");
             }
             if (lower.indexOf("cooldown") >= 0 || (lower.indexOf("429") >= 0 && lower.indexOf("status 429") < 0)) return currentLang === "zh-CN" ? "⏳ 429 冷却中" : "⏳ 429 Cooldown";

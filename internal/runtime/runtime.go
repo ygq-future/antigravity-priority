@@ -15,7 +15,6 @@ import (
 
 	"antigravity-priority/internal/apply"
 	"antigravity-priority/internal/config"
-	"antigravity-priority/internal/evidence"
 	"antigravity-priority/internal/host"
 	"antigravity-priority/internal/management"
 	"antigravity-priority/internal/priority"
@@ -23,14 +22,6 @@ import (
 )
 
 const maxRunHistory = 10
-
-type quotaPreview struct {
-	ID              string
-	ModelGroup      config.AntigravityModelGroup
-	AuthScope       string
-	HostFingerprint string
-	EvidenceByGroup map[config.AntigravityModelGroup]evidence.Result
-}
 
 // Runtime manages plugin lifecycle, configuration, ticker worker, and single-flight execution.
 type Runtime struct {
@@ -47,7 +38,6 @@ type Runtime struct {
 	latestResult            apply.Result
 	latestAudit             string
 	latestDualSnapshot      *apply.DualGroupSnapshot
-	latestQuotaPreview      *quotaPreview
 	scheduleConfig          state.ScheduleConfig
 	stateCacheOverride      string
 	runHistory              []RunHistoryEntry
@@ -258,27 +248,16 @@ func (r *Runtime) applyStateCacheOverride(cfg config.Config) config.Config {
 	return cfg
 }
 
-// ManualApply triggers an immediate priority calculation and host write-back.
-func (r *Runtime) ManualApply(ctx context.Context, modelGroup config.AntigravityModelGroup, authIndexes []string) error {
-	previewID := ""
-	if preview := r.currentQuotaPreview(); preview != nil {
-		previewID = preview.ID
-	}
-	return r.runWithPreview(ctx, TriggerManualApply, modelGroup, authIndexes, previewID, true)
-}
-
-// ManualApplyWithPreview commits the quota preview identified by previewID
-// without issuing another quota request.
-func (r *Runtime) ManualApplyWithPreview(ctx context.Context, modelGroup config.AntigravityModelGroup, authIndexes []string, previewID string) error {
-	return r.runWithPreview(ctx, TriggerManualApply, modelGroup, authIndexes, previewID, true)
-}
-
 // Probe triggers a probe-only execution: fetches fresh quota and updates the cache without planning or applying.
-func (r *Runtime) Probe(ctx context.Context, modelGroup config.AntigravityModelGroup, authIndexes []string) error {
-	return r.run(ctx, TriggerProbe, modelGroup, authIndexes)
+func (r *Runtime) Probe(ctx context.Context, _ config.AntigravityModelGroup, authIndexes []string) error {
+	return r.run(ctx, TriggerProbe, authIndexes)
 }
 
-// ResetAllPriorities removes the priority field from all Antigravity credentials in CPA host.
+// ResetAllPriorities clears the static priority field from all Antigravity
+// credentials in CPA Host. It is an explicit user maintenance action: the
+// scheduler never reads Host priority, so this reset does not affect the
+// in-memory routing tables except through the credential inventory refresh it
+// triggers afterwards.
 func (r *Runtime) ResetAllPriorities(ctx context.Context) (map[string]any, error) {
 	if !r.runMu.TryLock() {
 		return nil, ErrRunInProgress
@@ -349,7 +328,6 @@ func (r *Runtime) ResetAllPriorities(ctx context.Context) (map[string]any, error
 		return nil, err
 	}
 	primarySnapshot := projection.ControlSnapshot
-	r.clearQuotaPreview()
 	r.setDualSnapshot(projection.Snapshot)
 
 	summary := resultSummary("reset", result)
@@ -357,7 +335,7 @@ func (r *Runtime) ResetAllPriorities(ctx context.Context) (map[string]any, error
 	snap := primarySnapshot
 	_, projectErr := r.projectRun(ctx, store, result, summary, RunHistoryEntry{
 		Kind:     KindReset,
-		Trigger:  string(TriggerManualApply),
+		Trigger:  string(TriggerManualReset),
 		Message:  summary,
 		Snapshot: &snap,
 	})
@@ -441,12 +419,6 @@ func (r *Runtime) SyncHost(ctx context.Context, modelGroup config.AntigravityMod
 	if err != nil {
 		return apply.DualGroupSnapshot{}, err
 	}
-	// Host synchronization only refreshes the projection. It must not consume
-	// an unused Fresh Evidence preview; ManualApplyWithPreview still validates
-	// the preview's host fingerprint before any transition is executed.
-	if preview := r.currentQuotaPreview(); preview != nil {
-		projection.Snapshot.PreviewID = preview.ID
-	}
 	authModels, _ := client.ListAuthModels(ctx)
 	r.routingMu.Lock()
 	r.updateModelInventoryLocked(files, authModels)
@@ -495,11 +467,7 @@ func (r *Runtime) AutoApply(ctx context.Context) error {
 	return r.runAuto(ctx)
 }
 
-func (r *Runtime) run(ctx context.Context, trigger Trigger, modelGroup config.AntigravityModelGroup, authIndexes []string) error {
-	return r.runWithPreview(ctx, trigger, modelGroup, authIndexes, "", false)
-}
-
-func (r *Runtime) runWithPreview(ctx context.Context, trigger Trigger, _ config.AntigravityModelGroup, authIndexes []string, previewID string, previewRequired bool) error {
+func (r *Runtime) run(ctx context.Context, trigger Trigger, authIndexes []string) error {
 	if !r.runMu.TryLock() {
 		return ErrRunInProgress
 	}
@@ -511,16 +479,14 @@ func (r *Runtime) runWithPreview(ctx context.Context, trigger Trigger, _ config.
 	}
 	defer cleanup()
 
-	if !cfg.Enabled && trigger != TriggerManualApply {
+	if !cfg.Enabled {
 		return errors.New("plugin is disabled")
 	}
 
 	if err := runner(taskCtx, TaskRequest{
-		Config:          cfg,
-		Trigger:         trigger,
-		AuthIndexes:     append([]string(nil), authIndexes...),
-		PreviewID:       strings.TrimSpace(previewID),
-		PreviewRequired: previewRequired,
+		Config:      cfg,
+		Trigger:     trigger,
+		AuthIndexes: append([]string(nil), authIndexes...),
 	}); err != nil && !errors.Is(err, context.Canceled) {
 		return fmt.Errorf("run %s: %w", trigger, err)
 	}
@@ -735,7 +701,7 @@ func (r *Runtime) Diagnostics(ctx context.Context) (map[string]any, error) {
 		"rate_limit_storm":      rateLimitStorm,
 		"latest_audit":          audit,
 		"last_result":           result,
-		"latest_apply":          r.latestApplyEntry(),
+		"latest_apply":          r.latestAutoApplyEntry(),
 		"run_history":           r.currentRunHistory(),
 		"request_history":       requestHistory,
 		"request_history_limit": cfg.RequestHistoryLimit,
@@ -901,22 +867,12 @@ func (r *Runtime) snapshotRunEntry(result apply.Result, audit string, entry RunH
 	if entry.At.IsZero() {
 		entry.At = r.clock.Now().UTC()
 	}
-	if entry.Kind == "" {
-		entry.Kind = KindApply
-	}
 	history := make([]RunHistoryEntry, 0, maxRunHistory)
 	history = append(history, entry)
 	for i := 0; i < len(r.runHistory) && len(history) < maxRunHistory; i++ {
 		history = append(history, r.runHistory[i])
 	}
 	r.runHistory = history
-}
-
-func (r *Runtime) snapshotLatestResult(result apply.Result, audit string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.latestResult = result
-	r.latestAudit = audit
 }
 
 func (r *Runtime) enrichSnapshotWithModelsLocked(snap *apply.DualGroupSnapshot) {
@@ -1017,28 +973,6 @@ func (r *Runtime) currentSnapshotEmails() map[string]string {
 	return emails
 }
 
-func (r *Runtime) setQuotaPreview(preview quotaPreview) {
-	cloned := cloneQuotaPreview(preview)
-	r.mu.Lock()
-	r.latestQuotaPreview = &cloned
-	r.mu.Unlock()
-}
-
-func (r *Runtime) currentQuotaPreview() *quotaPreview {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.latestQuotaPreview == nil {
-		return nil
-	}
-	cloned := cloneQuotaPreview(*r.latestQuotaPreview)
-	return &cloned
-}
-
-func (r *Runtime) clearQuotaPreview() {
-	r.mu.Lock()
-	r.latestQuotaPreview = nil
-	r.mu.Unlock()
-}
 func (r *Runtime) setLastProbeOutcomes(outcomes []management.ProbeOutcome) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -1057,15 +991,6 @@ func (r *Runtime) LastProbeOutcomes(ctx context.Context) []management.ProbeOutco
 		return nil
 	}
 	return append([]management.ProbeOutcome(nil), r.latestProbeOutcomes...)
-}
-
-func cloneQuotaPreview(preview quotaPreview) quotaPreview {
-	cloned := preview
-	cloned.EvidenceByGroup = make(map[config.AntigravityModelGroup]evidence.Result, len(preview.EvidenceByGroup))
-	for group, result := range preview.EvidenceByGroup {
-		cloned.EvidenceByGroup[group] = cloneEvidence(result)
-	}
-	return cloned
 }
 
 // GetScheduleConfig returns the current dynamic schedule configuration.
@@ -1279,11 +1204,11 @@ func (r *Runtime) currentRunHistory() []RunHistoryEntry {
 	return out
 }
 
-func (r *Runtime) latestApplyEntry() *RunHistoryEntry {
+func (r *Runtime) latestAutoApplyEntry() *RunHistoryEntry {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, entry := range r.runHistory {
-		if entry.Kind == KindApply || entry.Kind == KindAutoApply {
+		if entry.Kind == KindAutoApply {
 			copy := entry
 			return &copy
 		}

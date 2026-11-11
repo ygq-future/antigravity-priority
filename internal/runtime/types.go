@@ -39,7 +39,6 @@ const (
 	MethodFilterInbound      = "filter.inbound"
 
 	// Run History Kinds
-	KindApply            = "apply"
 	KindProbe            = "probe"
 	KindReset            = "reset"
 	KindAutoApply        = "auto_apply"
@@ -51,21 +50,19 @@ const (
 type Trigger string
 
 const (
-	// TriggerManualApply indicates a manual write-back execution.
-	TriggerManualApply Trigger = "manual_apply"
 	// TriggerAutoApply indicates a background scheduled auto-apply execution.
 	TriggerAutoApply Trigger = "auto_apply"
 	// TriggerProbe indicates a probe-only execution that fetches fresh quota without planning or applying.
 	TriggerProbe Trigger = "probe"
+	// TriggerManualReset indicates a user-triggered static priority reset.
+	TriggerManualReset Trigger = "manual_reset"
 )
 
 // TaskRequest holds parameters for an internal scheduling run.
 type TaskRequest struct {
-	Config          config.Config
-	Trigger         Trigger
-	AuthIndexes     []string
-	PreviewID       string
-	PreviewRequired bool
+	Config      config.Config
+	Trigger     Trigger
+	AuthIndexes []string
 }
 
 // TaskRunner executes a scheduling task.
@@ -80,7 +77,6 @@ type Clock interface {
 type Sleeper interface {
 	Sleep(ctx context.Context, duration time.Duration) error
 }
-
 
 // RunHistoryEntry records the execution outcome of a scheduling run.
 type RunHistoryEntry struct {
@@ -126,7 +122,6 @@ type ConfigField struct {
 	DefaultValue any      `json:"DefaultValue"`
 }
 
-
 // SchedulerPickRequest represents the JSON-RPC request for scheduler.pick.
 type SchedulerPickRequest struct {
 	Provider   string                   `json:"Provider"`
@@ -162,6 +157,7 @@ type SchedulerPickResponse struct {
 	RejectReason    string `json:"reject_reason,omitempty"`
 	RejectCode      string `json:"reject_code,omitempty"`
 }
+
 // Metadata describes non-sensitive plugin information displayed in CPA.
 type Metadata struct {
 	Name             string        `json:"Name"`
@@ -174,10 +170,10 @@ type Metadata struct {
 
 // Options provides injectable dependencies for the runtime.
 type Options struct {
-	Host          host.HostCallbacks
-	Clock         Clock
-	Sleeper       Sleeper
-	Runner        TaskRunner
+	Host    host.HostCallbacks
+	Clock   Clock
+	Sleeper Sleeper
+	Runner  TaskRunner
 	// StateCachePath overrides the startup cache path. It is primarily used
 	// to isolate runtime instances in tests; production callers may leave it
 	// empty to use the configured default path.

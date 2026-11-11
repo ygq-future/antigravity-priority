@@ -5,7 +5,6 @@ const templateScriptHistoryDetails = `        function formatHistoryKind(entry) 
             var trigger = entry && entry.trigger ? entry.trigger : "";
             var k = kind.toLowerCase();
             if (k === "auto_apply" || trigger.toLowerCase() === "auto_apply") return currentLang === "zh-CN" ? "自动调度" : "AUTO SCHEDULE";
-            if (k === "apply" || k === "manual_apply") return currentLang === "zh-CN" ? "立即写回" : "APPLY";
             if (k === "probe") return currentLang === "zh-CN" ? "配额探测" : "PROBE";
             if (k === "reset") return currentLang === "zh-CN" ? "重置优先级" : "RESET";
             return (kind || "RUN").toUpperCase();
@@ -48,9 +47,9 @@ const templateScriptHistoryDetails = `        function formatHistoryKind(entry) 
 						skipped: entry.skipped || 0
 					};
 					if (isAutoSchedule) {
-						showModal("auto-history", detailResult, true);
+						showModal("auto-history", detailResult);
 					} else {
-						showModal("probe-history", detailResult, true);
+						showModal("probe-history", detailResult);
 					}
                 }).catch(function(err) {
                     showToast(err.message || (currentLang === "zh-CN" ? "读取探测明细失败" : "Failed to load probe details"), "error");
@@ -75,7 +74,7 @@ const templateScriptHistoryDetails = `        function formatHistoryKind(entry) 
             };
 
             // Strictly read-only for historical detail modal
-            showModal("history", result, true);
+            showModal("history", result);
         }
 
 `

@@ -191,7 +191,7 @@ func TestDevHostReturnsBothModelGroupsAndQuotaLifecycle(t *testing.T) {
 	}
 }
 
-func TestDevRuntimeUsesProductionPathForProbeApplyAndManagement(t *testing.T) {
+func TestDevRuntimeUsesProductionPathForProbeAndManagement(t *testing.T) {
 	now := time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
 	clock := &devTestClock{now: now}
 	dev, err := newDevServer(devServerOptions{
@@ -222,19 +222,6 @@ func TestDevRuntimeUsesProductionPathForProbeApplyAndManagement(t *testing.T) {
 		if len(snapshot.Groups[group].Items) != 10 {
 			t.Fatalf("%s item count = %d, want 10", group, len(snapshot.Groups[group].Items))
 		}
-	}
-	if snapshot.PreviewID == "" {
-		t.Fatal("probe did not publish a preview id")
-	}
-	if err := dev.runtime.ManualApplyWithPreview(context.Background(), config.AntigravityModelGroupGemini, nil, snapshot.PreviewID); err != nil {
-		t.Fatalf("manual apply with preview failed: %v", err)
-	}
-	postApplySnapshot, err := dev.runtime.LatestSnapshot(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if postApplySnapshot.PreviewID != "" || len(postApplySnapshot.Groups["gemini"].Changes) != 0 {
-		t.Fatalf("post-apply snapshot = %#v; want consumed preview and no pending changes", postApplySnapshot)
 	}
 
 	samples, err := dev.runtime.GetSamples(context.Background(), "dev-auth-001", "gemini")
@@ -274,36 +261,6 @@ func TestDevRuntimeUsesProductionPathForProbeApplyAndManagement(t *testing.T) {
 	}
 	if last, ok := scheduler["last_auto_apply_at"].(time.Time); !ok || last.IsZero() {
 		t.Fatalf("auto scheduler did not record a run: %#v", scheduler["last_auto_apply_at"])
-	}
-
-	if err := dev.runtime.Probe(context.Background(), config.AntigravityModelGroupGemini, nil); err != nil {
-		t.Fatal(err)
-	}
-	previewSnapshot, err := dev.runtime.LatestSnapshot(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := dev.runtime.ManualApplyWithPreview(context.Background(), config.AntigravityModelGroupGemini, nil, previewSnapshot.PreviewID); err != nil {
-		t.Fatal(err)
-	}
-	files, err := dev.host.ListAuthFiles(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, file := range files {
-		document, err := dev.host.GetAuth(context.Background(), file.AuthIndex)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var raw struct {
-			Priority *int `json:"priority"`
-		}
-		if err := json.Unmarshal(document.JSON, &raw); err != nil {
-			t.Fatal(err)
-		}
-		if raw.Priority == nil {
-			t.Fatalf("apply did not write priority for %s: %s", file.AuthIndex, document.JSON)
-		}
 	}
 
 	server := httptest.NewServer(dev.runtime.ManagementHandler())

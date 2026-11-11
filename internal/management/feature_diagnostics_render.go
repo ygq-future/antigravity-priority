@@ -356,7 +356,7 @@ const templateScriptDiagnostics = `        let latestDiagnostics = null;
                     ? item.current.priority
                     : "-";
                 var target = diagTargetPriority(item);
-                var reason = String(item.reason || "-").replace(/(^|;\s*)historical:\s*/g, "$1");
+                var reason = String(item.reason || "-");
                 var credDisplayName = item.email || "Credential";
                 var maskedCredential = formatMaskedEmail(credDisplayName);
                 html += "<tr>" +

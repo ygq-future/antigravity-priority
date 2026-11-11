@@ -45,16 +45,9 @@ func CompareHealthyCandidates(left PlanItem, right PlanItem) int {
 	return cmp.Compare(left.Credential.AuthIndex, right.Credential.AuthIndex)
 }
 
-
 // SortPlanItems orders items deterministically for the final Plan representation.
 func SortPlanItems(items []PlanItem) {
 	slices.SortStableFunc(items, func(left PlanItem, right PlanItem) int {
-		if left.EvidenceFresh && !right.EvidenceFresh {
-			return -1
-		}
-		if !left.EvidenceFresh && right.EvidenceFresh {
-			return 1
-		}
 		if left.Priority != right.Priority {
 			return right.Priority - left.Priority
 		}
@@ -67,4 +60,3 @@ func SortPlanItems(items []PlanItem) {
 		return cmp.Compare(left.Credential.AuthIndex, right.Credential.AuthIndex)
 	})
 }
-

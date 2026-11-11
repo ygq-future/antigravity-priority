@@ -2,11 +2,8 @@ package runtime
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -28,7 +25,7 @@ const (
 )
 
 func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) error {
-	if !request.Config.Enabled && request.Trigger != TriggerManualApply {
+	if !request.Config.Enabled {
 		return nil
 	}
 	if request.Trigger == TriggerAutoApply && !request.Config.AutoApply {
@@ -70,64 +67,46 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 		return err
 	}
 
-	var preview *quotaPreview
-	if request.Trigger == TriggerManualApply && request.PreviewRequired {
-		preview, err = r.previewForApply(request)
-		if err != nil {
+	var evidence collectedEvidence
+	forceProbe := request.Trigger == TriggerProbe || request.Trigger == TriggerAutoApply
+	targetedSingleAuth := len(request.AuthIndexes) > 0
+	evidence, err = r.collectEvidenceForTrigger(ctx, collectInput{
+		client:             client,
+		store:              store,
+		credentials:        probeCredentials,
+		authMaterials:      probeAuthMaterials,
+		now:                now,
+		cacheTTL:           defaultProbeCacheTTL,
+		forceProbe:         forceProbe,
+		targetedSingleAuth: targetedSingleAuth,
+		maxConcurrency:     request.Config.MaxConcurrency,
+		modelGroup:         request.Config.AntigravityModelGroup,
+		sampleCapacity:     request.Config.QuotaSampleCapacity,
+	}, request.Trigger)
+	if err != nil {
+		return err
+	}
+	r.setLastProbeOutcomes(probeOutcomes(evidence.Probes, evidence.ByGroup))
+
+	if len(evidence.RateLimited) > 0 {
+		if err := store.SaveStateAtomic(ctx); err != nil {
 			return err
 		}
-	}
-
-	var evidence collectedEvidence
-	if preview != nil {
-		evidence = collectedEvidence{
-			RoundID:      preview.ID,
-			ByGroup:      cloneEvidenceByGroup(preview.EvidenceByGroup),
-			Observations: nil,
+		for authIndex, modelGroup := range evidence.RateLimited {
+			if err := r.observe429(ctx, authIndex, modelGroup, "", false); err != nil {
+				return err
+			}
+		}
+		store, err = state.Load(ctx, cachePath)
+		if err != nil {
+			return err
 		}
 	} else {
-		forceProbe := request.Trigger == TriggerProbe || request.Trigger == TriggerAutoApply
-		targetedSingleAuth := len(request.AuthIndexes) > 0
-		evidence, err = r.collectEvidenceForTrigger(ctx, collectInput{
-			client:             client,
-			store:              store,
-			credentials:        probeCredentials,
-			authMaterials:      probeAuthMaterials,
-			now:                now,
-			cacheTTL:           defaultProbeCacheTTL,
-			forceProbe:         forceProbe,
-			targetedSingleAuth: targetedSingleAuth,
-			maxConcurrency:     request.Config.MaxConcurrency,
-			modelGroup:         request.Config.AntigravityModelGroup,
-			sampleCapacity:     request.Config.QuotaSampleCapacity,
-		}, request.Trigger)
-		if err != nil {
+		if err := store.SaveStateAtomic(ctx); err != nil {
 			return err
 		}
-		r.setLastProbeOutcomes(probeOutcomes(evidence.Probes, evidence.ByGroup))
 	}
-
-	if preview == nil {
-		if len(evidence.RateLimited) > 0 {
-			if err := store.SaveStateAtomic(ctx); err != nil {
-				return err
-			}
-			for authIndex, modelGroup := range evidence.RateLimited {
-				if err := r.observe429(ctx, authIndex, modelGroup, "", false); err != nil {
-					return err
-				}
-			}
-			store, err = state.Load(ctx, cachePath)
-			if err != nil {
-				return err
-			}
-		} else {
-			if err := store.SaveStateAtomic(ctx); err != nil {
-				return err
-			}
-		}
-	}
-	if preview == nil && (request.Config.Warmup.GeminiEnabled || request.Config.Warmup.ClaudeEnabled) {
+	if request.Config.Warmup.GeminiEnabled || request.Config.Warmup.ClaudeEnabled {
 		disabledAuth := make(map[string]struct{})
 		for _, c := range allCredentials {
 			if c.Disabled {
@@ -148,26 +127,10 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 	if err != nil {
 		return err
 	}
-	plan := projection.ControlPlan
 	primarySnapshot := projection.ControlSnapshot
-	if len(request.AuthIndexes) > 0 {
-		plan.Changes = filterChangesByAuthIndex(plan.Changes, request.AuthIndexes)
-	}
-	if preview != nil && preview.HostFingerprint != hostFingerprint(primarySnapshot.Items) {
-		return fmt.Errorf("quota preview %q is stale: CPA host state changed; refresh quota before applying", preview.ID)
-	}
 
-	// Probe-only: evidence collected, dual snapshot updated, no apply executed (REQ-04).
+	// Probe-only: evidence collected and dual snapshot updated; no Host write occurs.
 	if request.Trigger == TriggerProbe {
-		previewID := evidence.RoundID
-		r.setQuotaPreview(quotaPreview{
-			ID:              previewID,
-			ModelGroup:      request.Config.AntigravityModelGroup,
-			AuthScope:       authScopeKey(request.AuthIndexes),
-			HostFingerprint: hostFingerprint(primarySnapshot.Items),
-			EvidenceByGroup: projectionEffectiveEvidence(store, allCredentials, evidence.ByGroup, request),
-		})
-		projection.Snapshot.PreviewID = previewID
 		r.setDualSnapshot(projection.Snapshot)
 		result := apply.Result{Snapshot: primarySnapshot}
 		audit := fmt.Sprintf("probe completed: %d probe observations", evidence.Probed)
@@ -189,8 +152,6 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 
 	// AutoApply: background quota probe and calibration only. Never writes back priorities to host files.
 	if request.Trigger == TriggerAutoApply {
-		projection.Snapshot.PreviewID = ""
-		r.clearQuotaPreview()
 		r.setDualSnapshot(projection.Snapshot)
 		result := apply.Result{Snapshot: primarySnapshot}
 		summary := fmt.Sprintf("auto schedule probed=%d; in-memory routing tables calibrated", evidence.Probed)
@@ -207,119 +168,8 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 		return projectErr
 	}
 
-	if len(plan.Changes) == 0 {
-		projection.Snapshot.PreviewID = ""
-		r.clearQuotaPreview()
-		r.setDualSnapshot(projection.Snapshot)
-		result := apply.Result{Snapshot: primarySnapshot}
-		summary := fmt.Sprintf("all %d credentials in sync, no changes required", len(primarySnapshot.Items))
-		_, projectErr := r.projectSnapshot(ctx, store, result, summary)
-		r.routingMu.Lock()
-		r.recomputeRoutingTablesLocked(now, allCredentials)
-		r.routingMu.Unlock()
-		return projectErr
-	}
-
-	transition := apply.NewHostTransition(client)
-	result, err := apply.ExecutePlan(ctx, transition, plan, true)
-	if err != nil {
-		return err
-	}
-	postApplyProjection, err := projectCurrentHost(ctx, client, request, evidence.ByGroup, store, now)
-	if err != nil {
-		if store != nil {
-			_ = store.SaveStateAtomic(ctx)
-		}
-		return fmt.Errorf("reconcile Host after apply: %w", err)
-	}
-	postApplyProjection.Snapshot.PreviewID = ""
-	r.clearQuotaPreview()
-	r.setDualSnapshot(postApplyProjection.Snapshot)
-
-	summary := resultSummary("apply", result)
-	_, projectErr := r.projectRun(ctx, store, result, summary, RunHistoryEntry{
-		Kind:     KindApply,
-		Trigger:  string(request.Trigger),
-		Message:  summary,
-		Snapshot: &primarySnapshot,
-	})
-	r.routingMu.Lock()
-	r.recomputeRoutingTablesLocked(now, allCredentials)
-	r.routingMu.Unlock()
-	return projectErr
-}
-
-func (r *Runtime) previewForApply(request TaskRequest) (*quotaPreview, error) {
-	previewID := strings.TrimSpace(request.PreviewID)
-	if previewID == "" {
-		return nil, errors.New("no pending quota preview; refresh quota before applying")
-	}
-	preview := r.currentQuotaPreview()
-	if preview == nil || preview.ID != previewID {
-		return nil, fmt.Errorf("quota preview %q is unavailable; refresh quota before applying", previewID)
-	}
-	if preview.ModelGroup != request.Config.AntigravityModelGroup {
-		return nil, fmt.Errorf("quota preview %q belongs to another control model group; refresh quota before applying", previewID)
-	}
-	if preview.AuthScope != authScopeKey(request.AuthIndexes) {
-		return nil, fmt.Errorf("quota preview %q belongs to another credential scope; refresh quota before applying", previewID)
-	}
-	if _, ok := preview.EvidenceByGroup[request.Config.AntigravityModelGroup]; !ok {
-		return nil, fmt.Errorf("quota preview %q has no evidence for the control model group; refresh quota before applying", previewID)
-	}
-	return preview, nil
-}
-
-func cloneEvidenceByGroup(source map[config.AntigravityModelGroup]evidence.Result) map[config.AntigravityModelGroup]evidence.Result {
-	cloned := make(map[config.AntigravityModelGroup]evidence.Result, len(source))
-	for group, result := range source {
-		cloned[group] = cloneEvidence(result)
-	}
-	return cloned
-}
-
-func authScopeKey(authIndexes []string) string {
-	if len(authIndexes) == 0 {
-		return "*"
-	}
-	unique := make(map[string]struct{}, len(authIndexes))
-	for _, authIndex := range authIndexes {
-		if trimmed := strings.TrimSpace(authIndex); trimmed != "" {
-			unique[trimmed] = struct{}{}
-		}
-	}
-	values := make([]string, 0, len(unique))
-	for authIndex := range unique {
-		values = append(values, authIndex)
-	}
-	sort.Strings(values)
-	return strings.Join(values, ",")
-}
-
-func hostFingerprint(items []apply.SnapshotItem) string {
-	type hostState struct {
-		AuthIndex       string
-		Priority        int
-		PriorityMissing bool
-		Disabled        bool
-	}
-	states := make([]hostState, 0, len(items))
-	for _, item := range items {
-		states = append(states, hostState{
-			AuthIndex:       item.Identity.AuthIndex,
-			Priority:        item.Current.Priority,
-			PriorityMissing: item.Current.PriorityMissing,
-			Disabled:        item.Current.Disabled,
-		})
-	}
-	sort.Slice(states, func(left, right int) bool {
-		return states[left].AuthIndex < states[right].AuthIndex
-	})
-	hash := sha256.New()
-	for _, state := range states {
-		_, _ = fmt.Fprintf(hash, "%s\x00%d\x00%t\x00%t\n", state.AuthIndex, state.Priority, state.PriorityMissing, state.Disabled)
-	}
-	return hex.EncodeToString(hash.Sum(nil))
+	// Unknown triggers perform no Host mutation.
+	return nil
 }
 
 func projectCurrentHost(
@@ -481,23 +331,6 @@ func projectionEffectiveEvidence(
 		merged[group] = res
 	}
 	return merged
-}
-
-func filterChangesByAuthIndex(changes []priority.Change, authIndexes []string) []priority.Change {
-	if len(authIndexes) == 0 {
-		return changes
-	}
-	allowed := make(map[string]struct{}, len(authIndexes))
-	for _, idx := range authIndexes {
-		allowed[idx] = struct{}{}
-	}
-	filtered := make([]priority.Change, 0, len(changes))
-	for _, c := range changes {
-		if _, ok := allowed[c.Credential.AuthIndex]; ok {
-			filtered = append(filtered, c)
-		}
-	}
-	return filtered
 }
 
 func filterCredentialsByAuthIndex(credentials []core.Credential, authIndexes []string) []core.Credential {

@@ -174,7 +174,6 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
             const groups = (latestSnapshot && latestSnapshot.groups) || {};
             const groupData = groups[pool] || groups[activeGroup] || groups["gemini"] || {};
             const rawItems = groupData.items || [];
-            const pendingAuthIndexes = new Set((groupData.changes || []).map(change => change.auth_index));
 
             const activeItems = [];
             const bypassedItems = [];

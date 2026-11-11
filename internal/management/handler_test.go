@@ -42,7 +42,6 @@ func (m *mockRunner) Reset(ctx context.Context) (map[string]any, error) {
 	return map[string]any{"ok": true, "reset_count": 0}, nil
 }
 
-
 func (m *mockRunner) LatestSnapshot(ctx context.Context) (apply.DualGroupSnapshot, error) {
 	if m.snapshotFunc != nil {
 		return m.snapshotFunc(ctx)
@@ -142,9 +141,6 @@ func TestHandler_Run_Probe_Success(t *testing.T) {
 	runner := &mockRunner{
 		runFunc: func(ctx context.Context, req management.RunRequest) (apply.Result, error) {
 			called = true
-			if req.Mode != "probe" {
-				t.Errorf("expected mode 'probe', got %q", req.Mode)
-			}
 			if req.AntigravityModelGroup != config.AntigravityModelGroupClaudeGPT {
 				t.Errorf("expected model group 'claude_gpt', got %q", req.AntigravityModelGroup)
 			}
@@ -190,38 +186,6 @@ func TestHandler_Run_Probe_Success(t *testing.T) {
 	}
 }
 
-func TestHandler_Run_Apply_Success(t *testing.T) {
-	called := false
-	runner := &mockRunner{
-		runFunc: func(ctx context.Context, req management.RunRequest) (apply.Result, error) {
-			called = true
-			if req.Mode != "apply" {
-				t.Errorf("expected mode 'apply', got %q", req.Mode)
-			}
-			if req.PreviewID != "preview-123" {
-				t.Errorf("expected preview id preview-123, got %q", req.PreviewID)
-			}
-			return apply.Result{
-				Attempted: 1,
-				Succeeded: 1,
-			}, nil
-		},
-	}
-
-	handler := management.NewHandler(runner)
-	req := httptest.NewRequest(http.MethodPost, "/run?mode=apply&auth_index=auth_1&preview_id=preview-123", nil)
-	rec := httptest.NewRecorder()
-
-	handler.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d", rec.Code)
-	}
-	if !called {
-		t.Errorf("expected runner.Run to be called")
-	}
-}
-
 func TestHandler_Run_InvalidMode(t *testing.T) {
 	handler := management.NewHandler(&mockRunner{})
 	req := httptest.NewRequest(http.MethodPost, "/run?mode=invalid", nil)
@@ -236,7 +200,7 @@ func TestHandler_Run_InvalidMode(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &errResp); err != nil {
 		t.Fatalf("unmarshal error resp failed: %v", err)
 	}
-	if errResp["error"] != "invalid mode: must be 'apply' or 'probe'" {
+	if errResp["error"] != "invalid mode: must be 'probe'" {
 		t.Errorf("unexpected error message: %q", errResp["error"])
 	}
 }
@@ -265,7 +229,7 @@ func TestHandler_Run_ConcurrencyConflict(t *testing.T) {
 	<-doneChan
 
 	// Second request should conflict
-	req2 := httptest.NewRequest(http.MethodPost, "/run?mode=apply", nil)
+	req2 := httptest.NewRequest(http.MethodPost, "/run?mode=probe", nil)
 	rec2 := httptest.NewRecorder()
 	handler.ServeHTTP(rec2, req2)
 
@@ -429,7 +393,7 @@ func TestHandler_RunnerError(t *testing.T) {
 	}
 
 	handler := management.NewHandler(runner)
-	req := httptest.NewRequest(http.MethodPost, "/run?mode=apply", nil)
+	req := httptest.NewRequest(http.MethodPost, "/run?mode=probe", nil)
 	rec := httptest.NewRecorder()
 
 	handler.ServeHTTP(rec, req)
@@ -836,8 +800,8 @@ func TestHandler_RequestHistory_Endpoints(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 	var res struct {
-		OK      bool                       `json:"ok"`
-		Total   int                        `json:"total"`
+		OK      bool                        `json:"ok"`
+		Total   int                         `json:"total"`
 		Records []state.RequestHistoryEntry `json:"records"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil || !res.OK {
@@ -860,7 +824,7 @@ func TestHandler_RequestHistory_Endpoints(t *testing.T) {
 	rec2 := httptest.NewRecorder()
 	handler.ServeHTTP(rec2, req2)
 	var res2 struct {
-		Total   int                        `json:"total"`
+		Total   int                         `json:"total"`
 		Records []state.RequestHistoryEntry `json:"records"`
 	}
 	_ = json.Unmarshal(rec2.Body.Bytes(), &res2)

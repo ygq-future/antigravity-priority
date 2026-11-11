@@ -6,11 +6,11 @@ package management
 // bilingual key during asset movement.
 var overviewTranslationKeys = []string{
 	"kpiTotal", "kpiBoosted", "kpiBoostedDesc", "kpiDepleted", "kpiDepletedDesc", "kpiLastAudit",
-	"labelModelGroup", "optGemini", "optClaudeGPT", "btnRefresh", "btnApply", "btnReset", "btnProbe", "btnSamples", "btnTier",
+	"labelModelGroup", "optGemini", "optClaudeGPT", "btnRefresh", "btnReset", "btnProbe", "btnSamples", "btnTier",
 	"customTierModalTitle", "customTierSelectLabel", "customTierAutoOption", "customTierCustomInput", "customTierExplanation", "btnSaveCustomTier",
 	"samplesModalTitle", "colObservedAt", "colShortRem", "colLongRem", "noSamples", "actualPriority", "targetPriority",
-	"predictedPriority", "pendingApply", "targetChanged", "projectedApplyPreview", "pendingApplyPreview", "manualApplyRecheck", "unsetPriority", "syncSuccess", "confirmReset", "resetSuccess", "loading", "noCreds",
-	"noChanges", "noChangesToApply", "statusActive", "statusBoosted", "statusWeeklyDepleted", "statusShortDepleted",
+	"predictedPriority", "unsetPriority", "syncSuccess", "confirmReset", "resetSuccess", "loading", "noCreds",
+	"noChanges", "statusActive", "statusBoosted", "statusWeeklyDepleted", "statusShortDepleted",
 	"statusFailed", "shortWindow", "longWindow", "argonWindow", "resetIn", "priority", "urgencyLabel", "burnLabel", "running",
 	"scheduleActive", "schedulePaused", "scheduleSleeping", "scheduleDisabled", "predictedBadge", "predictedNote",
 	"probeSuccess", "probeCooldown", "probing", "probingQuotaTitle", "probingQuotaDesc", "syncingQuotaTitle", "syncingQuotaDesc", "resettingTitle", "resettingDesc", "viewDetails", "statusCooldown", "statusDisabled", "btnProbeSingle", "probeSingleSuccess",

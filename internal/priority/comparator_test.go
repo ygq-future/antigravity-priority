@@ -89,59 +89,40 @@ func TestCompareHealthyCandidates(t *testing.T) {
 	})
 }
 
-
 func TestSortPlanItems(t *testing.T) {
 	items := []PlanItem{
 		{
-			Credential: core.Credential{AuthIndex: "unprobed-2"},
+			Credential: core.Credential{AuthIndex: "unprobed"},
 			Priority:   50,
 		},
 		{
-			Credential:    core.Credential{AuthIndex: "fresh-depleted"},
-			Priority:      -1,
-			Disabled:      true,
-			EvidenceFresh: true,
+			Credential: core.Credential{AuthIndex: "hard-depleted"},
+			Priority:   -1,
+			Disabled:   true,
 		},
 		{
-			Credential:    core.Credential{AuthIndex: "fresh-boost-1"},
-			Priority:      999,
-			EvidenceFresh: true,
+			Credential: core.Credential{AuthIndex: "boost-1"},
+			Priority:   999,
 		},
 		{
-			Credential:    core.Credential{AuthIndex: "fresh-boost-2"},
-			Priority:      998,
-			EvidenceFresh: true,
+			Credential: core.Credential{AuthIndex: "boost-2"},
+			Priority:   998,
 		},
 		{
-			Credential:    core.Credential{AuthIndex: "fresh-soft-depleted"},
-			Priority:      -1,
-			Disabled:      false,
-			EvidenceFresh: true,
+			Credential: core.Credential{AuthIndex: "soft-depleted"},
+			Priority:   -1,
+			Disabled:   false,
 		},
 	}
 
 	SortPlanItems(items)
 
-	// Expected order:
-	// 0: fresh-boost-1 (999, fresh)
-	// 1: fresh-boost-2 (998, fresh)
-	// 2: fresh-soft-depleted (-1, fresh, disabled=false)
-	// 3: fresh-depleted (-1, fresh, disabled=true)
-	// 4: unprobed-2 (50, non-fresh)
-	if items[0].Credential.AuthIndex != "fresh-boost-1" {
-		t.Errorf("item[0] = %s; want fresh-boost-1", items[0].Credential.AuthIndex)
+	// Expected order: priority descending, then enabled before disabled,
+	// then AuthIndex ascending.
+	want := []string{"boost-1", "boost-2", "unprobed", "soft-depleted", "hard-depleted"}
+	for index, authIndex := range want {
+		if items[index].Credential.AuthIndex != authIndex {
+			t.Errorf("item[%d] = %s; want %s", index, items[index].Credential.AuthIndex, authIndex)
+		}
 	}
-	if items[1].Credential.AuthIndex != "fresh-boost-2" {
-		t.Errorf("item[1] = %s; want fresh-boost-2", items[1].Credential.AuthIndex)
-	}
-	if items[2].Credential.AuthIndex != "fresh-soft-depleted" {
-		t.Errorf("item[2] = %s; want fresh-soft-depleted", items[2].Credential.AuthIndex)
-	}
-	if items[3].Credential.AuthIndex != "fresh-depleted" {
-		t.Errorf("item[3] = %s; want fresh-depleted", items[3].Credential.AuthIndex)
-	}
-	if items[4].Credential.AuthIndex != "unprobed-2" {
-		t.Errorf("item[4] = %s; want unprobed-2", items[4].Credential.AuthIndex)
-	}
-
 }

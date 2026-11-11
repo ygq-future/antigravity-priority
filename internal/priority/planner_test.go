@@ -2,7 +2,6 @@ package priority
 
 import (
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 
@@ -296,9 +295,6 @@ func TestPlanFreshOnly(t *testing.T) {
 		if !item.Disabled || item.Priority != 100 {
 			t.Errorf("expected manually disabled account to keep host state, got %+v", item)
 		}
-		if item.EvidenceFresh {
-			t.Errorf("manually disabled account must not expose fresh planning evidence: %+v", item)
-		}
 		if item.Reason != ReasonDisabledOnHost {
 			t.Errorf("expected reason %q, got %q", ReasonDisabledOnHost, item.Reason)
 		}
@@ -324,11 +320,11 @@ func TestPlanFreshOnly(t *testing.T) {
 		evidence := []QuotaEvidence{
 			{
 				// 0% 7d quota: weekly depleted, priority=-1, disabled=false
-				AuthIndex:            "weekly-below-threshold",
-				LongWindowRemaining:  int64Ptr(0),
-				LongWindowResetAt:    &reset7d,
-				ShortWindowResetAt:   &reset5h,
-				CycleBurnRate:        0.15,
+				AuthIndex:           "weekly-below-threshold",
+				LongWindowRemaining: int64Ptr(0),
+				LongWindowResetAt:   &reset7d,
+				ShortWindowResetAt:  &reset5h,
+				CycleBurnRate:       0.15,
 			},
 			{
 				// 15% 7d quota (>= 10% threshold) & 80% 5h: healthy, priority=100, disabled=false
@@ -465,7 +461,7 @@ func TestPlanFreshOnly(t *testing.T) {
 		}
 	})
 
-	t.Run("acceptance: priority uniqueness and unprobed peer ForceWrite tagging", func(t *testing.T) {
+	t.Run("acceptance: priority uniqueness and unprobed peer stability", func(t *testing.T) {
 		creds := []core.Credential{
 			{AuthIndex: "fresh-boost", Priority: 50, Disabled: false},
 			{AuthIndex: "fresh-reg", Priority: 50, Disabled: false},
@@ -516,13 +512,10 @@ func TestPlanFreshOnly(t *testing.T) {
 			t.Errorf("unprobed-peer-collision priority = %d; want <= 100", unprobedColl.Priority)
 		}
 
-		// unprobed-peer-safe had priority 70 -> stays 70, ForceWrite = false
+		// unprobed-peer-safe had priority 70 -> stays 70
 		unprobedSafe := itemMap["unprobed-peer-safe"]
 		if unprobedSafe.Priority != 70 {
 			t.Errorf("unprobed-peer-safe priority = %d; want 70", unprobedSafe.Priority)
-		}
-		if unprobedSafe.ForceWrite {
-			t.Errorf("unprobed-peer-safe ForceWrite = true; want false")
 		}
 	})
 
@@ -588,35 +581,36 @@ func TestPlanFreshOnly(t *testing.T) {
 		}
 	})
 
-	t.Run("historical evidence is read-only", func(t *testing.T) {
+	t.Run("persisted historical evidence plans from stored quota", func(t *testing.T) {
 		creds := []core.Credential{
-			{AuthIndex: "stale-cred", Priority: 50, Disabled: false},
+			{AuthIndex: "stored-cred", Priority: 50, Disabled: false},
 		}
-
+		reset7d := now.Add(100 * time.Hour)
+		reset5h := now.Add(3 * time.Hour)
 		evidence := []QuotaEvidence{
 			{
-				AuthIndex: "stale-cred",
+				AuthIndex:            "stored-cred",
+				LongWindowRemaining:  int64Ptr(80),
+				LongWindowResetAt:    &reset7d,
+				ShortWindowRemaining: int64Ptr(80),
+				ShortWindowResetAt:   &reset5h,
 			},
 		}
 
 		plan := PlanWithEvidence(creds, plannerEvidence{Historical: evidence}, defaultOptions)
 
-		if len(plan.Changes) != 0 {
-			t.Errorf("expected 0 changes for stale evidence, got %d", len(plan.Changes))
-		}
-
 		if len(plan.Items) != 1 {
 			t.Fatalf("expected 1 item, got %d", len(plan.Items))
 		}
 		item := plan.Items[0]
-		if item.EvidenceFresh {
-			t.Errorf("historical evidence was marked fresh")
+		if item.Disabled || item.Priority != 100 {
+			t.Errorf("historical evidence should plan a healthy target: %#v", item)
 		}
-		if item.Disabled || item.Priority == -1 {
-			t.Errorf("historical evidence should not disable credential: %#v", item)
+		if item.Reason != ReasonFreshRemainingPositive {
+			t.Errorf("historical evidence reason = %q; want %q", item.Reason, ReasonFreshRemainingPositive)
 		}
-		if !strings.HasPrefix(item.Reason, "historical: ") {
-			t.Errorf("historical evidence reason = %q; want historical diagnostic", item.Reason)
+		if len(plan.Changes) != 1 || plan.Changes[0].Credential.AuthIndex != "stored-cred" {
+			t.Errorf("historical evidence change projection = %#v; want one target diff", plan.Changes)
 		}
 	})
 
@@ -710,7 +704,7 @@ func TestPlanFreshOnly(t *testing.T) {
 		if unprobed.Priority != 999 {
 			t.Errorf("unprobed-legacy-999 priority = %d; want 999", unprobed.Priority)
 		}
-		if unprobed.ForceWrite || len(plan.Changes) != 1 {
+		if len(plan.Changes) != 1 {
 			t.Errorf("unprobed-legacy-999 gained write authority: item=%#v plan=%#v", unprobed, plan.Changes)
 		}
 	})
@@ -775,53 +769,59 @@ func TestPlanFreshOnly(t *testing.T) {
 	})
 }
 
-func TestPlanWithEvidence_MixedRoundKeepsNonFreshCredentialsReadOnly(t *testing.T) {
+func TestPlanWithEvidence_FreshEvidenceTakesPrecedenceOverHistorical(t *testing.T) {
 	now := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
 	reset5h := now.Add(4 * time.Hour)
 	reset7d := now.Add(100 * time.Hour)
 	credentials := []core.Credential{
 		{AuthIndex: "fresh", Priority: 50},
 		{AuthIndex: "historical", Priority: 50},
+		{AuthIndex: "both", Priority: 50},
 		{AuthIndex: "failed", Priority: 70},
 	}
-	fresh := QuotaEvidence{
-		AuthIndex:            "fresh",
+	healthy := QuotaEvidence{
 		LongWindowRemaining:  int64Ptr(80),
 		LongWindowResetAt:    &reset7d,
 		ShortWindowRemaining: int64Ptr(80),
 		ShortWindowResetAt:   &reset5h,
 	}
-	historical := QuotaEvidence{
-		AuthIndex:            "historical",
+	fresh := healthy
+	fresh.AuthIndex = "fresh"
+	historical := healthy
+	historical.AuthIndex = "historical"
+	depleted := QuotaEvidence{
+		AuthIndex:            "both",
 		LongWindowRemaining:  int64Ptr(80),
 		LongWindowResetAt:    &reset7d,
-		ShortWindowRemaining: int64Ptr(80),
+		ShortWindowRemaining: int64Ptr(0),
 		ShortWindowResetAt:   &reset5h,
 	}
+	preferred := healthy
+	preferred.AuthIndex = "both"
 
 	plan := PlanWithEvidence(credentials, plannerEvidence{
-		Fresh:      []QuotaEvidence{fresh},
-		Historical: []QuotaEvidence{historical},
+		Fresh:      []QuotaEvidence{fresh, preferred},
+		Historical: []QuotaEvidence{historical, depleted},
 	}, Options{Now: now, NormalStartPriority: 100, MinChange: 1})
 
 	items := make(map[string]PlanItem, len(plan.Items))
 	for _, item := range plan.Items {
 		items[item.Credential.AuthIndex] = item
 	}
-	if !items["fresh"].EvidenceFresh || items["fresh"].Priority != 100 {
-		t.Fatalf("fresh item = %#v; want fresh scheduled target", items["fresh"])
+	if items["fresh"].Priority != 100 {
+		t.Fatalf("fresh item = %#v; want scheduled target 100", items["fresh"])
 	}
-	if items["historical"].EvidenceFresh || items["historical"].Priority != 100 {
-		t.Fatalf("historical item = %#v; want read-only predicted target", items["historical"])
+	if items["historical"].Priority != 100 {
+		t.Fatalf("historical item = %#v; want stored-quota target 100", items["historical"])
 	}
-	if !strings.HasPrefix(items["historical"].Reason, "historical: ") {
-		t.Fatalf("historical reason = %q; want historical diagnostic", items["historical"].Reason)
+	if items["both"].Priority != 100 {
+		t.Fatalf("precedence item = %#v; fresh evidence must override depleted historical evidence", items["both"])
 	}
-	if items["failed"].EvidenceFresh || items["failed"].Priority != 70 || items["failed"].Disabled {
+	if items["failed"].Priority != 70 || items["failed"].Disabled {
 		t.Fatalf("failed item changed without evidence: %#v", items["failed"])
 	}
-	if len(plan.Changes) != 1 || plan.Changes[0].Credential.AuthIndex != "fresh" || !plan.Changes[0].EvidenceFresh {
-		t.Fatalf("mixed plan changes = %#v; want only fresh write-qualified change", plan.Changes)
+	if len(plan.Changes) != 3 {
+		t.Fatalf("change projection = %#v; want the three evidenced credentials", plan.Changes)
 	}
 }
 

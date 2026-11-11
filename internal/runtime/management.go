@@ -239,21 +239,11 @@ func envelopeManagement(result any, err error) []byte {
 }
 
 func (r managementRunner) Run(ctx context.Context, request management.RunRequest) (apply.Result, error) {
-	if request.Mode == "apply" {
-		if err := r.runtime.ManualApplyWithPreview(ctx, request.AntigravityModelGroup, request.AuthIndexes, request.PreviewID); err != nil {
-			return apply.Result{}, err
-		}
-		result, _ := r.runtime.currentRunSnapshot()
-		return result, nil
+	if err := r.runtime.Probe(ctx, request.AntigravityModelGroup, request.AuthIndexes); err != nil {
+		return apply.Result{}, err
 	}
-	if request.Mode == "probe" {
-		if err := r.runtime.Probe(ctx, request.AntigravityModelGroup, request.AuthIndexes); err != nil {
-			return apply.Result{}, err
-		}
-		result, _ := r.runtime.currentRunSnapshot()
-		return result, nil
-	}
-	return apply.Result{}, fmt.Errorf("unsupported run mode: %s", request.Mode)
+	result, _ := r.runtime.currentRunSnapshot()
+	return result, nil
 }
 
 func (r managementRunner) Reset(ctx context.Context) (map[string]any, error) {

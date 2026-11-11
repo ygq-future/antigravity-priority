@@ -10,9 +10,7 @@ import (
 	"testing"
 
 	"antigravity-priority/internal/apply"
-	"antigravity-priority/internal/core"
 	"antigravity-priority/internal/host"
-	"antigravity-priority/internal/priority"
 )
 
 type documentFixture struct {
@@ -57,7 +55,9 @@ func (f *documentFixture) SaveAuth(context.Context, string, json.RawMessage) err
 func (f *documentFixture) HTTPDo(context.Context, host.HTTPRequest) (host.HTTPResponse, error) {
 	return host.HTTPResponse{}, nil
 }
-func (f *documentFixture) ListAuthModels(context.Context) ([]host.AuthModelsEntry, error) { return nil, nil }
+func (f *documentFixture) ListAuthModels(context.Context) ([]host.AuthModelsEntry, error) {
+	return nil, nil
+}
 
 type missingIdentityStore struct{ host.API }
 
@@ -214,35 +214,4 @@ func TestHostTransition_SetUnsetAndCancellationSemantics(t *testing.T) {
 	if err != nil || result.Details[0].Outcome != apply.OutcomeCommitted {
 		t.Fatalf("post-commit cancellation negated committed state: %#v, %v", result, err)
 	}
-}
-
-func TestExecutePlan_UsesTransitionAndDerivedCounters(t *testing.T) {
-	fixture, client := newDocumentFixture(t, map[string]string{"idx-1": `{"priority":10,"disabled":false}`})
-	plan := priority.Plan{
-		Items: []priority.PlanItem{
-			{Credential: core.Credential{AuthIndex: "idx-1", Name: "credential-idx-1", Priority: 10, Disabled: false}, Priority: 20, Disabled: false, EvidenceFresh: true, Reason: "fresh"},
-			{Credential: core.Credential{AuthIndex: "idx-2", Name: "skipped", Priority: 30}, Priority: 30, Disabled: false, EvidenceFresh: false, Reason: priority.ReasonKeepCurrentState},
-		},
-		Changes: []priority.Change{{Credential: core.Credential{AuthIndex: "idx-1", Name: "credential-idx-1", Priority: 10, Disabled: false}, Priority: 20, Disabled: false, EvidenceFresh: true, Reason: "fresh"}},
-	}
-	result, err := apply.Apply(context.Background(), apply.Request{Transition: apply.NewHostTransition(client), Plan: plan, ReportSkippedPlan: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Succeeded != 1 || result.Skipped != 1 || result.Transitions.Totals.Committed != 1 {
-		t.Fatalf("unexpected plan projection: %#v", result)
-	}
-	if result.Record.Status != apply.RecordNotAttempted || strings.Contains(string(mustJSON(t, result)), "token") {
-		t.Fatalf("unexpected result projection: %#v", result)
-	}
-	_ = fixture
-}
-
-func mustJSON(t *testing.T, value any) []byte {
-	t.Helper()
-	data, err := json.Marshal(value)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return data
 }

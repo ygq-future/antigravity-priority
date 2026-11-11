@@ -32,7 +32,7 @@
 
 1. **核心功能聚焦原则**：
    - 概览仅保留高阶核心能力（如 Antigravity 双窗口调度、Dynamic Boost 提权、Weekly Urgency 轮转、自适应学习率、自愈式软降级、UI 动态配置中心、双主题仪表盘）；
-   - **严禁过度展开技术细节**（无需单独罗列如“复用 CPA 宿主链路”、“新鲜证据门禁”、“两阶段纯内存计算”等开发层面的细节优化）。
+   - **严禁过度展开技术细节**（无需单独罗列如“复用 CPA 宿主链路”、“两阶段纯内存计算”等开发层面的细节优化）。
 2. **纯净化原则（无内部研发代号）**：
    - **严禁在 `README.md`、`README.en.md` 和 Release Notes 中暴露 `(REQ-xx)` 内部研发标签**。
 
@@ -70,31 +70,40 @@
 本地完成代码后必须严格按以下顺序执行，不能用 `go vet` 替代 `golangci-lint`：
 
 ```bash
-# 1. Lint（必须使用与 release workflow 一致的 golangci-lint v2.12.2）
+# 1. gopls 提交门禁（扫描暂存区新增/改动的 Go 文件，要求零 warning / hint）
+scripts/gopls-gate.sh
+
+# 2. Lint（必须使用与 release workflow 一致的 golangci-lint v2.12.2）
 golangci-lint run --timeout=5m
 
-# 2. 单元测试
+# 3. 单元测试
 go test ./...
 ```
+
+> **gopls 门禁安装**：新克隆仓库后执行一次 `scripts/gopls-gate.sh --install-hook`，即可在 `git commit` 时自动对本次新增/改动的 Go 文件执行 `gopls check -severity=hint`；任何 warning 或语法糖建议都会阻断提交。手动复核指定文件：`scripts/gopls-gate.sh <file>...`。
 
 ### 4.2 提交与发布前完整验证
 
 准备提交、创建版本标签或发布 Release 前，必须重新执行 lint，然后执行以下完整验证命令：
 
 ```bash
-# 1. Lint（必须使用与 release workflow 一致的 golangci-lint v2.12.2）
+# 1. gopls 门禁（暂存区新增/改动文件；发布前可对版本区间全量复核）
+scripts/gopls-gate.sh
+scripts/gopls-gate.sh $(git diff --name-only <last-tag> -- '*.go')
+
+# 2. Lint（必须使用与 release workflow 一致的 golangci-lint v2.12.2）
 golangci-lint run --timeout=5m
 
-# 2. 编译自检（确保所有包与子模块无语法/类型错误）
+# 3. 编译自检（确保所有包与子模块无语法/类型错误）
 go build ./...
 
-# 3. 基础静态代码分析
+# 4. 基础静态代码分析
 go vet ./...
 
-# 4. 完整单元测试（默认不带 -v，极简输出节省 token；仅测试失败时自动打印堆栈）
+# 5. 完整单元测试（默认不带 -v，极简输出节省 token；仅测试失败时自动打印堆栈）
 go test ./...
 
-# 5. 数据竞争检测（确保并发调度、探针协程池与缓存读写零 race condition）
+# 6. 数据竞争检测（确保并发调度、探针协程池与缓存读写零 race condition）
 go test -race ./...
 ```
 
@@ -121,11 +130,13 @@ go test -race ./...
          │
          ▼
 [2. 功能完成后的本地验证]
+   ├─ scripts/gopls-gate.sh   (新增/改动 Go 文件零 warning / hint)
    ├─ golangci-lint run --timeout=5m
    └─ go test ./...
          │
          ▼
 [3. 执行提交与发布前完整质量自检]
+   ├─ scripts/gopls-gate.sh
    ├─ 再次执行 golangci-lint run --timeout=5m
    ├─ go build ./...
    ├─ go vet ./...
