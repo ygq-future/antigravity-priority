@@ -4,7 +4,7 @@ const templateScriptLiveUI = `        function updateAllCountdowns() {
             document.querySelectorAll(".meter-countdown[data-reset-time]").forEach(function(el) {
                 var resetTime = el.getAttribute("data-reset-time");
                 if (resetTime) {
-                    el.textContent = formatCountdown(resetTime);
+                    el.textContent = formatCountdown(resetTime, el.getAttribute("data-expiry-mode") || "");
                 }
             });
 

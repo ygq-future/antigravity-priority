@@ -173,6 +173,67 @@ func TestStatusHTML_JavaScriptSyntax(t *testing.T) {
 	}
 }
 
+func TestQuotaCountdownExpirySemantics(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not available; quota countdown behavior is checked in the Node-enabled verification environment")
+	}
+
+	harness := `var currentLang = "zh-CN";
+` + templateScriptOverviewReset + templateScriptLiveUI + `
+function assert(cond, msg) {
+    if (!cond) {
+        console.error(msg);
+        process.exit(1);
+    }
+}
+
+var now = Date.now();
+var past = new Date(now - 60000).toISOString();
+var future = new Date(now + 3600000).toISOString();
+
+assert(formatCountdown(past, "stale") === "待刷新", "elapsed stale window must render 待刷新, got " + formatCountdown(past, "stale"));
+assert(formatCountdown(past, "ready") === "就绪", "elapsed idle window must render 就绪, got " + formatCountdown(past, "ready"));
+assert(formatCountdown(past) === "就绪", "default elapsed countdown must stay 就绪, got " + formatCountdown(past));
+assert(/^(\d{2}h|\d{2}m)/.test(formatCountdown(future)), "future countdown must render remaining time, got " + formatCountdown(future));
+
+assert(quotaWindowExpiryMode("weekly", 100) === "stale", "an elapsed weekly reset is always stale evidence");
+assert(quotaWindowExpiryMode("weekly", 40) === "stale", "weekly consumption must never render ready");
+assert(quotaWindowExpiryMode("short", 100) === "ready", "an idle full 5h window is ready");
+assert(quotaWindowExpiryMode("short", 99) === "stale", "a consumed 5h window must not render ready");
+assert(quotaWindowExpiryMode("short", null) === "ready", "unknown 5h remaining must not invalidate the countdown");
+
+currentLang = "en";
+assert(formatCountdown(past, "stale") === "Stale", "English stale label must be Stale");
+assert(formatCountdown(past, "ready") === "Ready", "English idle label must be Ready");
+currentLang = "zh-CN";
+
+var resetElement = {
+    textContent: "",
+    getAttribute: function(name) {
+        if (name === "data-reset-time") return past;
+        if (name === "data-expiry-mode") return "stale";
+        return null;
+    }
+};
+var dynamicConfig = { auto_apply: false };
+var scheduleConfig = null;
+var latestDiagnostics = {};
+function renderScheduleStatus() {}
+var document = {
+    hidden: false,
+    querySelectorAll: function(selector) {
+        return selector === ".meter-countdown[data-reset-time]" ? [resetElement] : [];
+    }
+};
+updateAllCountdowns();
+assert(resetElement.textContent === "待刷新", "live countdown tick must keep the stale label, got " + resetElement.textContent);
+process.exit(0);
+`
+
+	runNodeFixture(t, node, "quota-countdown-expiry.js", harness)
+}
+
 func TestSamplesModalUsesSelectedModelGroupOnly(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -515,7 +576,7 @@ func TestProbeOutcomeToastAndRenderFailureTruth(t *testing.T) {
 		t.Skip("node is not available; probe outcome behavior is checked in the Node-enabled verification environment")
 	}
 
-	harness := templateScriptOverviewActionsCore + templateScriptOverviewRender + templateScriptProbeSchedule + `
+	harness := templateScriptOverviewActionsCore + templateScriptOverviewRender + templateScriptOverviewReset + templateScriptProbeSchedule + `
 const toastCalls = [];
 function element(initial) {
     return Object.assign({
@@ -734,7 +795,7 @@ func TestTriggerProbe_ListLoadingState(t *testing.T) {
 		t.Skip("node is not available; probe outcome behavior is checked in the Node-enabled verification environment")
 	}
 
-	harness := templateScriptOverviewActionsCore + templateScriptOverviewRender + templateScriptProbeSchedule + `
+	harness := templateScriptOverviewActionsCore + templateScriptOverviewRender + templateScriptOverviewReset + templateScriptProbeSchedule + `
 function element(initial) {
     return Object.assign({
         hidden: true,
@@ -807,7 +868,7 @@ func TestRefreshDashboard_ManualSyncLoadingState(t *testing.T) {
 		t.Skip("node is not available; refresh dashboard behavior is checked in the Node-enabled verification environment")
 	}
 
-	harness := templateScriptOverviewActionsCore + templateScriptOverviewRender + templateScriptProbeSchedule + `
+	harness := templateScriptOverviewActionsCore + templateScriptOverviewRender + templateScriptOverviewReset + templateScriptProbeSchedule + `
 function element(initial) {
     return Object.assign({
         hidden: true,

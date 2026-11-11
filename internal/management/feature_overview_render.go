@@ -371,11 +371,11 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
                         ? { remaining: item.argon_window_remaining, reset_at: item.argon_window_reset_at }
                         : qw.argon_7d);
                 const bars = [
-                    { id: "gemini_5h", label: "Gemini 5h", windowType: t("shortWindow"), data: qw.gemini_5h || { remaining: item.short_window_remaining, reset_at: item.short_window_reset_at }, isActive: (pool === "gemini" || pool === "argon") },
-                    { id: "gemini_7d", label: "Gemini 7d", windowType: t("longWindow"), data: qw.gemini_7d || { remaining: item.long_window_remaining, reset_at: item.long_window_reset_at }, isActive: (pool === "gemini") },
-                    { id: "claude_5h", label: "Claude 5h", windowType: t("shortWindow"), data: qw.claude_5h, isActive: (pool === "claude_gpt") },
-                    { id: "claude_7d", label: "Claude 7d", windowType: t("longWindow"), data: qw.claude_7d, isActive: (pool === "claude_gpt") },
-                    { id: "argon_7d", label: "Argon 7d", windowType: t("argonWindow"), data: argonData, isActive: (pool === "argon") }
+                    { id: "gemini_5h", kind: "short", label: "Gemini 5h", windowType: t("shortWindow"), data: qw.gemini_5h || { remaining: item.short_window_remaining, reset_at: item.short_window_reset_at }, isActive: (pool === "gemini" || pool === "argon") },
+                    { id: "gemini_7d", kind: "weekly", label: "Gemini 7d", windowType: t("longWindow"), data: qw.gemini_7d || { remaining: item.long_window_remaining, reset_at: item.long_window_reset_at }, isActive: (pool === "gemini") },
+                    { id: "claude_5h", kind: "short", label: "Claude 5h", windowType: t("shortWindow"), data: qw.claude_5h, isActive: (pool === "claude_gpt") },
+                    { id: "claude_7d", kind: "weekly", label: "Claude 7d", windowType: t("longWindow"), data: qw.claude_7d, isActive: (pool === "claude_gpt") },
+                    { id: "argon_7d", kind: "weekly", label: "Argon 7d", windowType: t("argonWindow"), data: argonData, isActive: (pool === "argon") }
                 ];
 
                 cardHtml += "<div class=\"quota-bars-grid\">";
@@ -388,7 +388,8 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
                     else if (pct <= 30) fillClass = "meter-fill-warning";
 
                     const resetTime = d.reset_at || "";
-                    const resetStr = resetTime ? formatCountdown(resetTime) : "-";
+                    const expiryMode = quotaWindowExpiryMode(b.kind, hasVal ? Number(d.remaining) : null);
+                    const resetStr = resetTime ? formatCountdown(resetTime, expiryMode) : "-";
 
                     let estBurnTag = "";
                     if (b.isActive) {
@@ -412,7 +413,7 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
                                 "<span class=\"meter-pool-name\">" + escapeHTML(b.label) + "</span>" +
                                 pctDisplay + estBurnTag +
                             "</span>" +
-                            "<span class=\"meter-countdown\" data-reset-time=\"" + escapeHTML(resetTime) + "\">" + resetStr + "</span>" +
+                            "<span class=\"meter-countdown\" data-reset-time=\"" + escapeHTML(resetTime) + "\" data-expiry-mode=\"" + expiryMode + "\">" + resetStr + "</span>" +
                         "</div>" +
                         "<div class=\"meter-track\">" +
                             "<div class=\"meter-fill " + (hasVal ? fillClass : "") + "\" style=\"width: " + (hasVal ? pct : 0) + "%\"></div>" +

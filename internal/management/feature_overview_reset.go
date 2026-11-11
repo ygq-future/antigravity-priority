@@ -31,12 +31,28 @@ const templateScriptOverviewReset = `        async function triggerReset() {
             }
         }
 
-        function formatCountdown(targetDateStr) {
+        // quotaWindowExpiryMode decides how an elapsed reset timestamp is read.
+        // Weekly quotas roll on a fixed cadence, so an elapsed weekly reset can
+        // only be stale evidence. A 5h window may legitimately stay idle at full
+        // quota with an elapsed reset; once any quota is consumed the window is
+        // active and an elapsed reset is stale evidence as well.
+        function quotaWindowExpiryMode(windowKind, remaining) {
+            if (windowKind === "weekly") return "stale";
+            if (remaining === null || remaining === undefined) return "ready";
+            var value = Number(remaining);
+            if (!Number.isFinite(value)) return "ready";
+            return value >= 100 ? "ready" : "stale";
+        }
+
+        function formatCountdown(targetDateStr, expiryMode) {
             if (!targetDateStr) return "-";
             var target = new Date(targetDateStr).getTime();
             var now = Date.now();
             var diff = target - now;
-            if (diff <= 0) return currentLang === "zh-CN" ? "就绪" : "Ready";
+            if (diff <= 0) {
+                if (expiryMode === "stale") return currentLang === "zh-CN" ? "待刷新" : "Stale";
+                return currentLang === "zh-CN" ? "就绪" : "Ready";
+            }
 
             var days = Math.floor(diff / (1000 * 60 * 60 * 24));
             var hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
