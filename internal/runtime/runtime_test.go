@@ -701,8 +701,14 @@ func TestRuntime_ProbeProjectsAllPoolsFromOneQuotaResponse(t *testing.T) {
 	gemini := snapshot.Groups[string(config.AntigravityModelGroupGemini)]
 	argon := snapshot.Groups[string(config.AntigravityModelGroupArgon)]
 	claudeGPT := snapshot.Groups[string(config.AntigravityModelGroupClaudeGPT)]
-	if len(mock.httpCalls) != 1 {
-		t.Fatalf("quota HTTP calls = %d, want one response for all pools", len(mock.httpCalls))
+	quotaCalls := 0
+	for _, call := range mock.httpCalls {
+		if call.URL == antigravity.RetrieveUserQuotaSummaryURL {
+			quotaCalls++
+		}
+	}
+	if quotaCalls != 1 {
+		t.Fatalf("quota HTTP calls = %d, want one response for all pools", quotaCalls)
 	}
 	if len(gemini.Items) != 1 || gemini.Items[0].R7d != 0.7 {
 		t.Fatalf("gemini projection = %#v, want fresh quota data", gemini)
@@ -747,6 +753,10 @@ func TestRuntime_ProbeKeepsDualWindowCountdownsAndPlanTier(t *testing.T) {
 			StatusCode: http.StatusOK,
 			Body:       []byte(`{"models":{"gemini-2.0-flash":{"modelProvider":"google","quotaInfo":{"remainingFraction":0.15,"resetTime":"2026-08-22T11:00:00Z"}}}}`),
 		},
+		antigravity.LoadCodeAssistDailyURL: {
+			StatusCode: http.StatusOK,
+			Body:       []byte(`{"currentTier":{"id":"free-tier"},"paidTier":{"id":"g1-pro-tier","name":"Google AI Pro"}}`),
+		},
 	}
 	r := newTestRuntime(t, runtime.Options{Host: mock, Clock: &testClock{now: time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)}, Sleeper: testSleeper{}})
 	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
@@ -759,8 +769,14 @@ func TestRuntime_ProbeKeepsDualWindowCountdownsAndPlanTier(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(mock.httpCalls) != 1 {
-		t.Fatalf("quota HTTP calls = %d, want a single summary request", len(mock.httpCalls))
+	quotaCalls := 0
+	for _, call := range mock.httpCalls {
+		if call.URL == antigravity.RetrieveUserQuotaSummaryURL {
+			quotaCalls++
+		}
+	}
+	if quotaCalls != 1 {
+		t.Fatalf("quota HTTP calls = %d, want a single summary request", quotaCalls)
 	}
 	items := snapshot.Groups[string(config.AntigravityModelGroupGemini)].Items
 	if len(items) != 1 {
@@ -775,6 +791,82 @@ func TestRuntime_ProbeKeepsDualWindowCountdownsAndPlanTier(t *testing.T) {
 	}
 	if item.R5h != 0.85 || item.R7d != 0.70 {
 		t.Fatalf("quota meters = r5h %v r7d %v, want 0.85/0.70", item.R5h, item.R7d)
+	}
+}
+
+func TestRuntime_ProbeUsesLoadCodeAssistTierOverWindowInference(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	mock := newMockHost()
+	mock.files = []host.AuthFile{{
+		Name:      "ultra-account",
+		AuthIndex: "ultra-auth",
+		Provider:  string(core.ProviderAntigravity),
+		Type:      string(core.CredentialTypeAntigravity),
+		Priority:  100,
+	}}
+	quotaBody := []byte(`{"groups":[
+		{"displayName":"Gemini Models","buckets":[
+			{"window":"5h","remainingFraction":0.85,"resetTime":"2026-11-11T17:00:00Z"},
+			{"window":"weekly","remainingFraction":0.70,"resetTime":"2026-11-18T00:00:00Z"}
+		]},
+		{"displayName":"Claude and GPT models","buckets":[
+			{"window":"5h","remainingFraction":0.60,"resetTime":"2026-11-11T17:00:00Z"},
+			{"window":"weekly","remainingFraction":0.50,"resetTime":"2026-11-18T00:00:00Z"}
+		]}
+	]}`)
+	mock.httpResponses = map[string]host.HTTPResponse{
+		antigravity.LoadCodeAssistDailyURL: {
+			StatusCode: http.StatusOK,
+			Body:       []byte(`{"currentTier":{"id":"free-tier"},"paidTier":{"id":"g1-ultra-tier","name":"Google AI Ultra"}}`),
+		},
+		antigravity.RetrieveUserQuotaSummaryURL: {
+			StatusCode: http.StatusOK,
+			Body:       quotaBody,
+		},
+	}
+	now := time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)
+	r := newTestRuntime(t, runtime.Options{Host: mock, Clock: &testClock{now: now}, Sleeper: testSleeper{}})
+	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Probe(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot, err := r.LatestSnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := snapshot.Groups[string(config.AntigravityModelGroupGemini)].Items
+	if len(items) != 1 {
+		t.Fatalf("gemini items = %d; want 1", len(items))
+	}
+	if items[0].PlanType != string(core.PlanTypeUltra) {
+		t.Fatalf("plan type = %q; want ultra from loadCodeAssist", items[0].PlanType)
+	}
+
+	loadCalls := 0
+	for _, call := range mock.httpCalls {
+		if call.URL == antigravity.LoadCodeAssistDailyURL {
+			loadCalls++
+		}
+	}
+	if loadCalls != 1 {
+		t.Fatalf("loadCodeAssist calls = %d; want 1", loadCalls)
+	}
+
+	// A second probe within the cache window must not refetch the tier.
+	if err := r.Probe(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	loadCalls = 0
+	for _, call := range mock.httpCalls {
+		if call.URL == antigravity.LoadCodeAssistDailyURL {
+			loadCalls++
+		}
+	}
+	if loadCalls != 1 {
+		t.Fatalf("loadCodeAssist calls after cached probe = %d; want 1", loadCalls)
 	}
 }
 
@@ -1017,8 +1109,8 @@ func TestRuntime_ProductionRunner_CachedEvidence(t *testing.T) {
 	if len(mock.httpCalls) == 0 {
 		t.Fatal("expected AutoApply to force a current-round Google probe")
 	}
-	if got := strings.Join(mock.operations, ","); !strings.HasPrefix(got, "host-sync,google-probe,host-sync") {
-		t.Fatalf("operation order = %s; want host-sync,google-probe,host-sync before planning/apply", got)
+	if got := strings.Join(mock.operations, ","); !strings.HasPrefix(got, "host-sync,google-probe,google-probe,host-sync") {
+		t.Fatalf("operation order = %s; want host-sync,plan-tier probe,quota probe,host-sync before planning/apply", got)
 	}
 	snapshot, err := r.LatestSnapshot(context.Background())
 	if err != nil {

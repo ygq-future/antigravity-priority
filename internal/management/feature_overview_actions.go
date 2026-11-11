@@ -70,6 +70,12 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
             if (raw === "free") {
                 return "<span class=\"badge badge-plan badge-plan-free\">FREE</span>";
             }
+            if (raw === "ultra") {
+                return "<span class=\"badge badge-plan badge-plan-ultra\">ULTRA</span>";
+            }
+            if (raw === "ultra_lite" || raw === "ultra-lite") {
+                return "<span class=\"badge badge-plan badge-plan-ultra-lite\">ULTRA-LITE</span>";
+            }
             if (raw === "team") {
                 return "<span class=\"badge badge-plan badge-plan-default\">TEAM</span>";
             }

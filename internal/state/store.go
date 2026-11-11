@@ -58,6 +58,15 @@ type Entry struct {
 	UnavailableReason        string        `json:"unavailable_reason,omitempty"`
 }
 
+// PlanTierRecord is the account-level subscription tier discovered from
+// loadCodeAssist. It is independent of per-model-group quota evidence so a
+// daily refresh does not rewrite quota history.
+type PlanTierRecord struct {
+	PlanType    core.PlanType `json:"plan_type,omitempty"`
+	ObservedAt  time.Time     `json:"observed_at,omitzero"`
+	AttemptedAt time.Time     `json:"attempted_at,omitzero"`
+}
+
 // ProbeSuccess contains updated quota and state evidence after a successful probe.
 type ProbeSuccess struct {
 	AuthIndex            string
@@ -149,6 +158,7 @@ type Store struct {
 	saveMu          sync.Mutex
 	paths           Paths
 	entries         map[string]Entry
+	planTiers       map[string]PlanTierRecord
 	latestAudit     string
 	latestResult    []byte
 	runHistory      []byte
@@ -164,10 +174,11 @@ type Store struct {
 // stateDocument is the main quota/health document. Run and request history
 // live in sibling documents so their writes never rewrite quota evidence.
 type stateDocument struct {
-	SchemaVersion   int                      `json:"schema_version"`
-	Entries         map[string]Entry         `json:"entries"`
-	Cooldowns       map[string]CooldownEntry `json:"cooldowns,omitempty"`
-	WarmupCompleted map[string]time.Time     `json:"warmup_completed,omitempty"`
+	SchemaVersion   int                       `json:"schema_version"`
+	Entries         map[string]Entry          `json:"entries"`
+	PlanTiers       map[string]PlanTierRecord `json:"plan_tiers,omitempty"`
+	Cooldowns       map[string]CooldownEntry  `json:"cooldowns,omitempty"`
+	WarmupCompleted map[string]time.Time      `json:"warmup_completed,omitempty"`
 }
 
 // legacyStateDocument retains the pre-split single-file fields so an existing
@@ -221,6 +232,7 @@ func Load(ctx context.Context, path string) (*Store, error) {
 	store := &Store{
 		paths:           paths,
 		entries:         make(map[string]Entry),
+		planTiers:       make(map[string]PlanTierRecord),
 		cooldowns:       make(map[string]CooldownEntry),
 		warmupCompleted: make(map[string]time.Time),
 	}
@@ -400,6 +412,14 @@ func (s *Store) applyStateDocument(doc legacyStateDocument) {
 		}
 		cleanseClonedArgonEntries(s.entries)
 	}
+	if doc.PlanTiers != nil {
+		s.planTiers = make(map[string]PlanTierRecord, len(doc.PlanTiers))
+		for authIndex, record := range doc.PlanTiers {
+			record.ObservedAt = utcOrZero(record.ObservedAt)
+			record.AttemptedAt = utcOrZero(record.AttemptedAt)
+			s.planTiers[authIndexKey(authIndex)] = record
+		}
+	}
 	s.applyRunsFields(doc.LatestAudit, doc.LatestResult, doc.RunHistory)
 	if len(doc.RequestHistory) > 0 {
 		s.requestHistory = append([]RequestHistoryEntry(nil), doc.RequestHistory...)
@@ -496,6 +516,7 @@ func (s *Store) SaveStateAtomic(ctx context.Context) error {
 		return stateDocument{
 			SchemaVersion:   SchemaVersion,
 			Entries:         s.entries,
+			PlanTiers:       s.planTiers,
 			Cooldowns:       s.cooldowns,
 			WarmupCompleted: s.warmupCompleted,
 		}
@@ -858,11 +879,43 @@ func (s *Store) GetEntry(authIndex, modelGroup string) (Entry, bool) {
 	return entry, ok
 }
 
+// GetPlanTier returns the account-level subscription tier discovered from
+// loadCodeAssist. The boolean reports whether a record exists, including a
+// failed attempt that has not produced a tier yet.
+func (s *Store) GetPlanTier(authIndex string) (PlanTierRecord, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	record, ok := s.planTiers[authIndexKey(authIndex)]
+	return record, ok
+}
+
+// SetPlanTier stores the account-level subscription tier. Callers refreshing a
+// failed request must carry the previous PlanType forward and update AttemptedAt.
+func (s *Store) SetPlanTier(authIndex string, record PlanTierRecord) {
+	key := authIndexKey(authIndex)
+	if key == "" {
+		return
+	}
+	record.ObservedAt = utcOrZero(record.ObservedAt)
+	record.AttemptedAt = utcOrZero(record.AttemptedAt)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.planTiers == nil {
+		s.planTiers = make(map[string]PlanTierRecord)
+	}
+	s.planTiers[key] = record
+}
+
 // GetPlanType returns the cached PlanType for authIndex across known model groups.
-// It checks the specific modelGroup if provided, or looks up in known groups.
+// The account-level loadCodeAssist tier is authoritative; per-group probe values
+// remain a backward-compatible fallback for older caches.
 func (s *Store) GetPlanType(authIndex, preferredGroup string) core.PlanType {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if record, ok := s.planTiers[authIndexKey(authIndex)]; ok &&
+		record.PlanType != "" && record.PlanType != core.PlanTypeUnknown {
+		return record.PlanType
+	}
 	if preferredGroup != "" {
 		if entry, ok := s.entries[entryKey(authIndex, preferredGroup)]; ok && entry.PlanType != "" && entry.PlanType != core.PlanTypeUnknown {
 			return entry.PlanType
@@ -1136,6 +1189,7 @@ func (s *Store) GetHistoricalEvidence(authIndex, modelGroup string) (priority.Qu
 	if normGroup == string(config.AntigravityModelGroupArgon) {
 		geminiEntry, hasGemini = s.entries[entryKey(authIndex, string(config.AntigravityModelGroupGemini))]
 	}
+	planTierRecord, hasPlanTier := s.planTiers[authIndexKey(authIndex)]
 	s.mu.RUnlock()
 	if !ok || entry.SchemaVersion != SchemaVersion {
 		return priority.QuotaEvidence{}, false
@@ -1210,6 +1264,10 @@ func (s *Store) GetHistoricalEvidence(authIndex, modelGroup string) (priority.Qu
 	if cycleBurnRate <= 0 {
 		cycleBurnRate = DefaultCycleBurnRate
 	}
+	planType := entry.PlanType
+	if hasPlanTier && planTierRecord.PlanType != "" && planTierRecord.PlanType != core.PlanTypeUnknown {
+		planType = planTierRecord.PlanType
+	}
 
 	return priority.QuotaEvidence{
 		Provider:             core.ProviderAntigravity,
@@ -1224,7 +1282,7 @@ func (s *Store) GetHistoricalEvidence(authIndex, modelGroup string) (priority.Qu
 		LongWindowRemaining:  longRemaining,
 		ArgonWindowResetAt:   argonResetAt,
 		ArgonWindowRemaining: argonRemaining,
-		PlanType:             entry.PlanType,
+		PlanType:             planType,
 		CycleBurnRate:        cycleBurnRate,
 	}, true
 }

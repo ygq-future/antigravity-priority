@@ -67,8 +67,18 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 		return err
 	}
 
-	var evidence collectedEvidence
 	targetedSingleAuth := len(request.AuthIndexes) > 0
+	tierChanged, err := refreshPlanTiers(ctx, client, probeCredentials, probeAuthMaterials, store, now, targetedSingleAuth, request.Config.MaxConcurrency)
+	if err != nil {
+		return err
+	}
+	if tierChanged {
+		if err := store.SaveStateAtomic(ctx); err != nil {
+			return err
+		}
+	}
+
+	var evidence collectedEvidence
 	evidence, err = r.collectEvidenceForTrigger(ctx, collectInput{
 		client:             client,
 		store:              store,

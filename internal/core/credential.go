@@ -56,6 +56,10 @@ const (
 	PlanTypePlus PlanType = "plus"
 	// PlanTypePro represents a pro tier plan.
 	PlanTypePro PlanType = "pro"
+	// PlanTypeUltra represents the top Google AI Ultra tier.
+	PlanTypeUltra PlanType = "ultra"
+	// PlanTypeUltraLite represents the lower Google AI Ultra tier (Ultra 5x).
+	PlanTypeUltraLite PlanType = "ultra_lite"
 	// PlanTypeTeam represents a team tier plan.
 	PlanTypeTeam PlanType = "team"
 )

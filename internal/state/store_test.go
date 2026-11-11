@@ -738,6 +738,62 @@ func TestStore_GetPlanType(t *testing.T) {
 	}
 }
 
+func TestStore_PlanTierPersistsAndOverridesProbePlanType(t *testing.T) {
+	ctx := context.Background()
+	cachePath := filepath.Join(t.TempDir(), "plan-tier-cache.json")
+	store, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)
+
+	store.SetPlanTier("acc-ultra", state.PlanTierRecord{
+		PlanType:    core.PlanTypeUltra,
+		ObservedAt:  now,
+		AttemptedAt: now,
+	})
+	if err := store.SaveStateAtomic(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	reloaded, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, ok := reloaded.GetPlanTier("acc-ultra")
+	if !ok {
+		t.Fatal("plan tier record was not persisted")
+	}
+	if record.PlanType != core.PlanTypeUltra {
+		t.Fatalf("reloaded record = %#v; want ultra", record)
+	}
+	if !record.ObservedAt.Equal(now) {
+		t.Fatalf("observed_at = %v; want %v", record.ObservedAt, now)
+	}
+
+	// A legacy per-group probe result must not override the authoritative tier.
+	if err := reloaded.MarkProbeSuccess(ctx, state.ProbeSuccess{
+		AuthIndex:  "acc-ultra",
+		ModelGroup: "gemini",
+		ObservedAt: now,
+		ResetAt:    now.Add(time.Hour),
+		Remaining:  80,
+		PlanType:   core.PlanTypePro,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := reloaded.GetPlanType("acc-ultra", "gemini"); got != core.PlanTypeUltra {
+		t.Fatalf("GetPlanType() = %q; want ultra", got)
+	}
+	evidence, ok := reloaded.GetHistoricalEvidence("acc-ultra", "gemini")
+	if !ok {
+		t.Fatal("expected historical evidence")
+	}
+	if evidence.PlanType != core.PlanTypeUltra {
+		t.Fatalf("historical evidence plan type = %q; want ultra", evidence.PlanType)
+	}
+}
+
 func TestStore_CleanseClonedArgonEntriesOnLoad(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "legacy-cache.json")

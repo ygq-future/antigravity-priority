@@ -275,6 +275,16 @@ const templateStyleControls = `        /* KPI Cards Grid */
             border: 1px solid var(--badge-plan-free-border);
             color: var(--badge-plan-free-text);
         }
+        .badge-plan-ultra {
+            background: var(--badge-plan-ultra-bg);
+            border: 1px solid var(--badge-plan-ultra-border);
+            color: var(--badge-plan-ultra-text);
+        }
+        .badge-plan-ultra-lite {
+            background: var(--badge-plan-ultra-lite-bg);
+            border: 1px solid var(--badge-plan-ultra-lite-border);
+            color: var(--badge-plan-ultra-lite-text);
+        }
 
 
         .badge-plan-default {

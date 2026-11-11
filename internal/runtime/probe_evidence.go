@@ -246,6 +246,19 @@ func probeAndRecord(ctx context.Context, client *host.Client, store *state.Store
 		ProjectID:   job.authMaterial.projectID,
 		ObservedAt:  now,
 	})
+	// The planner prefers ProbeResult.PlanType over credential.PlanType, so
+	// propagate the authoritative account tier into every group result before
+	// it becomes quota evidence. The per-group cache remains a fallback for
+	// accounts whose tier has not been discovered yet.
+	if store != nil {
+		if tier, ok := store.GetPlanTier(job.credential.AuthIndex); ok &&
+			tier.PlanType != "" && tier.PlanType != core.PlanTypeUnknown {
+			for group, result := range results {
+				result.PlanType = tier.PlanType
+				results[group] = result
+			}
+		}
+	}
 	items := make([]antigravity.ProbeResult, 0, len(config.AllAntigravityModelGroups))
 	for _, group := range config.AllAntigravityModelGroups {
 		result, ok := results[antigravity.ModelGroup(group)]

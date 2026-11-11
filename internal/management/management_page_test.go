@@ -106,6 +106,37 @@ assertEqual(maskButton.innerHTML.indexOf("accountMaskOn") >= 0, true, "masked la
 	runNodeFixture(t, node, "account-masking.js", harness)
 }
 
+func TestFormatPlanBadgeRendersRealSubscriptionTiers(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not available; plan badge behavior is checked in the Node-enabled verification environment")
+	}
+
+	harness := `
+function escapeHTML(value) { return String(value); }
+` + templateScriptOverviewActionsCore + `
+function assertEqual(actual, expected, label) {
+    if (actual !== expected) {
+        throw new Error(label + ": got " + JSON.stringify(actual) + ", want " + JSON.stringify(expected));
+    }
+}
+
+var ultra = formatPlanBadge("ultra");
+assertEqual(ultra.indexOf(">ULTRA<") >= 0, true, "ultra label");
+assertEqual(ultra.indexOf("badge-plan-ultra\"") >= 0, true, "ultra badge class");
+
+var ultraLite = formatPlanBadge("ultra_lite");
+assertEqual(ultraLite.indexOf(">ULTRA-LITE<") >= 0, true, "ultra-lite label");
+assertEqual(ultraLite.indexOf("badge-plan-ultra-lite") >= 0, true, "ultra-lite badge class");
+
+assertEqual(formatPlanBadge("pro").indexOf(">PRO<") >= 0, true, "pro label");
+assertEqual(formatPlanBadge("free").indexOf(">FREE<") >= 0, true, "free label");
+assertEqual(formatPlanBadge("g1-enterprise-tier").indexOf(">G1-ENTERPRISE-TIER<") >= 0, true, "unknown tier remains visible");
+assertEqual(formatPlanBadge("").indexOf(">ANTIGRAVITY<") >= 0, true, "empty tier fallback");
+`
+	runNodeFixture(t, node, "plan-badges.js", harness)
+}
+
 func TestOverview_SingleProbeButtonAndStatusDisabledBadge(t *testing.T) {
 	if !strings.Contains(StatusHTML, `probeSingleCredential`) {
 		t.Fatal("overview must include probeSingleCredential script function")
