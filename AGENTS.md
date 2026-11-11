@@ -26,7 +26,7 @@
 2. **公开文档与双语规范**：`README.md` 与 `README.en.md` 保持中英双语对齐，聚焦核心价值，**严禁在面向用户的文档和 Release Notes 中出现 `(REQ-xx)` 内部研发标签**；每次起草 Release Notes 必须执行 `git log <last-tag>..HEAD --oneline` 完整回溯自上一次发布以来的全部提交，严禁遗漏任何中间 commit；
 3. **架构与元数据契约**：确保 CPA 宿主 `config.yaml` 极简无扰、`buildMetadata()` 不暴露多余抽屉字段、`config.Default()` 作为基石兜底与 UI 配置中心保持一致；
 4. **全套质量验证**：每完成一项功能或缺陷修复，必须先执行与 release workflow 一致的 `golangci-lint v2.12.2`，通过后再执行 `go test ./...`；提交或发布前必须再次执行 `golangci-lint run --timeout=5m`，并执行 `go build ./...`、`go vet ./...`、`go test ./...`、`go test -race ./...`，确保零告警与零数据竞争（默认不带 `-v`，避免冗余刷屏，失败时 Go 会自动打印失败详情）；
-5. **gopls 提交门禁**：每次提交前必须对本次新增/改动的 Go 文件执行 `scripts/gopls-gate.sh`，确保 `gopls check -severity=hint` **零输出**；任何 warning 或语法糖建议必须修复后再提交。新克隆仓库需执行一次 `scripts/gopls-gate.sh --install-hook` 安装 `pre-commit` 钩子（脚本已自带安装能力，默认扫描暂存区的 `.go` 文件）。
+5. **LSP 诊断门禁**：每次提交前必须对本次新增/改动的 Go 文件优先使用宿主既有 LSP 服务执行 `diagnostics`（`xd://lsp`，必要时 `code_actions`），确保零 warning / info / hint；仅在宿主未提供 LSP 服务时，才探测本地语言服务器 CLI。任何 warning 或语法糖建议必须修复后再提交。禁止再引入独立的 `gopls check` 包装脚本或 `pre-commit` 钩子。
 
 ---
 
