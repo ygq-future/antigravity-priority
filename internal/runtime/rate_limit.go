@@ -206,6 +206,10 @@ func (r *Runtime) triggerFailure(ctx context.Context, input failureInput) error 
 	}
 	store.SetCooldown(entry)
 	r.setActiveCooldown(entry)
+	if err := store.SaveStateAtomic(ctx); err != nil {
+		r.recordCooldownFailure(ctx, store, input.AuthIndex, input.Reason, failureTrigger(input.Kind), err)
+		return fmt.Errorf("persist health cooldown: %w", err)
+	}
 
 	if r.hostCallbacks == nil {
 		err := errMissingHostCallbacks
@@ -268,7 +272,7 @@ func (r *Runtime) observeUsageSuccess(ctx context.Context, authIndex, modelGroup
 			)
 			if weightedTokens > 0 {
 				store.RecordUsageConsumption(authIndex, modelGroup, weightedTokens, now)
-				_ = store.SaveAtomic(ctx)
+				_ = store.SaveStateAtomic(ctx)
 			}
 		}
 	}
@@ -345,7 +349,7 @@ func (r *Runtime) observeUsageSuccess(ctx context.Context, authIndex, modelGroup
 		return nil
 	}
 	if hasActiveFailureForAuth(store, authIndex, now) {
-		if err := store.SaveAtomic(ctx); err != nil {
+		if err := store.SaveStateAtomic(ctx); err != nil {
 			return err
 		}
 		r.routingMu.Lock()
@@ -529,7 +533,7 @@ func (r *Runtime) rescheduleAfterRestoreFailure(ctx context.Context, store *stat
 	entry.CooldownUntil = entry.NextRecoveryAt
 	store.SetCooldown(entry)
 	r.setActiveCooldown(entry)
-	_ = store.SaveAtomic(ctx)
+	_ = store.SaveStateAtomic(ctx)
 	r.signalRateLimitWorker()
 }
 
@@ -562,7 +566,7 @@ func (r *Runtime) rescheduleFailure(ctx context.Context, store *state.Store, ent
 	entry.ProbeEnabled = true
 	store.SetCooldown(entry)
 	r.setActiveCooldown(entry)
-	_ = store.SaveAtomic(ctx)
+	_ = store.SaveStateAtomic(ctx)
 	r.routingMu.Lock()
 	r.recomputeRoutingTablesLocked(now)
 	r.routingMu.Unlock()
@@ -576,7 +580,7 @@ func (r *Runtime) escalateAuthProblem(ctx context.Context, store *state.Store, e
 
 	accountKey := state.CooldownKey(entry.AuthIndex, "")
 	if existing, active := store.GetCooldowns()[accountKey]; active && now.Before(existing.CooldownUntil) {
-		_ = store.SaveAtomic(ctx)
+		_ = store.SaveStateAtomic(ctx)
 		r.routingMu.Lock()
 		r.recomputeRoutingTablesLocked(now)
 		r.routingMu.Unlock()
@@ -603,7 +607,7 @@ func (r *Runtime) escalateAuthProblem(ctx context.Context, store *state.Store, e
 	}
 	store.SetCooldown(accountEntry)
 	r.setActiveCooldown(accountEntry)
-	_ = store.SaveAtomic(ctx)
+	_ = store.SaveStateAtomic(ctx)
 	r.routingMu.Lock()
 	r.recomputeRoutingTablesLocked(now)
 	r.routingMu.Unlock()
@@ -730,14 +734,14 @@ func (r *Runtime) restoreCooldown(ctx context.Context, store *state.Store, entry
 	store.DeleteCooldownExact(key)
 	r.clearActiveCooldownExact(key)
 	if manualChange {
-		_ = store.SaveAtomic(ctx)
+		_ = store.SaveStateAtomic(ctx)
 		r.routingMu.Lock()
 		r.recomputeRoutingTablesLocked(now)
 		r.routingMu.Unlock()
 		return nil
 	}
 	if hasActiveFailureForAuth(store, entry.AuthIndex, now) {
-		_ = store.SaveAtomic(ctx)
+		_ = store.SaveStateAtomic(ctx)
 		r.routingMu.Lock()
 		r.recomputeRoutingTablesLocked(now)
 		r.routingMu.Unlock()
@@ -752,7 +756,7 @@ func (r *Runtime) applyCooldownRecovery(ctx context.Context, store *state.Store,
 		return err
 	}
 	if credential.Priority != priority.DepletedPriority || credential.Disabled != entry.AppliedDisabled {
-		_ = store.SaveAtomic(ctx)
+		_ = store.SaveStateAtomic(ctx)
 		r.routingMu.Lock()
 		r.recomputeRoutingTablesLocked(r.clock.Now().UTC())
 		r.routingMu.Unlock()
@@ -774,6 +778,10 @@ func (r *Runtime) applyCooldownRecovery(ctx context.Context, store *state.Store,
 	r.recomputeRoutingTablesLocked(r.clock.Now().UTC())
 	r.routingMu.Unlock()
 	summary := resultSummary("cooldown recovery", result)
+	if err := store.SaveStateAtomic(ctx); err != nil {
+		r.recordCooldownFailure(ctx, store, entry.AuthIndex, cause, trigger, err)
+		return fmt.Errorf("persist cooldown recovery: %w", err)
+	}
 	_, err = r.projectRun(ctx, store, result, summary, RunHistoryEntry{Kind: KindCooldownRecovery, Trigger: trigger, Message: summary, Snapshot: &result.Snapshot})
 	return err
 }

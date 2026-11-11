@@ -73,7 +73,7 @@ func (r *Runtime) persistRun(ctx context.Context, store *state.Store, result app
 		return result, fmt.Errorf("encode execution history: %w", marshalErr)
 	}
 	store.SetRuntimeSnapshot(audit, resultJSON, historyJSON)
-	if err := store.SaveAtomic(ctx); err != nil {
+	if err := store.SaveRunsAtomic(ctx); err != nil {
 		result.Record = apply.RecordResult{Status: apply.RecordFailed, Error: host.RedactBytes([]byte(err.Error()))}
 		if entry != nil {
 			entry.Record = result.Record

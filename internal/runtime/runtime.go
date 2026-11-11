@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -33,46 +34,46 @@ type quotaPreview struct {
 
 // Runtime manages plugin lifecycle, configuration, ticker worker, and single-flight execution.
 type Runtime struct {
-	mu                       sync.Mutex
-	runMu                    sync.Mutex
-	runner                   TaskRunner
-	rootCtx                  context.Context
-	cancel                   context.CancelFunc
-	cfg                      config.Config
-	hostCallbacks            host.HostCallbacks
-	clock                    Clock
-	sleeper                  Sleeper
-	management               *management.Handler
-	latestResult             apply.Result
-	latestAudit              string
-	latestDualSnapshot       *apply.DualGroupSnapshot
-	latestQuotaPreview       *quotaPreview
-	scheduleConfig           state.ScheduleConfig
-	stateCacheOverride       string
-	runHistory               []RunHistoryEntry
-	requestHistory           []state.RequestHistoryEntry
-	requestHistoryPersistMu  sync.Mutex
-	latestProbeOutcomes      []management.ProbeOutcome
-	lastAutoApplyAt          time.Time
-	worker                   *tickerWorker
-	shutdown                 bool
-	rateLimitMu              sync.Mutex
-	pending429               map[string]pending429
-	stormUntil               time.Time
-	stormAccounts            map[string]bool
-	activeCooldowns          map[string]state.CooldownEntry
-	rateLimitWake            chan struct{}
-	rateLimitDone            chan struct{}
-	routingMu                sync.RWMutex
-	plansByPool              map[config.AntigravityModelGroup]PoolRoutingTable
-	authIDToIndex            map[string]string
-	supportedModelsByAuth    map[string]map[string]struct{}
-	modelCatalog             []ModelCatalogItem
-	rrCursorByPool           map[config.AntigravityModelGroup]string
-	sessionAffinity          map[string]sessionBinding
-	warmupResetMu            sync.Mutex
-	warmupAttempts           map[string]warmupAttempt
-	warmupResetWake          chan struct{}
+	mu                      sync.Mutex
+	runMu                   sync.Mutex
+	runner                  TaskRunner
+	rootCtx                 context.Context
+	cancel                  context.CancelFunc
+	cfg                     config.Config
+	hostCallbacks           host.HostCallbacks
+	clock                   Clock
+	sleeper                 Sleeper
+	management              *management.Handler
+	latestResult            apply.Result
+	latestAudit             string
+	latestDualSnapshot      *apply.DualGroupSnapshot
+	latestQuotaPreview      *quotaPreview
+	scheduleConfig          state.ScheduleConfig
+	stateCacheOverride      string
+	runHistory              []RunHistoryEntry
+	requestHistory          []state.RequestHistoryEntry
+	requestHistoryPersistMu sync.Mutex
+	latestProbeOutcomes     []management.ProbeOutcome
+	lastAutoApplyAt         time.Time
+	worker                  *tickerWorker
+	shutdown                bool
+	rateLimitMu             sync.Mutex
+	pending429              map[string]pending429
+	stormUntil              time.Time
+	stormAccounts           map[string]bool
+	activeCooldowns         map[string]state.CooldownEntry
+	rateLimitWake           chan struct{}
+	rateLimitDone           chan struct{}
+	routingMu               sync.RWMutex
+	plansByPool             map[config.AntigravityModelGroup]PoolRoutingTable
+	authIDToIndex           map[string]string
+	supportedModelsByAuth   map[string]map[string]struct{}
+	modelCatalog            []ModelCatalogItem
+	rrCursorByPool          map[config.AntigravityModelGroup]string
+	sessionAffinity         map[string]sessionBinding
+	warmupResetMu           sync.Mutex
+	warmupAttempts          map[string]warmupAttempt
+	warmupResetWake         chan struct{}
 }
 
 // New creates an initialized Runtime instance.
@@ -87,25 +88,25 @@ func New(options Options) *Runtime {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	rt := &Runtime{
-		rootCtx:                  ctx,
-		cancel:                   cancel,
-		cfg:                      config.Default(),
-		hostCallbacks:            options.Host,
-		clock:                    clock,
-		sleeper:                  sleeper,
-		pending429:               make(map[string]pending429),
-		stormAccounts:            make(map[string]bool),
-		activeCooldowns:          make(map[string]state.CooldownEntry),
-		rateLimitWake:            make(chan struct{}, 1),
-		rateLimitDone:            make(chan struct{}),
-		plansByPool:              make(map[config.AntigravityModelGroup]PoolRoutingTable),
-		authIDToIndex:            make(map[string]string),
-		supportedModelsByAuth:    make(map[string]map[string]struct{}),
-		modelCatalog:             append([]ModelCatalogItem(nil), builtInAntigravityModels...),
-		rrCursorByPool:           make(map[config.AntigravityModelGroup]string),
-		sessionAffinity:          make(map[string]sessionBinding),
-		warmupAttempts:           make(map[string]warmupAttempt),
-		warmupResetWake:          make(chan struct{}, 1),
+		rootCtx:               ctx,
+		cancel:                cancel,
+		cfg:                   config.Default(),
+		hostCallbacks:         options.Host,
+		clock:                 clock,
+		sleeper:               sleeper,
+		pending429:            make(map[string]pending429),
+		stormAccounts:         make(map[string]bool),
+		activeCooldowns:       make(map[string]state.CooldownEntry),
+		rateLimitWake:         make(chan struct{}, 1),
+		rateLimitDone:         make(chan struct{}),
+		plansByPool:           make(map[config.AntigravityModelGroup]PoolRoutingTable),
+		authIDToIndex:         make(map[string]string),
+		supportedModelsByAuth: make(map[string]map[string]struct{}),
+		modelCatalog:          append([]ModelCatalogItem(nil), builtInAntigravityModels...),
+		rrCursorByPool:        make(map[config.AntigravityModelGroup]string),
+		sessionAffinity:       make(map[string]sessionBinding),
+		warmupAttempts:        make(map[string]warmupAttempt),
+		warmupResetWake:       make(chan struct{}, 1),
 	}
 	if strings.TrimSpace(options.StateCachePath) != "" {
 		rt.cfg.StateCachePath = options.StateCachePath
@@ -604,7 +605,7 @@ func (r *Runtime) persistLastAutoApplyAt(ctx context.Context, cfg config.Config,
 		return fmt.Errorf("load state for auto apply schedule: %w", err)
 	}
 	store.SetLastAutoApplyAt(at)
-	if err := store.SaveAtomic(ctx); err != nil {
+	if err := store.SaveRuntimeAtomic(ctx); err != nil {
 		return fmt.Errorf("persist auto apply schedule: %w", err)
 	}
 	return nil
@@ -684,11 +685,13 @@ func (r *Runtime) Diagnostics(ctx context.Context) (map[string]any, error) {
 	nextRunAt := r.clock.Now().UTC().Add(nextWait)
 
 	activeCooldowns := make([]map[string]any, 0)
+	var loadErrors []string
 	cachePath := cfg.StateCachePath
 	if strings.TrimSpace(cachePath) == "" {
 		cachePath = config.DefaultStateCachePath
 	}
 	if store, err := state.Load(ctx, cachePath); err == nil {
+		loadErrors = store.LoadErrors()
 		now := r.clock.Now().UTC()
 		for _, c := range store.GetCooldowns() {
 			if now.Before(c.CooldownUntil) {
@@ -708,6 +711,7 @@ func (r *Runtime) Diagnostics(ctx context.Context) (map[string]any, error) {
 		}
 	}
 	pending429, rateLimitStorm := r.rateLimitDiagnostics()
+	requestHistory := r.currentRequestHistory()
 
 	return map[string]any{
 		"management_api": map[string]any{
@@ -726,16 +730,60 @@ func (r *Runtime) Diagnostics(ctx context.Context) (map[string]any, error) {
 			"window_start":       sched.WindowStart,
 			"window_end":         sched.WindowEnd,
 		},
-		"active_cooldowns": activeCooldowns,
-		"pending_429":      pending429,
-		"rate_limit_storm": rateLimitStorm,
-		"latest_audit":     audit,
-		"last_result":      result,
-		"latest_apply":     r.latestApplyEntry(),
-		"run_history":      r.currentRunHistory(),
-		"request_history":  r.currentRequestHistory(),
+		"active_cooldowns":      activeCooldowns,
+		"pending_429":           pending429,
+		"rate_limit_storm":      rateLimitStorm,
+		"latest_audit":          audit,
+		"last_result":           result,
+		"latest_apply":          r.latestApplyEntry(),
+		"run_history":           r.currentRunHistory(),
+		"request_history":       requestHistory,
 		"request_history_limit": cfg.RequestHistoryLimit,
+		"storage":               storageDiagnostics(cachePath, loadErrors),
 	}, nil
+}
+
+// storageDiagnostics reports the split cache documents backing the runtime.
+// Paths stay exactly as configured so operators can correlate them with disk.
+func storageDiagnostics(cachePath string, loadErrors []string) map[string]any {
+	paths := state.ResolvePaths(cachePath)
+	specs := []struct {
+		role string
+		path string
+	}{
+		{role: "state", path: paths.Main},
+		{role: "runtime", path: paths.Runtime},
+		{role: "runs", path: paths.Runs},
+		{role: "requests", path: paths.Requests},
+	}
+	files := make([]map[string]any, 0, len(specs))
+	var total int64
+	for _, spec := range specs {
+		entry := map[string]any{
+			"role":   spec.role,
+			"path":   spec.path,
+			"exists": false,
+		}
+		info, err := os.Stat(spec.path)
+		switch {
+		case err == nil:
+			entry["exists"] = true
+			entry["size_bytes"] = info.Size()
+			entry["modified_at"] = info.ModTime().UTC().Format(time.RFC3339)
+			total += info.Size()
+		case !errors.Is(err, os.ErrNotExist):
+			entry["error"] = host.RedactBytes([]byte(err.Error()))
+		}
+		files = append(files, entry)
+	}
+	result := map[string]any{
+		"files":            files,
+		"total_size_bytes": total,
+	}
+	if len(loadErrors) > 0 {
+		result["load_errors"] = append([]string(nil), loadErrors...)
+	}
+	return result
 }
 
 // Shutdown terminates runtime workers and marks runtime as shutdown.
@@ -1048,7 +1096,7 @@ func (r *Runtime) SetScheduleConfig(ctx context.Context, cfg config.ScheduleConf
 		return fmt.Errorf("load state for schedule config: %w", err)
 	}
 	store.SetScheduleConfig(cfg)
-	if err := store.SaveAtomic(ctx); err != nil {
+	if err := store.SaveRuntimeAtomic(ctx); err != nil {
 		return fmt.Errorf("persist schedule config: %w", err)
 	}
 	r.mu.Lock()
@@ -1104,7 +1152,7 @@ func (r *Runtime) SetDynamicConfig(ctx context.Context, dyn config.DynamicConfig
 	}
 	store.SetDynamicConfig(dyn)
 	store.SetScheduleConfig(dyn.Schedule)
-	if err := store.SaveAtomic(ctx); err != nil {
+	if err := store.SaveRuntimeAtomic(ctx); err != nil {
 		return fmt.Errorf("save dynamic config: %w", err)
 	}
 
@@ -1194,7 +1242,7 @@ func (r *Runtime) SetCustomTier(ctx context.Context, authIndex string, tier int)
 		return fmt.Errorf("load state for custom tier: %w", err)
 	}
 	store.SetCustomTier(cleanIdx, tier)
-	if err := store.SaveAtomic(ctx); err != nil {
+	if err := store.SaveRuntimeAtomic(ctx); err != nil {
 		return fmt.Errorf("persist custom tier: %w", err)
 	}
 

@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"strings"
 
-	"antigravity-priority/internal/config"
 	"antigravity-priority/internal/host"
 	"antigravity-priority/internal/state"
 )
@@ -66,7 +65,9 @@ func (r *Runtime) requestHistoryLimitLocked() int {
 	return r.cfg.RequestHistoryLimit
 }
 
-// persistRequestHistory writes the latest in-memory history to the state cache.
+// persistRequestHistory writes only the request-history sidecar. It never
+// reads or rewrites quota evidence, so high request volume cannot disturb
+// unrelated cache documents.
 // The persist mutex keeps concurrent writers from replacing a newer snapshot with an older one.
 func (r *Runtime) persistRequestHistory(ctx context.Context) {
 	r.requestHistoryPersistMu.Lock()
@@ -77,13 +78,7 @@ func (r *Runtime) persistRequestHistory(ctx context.Context) {
 	cachePath := r.cfg.StateCachePath
 	r.mu.Unlock()
 
-	if strings.TrimSpace(cachePath) == "" {
-		cachePath = config.DefaultStateCachePath
-	}
-	if store, err := state.Load(ctx, cachePath); err == nil {
-		store.SetRequestHistory(entries)
-		_ = store.SaveAtomic(ctx)
-	}
+	_ = state.WriteRequestHistoryAtomic(ctx, cachePath, entries)
 }
 
 // currentRequestHistory returns a copy of current request history entries.

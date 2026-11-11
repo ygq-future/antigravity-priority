@@ -109,7 +109,7 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 
 	if preview == nil {
 		if len(evidence.RateLimited) > 0 {
-			if err := store.SaveAtomic(ctx); err != nil {
+			if err := store.SaveStateAtomic(ctx); err != nil {
 				return err
 			}
 			for authIndex, modelGroup := range evidence.RateLimited {
@@ -122,7 +122,7 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 				return err
 			}
 		} else {
-			if err := store.SaveAtomic(ctx); err != nil {
+			if err := store.SaveStateAtomic(ctx); err != nil {
 				return err
 			}
 		}
@@ -135,7 +135,7 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 			}
 		}
 		if r.triggerWarmupForEligibleCredentials(ctx, client, request.Config.Warmup, evidence.ByGroup, allAuthMaterials, disabledAuth, store, now) > 0 {
-			if err := store.SaveAtomic(ctx); err != nil {
+			if err := store.SaveStateAtomic(ctx); err != nil {
 				return fmt.Errorf("persist warm-up state: %w", err)
 			}
 		}
@@ -228,7 +228,7 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 	postApplyProjection, err := projectCurrentHost(ctx, client, request, evidence.ByGroup, store, now)
 	if err != nil {
 		if store != nil {
-			_ = store.SaveAtomic(ctx)
+			_ = store.SaveStateAtomic(ctx)
 		}
 		return fmt.Errorf("reconcile Host after apply: %w", err)
 	}

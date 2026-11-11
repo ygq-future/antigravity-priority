@@ -19,8 +19,10 @@ const (
 	DynamicLibraryBaseName = "antigravity-priority"
 	// CPAConfigKey is the configuration key under plugins.configs in CPA.
 	CPAConfigKey = "antigravity-priority"
-	// DefaultStateCachePath is the default path for persisting probe state and burn rate metrics inside CPA's persistent data directory.
-	DefaultStateCachePath = "data/antigravity-priority-cache.json"
+	// DefaultStateCachePath is the main state file inside the plugin's dedicated cache directory.
+	DefaultStateCachePath = "data/antigravity-priority/state.json"
+	// LegacyDefaultStateCachePath is the pre-directory cache file migrated automatically.
+	LegacyDefaultStateCachePath = "data/antigravity-priority-cache.json"
 
 	// KeyEnabled is the JSON/YAML key for enabled.
 	KeyEnabled = "enabled"

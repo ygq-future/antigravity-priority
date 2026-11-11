@@ -14,6 +14,9 @@ go run ./cmd/devserver
 data/devserver/auth-files/
 data/devserver/quota-state.json
 data/devserver/refresh-cache.json
+data/devserver/refresh-cache.runtime.json
+data/devserver/refresh-cache.runs.json
+data/devserver/refresh-cache.requests.json
 ```
 
 已有 `.json` auth 文件会被读取并保留；启动参数中的账号数表示目录中至少生成多少个账号，不会覆盖手动修改的文件。

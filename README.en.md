@@ -119,15 +119,15 @@ plugins:
   configs:
     antigravity-priority:
       enabled: true
-      # state_cache_path: "data/antigravity-priority-cache.json" # Optional custom cache path
+      # state_cache_path: "data/antigravity-priority/state.json" # Optional custom cache path
 ```
 
 | Host Parameter | Default | Required | Description |
 | :--- | :--- | :--- | :--- |
 | **`enabled`** | `true` | Yes | Global plugin switch. When `false`, all scheduling and background workers are halted. |
-| **`state_cache_path`** | `data/antigravity-priority-cache.json` | No | File path for persisting state snapshots, dynamic configuration, and adaptive burn rates. |
+| **`state_cache_path`** | `data/antigravity-priority/state.json` | No | Main state file path, stored by default under `data/antigravity-priority/`. The same directory derives `runtime.json`, `runs.json`, and `requests.json` for runtime config, run audit, and request history so high-frequency writes never touch unrelated state. |
 
-> **⚠️ Path Migration Note**: The plugin does not perform automatic hot migration across storage paths. If `state_cache_path` is changed mid-operation, the plugin treats missing new paths as clean cold starts. To retain existing dynamic configuration, run history, and learned burn rates, stop CPA/plugin and manually move or copy the existing cache file to the new path before updating the configuration.
+> **⚠️ Path Migration Note**: The legacy default `data/antigravity-priority-cache.json` is migrated automatically into `data/antigravity-priority/` on startup, and old files are removed only after all four new documents are written. Changing `state_cache_path` to a different path does not hot-migrate; stop CPA/plugin and move or copy the whole cache directory before updating the configuration.
 
 ### 2. UI Dynamic Config Center (Zero-Restart Hot Reload)
 
@@ -164,9 +164,9 @@ The plugin registers **resources** (static management dashboard) and **routes** 
     - **Model-Centric Routing Board**: Dropdown to select concrete models (Gemini pool, Argon pool, Claude & GPT pool), instantly rendering call order tiers (Tier #1 · 999 Boost, Tier #2 · 100 Clustered Round-Robin, etc.) and active eligibility.
     - **Panoramic 5-Bar Quota Cards**: Every card displays all 5 quota bars (Gemini 5h/7d, Claude 5h/7d, Argon 7d), highlighting the active route bars for the selected model with adaptive countdown timers and learned $C_{\text{cycle}}$.
     - **Scheduling & Synchronization Control**: Provides `🔄 Sync Host`, `📡 Fetch Quota (10s cooldown)`, and `🔄 Reset Static Priorities`.
-    - **Real-Time Request History**: Retains up to 100 recent request logs with model, target quota pool, token breakdown, and response status with one-click clear.
+    - **Real-Time Request History**: Retains recent request logs (configurable retention, default 100, max 1000) with model, target quota pool, token breakdown, and response status with one-click clear.
     - **Samples Modal**: Seamlessly toggle between Gemini, Argon, and Claude & GPT sample histories.
-    - **System Diagnostics**: Scheduler engine lifecycle, active window states, 429 rate limit circuit breaking monitor, full email identity, and last apply health metrics with one-click JSON Copy.
+    - **System Diagnostics**: Health banner, three KPIs (scheduler, isolation, last run), a three-pool quota matrix, per-credential decision explanations (priority, urgency, T7d/T_req, C_cycle, reason), 429 storm and cooldown isolation, run timeline, and the path, size, and presence of the four cache files, with one-click JSON Copy.
     - **⚙️ Config Center**: Online management of all scheduling and algorithm parameters with instant hot reload.
 
 ### Management API (Dynamic, Key Required)
@@ -184,7 +184,7 @@ The plugin registers **resources** (static management dashboard) and **routes** 
 - `POST /v0/management/plugins/antigravity-priority/schedule/config`
   - Updates active schedule time window or toggles pause/resume.
 - `GET /v0/management/plugins/antigravity-priority/diagnostics`
-  - Exports scheduler diagnostic metrics, active 429 cooldowns, background worker state, and run history; account identity uses full email while tokens, keys, and persisted audit fields remain redacted.
+  - Exports scheduler state, plan snapshot, cooldowns and 429 storm, run history, active policy, and the status of the four cache files; account identity uses full email while tokens, keys, and persisted audit fields remain redacted.
 - `POST /v0/management/plugins/antigravity-priority/sync`
   - Actively re-syncs latest credential files from CPA host and regenerates three-pool snapshots immediately.
 - `GET /v0/management/plugins/antigravity-priority/samples?auth_index=xxx`

@@ -119,15 +119,15 @@ plugins:
   configs:
     antigravity-priority:
       enabled: true
-      # state_cache_path: "data/antigravity-priority-cache.json" # 可选，自定义持久化缓存路径
+      # state_cache_path: "data/antigravity-priority/state.json" # 可选，自定义持久化缓存路径
 ```
 
 | 宿主字段 | 默认值 | 必填 | 说明 |
 | :--- | :--- | :--- | :--- |
 | **`enabled`** | `true` | 是 | 插件全局启用开关。设为 `false` 时彻底停止调度与后台任务。 |
-| **`state_cache_path`** | `data/antigravity-priority-cache.json` | 否 | 插件状态快照、动态配置与时序自适应学习率的持久化存储文件路径。 |
+| **`state_cache_path`** | `data/antigravity-priority/state.json` | 否 | 主状态文件路径，默认收纳于 `data/antigravity-priority/` 目录。同目录自动派生 `runtime.json`、`runs.json`、`requests.json`，分别承载运行配置、运行审计与请求历史，避免高频写入互相影响。 |
 
-> **⚠️ 路径迁移提示**：插件不支持跨路径自动热迁移旧数据。若在运行中途更改了 `state_cache_path`，系统在新路径未找到文件时将默认作为全新冷启动。如需保留原有的动态配置、历史记录与自适应学习率，请在修改 YAML 前停止 CPA / 插件，手动将原缓存文件移动或复制至新路径。
+> **⚠️ 路径迁移提示**：旧版默认路径 `data/antigravity-priority-cache.json` 会在启动时自动迁移到 `data/antigravity-priority/` 目录，并在四份新文件全部落盘后删除旧文件，不留残留。若手动把 `state_cache_path` 改到全新路径，插件不会跨路径热迁移；请停止 CPA / 插件后将整个缓存目录移动或复制到新位置。
 
 ### 2. UI 动态配置中心 (免重启热生效)
 
@@ -164,9 +164,9 @@ plugins:
     - **模型驱动路由看板**：支持下拉选择具体模型（Gemini 池、Argon 池、Claude & GPT 池），即时展示对应模型的完整凭证调用次序（Tier #1 · 999 提权、Tier #2 · 100 平级轮询等）与生效状态。
     - **全景五进度条卡片**：每个凭证卡片同时渲染全部 5 根配额进度条（Gemini 5h/7d、Claude 5h/7d、Argon 7d），并高亮当前选中模型的生效配额；秒级自适应倒计时与自适应消耗速率 $C_{\text{cycle}}$。
     - **调度与同步控制**：提供 `🔄 刷新同步 (Sync Host)`、`📡 刷新配额 (10s冷却)`、`🔄 重置静态优先级 (Reset Priorities)`。
-    - **实时请求历史**：实时追踪捕获最近 100 条请求记录，记录请求 Model、目标配额池、Token 消耗细分与状态码，支持一键清空。
+    - **实时请求历史**：实时追踪捕获最近请求记录（保留条数可配置，默认 100，最高 1000），记录请求 Model、目标配额池、Token 消耗细分与状态码，支持一键清空。
     - **采样历史**：支持自由切换 Gemini、Argon 与 Claude & GPT 三大配额池时序样本。
-    - **系统诊断**：调度引擎生命周期、时段状态、429 熔断与冷却监控看板、完整 email 身份、最近写入健康度与脱敏审计流，支持一键复制诊断 JSON。
+    - **系统诊断**：运行健康横幅、调度/隔离冷却/最近运行三类 KPI、三配额池矩阵、逐凭证调度决策解释（优先级、Urgency、T7d/T_req、C_cycle 与原因）、429 风暴与冷却隔离、运行时间线，以及四类缓存文件的路径、体积与缺失状态，支持一键复制诊断 JSON。
     - **⚙️ 配置中心**：在线修改所有调度与算法参数，0 秒热生效与一键恢复默认。
 
 ### 管理 API（动态接口，需 Management Key 鉴权）
@@ -184,7 +184,7 @@ plugins:
 - `POST /v0/management/plugins/antigravity-priority/schedule/config`
   - 动态切换自动调度暂停/恢复或更新生效时间区间。
 - `GET /v0/management/plugins/antigravity-priority/diagnostics`
-  - 导出调度器运行诊断数据、429 活跃熔断记录、后台 Ticker 状态、最近写入体征与近期执行记录；账号身份使用完整 email，令牌、密钥及持久化审计字段保持脱敏。
+  - 导出调度器状态、计划快照、冷却与 429 风暴、运行历史、当前策略与四类缓存文件状态；账号身份使用完整 email，令牌、密钥及持久化审计字段保持脱敏。
 - `POST /v0/management/plugins/antigravity-priority/sync`
   - 主动从 CPA 宿主同步最新凭证文件列表并即时重新生成三大配额池快照。
 - `GET /v0/management/plugins/antigravity-priority/samples?auth_index=xxx`

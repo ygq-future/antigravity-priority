@@ -373,7 +373,7 @@ func TestScheduler_PoolScoped429Cooldown_Isolation(t *testing.T) {
 // 5. Acceptance Criterion 5: Non-Antigravity scheduler.pick returns handled: false
 func TestScheduler_NonAntigravityRequest_ReturnsHandledFalse(t *testing.T) {
 	ctx := context.Background()
-	r := runtime.New(runtime.Options{})
+	r := runtime.New(runtime.Options{StateCachePath: filepath.Join(t.TempDir(), "cache.json")})
 
 	// No antigravity candidates present
 	req, _ := json.Marshal(runtime.SchedulerPickRequest{

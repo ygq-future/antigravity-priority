@@ -47,7 +47,7 @@ const helpMarkup = `
                     </div>
                     <div class="help-feature-item">
                         <div class="help-feature-title" data-i18n="helpUITitle">🖥️ 可视化调度与观测</div>
-                        <div data-i18n="helpUIDesc">概览看板展示模型路由与 5 条配额进度条，请求历史记录模型、Token 消耗与状态，系统诊断透出调度、熔断与脱敏审计；配置中心修改后即时热生效。</div>
+                        <div data-i18n="helpUIDesc">概览看板展示模型路由与 5 条配额进度条，请求历史记录模型、Token 消耗与状态，系统诊断透出配额池矩阵、决策解释、健康隔离、运行时间线与四类缓存文件状态；配置中心修改后即时热生效。</div>
                     </div>
                 </div>
             </div>

@@ -263,9 +263,14 @@ func TestStatusHTML_ContainsRequiredUIElements(t *testing.T) {
 		{"Diagnostics panel", "panelDiagnostics"},
 		{"Diagnostics KPI grid", "diag-kpi-grid"},
 		{"Diagnostics copy button", "btnCopyDiagnostics"},
-		{"Diagnostics scheduler section", "diagSectionScheduler"},
-		{"Diagnostics cooldown section", "diagSectionCooldown"},
-		{"Diagnostics audit section", "diagSectionAudit"},
+		{"Diagnostics pool matrix", "diagPoolMatrix"},
+		{"Diagnostics pool section", "diagSectionPools"},
+		{"Diagnostics plan table", "diagPlanTable"},
+		{"Diagnostics plan section", "diagSectionPlan"},
+		{"Diagnostics health section", "diagSectionCooldown"},
+		{"Diagnostics timeline section", "diagSectionTimeline"},
+		{"Diagnostics storage section", "diagSectionStorage"},
+		{"Diagnostics storage list", "diagStorageList"},
 		{"Credentials loading overlay", "credentialsLoadingOverlay"},
 		{"Credentials loading card", "credentials-loading-card"},
 		{"Quota probe radar beacon", "quota-probe-radar"},
@@ -320,8 +325,8 @@ func TestStatusHTML_ContainsRequiredUIElements(t *testing.T) {
 	if !strings.Contains(html, `showModal("probe-history"`) || !strings.Contains(html, "probe_round_id") {
 		t.Error("probe history details must load samples by probe round")
 	}
-	if !strings.Contains(html, "latestDiagnostics.latest_apply") || !strings.Contains(html, "No Apply write recorded yet") {
-		t.Error("diagnostics write-health UI must use latest_apply and expose the no-Apply state")
+	if !strings.Contains(html, "latestDiagnostics.latest_apply") || !strings.Contains(html, "diagNoLastRun") {
+		t.Error("diagnostics last-run UI must use latest_apply and expose the no-run state")
 	}
 	if strings.Contains(html, `SYNC_PATH + "?antigravity_model_group="`) {
 		t.Error("dashboard view selector must not be sent as write-back/control authority")

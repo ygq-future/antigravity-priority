@@ -1788,6 +1788,43 @@ func TestRuntime_Diagnostics(t *testing.T) {
 	}
 }
 
+func TestRuntime_Diagnostics_StorageDocuments(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	r := newTestRuntime(t, runtime.Options{StateCachePath: cachePath})
+
+	diag, err := r.Diagnostics(context.Background())
+	if err != nil {
+		t.Fatalf("diagnostics failed: %v", err)
+	}
+	storage, ok := diag["storage"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected storage section, got %#v", diag["storage"])
+	}
+	files, ok := storage["files"].([]map[string]any)
+	if !ok || len(files) != 4 {
+		t.Fatalf("expected 4 storage documents, got %#v", storage["files"])
+	}
+	roles := make(map[string]bool, len(files))
+	for _, file := range files {
+		role, _ := file["role"].(string)
+		roles[role] = true
+		if path, _ := file["path"].(string); path == "" {
+			t.Errorf("storage document %q has no path", role)
+		}
+		if exists, _ := file["exists"].(bool); !exists {
+			t.Errorf("storage document %q is missing on disk", role)
+		}
+	}
+	for _, role := range []string{"state", "runtime", "runs", "requests"} {
+		if !roles[role] {
+			t.Errorf("storage section missing role %q", role)
+		}
+	}
+	if total, _ := storage["total_size_bytes"].(int64); total <= 0 {
+		t.Errorf("expected positive total cache size, got %#v", storage["total_size_bytes"])
+	}
+}
+
 func ptrInt64(v int64) *int64 {
 	return new(v)
 }
@@ -2037,11 +2074,10 @@ func TestRuntime_GetSetDynamicConfig(t *testing.T) {
 			WindowEnd:     "22:00",
 		},
 		Warmup: config.WarmupConfig{
-			GeminiEnabled:  true,
-			GeminiModel:    "gemini-3-flash",
-			ClaudeEnabled:  true,
-			ClaudeModel:    "claude-sonnet-5-5-high",
-
+			GeminiEnabled: true,
+			GeminiModel:   "gemini-3-flash",
+			ClaudeEnabled: true,
+			ClaudeModel:   "claude-sonnet-5-5-high",
 		},
 	}
 	if err := r.SetDynamicConfig(context.Background(), update); err != nil {
@@ -2077,7 +2113,6 @@ func TestRuntime_GetSetDynamicConfig(t *testing.T) {
 	if !runtimeCfg.Warmup.GeminiEnabled || !runtimeCfg.Warmup.ClaudeEnabled {
 		t.Errorf("expected warmup enabled in runtime config, got: %+v", runtimeCfg.Warmup)
 	}
-
 
 	// 4. Verify disk persistence and survival across reloads
 	store, err := state.Load(context.Background(), cachePath)
@@ -2297,7 +2332,6 @@ func TestRuntime_AutoApply_DoesNotMutateHostFiles(t *testing.T) {
 		t.Fatalf("expected host priority to remain 0, got %d", mock.files[0].Priority)
 	}
 }
-
 
 func TestRuntime_ProductionRunner_RespectsManuallyDisabledAccounts(t *testing.T) {
 	tempDir := t.TempDir()

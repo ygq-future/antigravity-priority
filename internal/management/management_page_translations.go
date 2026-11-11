@@ -27,13 +27,20 @@ var historyTranslationKeys = []string{
 }
 
 var diagnosticsTranslationKeys = []string{
-	"diagnosticsTitle", "btnCopyDiagnostics", "diagKpiScheduler", "diagKpiCooldown", "diagCooldownSubText", "diagKpiLastApply",
-	"diagSectionScheduler", "diagSchedIntervalLabel", "diagSchedWorkerLabel", "diagSchedLastRunLabel", "diagSchedNextRunLabel",
-	"diagWindowPolicyLabel", "diagSectionCooldown", "diagCooldownEmptyText", "diagSectionAudit", "diagAuditSummaryLabel",
-	"diagWindowContinuous", "diagWindowActive", "diagWindowSleeping", "diagNoLastRun", "diagStatusRunning", "diagStatusPaused",
-	"diagStatusSleeping", "diagStatusDisabled", "diagWorkerActive", "diagWorkerInactive", "diagHealthy", "diagTripped",
-	"diagCoolingDownCount", "diagAllPassed", "diagHasFailed", "diagNoChanges", "diagSuccessPill", "diagFailedPill",
-	"diagSkippedPill", "diagAttemptedPill", "diagRemainingSec",
+	"diagnosticsTitle", "btnCopyDiagnostics",
+	"diagKpiScheduler", "diagKpiCooldown", "diagKpiLastApply",
+	"diagSectionPools", "diagSectionPlan", "diagSectionCooldown", "diagSectionTimeline", "diagSectionStorage",
+	"diagPoolLabel", "diagColActive", "diagColBoost", "diagColDepleted", "diagColCooldown",
+	"diagColMin5h", "diagColMin7d", "diagColNearestReset", "diagColAvgBurn",
+	"diagColCredential", "diagColPriority", "diagColDecision", "diagColUrgency", "diagColHorizon", "diagColCycle", "diagColReason",
+	"diagHealthOk", "diagHealthWarning", "diagHealthCritical", "diagHealthStorm", "diagHealthStorageError",
+	"diagPending429Title", "diagPending429Empty", "diagStormTitle", "diagStormUntil", "diagStormAccounts", "diagStormRecovered",
+	"diagTimelineEmpty", "diagRunRecordPersisted", "diagRunRecordFailed", "diagRunRecordNotAttempted",
+	"diagStorageRoleState", "diagStorageRoleRuntime", "diagStorageRoleRuns", "diagStorageRoleRequests", "diagStorageMissing", "diagStorageEmpty",
+	"diagCooldownSubText", "diagCooldownEmptyText", "diagNoLastRun", "diagStatusRunning", "diagStatusPaused", "diagStatusSleeping", "diagStatusDisabled",
+	"diagHealthy", "diagTripped", "diagCoolingDownCount",
+	"diagAllPassed", "diagHasFailed", "diagNoChanges", "diagSuccessPill", "diagFailedPill", "diagAttemptedPill",
+	"diagRemainingSec", "copiedSuccess",
 }
 
 var configTranslationKeys = []string{

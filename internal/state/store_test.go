@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"antigravity-priority/internal/config"
 	"antigravity-priority/internal/core"
 	"antigravity-priority/internal/state"
 )
@@ -1113,5 +1114,358 @@ func TestStore_ScheduleConfig_DynamicConfig_Sync(t *testing.T) {
 	loadedDyn, ok := loaded.GetDynamicConfig()
 	if !ok || !loadedDyn.Schedule.Paused {
 		t.Fatalf("expected loaded dynamicConfig to be healed with paused=true, got %+v", loadedDyn.Schedule)
+	}
+}
+
+func TestResolvePaths_DerivesSiblingDocuments(t *testing.T) {
+	mainPath := filepath.Join("data", "antigravity-priority", "state.json")
+	paths := state.ResolvePaths(mainPath)
+	if paths.Main != mainPath {
+		t.Fatalf("main path = %q; want %q", paths.Main, mainPath)
+	}
+	wantRuntime := filepath.Join("data", "antigravity-priority", "runtime.json")
+	wantRuns := filepath.Join("data", "antigravity-priority", "runs.json")
+	wantRequests := filepath.Join("data", "antigravity-priority", "requests.json")
+	if paths.Runtime != wantRuntime || paths.Runs != wantRuns || paths.Requests != wantRequests {
+		t.Fatalf("derived paths = %+v; want runtime=%q runs=%q requests=%q", paths, wantRuntime, wantRuns, wantRequests)
+	}
+
+	fallback := state.ResolvePaths("")
+	if fallback.Main != config.DefaultStateCachePath {
+		t.Fatalf("empty path fallback = %q; want %q", fallback.Main, config.DefaultStateCachePath)
+	}
+	legacyMapped := state.ResolvePaths(config.LegacyDefaultStateCachePath)
+	if legacyMapped.Main != config.DefaultStateCachePath {
+		t.Fatalf("legacy default must map into the dedicated directory, got %q", legacyMapped.Main)
+	}
+	legacy := state.LegacyPaths(config.LegacyDefaultStateCachePath)
+	wantLegacyRuntime := filepath.Join("data", "antigravity-priority-cache.runtime.json")
+	wantLegacyRuns := filepath.Join("data", "antigravity-priority-cache.runs.json")
+	wantLegacyRequests := filepath.Join("data", "antigravity-priority-cache.requests.json")
+	if legacy.Main != config.LegacyDefaultStateCachePath || legacy.Runtime != wantLegacyRuntime || legacy.Runs != wantLegacyRuns || legacy.Requests != wantLegacyRequests {
+		t.Fatalf("legacy paths = %+v", legacy)
+	}
+	fromNewDefault := state.LegacyPaths(config.DefaultStateCachePath)
+	if fromNewDefault.Main != config.LegacyDefaultStateCachePath {
+		t.Fatalf("new default must still locate the legacy cache for migration, got %q", fromNewDefault.Main)
+	}
+}
+
+func TestStore_SplitDocumentsPersistIndependently(t *testing.T) {
+	ctx := context.Background()
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	paths := state.ResolvePaths(cachePath)
+
+	store, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	if err := store.MarkProbeSuccess(ctx, state.ProbeSuccess{
+		AuthIndex:            "split-auth",
+		ModelGroup:           "gemini",
+		ObservedAt:           now,
+		ShortWindowResetAt:   now.Add(3 * time.Hour),
+		ShortWindowRemaining: int64Ptr(80),
+		LongWindowResetAt:    now.Add(72 * time.Hour),
+		LongWindowRemaining:  int64Ptr(90),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	store.SetScheduleConfig(state.ScheduleConfig{Paused: true})
+	store.SetRuntimeSnapshot("split audit", []byte(`{"ok":true}`), []byte(`[{"kind":"probe"}]`))
+	store.SetRequestHistory([]state.RequestHistoryEntry{{ID: "split-req", At: now, Model: "m", ModelPool: "gemini"}})
+
+	if err := store.SaveAtomic(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, path := range []string{paths.Main, paths.Runtime, paths.Runs, paths.Requests} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("expected split document %s: %v", path, err)
+		}
+	}
+
+	mainRaw, err := os.ReadFile(paths.Main)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, legacyKey := range []string{"request_history", "run_history", "latest_audit", "latest_result", "schedule_config", "app_config"} {
+		if strings.Contains(string(mainRaw), `"`+legacyKey+`"`) {
+			t.Fatalf("main state document still contains %q: %s", legacyKey, mainRaw)
+		}
+	}
+
+	reloaded, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := reloaded.GetEntry("split-auth", "gemini"); !ok {
+		t.Fatal("expected quota entry in main state document")
+	}
+	if !reloaded.GetScheduleConfig().Paused {
+		t.Fatal("expected schedule config in runtime document")
+	}
+	audit, resultJSON, historyJSON := reloaded.GetRuntimeSnapshot()
+	if audit != "split audit" || len(resultJSON) == 0 || len(historyJSON) == 0 {
+		t.Fatalf("unexpected runs document: audit=%q result=%s history=%s", audit, resultJSON, historyJSON)
+	}
+	history := reloaded.GetRequestHistory()
+	if len(history) != 1 || history[0].ID != "split-req" {
+		t.Fatalf("unexpected request history: %+v", history)
+	}
+}
+
+func TestStore_TargetedSaveLeavesOtherDocumentsUntouched(t *testing.T) {
+	ctx := context.Background()
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	paths := state.ResolvePaths(cachePath)
+
+	store, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	store.SetScheduleConfig(state.ScheduleConfig{Paused: false})
+	store.SetRuntimeSnapshot("audit", []byte(`{"ok":true}`), []byte(`[]`))
+	store.SetRequestHistory([]state.RequestHistoryEntry{{ID: "first", At: now, Model: "m", ModelPool: "gemini"}})
+	if err := store.SaveAtomic(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	beforeMain, err := os.ReadFile(paths.Main)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeRuntime, err := os.ReadFile(paths.Runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeRuns, err := os.ReadFile(paths.Runs)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	store.SetRequestHistory([]state.RequestHistoryEntry{{ID: "second", At: now, Model: "m", ModelPool: "gemini"}})
+	if err := store.SaveRequestsAtomic(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	afterMain, _ := os.ReadFile(paths.Main)
+	afterRuntime, _ := os.ReadFile(paths.Runtime)
+	afterRuns, _ := os.ReadFile(paths.Runs)
+	if string(beforeMain) != string(afterMain) {
+		t.Fatal("request history save rewrote the main state document")
+	}
+	if string(beforeRuntime) != string(afterRuntime) {
+		t.Fatal("request history save rewrote the runtime document")
+	}
+	if string(beforeRuns) != string(afterRuns) {
+		t.Fatal("request history save rewrote the runs document")
+	}
+	if err := state.WriteRequestHistoryAtomic(ctx, cachePath, []state.RequestHistoryEntry{{ID: "third", At: now, Model: "m", ModelPool: "gemini"}}); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	history := reloaded.GetRequestHistory()
+	if len(history) != 1 || history[0].ID != "third" {
+		t.Fatalf("direct request history write not loaded: %+v", history)
+	}
+}
+
+func TestStore_LoadMigratesLegacySingleFileCache(t *testing.T) {
+	ctx := context.Background()
+	cachePath := filepath.Join(t.TempDir(), "legacy-cache.json")
+	legacy := `{
+		"schema_version": 1,
+		"entries": {
+			"legacy-auth|model_group=gemini": {
+				"schema_version": 1,
+				"provider": "antigravity",
+				"model_group": "gemini",
+				"auth_index": "legacy-auth",
+				"observed_at": "2026-11-10T12:00:00Z",
+				"remaining": 80,
+				"cycle_burn_rate": 0.15
+			}
+		},
+		"latest_audit": "legacy audit",
+		"run_history": [{"kind":"probe","at":"2026-11-10T12:00:00Z"}],
+		"request_history": [{"id":"legacy-req","at":"2026-11-10T12:00:00Z","model":"m","model_pool":"gemini"}],
+		"schedule_config": {"paused": true},
+		"app_config": {"auto_apply": true, "interval": "15m"},
+		"last_auto_apply_at": "2026-11-10T12:00:00Z"
+	}`
+	if err := os.WriteFile(cachePath, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := store.GetEntry("legacy-auth", "gemini"); !ok {
+		t.Fatal("expected legacy quota entry")
+	}
+	if audit, _, _ := store.GetRuntimeSnapshot(); audit != "legacy audit" {
+		t.Fatalf("legacy audit = %q", audit)
+	}
+	if history := store.GetRequestHistory(); len(history) != 1 || history[0].ID != "legacy-req" {
+		t.Fatalf("legacy request history = %+v", history)
+	}
+	if !store.GetScheduleConfig().Paused {
+		t.Fatal("expected legacy schedule config")
+	}
+
+	if err := store.SaveAtomic(ctx); err != nil {
+		t.Fatal(err)
+	}
+	paths := state.ResolvePaths(cachePath)
+	for _, path := range []string{paths.Runtime, paths.Runs, paths.Requests} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("expected migrated document %s: %v", path, err)
+		}
+	}
+	mainRaw, err := os.ReadFile(paths.Main)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, legacyKey := range []string{"request_history", "run_history", "latest_audit", "schedule_config", "app_config"} {
+		if strings.Contains(string(mainRaw), `"`+legacyKey+`"`) {
+			t.Fatalf("migrated main document still contains %q", legacyKey)
+		}
+	}
+	reloaded, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := reloaded.GetEntry("legacy-auth", "gemini"); !ok {
+		t.Fatal("expected migrated quota entry")
+	}
+	if history := reloaded.GetRequestHistory(); len(history) != 1 || history[0].ID != "legacy-req" {
+		t.Fatalf("migrated request history = %+v", history)
+	}
+}
+
+func TestStore_CorruptSidecarIsIsolated(t *testing.T) {
+	ctx := context.Background()
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	paths := state.ResolvePaths(cachePath)
+
+	store, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	if err := store.MarkProbeSuccess(ctx, state.ProbeSuccess{
+		AuthIndex:            "isolated-auth",
+		ModelGroup:           "gemini",
+		ObservedAt:           now,
+		ShortWindowResetAt:   now.Add(3 * time.Hour),
+		ShortWindowRemaining: int64Ptr(70),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveStateAtomic(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.Requests, []byte("{not-json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	reloaded, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatalf("corrupt request sidecar must not fail the load: %v", err)
+	}
+	if _, ok := reloaded.GetEntry("isolated-auth", "gemini"); !ok {
+		t.Fatal("main quota state was lost because a sidecar was corrupt")
+	}
+	if len(reloaded.GetRequestHistory()) != 0 {
+		t.Fatal("corrupt request history should load as empty")
+	}
+	if len(reloaded.LoadErrors()) == 0 {
+		t.Fatal("expected the corrupt sidecar to be reported")
+	}
+}
+
+func TestStore_MigratesLegacyDefaultIntoDedicatedDirectory(t *testing.T) {
+	ctx := context.Background()
+	t.Chdir(t.TempDir())
+
+	writeFile := func(path, content string) {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	legacyMain := `{
+		"schema_version": 1,
+		"entries": {
+			"legacy-auth|model_group=gemini": {
+				"schema_version": 1,
+				"provider": "antigravity",
+				"model_group": "gemini",
+				"auth_index": "legacy-auth",
+				"observed_at": "2026-11-10T12:00:00Z",
+				"remaining": 80,
+				"cycle_burn_rate": 0.15
+			}
+		},
+		"latest_audit": "legacy main audit"
+	}`
+	legacyRuntime := `{"schema_version":1,"schedule_config":{"paused":true},"app_config":{"auto_apply":true,"interval":"15m"}}`
+	legacyRuns := `{"schema_version":1,"latest_audit":"legacy runs"}`
+	legacyRequests := `{"schema_version":1,"request_history":[{"id":"legacy-req","at":"2026-11-10T12:00:00Z","model":"m","model_pool":"gemini"}]}`
+
+	legacy := state.LegacyPaths(config.LegacyDefaultStateCachePath)
+	writeFile(legacy.Main, legacyMain)
+	writeFile(legacy.Runtime, legacyRuntime)
+	writeFile(legacy.Runs, legacyRuns)
+	writeFile(legacy.Requests, legacyRequests)
+
+	store, err := state.Load(ctx, config.LegacyDefaultStateCachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := store.GetEntry("legacy-auth", "gemini"); !ok {
+		t.Fatal("expected legacy quota entry")
+	}
+	if audit, _, _ := store.GetRuntimeSnapshot(); audit != "legacy runs" {
+		t.Fatalf("legacy runs audit = %q", audit)
+	}
+	if history := store.GetRequestHistory(); len(history) != 1 || history[0].ID != "legacy-req" {
+		t.Fatalf("legacy request history = %+v", history)
+	}
+	if !store.GetScheduleConfig().Paused {
+		t.Fatal("expected legacy schedule config")
+	}
+
+	paths := state.ResolvePaths(config.DefaultStateCachePath)
+	for _, path := range []string{paths.Main, paths.Runtime, paths.Runs, paths.Requests} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("expected migrated document %s: %v", path, err)
+		}
+	}
+	for _, path := range []string{legacy.Main, legacy.Runtime, legacy.Runs, legacy.Requests} {
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("legacy file %s must be removed after migration, got %v", path, err)
+		}
+	}
+
+	reloaded, err := state.Load(ctx, config.LegacyDefaultStateCachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := reloaded.GetEntry("legacy-auth", "gemini"); !ok {
+		t.Fatal("expected migrated quota entry after reload")
+	}
+	if history := reloaded.GetRequestHistory(); len(history) != 1 || history[0].ID != "legacy-req" {
+		t.Fatalf("migrated request history = %+v", history)
 	}
 }

@@ -140,6 +140,15 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
             try {
                 const data = await apiFetch(DIAGNOSTICS_PATH);
                 latestDiagnostics = data;
+                if (!latestSnapshot) {
+                    try {
+                        const snapshot = await apiFetch(SNAPSHOT_PATH);
+                        latestSnapshot = snapshot;
+                        if (snapshot && Array.isArray(snapshot.models)) {
+                            updateModelDropdownFromSnapshot(snapshot.models);
+                        }
+                    } catch (_) {}
+                }
                 if (data && data.scheduler && typeof scheduleConfig !== "undefined") {
                     if (!scheduleConfig) {
                         scheduleConfig = {

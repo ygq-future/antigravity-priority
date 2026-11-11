@@ -80,7 +80,7 @@ func newDevServer(options devServerOptions) (*devServer, error) {
 				CooldownUntil: nowTime.Add(30 * time.Minute),
 				Reason:        "429 rate limit cooldown",
 			})
-			_ = store.SaveAtomic(context.Background())
+			_ = store.SaveStateAtomic(context.Background())
 		}
 		if len(store.GetRequestHistory()) == 0 {
 			nowTime := time.Now().UTC()
@@ -171,7 +171,7 @@ func newDevServer(options devServerOptions) (*devServer, error) {
 					ErrorMessage: "PERMISSION_DENIED: caller does not have permission to access the requested resource",
 				},
 			})
-			_ = store.SaveAtomic(context.Background())
+			_ = store.SaveRequestsAtomic(context.Background())
 		}
 	}
 	rt := runtime.New(runtime.Options{

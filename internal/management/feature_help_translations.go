@@ -22,7 +22,7 @@ const featureHelpTranslations = `        const HELP_ZH = {
                 help429Title: "🛡️ 健康故障转移与池级自愈",
                 help429Desc: "401/403 视为账号级异常直接隔离并软降级；429 与 5xx 精准隔离至受影响配额池，并进入带抖动的指数退避探测队列，探测成功后自动恢复原梯队，同账号其他配额池不受影响。",
                 helpUITitle: "🖥️ 可视化调度与观测",
-                helpUIDesc: "概览看板展示模型路由与 5 条配额进度条，请求历史记录模型、Token 消耗与状态，系统诊断透出调度、熔断与脱敏审计；配置中心修改后即时热生效。",
+                helpUIDesc: "概览看板展示模型路由与 5 条配额进度条，请求历史记录模型、Token 消耗与状态，系统诊断透出配额池矩阵、决策解释、健康隔离、运行时间线与四类缓存文件状态；配置中心修改后即时热生效。",
             }
         };
         const HELP_EN = {
@@ -47,7 +47,7 @@ const featureHelpTranslations = `        const HELP_ZH = {
                 help429Title: "🛡️ Scoped Health Failover & Pool Self-Healing",
                 help429Desc: "401/403 are treated as account-level failures and quarantined with soft demotion; 429 and 5xx are isolated to the affected pool and enter a jittered exponential-backoff probe queue, restoring the original tier after one success without impacting sibling pools.",
                 helpUITitle: "🖥️ Visual Scheduling & Observability",
-                helpUIDesc: "The overview board renders model routing and five quota bars, request history records models, token usage and status, diagnostics expose scheduling, circuit breakers and a redacted audit stream, and the Config Center applies changes hot.",
+                helpUIDesc: "The overview board renders model routing and five quota bars, request history records models, token usage and status, diagnostics expose the pool matrix, decision explanations, health isolation, run timeline, and the four cache files, and the Config Center applies changes hot.",
             }
         };
 `

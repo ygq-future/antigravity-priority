@@ -180,7 +180,7 @@ type PriorityRulesConfig = config.PriorityRulesConfig
 type Store struct {
 	mu              sync.RWMutex
 	saveMu          sync.Mutex
-	path            string
+	paths           Paths
 	entries         map[string]Entry
 	latestAudit     string
 	latestResult    []byte
@@ -192,140 +192,427 @@ type Store struct {
 	autoDisabled    map[string]AutoDisabledEntry
 	requestHistory  []RequestHistoryEntry
 	warmupCompleted map[string]time.Time
+	loadErrors      []string
 }
 
-type document struct {
+// stateDocument is the main quota/health document. Run and request history
+// live in sibling documents so their writes never rewrite quota evidence.
+type stateDocument struct {
 	SchemaVersion   int                          `json:"schema_version"`
 	Entries         map[string]Entry             `json:"entries"`
-	LatestAudit     string                       `json:"latest_audit,omitempty"`
-	LatestResult    json.RawMessage              `json:"latest_result,omitempty"`
-	RunHistory      json.RawMessage              `json:"run_history,omitempty"`
-	ScheduleConfig  *ScheduleConfig              `json:"schedule_config,omitempty"`
-	DynamicConfig   *DynamicConfig               `json:"app_config,omitempty"`
-	LastAutoApplyAt time.Time                    `json:"last_auto_apply_at,omitzero"`
 	Cooldowns       map[string]CooldownEntry     `json:"cooldowns,omitempty"`
 	AutoDisabled    map[string]AutoDisabledEntry `json:"auto_disabled,omitempty"`
-	RequestHistory  []RequestHistoryEntry        `json:"request_history,omitempty"`
 	WarmupCompleted map[string]time.Time         `json:"warmup_completed,omitempty"`
 }
 
-// Load loads the state document from path. If the file does not exist, an empty store is returned.
+// legacyStateDocument retains the pre-split single-file fields so an existing
+// cache migrates on the next full save without losing history or configuration.
+type legacyStateDocument struct {
+	stateDocument
+	LatestAudit     string                `json:"latest_audit,omitempty"`
+	LatestResult    json.RawMessage       `json:"latest_result,omitempty"`
+	RunHistory      json.RawMessage       `json:"run_history,omitempty"`
+	ScheduleConfig  *ScheduleConfig       `json:"schedule_config,omitempty"`
+	DynamicConfig   *DynamicConfig        `json:"app_config,omitempty"`
+	LastAutoApplyAt time.Time             `json:"last_auto_apply_at,omitzero"`
+	RequestHistory  []RequestHistoryEntry `json:"request_history,omitempty"`
+}
+
+// runtimeDocument holds low-frequency scheduling configuration.
+type runtimeDocument struct {
+	SchemaVersion   int             `json:"schema_version"`
+	ScheduleConfig  *ScheduleConfig `json:"schedule_config,omitempty"`
+	DynamicConfig   *DynamicConfig  `json:"app_config,omitempty"`
+	LastAutoApplyAt time.Time       `json:"last_auto_apply_at,omitzero"`
+}
+
+// runsDocument holds the latest execution result and bounded run history.
+type runsDocument struct {
+	SchemaVersion int             `json:"schema_version"`
+	LatestAudit   string          `json:"latest_audit,omitempty"`
+	LatestResult  json.RawMessage `json:"latest_result,omitempty"`
+	RunHistory    json.RawMessage `json:"run_history,omitempty"`
+}
+
+// requestsDocument isolates the high-frequency request history.
+type requestsDocument struct {
+	SchemaVersion  int                   `json:"schema_version"`
+	RequestHistory []RequestHistoryEntry `json:"request_history,omitempty"`
+}
+
+// Load loads the split cache documents rooted at path. A missing main file
+// yields an empty store. A corrupt main file fails, while corrupt sidecars are
+// isolated and reported through LoadErrors so one damaged history file cannot
+// block quota scheduling.
+//
+// Legacy single-file and pre-directory sibling layouts are migrated into the
+// current directory, then removed only after every new document is written.
 func Load(ctx context.Context, path string) (*Store, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("load state context: %w", err)
 	}
+	paths := ResolvePaths(path)
+	legacy := LegacyPaths(path)
 	store := &Store{
-		path:            path,
+		paths:           paths,
 		entries:         make(map[string]Entry),
 		cooldowns:       make(map[string]CooldownEntry),
 		autoDisabled:    make(map[string]AutoDisabledEntry),
 		warmupCompleted: make(map[string]time.Time),
 	}
+
+	var main legacyStateDocument
+	newMain, err := readDocument(paths.Main, &main)
+	if err != nil {
+		return store, fmt.Errorf("decode state cache %s: %w", paths.Main, errors.Join(ErrCorruptCache, err))
+	}
+	if newMain {
+		store.applyStateDocument(main)
+	}
+
+	var legacyMain legacyStateDocument
+	legacyMainExists := false
+	if legacy.Main != paths.Main {
+		legacyMainExists, err = readDocument(legacy.Main, &legacyMain)
+		if err != nil {
+			store.loadErrors = append(store.loadErrors, fmt.Sprintf("legacy state cache %s: %v", legacy.Main, err))
+		}
+	}
+	if !newMain && legacyMainExists {
+		store.applyStateDocument(legacyMain)
+	}
+
+	var runtimeDoc runtimeDocument
+	newRuntime, err := readDocument(paths.Runtime, &runtimeDoc)
+	if err != nil {
+		store.loadErrors = append(store.loadErrors, fmt.Sprintf("runtime cache %s: %v", paths.Runtime, err))
+	}
+	var legacyRuntimeDoc runtimeDocument
+	legacyRuntimeExists := false
+	if legacy.Runtime != paths.Runtime {
+		legacyRuntimeExists, err = readDocument(legacy.Runtime, &legacyRuntimeDoc)
+		if err != nil {
+			store.loadErrors = append(store.loadErrors, fmt.Sprintf("legacy runtime cache %s: %v", legacy.Runtime, err))
+		}
+	}
+	usedLegacyRuntime := false
+	switch {
+	case newRuntime:
+		store.applyRuntimeDocument(runtimeDoc)
+	case legacyRuntimeExists:
+		store.applyRuntimeDocument(legacyRuntimeDoc)
+		usedLegacyRuntime = true
+	case legacyMainExists:
+		store.applyLegacyRuntime(legacyMain)
+		usedLegacyRuntime = true
+	}
+
+	var runsDoc runsDocument
+	newRuns, err := readDocument(paths.Runs, &runsDoc)
+	if err != nil {
+		store.loadErrors = append(store.loadErrors, fmt.Sprintf("runs cache %s: %v", paths.Runs, err))
+	}
+	var legacyRunsDoc runsDocument
+	legacyRunsExists := false
+	if legacy.Runs != paths.Runs {
+		legacyRunsExists, err = readDocument(legacy.Runs, &legacyRunsDoc)
+		if err != nil {
+			store.loadErrors = append(store.loadErrors, fmt.Sprintf("legacy runs cache %s: %v", legacy.Runs, err))
+		}
+	}
+	usedLegacyRuns := false
+	switch {
+	case newRuns:
+		store.applyRunsDocument(runsDoc)
+	case legacyRunsExists:
+		store.applyRunsDocument(legacyRunsDoc)
+		usedLegacyRuns = true
+	case legacyMainExists:
+		store.applyLegacyRuns(legacyMain)
+		usedLegacyRuns = true
+	}
+
+	var requestsDoc requestsDocument
+	newRequests, err := readDocument(paths.Requests, &requestsDoc)
+	if err != nil {
+		store.loadErrors = append(store.loadErrors, fmt.Sprintf("request history cache %s: %v", paths.Requests, err))
+	}
+	var legacyRequestsDoc requestsDocument
+	legacyRequestsExists := false
+	if legacy.Requests != paths.Requests {
+		legacyRequestsExists, err = readDocument(legacy.Requests, &legacyRequestsDoc)
+		if err != nil {
+			store.loadErrors = append(store.loadErrors, fmt.Sprintf("legacy request history cache %s: %v", legacy.Requests, err))
+		}
+	}
+	usedLegacyRequests := false
+	switch {
+	case newRequests:
+		store.requestHistory = append([]RequestHistoryEntry(nil), requestsDoc.RequestHistory...)
+	case legacyRequestsExists:
+		store.requestHistory = append([]RequestHistoryEntry(nil), legacyRequestsDoc.RequestHistory...)
+		usedLegacyRequests = true
+	case legacyMainExists:
+		store.applyLegacyRequests(legacyMain)
+		usedLegacyRequests = true
+	}
+
+	if legacyMainExists || legacyRuntimeExists || legacyRunsExists || legacyRequestsExists {
+		usedLegacy := (!newMain && legacyMainExists) || usedLegacyRuntime || usedLegacyRuns || usedLegacyRequests
+		if usedLegacy {
+			if err := store.SaveAtomic(ctx); err != nil {
+				store.loadErrors = append(store.loadErrors, fmt.Sprintf("migrate legacy cache: %v", err))
+				return store, nil
+			}
+		}
+		store.removeLegacy(ctx, legacy, paths)
+	}
+
+	return store, nil
+}
+
+func (s *Store) applyLegacyRuntime(doc legacyStateDocument) {
+	s.applyConfigDocuments(doc.ScheduleConfig, doc.DynamicConfig)
+	s.lastAutoApplyAt = utcOrZero(doc.LastAutoApplyAt)
+}
+
+func (s *Store) applyLegacyRuns(doc legacyStateDocument) {
+	s.applyRunsFields(doc.LatestAudit, doc.LatestResult, doc.RunHistory)
+}
+
+func (s *Store) applyLegacyRequests(doc legacyStateDocument) {
+	if len(doc.RequestHistory) > 0 {
+		s.requestHistory = append([]RequestHistoryEntry(nil), doc.RequestHistory...)
+	}
+}
+
+// removeLegacy deletes pre-directory files after migration. Files that also
+// belong to the current layout are never removed.
+func (s *Store) removeLegacy(ctx context.Context, legacy, current Paths) {
+	if err := ctx.Err(); err != nil {
+		return
+	}
+	for _, path := range []string{legacy.Main, legacy.Runtime, legacy.Runs, legacy.Requests} {
+		if path == "" || path == current.Main || path == current.Runtime || path == current.Runs || path == current.Requests {
+			continue
+		}
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			s.loadErrors = append(s.loadErrors, fmt.Sprintf("remove legacy cache %s: %v", path, err))
+		}
+	}
+}
+
+// readDocument reads one cache document. It reports false for a missing or
+// empty file and returns the decode error for a corrupt document.
+func readDocument(path string, target any) (bool, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return store, nil
+			return false, nil
 		}
-		return nil, fmt.Errorf("read state cache %s: %w", path, err)
+		return false, err
 	}
 	if len(strings.TrimSpace(string(raw))) == 0 {
-		return store, nil
+		return false, nil
 	}
-	var doc document
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		return store, fmt.Errorf("decode state cache %s: %w", path, errors.Join(ErrCorruptCache, err))
+	if err := json.Unmarshal(raw, target); err != nil {
+		return true, err
 	}
+	return true, nil
+}
+
+func (s *Store) applyStateDocument(doc legacyStateDocument) {
 	if doc.Entries != nil {
-		store.entries = doc.Entries
-		for key, entry := range store.entries {
+		s.entries = doc.Entries
+		for key, entry := range s.entries {
 			entry.Samples, entry.LearningBaselineSequence = normalizeSampleHistory(entry.Samples, entry.LearningBaselineSequence)
-			store.entries[key] = entry
+			s.entries[key] = entry
 		}
-		cleanseClonedArgonEntries(store.entries)
+		cleanseClonedArgonEntries(s.entries)
 	}
-	store.latestAudit = doc.LatestAudit
-	if len(doc.LatestResult) > 0 {
-		store.latestResult = append([]byte(nil), doc.LatestResult...)
-	}
-	if len(doc.RunHistory) > 0 {
-		store.runHistory = append([]byte(nil), doc.RunHistory...)
-	}
+	s.applyRunsFields(doc.LatestAudit, doc.LatestResult, doc.RunHistory)
 	if len(doc.RequestHistory) > 0 {
-		store.requestHistory = append([]RequestHistoryEntry(nil), doc.RequestHistory...)
+		s.requestHistory = append([]RequestHistoryEntry(nil), doc.RequestHistory...)
 	}
-	if doc.ScheduleConfig != nil {
-		sc := *doc.ScheduleConfig
-		store.scheduleConfig = &sc
-	}
-	if doc.DynamicConfig != nil {
-		dc := *doc.DynamicConfig
-		if store.scheduleConfig != nil {
-			dc.Schedule = *store.scheduleConfig
-		} else {
-			sc := dc.Schedule
-			store.scheduleConfig = &sc
-		}
-		store.dynamicConfig = &dc
-	}
-	store.lastAutoApplyAt = utcOrZero(doc.LastAutoApplyAt)
+	s.applyConfigDocuments(doc.ScheduleConfig, doc.DynamicConfig)
+	s.lastAutoApplyAt = utcOrZero(doc.LastAutoApplyAt)
 	if doc.Cooldowns != nil {
-		store.cooldowns = make(map[string]CooldownEntry, len(doc.Cooldowns))
+		s.cooldowns = make(map[string]CooldownEntry, len(doc.Cooldowns))
 		for k, v := range doc.Cooldowns {
 			key := k
 			if !strings.Contains(k, "::") && v.ModelGroup != "" {
 				key = CooldownKey(v.AuthIndex, v.ModelGroup)
 			}
-			store.cooldowns[key] = v
+			s.cooldowns[key] = v
 		}
 	}
 	if doc.AutoDisabled != nil {
-		store.autoDisabled = doc.AutoDisabled
+		s.autoDisabled = doc.AutoDisabled
 	}
 	if doc.WarmupCompleted != nil {
-		store.warmupCompleted = make(map[string]time.Time, len(doc.WarmupCompleted))
+		s.warmupCompleted = make(map[string]time.Time, len(doc.WarmupCompleted))
 		for key, at := range doc.WarmupCompleted {
-			store.warmupCompleted[key] = utcOrZero(at)
+			s.warmupCompleted[key] = utcOrZero(at)
 		}
 	}
-	return store, nil
 }
 
-// SaveAtomic writes the store document to disk using a temporary file and rename.
-func (s *Store) SaveAtomic(ctx context.Context) (err error) {
+func (s *Store) applyRuntimeDocument(doc runtimeDocument) {
+	s.applyConfigDocuments(doc.ScheduleConfig, doc.DynamicConfig)
+	s.lastAutoApplyAt = utcOrZero(doc.LastAutoApplyAt)
+}
+
+func (s *Store) applyRunsDocument(doc runsDocument) {
+	s.applyRunsFields(doc.LatestAudit, doc.LatestResult, doc.RunHistory)
+}
+
+// applyRunsFields replaces the persisted execution projection. An empty
+// sidecar field clears legacy main-document values so the split stays authoritative.
+func (s *Store) applyRunsFields(audit string, latestResult, runHistory []byte) {
+	s.latestAudit = audit
+	s.latestResult = nil
+	if len(latestResult) > 0 {
+		s.latestResult = append([]byte(nil), latestResult...)
+	}
+	s.runHistory = nil
+	if len(runHistory) > 0 {
+		s.runHistory = append([]byte(nil), runHistory...)
+	}
+}
+
+// applyConfigDocuments merges persisted scheduling configuration. An explicit
+// schedule_config always wins over the schedule embedded in app_config.
+func (s *Store) applyConfigDocuments(schedule *ScheduleConfig, dynamic *DynamicConfig) {
+	if schedule != nil {
+		sc := *schedule
+		s.scheduleConfig = &sc
+	}
+	if dynamic == nil {
+		return
+	}
+	dc := *dynamic
+	if s.scheduleConfig != nil {
+		dc.Schedule = *s.scheduleConfig
+	} else {
+		sc := dc.Schedule
+		s.scheduleConfig = &sc
+	}
+	s.dynamicConfig = &dc
+}
+
+// LoadErrors reports sidecar documents that could not be decoded. Main state
+// corruption remains fatal and is returned by Load instead.
+func (s *Store) LoadErrors() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return append([]string(nil), s.loadErrors...)
+}
+
+// SaveAtomic writes every split document. Startup and migration use it to
+// rewrite a legacy single-file cache into the split layout.
+func (s *Store) SaveAtomic(ctx context.Context) error {
+	if err := s.SaveRuntimeAtomic(ctx); err != nil {
+		return err
+	}
+	if err := s.SaveRunsAtomic(ctx); err != nil {
+		return err
+	}
+	if err := s.SaveRequestsAtomic(ctx); err != nil {
+		return err
+	}
+	return s.SaveStateAtomic(ctx)
+}
+
+// SaveStateAtomic writes only quota evidence and health state.
+func (s *Store) SaveStateAtomic(ctx context.Context) error {
+	return s.saveDocument(ctx, "state cache", s.paths.Main, func() any {
+		return stateDocument{
+			SchemaVersion:   SchemaVersion,
+			Entries:         s.entries,
+			Cooldowns:       s.cooldowns,
+			AutoDisabled:    s.autoDisabled,
+			WarmupCompleted: s.warmupCompleted,
+		}
+	})
+}
+
+// SaveRuntimeAtomic writes only scheduling configuration.
+func (s *Store) SaveRuntimeAtomic(ctx context.Context) error {
+	return s.saveDocument(ctx, "runtime cache", s.paths.Runtime, func() any {
+		return runtimeDocument{
+			SchemaVersion:   SchemaVersion,
+			ScheduleConfig:  s.scheduleConfig,
+			DynamicConfig:   s.dynamicConfig,
+			LastAutoApplyAt: s.lastAutoApplyAt,
+		}
+	})
+}
+
+// SaveRunsAtomic writes only the latest execution result and run history.
+func (s *Store) SaveRunsAtomic(ctx context.Context) error {
+	return s.saveDocument(ctx, "runs cache", s.paths.Runs, func() any {
+		return runsDocument{
+			SchemaVersion: SchemaVersion,
+			LatestAudit:   s.latestAudit,
+			LatestResult:  s.latestResult,
+			RunHistory:    s.runHistory,
+		}
+	})
+}
+
+// SaveRequestsAtomic writes only the request history document.
+func (s *Store) SaveRequestsAtomic(ctx context.Context) error {
+	return s.saveDocument(ctx, "request history cache", s.paths.Requests, func() any {
+		return requestsDocument{
+			SchemaVersion:  SchemaVersion,
+			RequestHistory: s.requestHistory,
+		}
+	})
+}
+
+// saveDocument snapshots one document under the read lock, then atomically
+// replaces only its file. The write lock is held only while encoding so
+// concurrent readers never observe a half-mutated document.
+func (s *Store) saveDocument(ctx context.Context, label, path string, build func() any) error {
 	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("save state context: %w", err)
+		return fmt.Errorf("save %s context: %w", label, err)
 	}
 	s.saveMu.Lock()
 	defer s.saveMu.Unlock()
 	s.mu.RLock()
-	path := s.path
-	doc := document{
-		SchemaVersion:   SchemaVersion,
-		Entries:         s.entries,
-		LatestAudit:     s.latestAudit,
-		LatestResult:    s.latestResult,
-		RunHistory:      s.runHistory,
-		ScheduleConfig:  s.scheduleConfig,
-		DynamicConfig:   s.dynamicConfig,
-		LastAutoApplyAt: s.lastAutoApplyAt,
-		Cooldowns:       s.cooldowns,
-		AutoDisabled:    s.autoDisabled,
-		RequestHistory:  s.requestHistory,
-		WarmupCompleted: s.warmupCompleted,
-	}
-	data, err := json.MarshalIndent(doc, "", "  ")
+	data, err := json.MarshalIndent(build(), "", "  ")
 	s.mu.RUnlock()
 	if err != nil {
-		return fmt.Errorf("encode state cache: %w", err)
+		return fmt.Errorf("encode %s: %w", label, err)
 	}
+	return writeFileAtomic(path, data)
+}
 
+// WriteRequestHistoryAtomic persists only the request-history sidecar. The
+// hot request path calls it directly so it never reads or rewrites quota state.
+func WriteRequestHistoryAtomic(ctx context.Context, mainPath string, entries []RequestHistoryEntry) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("save request history context: %w", err)
+	}
+	paths := ResolvePaths(mainPath)
+	data, err := json.MarshalIndent(requestsDocument{
+		SchemaVersion:  SchemaVersion,
+		RequestHistory: entries,
+	}, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode request history cache: %w", err)
+	}
+	return writeFileAtomic(paths.Requests, data)
+}
+
+func writeFileAtomic(path string, data []byte) (err error) {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("create state cache dir %s: %w", dir, err)
+		return fmt.Errorf("create cache dir %s: %w", dir, err)
 	}
 	tmpFile, err := os.CreateTemp(dir, filepath.Base(path)+".*.tmp")
 	if err != nil {
-		return fmt.Errorf("create state cache temp: %w", err)
+		return fmt.Errorf("create cache temp: %w", err)
 	}
 	tmpPath := tmpFile.Name()
 	defer func() {
@@ -336,13 +623,13 @@ func (s *Store) SaveAtomic(ctx context.Context) (err error) {
 
 	if _, err = tmpFile.Write(data); err != nil {
 		_ = tmpFile.Close()
-		return fmt.Errorf("write state cache temp: %w", err)
+		return fmt.Errorf("write cache temp: %w", err)
 	}
 	if err = tmpFile.Close(); err != nil {
-		return fmt.Errorf("close state cache temp: %w", err)
+		return fmt.Errorf("close cache temp: %w", err)
 	}
 	if err = os.Rename(tmpPath, path); err != nil {
-		return fmt.Errorf("rename state cache temp: %w", err)
+		return fmt.Errorf("rename cache temp: %w", err)
 	}
 	return nil
 }
@@ -1240,9 +1527,9 @@ func (s *Store) DeleteAutoDisabled(authIndex string) {
 	delete(s.autoDisabled, authIndex)
 }
 
-// Path returns the file path of the state cache.
+// Path returns the file path of the main state cache document.
 func (s *Store) Path() string {
-	return s.path
+	return s.paths.Main
 }
 
 func cleanseClonedArgonEntries(entries map[string]Entry) {

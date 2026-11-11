@@ -54,10 +54,10 @@
 
 | 审阅维度 | 架构原理与检查标准 | 达标标准 |
 | :--- | :--- | :--- |
-| **宿主配置极简** | CPA 宿主 `config.yaml` 仅作为基础加载开关，不承载日常业务参数。 | 用户 YAML 仅需 `enabled: true`，物理路径 `state_cache_path` 默认缺省为 `data/antigravity-priority-cache.json`。 |
+| **宿主配置极简** | CPA 宿主 `config.yaml` 仅作为基础加载开关，不承载日常业务参数。 | 用户 YAML 仅需 `enabled: true`，物理路径 `state_cache_path` 默认缺省为 `data/antigravity-priority/state.json`（收纳于独立目录）。 |
 | **元数据干净度 (`buildMetadata`)** | CPA 官方管理端根据 `Metadata.ConfigFields` 渲染抽屉表单，用户在抽屉保存会写回 `config.yaml` 导致 CPA 强制重载。为了让配置中心独占管理业务参数，**`ConfigFields` 保持为 `nil`**（方案 A 极简无扰）。 | `buildMetadata()` 中不包含 `ConfigFields`，避免产生表单冲突与意外重载。 |
 | **分层配置底座 (`config.Default()`)** | `config.Default()` 是系统冷启动、无缓存文件时的基准兜底以及 UI 恢复默认值的**单一真实来源 (Single Source of Truth)**。 | `Default()` 返回的默认结构（15m, gemini, 6, 1, 999, 100）必须与推荐配置完全一致。 |
-| **动态配置持久化与热重载** | 业务与调度参数保存至 `data/antigravity-priority-cache.json` 的 `app_config` 节点，修改后立即热重设 Ticker Worker。 | 动态配置持久化存盘 (`SaveAtomic`)，启动与 Reconfigure 时自动合并持久化配置，0 秒免重启热生效。 |
+| **动态配置持久化与热重载** | 业务与调度参数保存至缓存目录的 `runtime.json`（自定义主文件名时为 `*.runtime.json`），修改后立即热重设 Ticker Worker；配额状态、运行审计与请求历史分别落盘，互不重写。 | 动态配置持久化存盘 (`SaveRuntimeAtomic`)，启动与 Reconfigure 时自动合并持久化配置，0 秒免重启热生效。 |
 
 ---
 
