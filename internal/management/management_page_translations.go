@@ -52,5 +52,6 @@ var configTranslationKeys = []string{
 
 var helpTranslationKeys = []string{
 	"helpTitle", "helpGithub", "helpP1", "help5hTitle", "help5hDesc", "help7dTitle", "help7dDesc", "helpBurnTitle", "helpBurnDesc",
-	"helpUrgencyTitle", "helpUrgencyDesc", "helpBoostTitle", "helpBoostDesc", "help429Title", "help429Desc",
+	"helpUrgencyTitle", "helpUrgencyDesc", "helpBoostTitle", "helpBoostDesc", "helpWarmupTitle", "helpWarmupDesc",
+	"helpTierTitle", "helpTierDesc", "help429Title", "help429Desc", "helpUITitle", "helpUIDesc",
 }
