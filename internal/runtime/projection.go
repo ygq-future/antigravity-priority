@@ -77,8 +77,7 @@ func ProjectModelGroups(input ProjectionInput) (ModelGroupProjection, error) {
 	for _, group := range config.AllAntigravityModelGroups {
 		snap := snapshotsByGroup[group]
 		groups[string(group)] = apply.PoolSnapshot{
-			Items:   snap.Items,
-			Changes: snap.Changes,
+			Items: snap.Items,
 		}
 	}
 
@@ -393,8 +392,6 @@ func cloneSnapshotSet(snapshot apply.SnapshotSet) apply.SnapshotSet {
 			}
 		}
 		clonedGroup.Items = items
-		clonedGroup.Changes = make([]apply.SnapshotChange, len(groupSnapshot.Changes))
-		copy(clonedGroup.Changes, groupSnapshot.Changes)
 		cloned.Groups[group] = clonedGroup
 	}
 	return cloned

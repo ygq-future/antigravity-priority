@@ -26,31 +26,13 @@ const templateScriptModals = `        function historyIdentity(value) {
             return meters.length ? "<div class=\"history-quota-values\">" + meters.join("") + "</div>" : "<span class=\"history-empty-cell\"></span>";
         }
 
-        function historyPriorityValue(target) {
-            if (!target) return "";
-            if (target.disabled) return currentLang === "zh-CN" ? "[已禁用]" : "[Disabled]";
-            if (target.priority_missing) return t("unsetPriority");
-            return target.priority !== undefined && target.priority !== null ? String(target.priority) : "";
-        }
-
-        function historyPriorityCell(change) {
-            if (!change) return "<span class=\"history-empty-cell\"></span>";
-            var from = historyPriorityValue(change.current);
-            var to = historyPriorityValue(change.target);
-            if (!from && !to) return "<span class=\"history-empty-cell\"></span>";
-            var reason = formatReason(change.reason, Boolean(change.is_boosted), Boolean(change.target && change.target.disabled));
-            return "<div class=\"history-priority-value\"><span>" + escapeHTML(from || "-") + "</span><b>&rarr;</b><span>" + escapeHTML(to || "-") + "</span></div>" +
-                (reason ? "<div class=\"history-priority-reason\">" + escapeHTML(reason) + "</div>" : "");
-        }
-
-        function renderHistoryComparison(list, result, includePriority) {
+        function renderHistoryComparison(list, result) {
             var groups = result && result.groups && typeof result.groups === "object" ? result.groups : {};
-            var changes = result && Array.isArray(result.changes) ? result.changes : [];
             var rows = {};
             var quotaRecordCount = 0;
             function ensure(value) {
                 var key = historyIdentity(value);
-                if (!rows[key]) rows[key] = {email: value && value.email ? String(value.email) : "", gemini: null, argon: null, claude_gpt: null, change: null};
+                if (!rows[key]) rows[key] = {email: value && value.email ? String(value.email) : "", gemini: null, argon: null, claude_gpt: null};
                 if (!rows[key].email && value && value.email) rows[key].email = String(value.email);
                 return rows[key];
             }
@@ -63,28 +45,22 @@ const templateScriptModals = `        function historyIdentity(value) {
                     quotaRecordCount++;
                 });
             });
-            changes.forEach(function(change) {
-                var row = ensure(change);
-                row.change = change;
-            });
 
             var rowKeys = Object.keys(rows).sort(function(left, right) {
                 return String(rows[left].email || left).localeCompare(String(rows[right].email || right));
             });
             list.innerHTML = "";
             if (rowKeys.length === 0) {
-                list.innerHTML = "<div class=\"empty-state\">" + (currentLang === "zh-CN" ? "本轮没有额度或优先级变化" : "No quota or priority changes in this run") + "</div>";
+                list.innerHTML = "<div class=\"empty-state\">" + (currentLang === "zh-CN" ? "本轮没有额度样本" : "No quota samples in this run") + "</div>";
                 return {quotaRecordCount: quotaRecordCount, rowCount: 0};
             }
 
-            var tableClass = includePriority ? "history-comparison-table" : "history-comparison-table history-comparison-quota-only";
-            var html = "<div class=\"" + tableClass + "\">" +
+            var html = "<div class=\"history-comparison-table history-comparison-quota-only\">" +
                 "<div class=\"history-comparison-row history-comparison-header\">" +
                     "<div>" + (currentLang === "zh-CN" ? "账号" : "Account") + "</div>" +
                     "<div>" + (currentLang === "zh-CN" ? "本次探测 Gemini 额度" : "Gemini Quota This Probe") + "</div>" +
                     "<div>" + (currentLang === "zh-CN" ? "本次探测 Argon 额度" : "Argon Quota This Probe") + "</div>" +
                     "<div>" + (currentLang === "zh-CN" ? "本次探测 Claude/GPT 额度" : "Claude/GPT Quota This Probe") + "</div>" +
-                    (includePriority ? "<div>" + (currentLang === "zh-CN" ? "优先级变化" : "Priority Change") + "</div>" : "") +
                 "</div>";
             rowKeys.forEach(function(key) {
                 var row = rows[key];
@@ -93,7 +69,6 @@ const templateScriptModals = `        function historyIdentity(value) {
                     "<div>" + historyQuotaCell(row.gemini) + "</div>" +
                     "<div>" + historyQuotaCell(row.argon) + "</div>" +
                     "<div>" + historyQuotaCell(row.claude_gpt) + "</div>" +
-                    (includePriority ? "<div>" + historyPriorityCell(row.change) + "</div>" : "") +
                 "</div>";
             });
             list.innerHTML = html + "</div>";
@@ -116,11 +91,8 @@ const templateScriptModals = `        function historyIdentity(value) {
 					? (currentLang === "zh-CN" ? "自动调度明细" : "Automatic Schedule Details")
 					: (currentLang === "zh-CN" ? "配额探测明细" : "Quota Probe Details");
                 const groups = result && result.groups && typeof result.groups === "object" ? result.groups : {};
-				const historyChanges = isAutoHistory && result && Array.isArray(result.changes) ? result.changes : [];
-				const comparison = renderHistoryComparison(list, {groups: groups, changes: historyChanges}, isAutoHistory && historyChanges.length > 0);
-				const summaryParts = [(currentLang === "zh-CN" ? "本轮新增配额样本: " : "New quota samples in this round: ") + comparison.quotaRecordCount];
-				if (isAutoHistory && historyChanges.length > 0) summaryParts.push((currentLang === "zh-CN" ? "优先级变化: " : "Priority changes: ") + historyChanges.length);
-				summary.textContent = summaryParts.join(" · ");
+				const comparison = renderHistoryComparison(list, {groups: groups});
+				summary.textContent = (currentLang === "zh-CN" ? "本轮新增配额样本: " : "New quota samples in this round: ") + comparison.quotaRecordCount;
 				modal.hidden = false;
                 return;
             }
@@ -139,8 +111,8 @@ const templateScriptModals = `        function historyIdentity(value) {
                     const row = document.createElement("div");
                     row.className = "diff-card";
                     let fromP = "-";
-                    if (c.current && c.current.priority !== undefined && c.current.priority !== null) {
-                        fromP = c.current.disabled ? (currentLang === "zh-CN" ? "[已禁用]" : "[Disabled]") : (c.current.priority_missing ? t("unsetPriority") : c.current.priority);
+                    if (c.host && c.host.priority !== undefined && c.host.priority !== null) {
+                        fromP = c.host.disabled ? (currentLang === "zh-CN" ? "[已禁用]" : "[Disabled]") : (c.host.priority_missing ? t("unsetPriority") : c.host.priority);
                     } else if (c.priority_from !== undefined && c.priority_from !== null) {
                         fromP = c.disabled_from ? (currentLang === "zh-CN" ? "[已禁用]" : "[Disabled]") : (c.priority_missing ? t("unsetPriority") : c.priority_from);
                     }

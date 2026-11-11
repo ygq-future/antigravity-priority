@@ -313,7 +313,6 @@ const latestDiagnostics = {run_history:[{
     kind:"auto_apply",
     trigger:"auto_apply",
     probe_round_id:"round-auto",
-    snapshot:{changes:[{email:"account@example.com",current:{priority:98,disabled:false},target:{priority:99,disabled:false},reason:"weekly urgency"}]},
     attempted:1,
     succeeded:1
 }]};
@@ -330,10 +329,10 @@ function formatReason(reason) { return reason || ""; }
     await new Promise(function(resolve) { setTimeout(resolve, 0); });
     if (elements.modalTitle.textContent !== "自动调度明细") throw new Error("automatic schedule title is missing");
     if (elements.modalDiffList.innerHTML.indexOf("history-comparison-table") < 0) throw new Error("automatic schedule comparison table is missing");
-    if (elements.modalDiffList.innerHTML.indexOf("优先级变化") < 0) throw new Error("automatic schedule priority column is missing");
+    if (elements.modalDiffList.innerHTML.indexOf("优先级变化") >= 0) throw new Error("automatic schedule must not render a priority change column");
     if (elements.modalDiffList.innerHTML.indexOf("account@example.com") < 0) throw new Error("automatic schedule account is missing");
-    if ((elements.modalDiffList.innerHTML.match(/history-comparison-row/g) || []).length !== 2) throw new Error("Gemini, Claude/GPT, and priority data were not merged into one account row");
-    if (elements.modalDiffList.innerHTML.indexOf("weekly urgency") < 0) throw new Error("automatic schedule priority details are missing");
+    if (elements.modalDiffList.innerHTML.indexOf("90%") < 0 || elements.modalDiffList.innerHTML.indexOf("55%") < 0) throw new Error("automatic schedule quota meters are missing");
+    if ((elements.modalDiffList.innerHTML.match(/history-comparison-row/g) || []).length !== 2) throw new Error("Gemini, Claude/GPT, and Argon data were not merged into one account row");
 })().catch(function(err) {
     console.error(err.stack || err.message);
     process.exit(1);
@@ -639,7 +638,7 @@ async function fetchDiagnostics() {}
                         auth_index: "fail-403",
                         email: "test-403@example.com",
                         reason: "probe failed: retrieve quota summary status 403; fresh remaining positive",
-                        current: { priority: 99, disabled: false },
+                        host: { priority: 99, disabled: false },
                         target: { priority: 99, disabled: false },
                         r5h: 1.0,
                         r7d: 1.0,
@@ -650,7 +649,7 @@ async function fetchDiagnostics() {}
                         auth_index: "cooldown-429",
                         email: "test-429@example.com",
                         reason: "probe failed: retrieve quota summary status 429; 429 rate limit cooldown",
-                        current: { priority: -1, disabled: false },
+                        host: { priority: -1, disabled: false },
                         target: { priority: -1, disabled: false },
                         r5h: 0.8,
                         r7d: 0.9,
@@ -663,7 +662,7 @@ async function fetchDiagnostics() {}
                         reason: "fresh remaining positive",
                         short_window_reset_at: "2026-10-16T08:00:00Z",
                         long_window_reset_at: "2026-10-23T08:00:00Z",
-                        current: { priority: 98, disabled: false },
+                        host: { priority: 98, disabled: false },
                         target: { priority: 98, disabled: false },
                         r5h: 0.95,
                         r7d: 0.99,

@@ -32,8 +32,6 @@ const (
 	KeyInterval = "interval"
 	// KeyMaxConcurrency is the JSON key for max_concurrency.
 	KeyMaxConcurrency = "max_concurrency"
-	// KeyMinChange is the JSON key for min_change.
-	KeyMinChange = "min_change"
 	// KeyUrgencyTolerance is the JSON key for urgency_tolerance.
 	KeyUrgencyTolerance = "urgency_tolerance"
 	// KeyRateLimitCooldownMinutes is the JSON key for rate_limit_cooldown_minutes.
@@ -89,8 +87,6 @@ const (
 	MinMaxConcurrency = 1
 	// MaxMaxConcurrency is the maximum allowed concurrency.
 	MaxMaxConcurrency = 32
-	// MaxMinChange is the maximum allowed priority change threshold.
-	MaxMinChange = 100
 	// MaxUrgencyTolerance is the maximum allowed urgency clustering tolerance.
 	MaxUrgencyTolerance = 0.5
 	// MinRateLimitCooldownMinutes is the minimum 429 cooldown duration.
@@ -112,7 +108,6 @@ type Config struct {
 	AutoApply                bool
 	Interval                 time.Duration
 	MaxConcurrency           int
-	MinChange                int
 	UrgencyTolerance         float64
 	RateLimitCooldownMinutes int
 	QuotaSampleCapacity      int
@@ -212,7 +207,6 @@ type DynamicConfig struct {
 	AutoApply                bool                `json:"auto_apply"`
 	Interval                 string              `json:"interval"` // e.g. "15m", "30m"
 	MaxConcurrency           int                 `json:"max_concurrency"`
-	MinChange                int                 `json:"min_change"`
 	UrgencyTolerance         float64             `json:"urgency_tolerance"`           // e.g. 0.05
 	RateLimitCooldownMinutes int                 `json:"rate_limit_cooldown_minutes"` // e.g. 5
 	QuotaSampleCapacity      int                 `json:"quota_sample_capacity"`       // e.g. 6 (range 2..30)
@@ -248,7 +242,6 @@ func Default() Config {
 		AutoApply:                false,
 		Interval:                 15 * time.Minute,
 		MaxConcurrency:           6,
-		MinChange:                1,
 		UrgencyTolerance:         DefaultUrgencyTolerance,
 		RateLimitCooldownMinutes: DefaultRateLimitCooldownMinutes,
 		QuotaSampleCapacity:      DefaultQuotaSampleCapacity,
@@ -271,7 +264,6 @@ func (cfg Config) Dynamic() DynamicConfig {
 		AutoApply:                cfg.AutoApply,
 		Interval:                 cfg.Interval.String(),
 		MaxConcurrency:           cfg.MaxConcurrency,
-		MinChange:                cfg.MinChange,
 		UrgencyTolerance:         cfg.UrgencyTolerance,
 		RateLimitCooldownMinutes: cfg.RateLimitCooldownMinutes,
 		QuotaSampleCapacity:      cfg.QuotaSampleCapacity,
@@ -311,9 +303,6 @@ func (dyn DynamicConfig) Validate() error {
 	}
 	if dyn.MaxConcurrency < MinMaxConcurrency || dyn.MaxConcurrency > MaxMaxConcurrency {
 		return fmt.Errorf("max_concurrency must be between %d and %d, got %d", MinMaxConcurrency, MaxMaxConcurrency, dyn.MaxConcurrency)
-	}
-	if dyn.MinChange < 0 || dyn.MinChange > MaxMinChange {
-		return fmt.Errorf("min_change must be between 0 and %d, got %d", MaxMinChange, dyn.MinChange)
 	}
 	if math.IsNaN(dyn.UrgencyTolerance) || math.IsInf(dyn.UrgencyTolerance, 0) || dyn.UrgencyTolerance < 0 || dyn.UrgencyTolerance > MaxUrgencyTolerance {
 		return fmt.Errorf("urgency_tolerance must be between 0 and %.1f, got %v", MaxUrgencyTolerance, dyn.UrgencyTolerance)
@@ -374,7 +363,6 @@ func (dyn DynamicConfig) ApplyTo(base Config) (Config, error) {
 	res.AutoApply = dyn.AutoApply
 	res.Interval = interval
 	res.MaxConcurrency = dyn.MaxConcurrency
-	res.MinChange = dyn.MinChange
 	res.UrgencyTolerance = dyn.UrgencyTolerance
 	res.RateLimitCooldownMinutes = dyn.RateLimitCooldownMinutes
 	res.QuotaSampleCapacity = dyn.QuotaSampleCapacity

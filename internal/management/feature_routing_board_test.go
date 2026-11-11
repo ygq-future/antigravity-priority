@@ -212,7 +212,7 @@ const sampleSnapshot = {
                     urgency: 0.85,
                     cycle_burn_rate: 0.15,
                     target: { priority: 999, disabled: false },
-                    current: { priority: 999, disabled: false },
+                    host: { priority: 999, disabled: false },
                     quota_windows: {
                         gemini_5h: { remaining: 90, reset_at: "2026-11-05T20:00:00Z" },
                         gemini_7d: { remaining: 85, reset_at: "2026-11-12T00:00:00Z" },
@@ -229,7 +229,7 @@ const sampleSnapshot = {
                     urgency: 0.95,
                     cycle_burn_rate: 0.18,
                     target: { priority: 100, disabled: false },
-                    current: { priority: 100, disabled: false },
+                    host: { priority: 100, disabled: false },
                     quota_windows: {
                         gemini_5h: { remaining: 50, reset_at: "2026-11-05T21:00:00Z" },
                         gemini_7d: { remaining: 40, reset_at: "2026-11-12T00:00:00Z" },
@@ -246,7 +246,7 @@ const sampleSnapshot = {
                     urgency: 1.05,
                     cycle_burn_rate: 0.15,
                     target: { priority: 10, disabled: false },
-                    current: { priority: 10, disabled: false },
+                    host: { priority: 10, disabled: false },
                     quota_windows: {
                         gemini_5h: { remaining: 40, reset_at: "2026-11-05T21:00:00Z" },
                         gemini_7d: { remaining: 30, reset_at: "2026-11-12T00:00:00Z" },
@@ -262,7 +262,7 @@ const sampleSnapshot = {
                     is_boosted: false,
                     reason: "429 rate limit cooldown",
                     target: { priority: -1, disabled: false },
-                    current: { priority: -1, disabled: false },
+                    host: { priority: -1, disabled: false },
                     quota_windows: {
                         gemini_5h: { remaining: 0, reset_at: "2026-11-05T18:00:00Z" },
                         gemini_7d: { remaining: 50, reset_at: "2026-11-12T00:00:00Z" },
@@ -541,8 +541,8 @@ function snapshotWithPriorities(priorityA, priorityB) {
         groups: {
             gemini: {
                 items: [
-                    { auth_index: "auth-a", email: "a@example.com", target: { priority: priorityA, disabled: false }, current: { priority: priorityA, disabled: false } },
-                    { auth_index: "auth-b", email: "b@example.com", target: { priority: priorityB, disabled: false }, current: { priority: priorityB, disabled: false } }
+                    { auth_index: "auth-a", email: "a@example.com", target: { priority: priorityA, disabled: false }, host: { priority: priorityA, disabled: false } },
+                    { auth_index: "auth-b", email: "b@example.com", target: { priority: priorityB, disabled: false }, host: { priority: priorityB, disabled: false } }
                 ]
             }
         }

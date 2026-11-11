@@ -22,18 +22,8 @@ func (r *Runtime) projectRun(ctx context.Context, store *state.Store, result app
 
 	result.Record = apply.RecordResult{Status: apply.RecordPersisted}
 	entry.Record = result.Record
-	// Probe and auto runs carry their own probe counts. Host transition results
-	// own the apply counters; only those results may override the entry.
-	if result.Attempted != 0 || result.Succeeded != 0 || result.Failed != 0 ||
-		result.Skipped != 0 || result.NoChange != 0 || result.Conflicts != 0 || result.Uncertain != 0 {
-		entry.Attempted = result.Attempted
-		entry.Succeeded = result.Succeeded
-		entry.Failed = result.Failed
-		entry.Skipped = result.Skipped
-		entry.NoChange = result.NoChange
-		entry.Conflicts = result.Conflicts
-		entry.Uncertain = result.Uncertain
-	}
+	// Callers own run statistics: probe/auto counts reflect probe observations,
+	// while Host transitions copy their apply.Result counters explicitly.
 	r.snapshotRunEntry(result, audit, entry)
 
 	resultJSON, marshalErr := json.Marshal(result)
@@ -58,6 +48,17 @@ func (r *Runtime) projectRun(ctx context.Context, store *state.Store, result app
 		return result, fmt.Errorf("persist execution result: %w", err)
 	}
 	return result, nil
+}
+
+func withTransitionStats(result apply.Result, entry RunHistoryEntry) RunHistoryEntry {
+	entry.Attempted = result.Attempted
+	entry.Succeeded = result.Succeeded
+	entry.Failed = result.Failed
+	entry.Skipped = result.Skipped
+	entry.NoChange = result.NoChange
+	entry.Conflicts = result.Conflicts
+	entry.Uncertain = result.Uncertain
+	return entry
 }
 
 func resultSummary(prefix string, result apply.Result) string {

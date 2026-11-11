@@ -76,7 +76,6 @@ type Options struct {
 	BoostStartPriority  int
 	NormalStartPriority int
 	FreeStartPriority   int
-	MinChange           int
 	UrgencyTolerance    float64
 	CooldownAuthIndexes map[string]time.Time
 	CooldownReasons     map[string]string
@@ -130,22 +129,10 @@ const (
 	quotaStateWeeklyDepleted
 )
 
-// Change represents a credential whose planned target differs from its current
-// Host state. It drives display and diagnostics only; the planner never writes
-// to the Host.
-type Change struct {
-	Credential core.Credential
-	Priority   int
-	Disabled   bool
-	Reason     string
-	IsBoosted  bool
-}
-
-// Plan encapsulates the complete immutable priority scheduling decision and change set.
+// Plan encapsulates the complete immutable priority scheduling decision set.
 type Plan struct {
 	DecidedAt time.Time
 	Items     []PlanItem
-	Changes   []Change
 }
 
 // PlanWithEvidence produces a plan from the Evidence authority's two
@@ -174,7 +161,6 @@ func planWithEvidence(credentials []core.Credential, evidence plannerEvidence, o
 	return Plan{
 		DecidedAt: options.Now.UTC(),
 		Items:     items,
-		Changes:   changes(items, options),
 	}
 }
 
@@ -197,9 +183,6 @@ func normalizeOptions(options Options) Options {
 	}
 	if options.FreeStartPriority > MaxPriority {
 		options.FreeStartPriority = MaxPriority
-	}
-	if options.MinChange < 0 {
-		options.MinChange = 0
 	}
 	return options
 }
@@ -457,44 +440,4 @@ func planPositive(items []PlanItem, options Options) {
 			items[index].Reason = ReasonFreshRemainingPositive
 		}
 	}
-}
-
-func changes(items []PlanItem, options Options) []Change {
-	result := make([]Change, 0)
-	for _, item := range items {
-		if targetDiffers(item, options) {
-			result = append(result, Change{
-				Credential: item.Credential,
-				Priority:   item.Priority,
-				Disabled:   item.Disabled,
-				Reason:     item.Reason,
-				IsBoosted:  item.IsBoosted,
-			})
-		}
-	}
-	return result
-}
-
-func targetDiffers(item PlanItem, options Options) bool {
-	if item.Credential.PriorityMissing {
-		return true
-	}
-	if item.Priority == item.Credential.Priority && item.Disabled == item.Credential.Disabled {
-		return false
-	}
-	if item.Disabled != item.Credential.Disabled {
-		return true
-	}
-	if item.Priority == DepletedPriority && item.Disabled {
-		return item.Credential.Priority != DepletedPriority || !item.Credential.Disabled
-	}
-	minChange := max(options.MinChange, 0)
-	return abs(item.Priority-item.Credential.Priority) >= minChange
-}
-
-func abs(v int) int {
-	if v < 0 {
-		return -v
-	}
-	return v
 }

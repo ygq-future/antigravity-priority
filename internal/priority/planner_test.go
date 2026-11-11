@@ -72,7 +72,6 @@ func TestPlanFreshOnly(t *testing.T) {
 		Now:                 now,
 		BoostStartPriority:  999,
 		NormalStartPriority: 100,
-		MinChange:           1,
 		UrgencyTolerance:    0.05,
 	}
 
@@ -141,11 +140,6 @@ func TestPlanFreshOnly(t *testing.T) {
 		}
 		if itemMap["boost-3"].Priority != 997 {
 			t.Errorf("boost-3 priority = %d; want 997", itemMap["boost-3"].Priority)
-		}
-
-		// Changes verification
-		if len(plan.Changes) != 3 {
-			t.Errorf("expected 3 changes, got %d", len(plan.Changes))
 		}
 	})
 
@@ -304,9 +298,6 @@ func TestPlanFreshOnly(t *testing.T) {
 		if item.ShortWindowResetAt == nil || !item.ShortWindowResetAt.Equal(reset5h) {
 			t.Errorf("expected reset timestamp preserved, got %+v", item.ShortWindowResetAt)
 		}
-		if len(plan.Changes) != 0 {
-			t.Errorf("manually disabled account must not produce a host write: %+v", plan.Changes)
-		}
 	})
 
 	t.Run("weekly depleted credential receives soft downgrade priority = -1 and disabled = false", func(t *testing.T) {
@@ -372,13 +363,6 @@ func TestPlanFreshOnly(t *testing.T) {
 		shortDep := itemMap["weekly-short-depleted"]
 		if shortDep.Disabled || shortDep.Priority != -1 || shortDep.Reason != ReasonFreshShortWindowDepleted {
 			t.Errorf("short depleted failed: %+v", shortDep)
-		}
-
-		// Changes should contain all priority updates, but NO disabled mutations
-		for _, c := range plan.Changes {
-			if c.Disabled {
-				t.Fatalf("planner must never produce a disabled=true change: %+v", c)
-			}
 		}
 	})
 
@@ -519,68 +503,6 @@ func TestPlanFreshOnly(t *testing.T) {
 		}
 	})
 
-	t.Run("min_change gating filters small non-disabled delta", func(t *testing.T) {
-		creds := []core.Credential{
-			{AuthIndex: "cred-small-delta", Priority: 99, Disabled: false}, // target priority 100 -> delta = 1
-			{AuthIndex: "cred-large-delta", Priority: 50, Disabled: false}, // target priority 99 -> delta = 49
-		}
-
-		reset7d := now.Add(80 * time.Hour)
-		reset5h := now.Add(2 * time.Hour)
-
-		evidence := []QuotaEvidence{
-			{
-				AuthIndex:            "cred-small-delta",
-				LongWindowRemaining:  int64Ptr(80),
-				LongWindowResetAt:    &reset7d,
-				ShortWindowRemaining: int64Ptr(80),
-				ShortWindowResetAt:   &reset5h,
-				CycleBurnRate:        0.15,
-			},
-			{
-				AuthIndex:            "cred-large-delta",
-				LongWindowRemaining:  int64Ptr(70),
-				LongWindowResetAt:    &reset7d,
-				ShortWindowRemaining: int64Ptr(80),
-				ShortWindowResetAt:   &reset5h,
-				CycleBurnRate:        0.15,
-			},
-		}
-
-		opts := defaultOptions
-		opts.MinChange = 5 // requires at least 5 priority change
-
-		plan := planFreshOnly(creds, evidence, opts)
-
-		// cred-small-delta (priority 99 -> 100, delta=1 < 5) should NOT be in Changes
-		// cred-large-delta (priority 50 -> 99, delta=49 >= 5) should BE in Changes
-		if len(plan.Changes) != 1 {
-			t.Fatalf("expected 1 change, got %d", len(plan.Changes))
-		}
-		if plan.Changes[0].Credential.AuthIndex != "cred-large-delta" {
-			t.Errorf("change authIndex = %s; want cred-large-delta", plan.Changes[0].Credential.AuthIndex)
-		}
-	})
-
-	t.Run("credential with PriorityMissing always triggers change", func(t *testing.T) {
-		creds := []core.Credential{
-			{AuthIndex: "missing-prio", Priority: 100, PriorityMissing: true, Disabled: false},
-		}
-		reset7d := now.Add(80 * time.Hour)
-		evidence := []QuotaEvidence{
-			{
-				AuthIndex:           "missing-prio",
-				LongWindowRemaining: int64Ptr(80),
-				LongWindowResetAt:   &reset7d,
-			},
-		}
-
-		plan := planFreshOnly(creds, evidence, defaultOptions)
-		if len(plan.Changes) != 1 {
-			t.Errorf("expected 1 change for missing priority, got %d", len(plan.Changes))
-		}
-	})
-
 	t.Run("persisted historical evidence plans from stored quota", func(t *testing.T) {
 		creds := []core.Credential{
 			{AuthIndex: "stored-cred", Priority: 50, Disabled: false},
@@ -609,9 +531,6 @@ func TestPlanFreshOnly(t *testing.T) {
 		if item.Reason != ReasonFreshRemainingPositive {
 			t.Errorf("historical evidence reason = %q; want %q", item.Reason, ReasonFreshRemainingPositive)
 		}
-		if len(plan.Changes) != 1 || plan.Changes[0].Credential.AuthIndex != "stored-cred" {
-			t.Errorf("historical evidence change projection = %#v; want one target diff", plan.Changes)
-		}
 	})
 
 	t.Run("missing evidence preserves current Host state", func(t *testing.T) {
@@ -638,31 +557,23 @@ func TestPlanFreshOnly(t *testing.T) {
 		if !alreadyDisabledItem.Disabled || alreadyDisabledItem.Priority != 100 {
 			t.Errorf("already-disabled-failed changed without evidence: %#v", alreadyDisabledItem)
 		}
-
-		if len(plan.Changes) != 0 {
-			t.Fatalf("expected no changes without evidence, got %#v", plan.Changes)
-		}
 	})
 
 	t.Run("handles empty credentials and options normalization gracefully", func(t *testing.T) {
 		emptyPlan := planFreshOnly(nil, nil, Options{Now: now})
-		if len(emptyPlan.Items) != 0 || len(emptyPlan.Changes) != 0 {
-			t.Errorf("empty plan should have 0 items and changes")
+		if len(emptyPlan.Items) != 0 {
+			t.Errorf("empty plan should have 0 items")
 		}
 
 		opts := normalizeOptions(Options{
 			BoostStartPriority:  -5,
 			NormalStartPriority: 2000,
-			MinChange:           -10,
 		})
 		if opts.BoostStartPriority != DefaultBoostStartPriority {
 			t.Errorf("BoostStartPriority = %d; want %d", opts.BoostStartPriority, DefaultBoostStartPriority)
 		}
 		if opts.NormalStartPriority != MaxPriority {
 			t.Errorf("NormalStartPriority = %d; want %d", opts.NormalStartPriority, MaxPriority)
-		}
-		if opts.MinChange != 0 {
-			t.Errorf("MinChange = %d; want 0", opts.MinChange)
 		}
 
 		optsMaxBoost := normalizeOptions(Options{
@@ -704,9 +615,6 @@ func TestPlanFreshOnly(t *testing.T) {
 		if unprobed.Priority != 999 {
 			t.Errorf("unprobed-legacy-999 priority = %d; want 999", unprobed.Priority)
 		}
-		if len(plan.Changes) != 1 {
-			t.Errorf("unprobed-legacy-999 gained write authority: item=%#v plan=%#v", unprobed, plan.Changes)
-		}
 	})
 
 	t.Run("already depleted credential on host generates no redundant change", func(t *testing.T) {
@@ -723,8 +631,8 @@ func TestPlanFreshOnly(t *testing.T) {
 		}
 
 		plan := planFreshOnly(creds, evidence, defaultOptions)
-		if len(plan.Changes) != 0 {
-			t.Errorf("expected 0 changes for already depleted credential, got %d", len(plan.Changes))
+		if len(plan.Items) != 1 || plan.Items[0].Priority != DepletedPriority {
+			t.Errorf("already depleted plan = %#v; want priority -1", plan.Items)
 		}
 	})
 
@@ -802,7 +710,7 @@ func TestPlanWithEvidence_FreshEvidenceTakesPrecedenceOverHistorical(t *testing.
 	plan := PlanWithEvidence(credentials, plannerEvidence{
 		Fresh:      []QuotaEvidence{fresh, preferred},
 		Historical: []QuotaEvidence{historical, depleted},
-	}, Options{Now: now, NormalStartPriority: 100, MinChange: 1})
+	}, Options{Now: now, NormalStartPriority: 100})
 
 	items := make(map[string]PlanItem, len(plan.Items))
 	for _, item := range plan.Items {
@@ -819,9 +727,6 @@ func TestPlanWithEvidence_FreshEvidenceTakesPrecedenceOverHistorical(t *testing.
 	}
 	if items["failed"].Priority != 70 || items["failed"].Disabled {
 		t.Fatalf("failed item changed without evidence: %#v", items["failed"])
-	}
-	if len(plan.Changes) != 3 {
-		t.Fatalf("change projection = %#v; want the three evidenced credentials", plan.Changes)
 	}
 }
 
@@ -841,16 +746,12 @@ func TestPlanFreshOnly_DepletedPriorityUsesExplicitRuntimeState(t *testing.T) {
 		Now:                 now,
 		BoostStartPriority:  999,
 		NormalStartPriority: 100,
-		MinChange:           1,
 	}
 
 	t.Run("healthy credential recovers from current minus one", func(t *testing.T) {
 		plan := planFreshOnly([]core.Credential{{AuthIndex: "recovered", Priority: -1}}, []QuotaEvidence{healthy}, options)
 		if len(plan.Items) != 1 || plan.Items[0].Priority != 100 || plan.Items[0].Disabled {
 			t.Fatalf("recovered item = %#v; want priority=100 disabled=false", plan.Items)
-		}
-		if len(plan.Changes) != 1 || plan.Changes[0].Priority != 100 {
-			t.Fatalf("recovery changes = %#v; want one positive write", plan.Changes)
 		}
 	})
 
@@ -861,16 +762,13 @@ func TestPlanFreshOnly_DepletedPriorityUsesExplicitRuntimeState(t *testing.T) {
 		if len(plan.Items) != 1 || plan.Items[0].Priority != -1 || plan.Items[0].Disabled || plan.Items[0].Reason != Reason429Cooldown {
 			t.Fatalf("cooldown item = %#v; want active soft cooldown", plan.Items)
 		}
-		if len(plan.Changes) != 0 {
-			t.Fatalf("cooldown changes = %#v; want no redundant write", plan.Changes)
-		}
 	})
 
 	t.Run("expired 429 cooldown recovers current minus one", func(t *testing.T) {
 		cooldownOptions := options
 		cooldownOptions.CooldownAuthIndexes = map[string]time.Time{"recovered": now.Add(-time.Second)}
 		plan := planFreshOnly([]core.Credential{{AuthIndex: "recovered", Priority: -1}}, []QuotaEvidence{healthy}, cooldownOptions)
-		if len(plan.Items) != 1 || plan.Items[0].Priority != 100 || len(plan.Changes) != 1 {
+		if len(plan.Items) != 1 || plan.Items[0].Priority != 100 {
 			t.Fatalf("expired cooldown plan = %#v; want recovered positive priority", plan)
 		}
 	})
@@ -938,7 +836,6 @@ func TestPlanWithEvidence_FreeTierIsolatedBelowPro(t *testing.T) {
 		BoostStartPriority:  999,
 		NormalStartPriority: 100,
 		FreeStartPriority:   10,
-		MinChange:           1,
 	}
 
 	plan := planFreshOnly(creds, evidence, opts)

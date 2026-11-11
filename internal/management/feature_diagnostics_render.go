@@ -352,8 +352,8 @@ const templateScriptDiagnostics = `        let latestDiagnostics = null;
             entries.forEach(function(entry) {
                 var item = entry.item;
                 var decision = diagDecision(item);
-                var current = item.current && item.current.priority !== undefined && item.current.priority !== null && !item.current.priority_missing
-                    ? item.current.priority
+                var host = item.host && item.host.priority !== undefined && item.host.priority !== null && !item.host.priority_missing
+                    ? item.host.priority
                     : "-";
                 var target = diagTargetPriority(item);
                 var reason = String(item.reason || "-");
@@ -364,7 +364,7 @@ const templateScriptDiagnostics = `        let latestDiagnostics = null;
                         "<span class=\"diag-cred-name\" title=\"" + escapeHTML(maskedCredential) + "\">" + escapeHTML(maskedCredential) + "</span>" +
                         "<span class=\"badge " + diagPoolBadgeClass(entry.group) + " diag-cred-pool\">" + escapeHTML(diagPoolLabel(entry.group)) + "</span>" +
                     "</div></td>" +
-                    "<td class=\"diag-mono\">" + escapeHTML(current + " → " + target) + "</td>" +
+                    "<td class=\"diag-mono\">" + escapeHTML(host + " → " + target) + "</td>" +
                     "<td><span class=\"badge " + decision.cls + "\">" + escapeHTML(decision.label) + "</span></td>" +
                     "<td class=\"diag-mono\">" + (Number(item.urgency) || 0).toFixed(2) + "</td>" +
                     "<td class=\"diag-mono\">" + diagFormatHours(item.t7d) + " / " + diagFormatHours(item.t_required) + "</td>" +

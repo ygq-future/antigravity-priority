@@ -51,35 +51,11 @@ func TestSnapshot_And_AuditEvent_Redaction(t *testing.T) {
 				Reason:   "keep current state",
 			},
 		},
-		Changes: []priority.Change{
-			{
-				Credential: core.Credential{
-					Name:      "user-cred",
-					AuthIndex: "idx-auth-123",
-					Account:   "acc-token=secret-acc",
-					Email:     "user-bearer-xyz@example.com",
-					Priority:  20,
-					Disabled:  false,
-				},
-				Priority: 90,
-				Disabled: false,
-				Reason:   "change with token=supersecret",
-			},
-			{
-				Credential: core.Credential{
-					Name:      "stale-cred",
-					AuthIndex: "idx-stale-456",
-					Priority:  10,
-				},
-				Priority: 10,
-				Reason:   "stale change",
-			},
-		},
 	}
 
 	// 1. Snapshot test
 	snapshot := apply.Snapshot(plan)
-	if snapshot.TotalItems != 2 || snapshot.TotalChanges != 2 {
+	if snapshot.TotalItems != 2 {
 		t.Fatalf("unexpected snapshot counts: %+v", snapshot)
 	}
 
@@ -209,16 +185,6 @@ func TestSnapshot_PriorityMissing_Preservation(t *testing.T) {
 				Disabled: false,
 			},
 		},
-		Changes: []priority.Change{
-			{
-				Credential: core.Credential{
-					AuthIndex:       "unset-cred",
-					Priority:        0,
-					PriorityMissing: true,
-				},
-				Priority: 100,
-			},
-		},
 	}
 
 	snapshot := apply.Snapshot(plan)
@@ -227,31 +193,26 @@ func TestSnapshot_PriorityMissing_Preservation(t *testing.T) {
 	}
 
 	// 1. Unset credential: Priority 0 and PriorityMissing true
-	if !snapshot.Items[0].Current.PriorityMissing {
-		t.Errorf("expected Items[0].Current.PriorityMissing=true, got false")
+	if !snapshot.Items[0].Host.PriorityMissing {
+		t.Errorf("expected Items[0].Host.PriorityMissing=true, got false")
 	}
-	if snapshot.Items[0].Current.Priority != 0 {
-		t.Errorf("expected Items[0].Current.Priority=0, got %d", snapshot.Items[0].Current.Priority)
+	if snapshot.Items[0].Host.Priority != 0 {
+		t.Errorf("expected Items[0].Host.Priority=0, got %d", snapshot.Items[0].Host.Priority)
 	}
 
 	// 2. Explicit zero credential: Priority 0 and PriorityMissing false
-	if snapshot.Items[1].Current.PriorityMissing {
-		t.Errorf("expected Items[1].Current.PriorityMissing=false, got true")
+	if snapshot.Items[1].Host.PriorityMissing {
+		t.Errorf("expected Items[1].Host.PriorityMissing=false, got true")
 	}
-	if snapshot.Items[1].Current.Priority != 0 {
-		t.Errorf("expected Items[1].Current.Priority=0, got %d", snapshot.Items[1].Current.Priority)
+	if snapshot.Items[1].Host.Priority != 0 {
+		t.Errorf("expected Items[1].Host.Priority=0, got %d", snapshot.Items[1].Host.Priority)
 	}
 
 	// 3. Depleted credential: Priority -1 and PriorityMissing false
-	if snapshot.Items[2].Current.PriorityMissing {
-		t.Errorf("expected Items[2].Current.PriorityMissing=false, got true")
+	if snapshot.Items[2].Host.PriorityMissing {
+		t.Errorf("expected Items[2].Host.PriorityMissing=false, got true")
 	}
-	if snapshot.Items[2].Current.Priority != -1 {
-		t.Errorf("expected Items[2].Current.Priority=-1, got %d", snapshot.Items[2].Current.Priority)
-	}
-
-	// 4. Changes check
-	if !snapshot.Changes[0].Current.PriorityMissing {
-		t.Errorf("expected Changes[0].Current.PriorityMissing=true, got false")
+	if snapshot.Items[2].Host.Priority != -1 {
+		t.Errorf("expected Items[2].Host.Priority=-1, got %d", snapshot.Items[2].Host.Priority)
 	}
 }

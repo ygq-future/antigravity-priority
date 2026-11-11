@@ -17,7 +17,7 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
         }
 
         function isModelEligible(item, selectedModel, pool) {
-            if (item && item.current && item.current.disabled) {
+            if (item && item.host && item.host.disabled) {
                 return { eligible: false, reason: "disabled" };
             }
             if (item && Array.isArray(item.supported_models) && item.supported_models.length > 0) {
@@ -301,8 +301,8 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
                     } else {
                         priorityDisplay = item.target.priority;
                     }
-                } else if (item.current && item.current.priority !== undefined && item.current.priority !== null) {
-                    priorityDisplay = item.current.priority;
+                } else if (item.host && item.host.priority !== undefined && item.host.priority !== null) {
+                    priorityDisplay = item.host.priority;
                 }
                 const authIdx = item.auth_index || "";
                 const isProbing = probingAuthIndexes.has(String(authIdx));

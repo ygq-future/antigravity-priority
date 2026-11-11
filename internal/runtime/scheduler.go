@@ -284,7 +284,6 @@ func (r *Runtime) recomputePoolRoutingTableLocked(pool config.AntigravityModelGr
 		BoostStartPriority:  r.cfg.PriorityRules.BoostStartPriority,
 		NormalStartPriority: r.cfg.PriorityRules.NormalStartPriority,
 		FreeStartPriority:   r.cfg.PriorityRules.FreeStartPriority,
-		MinChange:           r.cfg.MinChange,
 		UrgencyTolerance:    r.cfg.UrgencyTolerance,
 		CooldownAuthIndexes: cooldowns,
 		CooldownReasons:     cooldownReasons,

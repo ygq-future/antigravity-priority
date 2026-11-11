@@ -372,7 +372,6 @@ func priorityOptions(cfg config.Config, store *state.Store, now time.Time) prior
 		BoostStartPriority:   cfg.PriorityRules.BoostStartPriority,
 		NormalStartPriority:  cfg.PriorityRules.NormalStartPriority,
 		FreeStartPriority:    cfg.PriorityRules.FreeStartPriority,
-		MinChange:            cfg.MinChange,
 		UrgencyTolerance:     cfg.UrgencyTolerance,
 		CooldownAuthIndexes:  cooldowns,
 		CooldownReasonsByKey: cooldownReasons,

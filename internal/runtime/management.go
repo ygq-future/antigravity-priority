@@ -291,7 +291,6 @@ func (r *Runtime) managementRunHistory() []map[string]any {
 		if entry.Snapshot != nil {
 			if snapshot, ok := item["snapshot"].(map[string]any); ok {
 				overlayManagementItemEmails(snapshot["items"], entry.Snapshot.Items, emailByMask, emailByAuthMask)
-				overlayManagementChangeEmails(snapshot["changes"], entry.Snapshot.Changes, emailByMask, emailByAuthMask)
 			}
 		}
 		result = append(result, item)
@@ -300,23 +299,6 @@ func (r *Runtime) managementRunHistory() []map[string]any {
 }
 
 func overlayManagementItemEmails(raw any, identities []apply.SnapshotItem, emailByMask, emailByAuthMask map[string]string) {
-	items, ok := raw.([]any)
-	if !ok {
-		return
-	}
-	for index, identity := range identities {
-		if index >= len(items) {
-			continue
-		}
-		item, ok := items[index].(map[string]any)
-		if !ok {
-			continue
-		}
-		overlayManagementEmail(item, identity.Identity.Email, emailByMask, emailByAuthMask)
-	}
-}
-
-func overlayManagementChangeEmails(raw any, identities []apply.SnapshotChange, emailByMask, emailByAuthMask map[string]string) {
 	items, ok := raw.([]any)
 	if !ok {
 		return

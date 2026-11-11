@@ -293,20 +293,19 @@ func TestHandler_Snapshot_Latest(t *testing.T) {
 	runner := &mockRunner{
 		snapshotFunc: func(ctx context.Context) (apply.SnapshotSet, error) {
 			primary := apply.PlanSnapshot{
-				TotalItems:   1,
-				TotalChanges: 1,
+				TotalItems: 1,
 				Items: []apply.SnapshotItem{
 					{
 						Identity:  apply.SnapshotIdentity{Email: "owner@example.com", AuthIndex: "auth_123"},
 						Name:      "test-account",
 						AuthIndex: "au***23",
-						Current:   apply.Target{Priority: 100},
+						Host:      apply.Target{Priority: 100},
 						Target:    apply.Target{Priority: 999},
 						Reason:    "fresh boosted",
 					},
 				},
 			}
-			predicted := apply.PlanSnapshot{Items: []apply.SnapshotItem{}, Changes: []apply.SnapshotChange{}}
+			predicted := apply.PlanSnapshot{Items: []apply.SnapshotItem{}}
 			return testSnapshotSet(time.Now().UTC(), primary, predicted), nil
 		},
 	}
@@ -524,7 +523,6 @@ func TestHandler_GetDynamicConfig(t *testing.T) {
 			AutoApply:                true,
 			Interval:                 "30m",
 			MaxConcurrency:           8,
-			MinChange:                2,
 			UrgencyTolerance:         0.05,
 			RateLimitCooldownMinutes: 5,
 			PriorityRules: state.PriorityRulesConfig{
@@ -580,7 +578,7 @@ func TestHandler_SetDynamicConfig_Success(t *testing.T) {
 	runner := &mockRunner{}
 	handler := management.NewHandler(runner)
 
-	body := `{"auto_apply":true,"interval":"20m","max_concurrency":4,"min_change":3,"urgency_tolerance":0.08,"rate_limit_cooldown_minutes":10,"quota_sample_capacity":6,"priority_rules":{"boost_start_priority":995,"normal_start_priority":120},"schedule":{"paused":false,"window_enabled":true,"window_start":"09:00","window_end":"18:00"}}`
+	body := `{"auto_apply":true,"interval":"20m","max_concurrency":4,"urgency_tolerance":0.08,"rate_limit_cooldown_minutes":10,"quota_sample_capacity":6,"priority_rules":{"boost_start_priority":995,"normal_start_priority":120},"schedule":{"paused":false,"window_enabled":true,"window_start":"09:00","window_end":"18:00"}}`
 	req := httptest.NewRequest(http.MethodPost, "/runtime-config", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 
@@ -597,9 +595,6 @@ func TestHandler_SetDynamicConfig_Success(t *testing.T) {
 	if cfg.Interval != "20m" {
 		t.Errorf("expected Interval=20m, got %q", cfg.Interval)
 	}
-	if cfg.MinChange != 3 {
-		t.Errorf("expected MinChange=3, got %d", cfg.MinChange)
-	}
 	if cfg.UrgencyTolerance != 0.08 {
 		t.Errorf("expected UrgencyTolerance=0.08, got %v", cfg.UrgencyTolerance)
 	}
@@ -612,7 +607,7 @@ func TestHandler_DynamicConfig_WarmupRoundTrip(t *testing.T) {
 	runner := &mockRunner{}
 	handler := management.NewHandler(runner)
 
-	body := `{"auto_apply":true,"interval":"15m","max_concurrency":6,"min_change":1,"urgency_tolerance":0.05,"rate_limit_cooldown_minutes":5,"quota_sample_capacity":6,"priority_rules":{"boost_start_priority":999,"normal_start_priority":100},"schedule":{"paused":false,"window_enabled":false,"window_start":"00:00","window_end":"23:59"},"warmup":{"gemini_enabled":true,"gemini_model":"gemini-2.0-flash","claude_enabled":true,"claude_model":"claude-3-7-sonnet"}}`
+	body := `{"auto_apply":true,"interval":"15m","max_concurrency":6,"urgency_tolerance":0.05,"rate_limit_cooldown_minutes":5,"quota_sample_capacity":6,"priority_rules":{"boost_start_priority":999,"normal_start_priority":100},"schedule":{"paused":false,"window_enabled":false,"window_start":"00:00","window_end":"23:59"},"warmup":{"gemini_enabled":true,"gemini_model":"gemini-2.0-flash","claude_enabled":true,"claude_model":"claude-3-7-sonnet"}}`
 	req := httptest.NewRequest(http.MethodPost, "/runtime-config", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 
@@ -655,7 +650,7 @@ func TestHandler_Sync_Success(t *testing.T) {
 					{
 						Name:      "test-account",
 						AuthIndex: "auth_sync",
-						Current:   apply.Target{Priority: 100},
+						Host:      apply.Target{Priority: 100},
 						Target:    apply.Target{Priority: 99},
 					},
 				},
@@ -685,8 +680,8 @@ func testSnapshotSet(observedAt time.Time, primary, predicted apply.PlanSnapshot
 	return apply.SnapshotSet{
 		ObservedAt: observedAt,
 		Groups: map[string]apply.PoolSnapshot{
-			"gemini":     {Items: primary.Items, Changes: primary.Changes},
-			"claude_gpt": {Items: predicted.Items, Changes: predicted.Changes},
+			"gemini":     {Items: primary.Items},
+			"claude_gpt": {Items: predicted.Items},
 		},
 	}
 }

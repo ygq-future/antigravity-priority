@@ -271,9 +271,6 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
             if (Array.isArray(result.changes) && result.changes.length > 0) {
                 return result.changes;
             }
-            if (result.snapshot && Array.isArray(result.snapshot.changes) && result.snapshot.changes.length > 0) {
-                return result.snapshot.changes;
-            }
             if (result.snapshot && Array.isArray(result.snapshot.items) && result.snapshot.items.length > 0) {
                 return result.snapshot.items;
             }

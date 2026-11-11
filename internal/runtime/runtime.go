@@ -331,23 +331,21 @@ func (r *Runtime) ResetAllPriorities(ctx context.Context) (map[string]any, error
 	// the authoritative snapshot for every other consumer.
 	geminiPool := projection.Snapshot.Groups[string(config.AntigravityModelGroupGemini)]
 	legacySnapshot := apply.PlanSnapshot{
-		DecidedAt:    projection.Snapshot.ObservedAt,
-		TotalItems:   len(geminiPool.Items),
-		TotalChanges: len(geminiPool.Changes),
-		Items:        geminiPool.Items,
-		Changes:      geminiPool.Changes,
+		DecidedAt:  projection.Snapshot.ObservedAt,
+		TotalItems: len(geminiPool.Items),
+		Items:      geminiPool.Items,
 	}
 	r.setSnapshotSet(projection.Snapshot)
 
 	summary := resultSummary("reset", result)
 	result.Snapshot = legacySnapshot
 	snap := legacySnapshot
-	_, projectErr := r.projectRun(ctx, store, result, summary, RunHistoryEntry{
+	_, projectErr := r.projectRun(ctx, store, result, summary, withTransitionStats(result, RunHistoryEntry{
 		Kind:     KindReset,
 		Trigger:  string(TriggerManualReset),
 		Message:  summary,
 		Snapshot: &snap,
-	})
+	}))
 	if projectErr != nil {
 		return map[string]any{
 			"ok":          false,
@@ -941,14 +939,14 @@ func (r *Runtime) patchSnapshotCooldown(authIndex string, inCooldown bool, reaso
 		for i, item := range group.Items {
 			if item.Identity.AuthIndex == authIndex || item.Name == authIndex || item.Identity.Email == authIndex || item.Email == authIndex || strings.EqualFold(item.AuthIndex, authIndex) {
 				if inCooldown {
-					group.Items[i].Current.Priority = priority.DepletedPriority
+					group.Items[i].Host.Priority = priority.DepletedPriority
 					group.Items[i].Target.Priority = priority.DepletedPriority
 					group.Items[i].Reason = reason
 					group.Items[i].IsBoosted = false
 				} else {
-					group.Items[i].Current.Priority = restoredPriority
+					group.Items[i].Host.Priority = restoredPriority
 					group.Items[i].Target.Priority = restoredPriority
-					group.Items[i].Current.Disabled = restoredDisabled
+					group.Items[i].Host.Disabled = restoredDisabled
 					group.Items[i].Target.Disabled = restoredDisabled
 					group.Items[i].Reason = reason
 				}

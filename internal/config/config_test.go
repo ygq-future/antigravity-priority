@@ -27,9 +27,6 @@ func TestDefault(t *testing.T) {
 	if cfg.MaxConcurrency != 6 {
 		t.Errorf("expected MaxConcurrency=6, got %v", cfg.MaxConcurrency)
 	}
-	if cfg.MinChange != 1 {
-		t.Errorf("expected MinChange=1, got %v", cfg.MinChange)
-	}
 	if cfg.QuotaSampleCapacity != 6 {
 		t.Errorf("expected QuotaSampleCapacity=6, got %v", cfg.QuotaSampleCapacity)
 	}
@@ -230,7 +227,6 @@ func TestDynamicConfig_ValidateAndApplyTo(t *testing.T) {
 			AutoApply:                true,
 			Interval:                 "30m",
 			MaxConcurrency:           12,
-			MinChange:                5,
 			UrgencyTolerance:         0.10,
 			RateLimitCooldownMinutes: 10,
 			QuotaSampleCapacity:      15,
@@ -261,9 +257,6 @@ func TestDynamicConfig_ValidateAndApplyTo(t *testing.T) {
 		}
 		if merged.MaxConcurrency != 12 {
 			t.Errorf("expected MaxConcurrency=12, got %d", merged.MaxConcurrency)
-		}
-		if merged.MinChange != 5 {
-			t.Errorf("expected MinChange=5, got %d", merged.MinChange)
 		}
 		if merged.UrgencyTolerance != 0.10 {
 			t.Errorf("expected UrgencyTolerance=0.10, got %f", merged.UrgencyTolerance)
@@ -322,16 +315,6 @@ func TestDynamicConfig_ValidateAndApplyTo(t *testing.T) {
 				name:    "max concurrency out of range (> 32)",
 				mutate:  func(dyn *config.DynamicConfig) { dyn.MaxConcurrency = 33 },
 				wantErr: "max_concurrency must be between",
-			},
-			{
-				name:    "min change out of range (< 0)",
-				mutate:  func(dyn *config.DynamicConfig) { dyn.MinChange = -1 },
-				wantErr: "min_change must be between",
-			},
-			{
-				name:    "min change out of range (> 100)",
-				mutate:  func(dyn *config.DynamicConfig) { dyn.MinChange = 101 },
-				wantErr: "min_change must be between",
 			},
 			{
 				name:    "urgency tolerance out of range (< 0)",
@@ -448,8 +431,6 @@ func TestDynamicConfig_ValidateAndApplyTo(t *testing.T) {
 		}{
 			{"max concurrency minimum", func(d *config.DynamicConfig) { d.MaxConcurrency = 1 }},
 			{"max concurrency maximum", func(d *config.DynamicConfig) { d.MaxConcurrency = 32 }},
-			{"min change minimum", func(d *config.DynamicConfig) { d.MinChange = 0 }},
-			{"min change maximum", func(d *config.DynamicConfig) { d.MinChange = 100 }},
 			{"urgency tolerance minimum", func(d *config.DynamicConfig) { d.UrgencyTolerance = 0 }},
 			{"urgency tolerance maximum", func(d *config.DynamicConfig) { d.UrgencyTolerance = 0.5 }},
 			{"cooldown minimum", func(d *config.DynamicConfig) { d.RateLimitCooldownMinutes = 1 }},
@@ -494,7 +475,7 @@ func TestDynamicConfigZeroToleranceAndLegacyPriorityRuleMigration(t *testing.T) 
 	}
 
 	var legacyFalse config.DynamicConfig
-	legacyJSON := []byte(`{"auto_apply":false,"interval":"15m","max_concurrency":6,"min_change":1,"urgency_tolerance":0.05,"rate_limit_cooldown_minutes":5,"quota_sample_capacity":6,"priority_rules":{"enabled":false,"boost_start_priority":777,"normal_start_priority":222},"schedule":{"paused":false}}`)
+	legacyJSON := []byte(`{"auto_apply":false,"interval":"15m","max_concurrency":6,"urgency_tolerance":0.05,"rate_limit_cooldown_minutes":5,"quota_sample_capacity":6,"priority_rules":{"enabled":false,"boost_start_priority":777,"normal_start_priority":222},"schedule":{"paused":false}}`)
 	if err := json.Unmarshal(legacyJSON, &legacyFalse); err != nil {
 		t.Fatal(err)
 	}

@@ -88,7 +88,7 @@ const diagnosticsMarkup = `
                             <thead>
                                 <tr>
                                     <th data-i18n="diagColCredential">凭证</th>
-                                    <th data-i18n="diagColPriority">优先级</th>
+                                    <th data-i18n="diagColPriority">宿主 → 规划</th>
                                     <th data-i18n="diagColDecision">决策</th>
                                     <th data-i18n="diagColUrgency">Urgency</th>
                                     <th data-i18n="diagColHorizon">T7d / T_req</th>

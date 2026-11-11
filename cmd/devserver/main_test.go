@@ -349,8 +349,8 @@ func TestDevServer_ManuallyDisabledAccountSimulation(t *testing.T) {
 			if it.Reason != "disabled on host" {
 				t.Fatalf("expected reason %q, got %q", "disabled on host", it.Reason)
 			}
-			if !it.Current.Disabled || !it.Target.Disabled {
-				t.Fatalf("expected item disabled on both current and target: %+v", it)
+			if !it.Host.Disabled || !it.Target.Disabled {
+				t.Fatalf("expected item disabled on both host and target: %+v", it)
 			}
 			if it.R7d <= 0 || it.R5h <= 0 {
 				t.Fatalf("expected valid non-zero quota for probed manually disabled item, got R7d=%v, R5h=%v", it.R7d, it.R5h)
@@ -360,9 +360,6 @@ func TestDevServer_ManuallyDisabledAccountSimulation(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("target credential %q not found in snapshot", targetAuth)
-	}
-	if len(group.Changes) != 0 {
-		t.Fatalf("manually disabled account must not produce changes, got %+v", group.Changes)
 	}
 }
 
@@ -426,8 +423,8 @@ func TestDevServer_SimulationEndpoints(t *testing.T) {
 		t.Fatal(err)
 	}
 	items := snap.Groups["gemini"].Items
-	if len(items) > 0 && items[0].Current.Priority != -1 {
-		t.Fatalf("snapshot priority = %d, want -1", items[0].Current.Priority)
+	if len(items) > 0 && items[0].Host.Priority != -1 {
+		t.Fatalf("snapshot priority = %d, want -1", items[0].Host.Priority)
 	}
 
 	// 3. Success using fuzzy match: immediate recovery
@@ -489,7 +486,7 @@ func TestDevServer_FreeAccountSimulation(t *testing.T) {
 	proCount := 0
 	disabledCount := 0
 	for _, it := range items {
-		if it.Current.Disabled {
+		if it.Host.Disabled {
 			disabledCount++
 			continue
 		}

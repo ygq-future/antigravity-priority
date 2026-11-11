@@ -302,7 +302,6 @@ const templateScriptConfig = `        let originalConfigState = null;
                     auto_apply: autoApply,
                     interval: interval,
                     max_concurrency: maxConcurrency,
-                    min_change: (dynamicConfig && dynamicConfig.min_change !== undefined) ? dynamicConfig.min_change : 1,
                     urgency_tolerance: urgencyTol,
                     rate_limit_cooldown_minutes: cooldownMin,
                     quota_sample_capacity: sampleCapacity,
@@ -358,7 +357,6 @@ const templateScriptConfig = `        let originalConfigState = null;
             var defaultCfg = {
                 auto_apply: false,
                 max_concurrency: 6,
-                min_change: 1,
                 urgency_tolerance: 0.05,
                 quota_sample_capacity: 6,
                 rate_limit_cooldown_minutes: 5,

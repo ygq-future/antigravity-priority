@@ -62,30 +62,3 @@ func TestManagementRunHistoryDoesNotExposeMaskedIdentityFallback(t *testing.T) {
 		t.Fatalf("unresolved management email=%v, want empty display fallback", item["email"])
 	}
 }
-
-func TestManagementRunHistoryResolvesEmailFromMaskedAuthIndex(t *testing.T) {
-	r := &Runtime{
-		runHistory: []RunHistoryEntry{{
-			Kind: "apply",
-			Snapshot: &apply.PlanSnapshot{Changes: []apply.SnapshotChange{{
-				AuthIndex: "auth***",
-			}}},
-		}},
-		latestSnapshotSet: &apply.SnapshotSet{Groups: map[string]apply.PoolSnapshot{
-			"gemini": {Items: []apply.SnapshotItem{{
-				Identity: apply.SnapshotIdentity{
-					AuthIndex: "auth-account-001",
-					Email:     "user@example.com",
-				},
-			}}},
-		}},
-	}
-
-	history := r.managementRunHistory()
-	snapshot, _ := history[0]["snapshot"].(map[string]any)
-	changes, _ := snapshot["changes"].([]any)
-	change, _ := changes[0].(map[string]any)
-	if change["email"] != "user@example.com" {
-		t.Fatalf("management email=%v, want email resolved from masked auth index", change["email"])
-	}
-}

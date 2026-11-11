@@ -12,11 +12,9 @@ import (
 // PlanSnapshot is the plan projection shared by audit, diagnostics, and trusted adapters.
 // Its JSON representation is redacted; raw identity is carried only in json-excluded fields.
 type PlanSnapshot struct {
-	DecidedAt    time.Time        `json:"decided_at"`
-	TotalItems   int              `json:"total_items"`
-	TotalChanges int              `json:"total_changes"`
-	Items        []SnapshotItem   `json:"items"`
-	Changes      []SnapshotChange `json:"changes"`
+	DecidedAt  time.Time      `json:"decided_at"`
+	TotalItems int            `json:"total_items"`
+	Items      []SnapshotItem `json:"items"`
 }
 
 // Snapshot returns an audit-safe JSON projection with trusted in-memory identity for adapters.
@@ -50,7 +48,7 @@ type SnapshotItem struct {
 	Type                  string           `json:"type"`
 	Status                string           `json:"status"`
 	PlanType              string           `json:"plan_type,omitempty"`
-	Current               Target           `json:"current"`
+	Host                  Target           `json:"host"`
 	Target                Target           `json:"target"`
 	Reason                string           `json:"reason"`
 	IsBoosted             bool             `json:"is_boosted"`
@@ -75,19 +73,6 @@ type SnapshotItem struct {
 	SupportedModels       []string         `json:"supported_models,omitempty"`
 }
 
-// SnapshotChange is the audit view of a single candidate change.
-type SnapshotChange struct {
-	Identity  SnapshotIdentity `json:"-"`
-	Name      string           `json:"name"`
-	AuthIndex string           `json:"auth_index"`
-	Account   string           `json:"account,omitempty"`
-	Email     string           `json:"email,omitempty"`
-	Current   Target           `json:"current"`
-	Target    Target           `json:"target"`
-	Reason    string           `json:"reason"`
-	IsBoosted bool             `json:"is_boosted"`
-}
-
 // SnapshotIdentity carries raw CPA Host identity only across the trusted in-memory adapter boundary.
 // It is excluded from audit and persisted snapshot JSON.
 type SnapshotIdentity struct {
@@ -95,7 +80,7 @@ type SnapshotIdentity struct {
 	AuthIndex string
 }
 
-// Target represents the priority and disabled target state.
+// Target represents a priority and disabled state for Host display and planned output.
 type Target struct {
 	Priority        int  `json:"priority"`
 	PriorityMissing bool `json:"priority_missing,omitempty"`
@@ -120,17 +105,12 @@ type AuditChange struct {
 
 func newPlanSnapshot(plan priority.Plan) PlanSnapshot {
 	snapshot := PlanSnapshot{
-		DecidedAt:    plan.DecidedAt,
-		TotalItems:   len(plan.Items),
-		TotalChanges: len(plan.Changes),
-		Items:        make([]SnapshotItem, 0, len(plan.Items)),
-		Changes:      make([]SnapshotChange, 0, len(plan.Changes)),
+		DecidedAt:  plan.DecidedAt,
+		TotalItems: len(plan.Items),
+		Items:      make([]SnapshotItem, 0, len(plan.Items)),
 	}
 	for _, item := range plan.Items {
 		snapshot.Items = append(snapshot.Items, snapshotItem(item))
-	}
-	for _, change := range plan.Changes {
-		snapshot.Changes = append(snapshot.Changes, snapshotChange(change))
 	}
 	return snapshot
 }
@@ -147,7 +127,7 @@ func snapshotItem(item priority.PlanItem) SnapshotItem {
 		Type:                 redactString(string(credential.Type)),
 		Status:               redactString(string(credential.Status)),
 		PlanType:             redactString(string(item.PlanType)),
-		Current:              currentTarget(credential.Priority, credential.PriorityMissing, credential.Disabled),
+		Host:                 hostState(credential.Priority, credential.PriorityMissing, credential.Disabled),
 		Target:               target(item.Priority, item.Disabled),
 		Reason:               redactString(item.Reason),
 		IsBoosted:            item.IsBoosted,
@@ -169,22 +149,7 @@ func snapshotItem(item priority.PlanItem) SnapshotItem {
 	}
 }
 
-func snapshotChange(change priority.Change) SnapshotChange {
-	credential := change.Credential
-	return SnapshotChange{
-		Identity:  SnapshotIdentity{Email: credential.Email, AuthIndex: credential.AuthIndex},
-		Name:      redactIdentifier(credential.Name),
-		AuthIndex: redactIdentifier(credential.AuthIndex),
-		Account:   redactIdentifier(credential.Account),
-		Email:     redactIdentifier(credential.Email),
-		Current:   currentTarget(credential.Priority, credential.PriorityMissing, credential.Disabled),
-		Target:    target(change.Priority, change.Disabled),
-		Reason:    redactString(change.Reason),
-		IsBoosted: change.IsBoosted,
-	}
-}
-
-func currentTarget(priority int, priorityMissing bool, disabled bool) Target {
+func hostState(priority int, priorityMissing bool, disabled bool) Target {
 	return Target{Priority: priority, PriorityMissing: priorityMissing, Disabled: disabled}
 }
 
@@ -227,8 +192,7 @@ func errStrings(errs []error) []string {
 
 // PoolSnapshot holds the snapshot for a single quota pool.
 type PoolSnapshot struct {
-	Items   []SnapshotItem   `json:"items"`
-	Changes []SnapshotChange `json:"changes"`
+	Items []SnapshotItem `json:"items"`
 }
 
 // ModelOption represents an available Antigravity model option for routing.

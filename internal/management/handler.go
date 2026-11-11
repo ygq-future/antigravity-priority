@@ -373,7 +373,6 @@ func managementSnapshotMap(snapshot apply.SnapshotSet) (map[string]any, error) {
 	for groupName, groupSnapshot := range snapshot.Groups {
 		group, _ := groups[groupName].(map[string]any)
 		overlaySnapshotIdentities(group["items"], itemIdentities(groupSnapshot.Items))
-		overlaySnapshotIdentities(group["changes"], changeIdentities(groupSnapshot.Changes))
 	}
 	return result, nil
 }
@@ -382,14 +381,6 @@ func itemIdentities(items []apply.SnapshotItem) []apply.SnapshotIdentity {
 	identities := make([]apply.SnapshotIdentity, len(items))
 	for index, item := range items {
 		identities[index] = item.Identity
-	}
-	return identities
-}
-
-func changeIdentities(changes []apply.SnapshotChange) []apply.SnapshotIdentity {
-	identities := make([]apply.SnapshotIdentity, len(changes))
-	for index, change := range changes {
-		identities[index] = change.Identity
 	}
 	return identities
 }

@@ -1108,7 +1108,7 @@ func TestRuntime_ProbeUsesPostProbePriorityAndDisabledState(t *testing.T) {
 		t.Fatal(err)
 	}
 	items := snapshot.Groups["gemini"].Items
-	if len(items) != 1 || items[0].Current.Priority != 77 || !items[0].Current.Disabled {
+	if len(items) != 1 || items[0].Host.Priority != 77 || !items[0].Host.Disabled {
 		t.Fatalf("post-probe current state = %#v; want priority=77 disabled=true", items)
 	}
 	if mock.saveCalls != 0 {
@@ -1237,7 +1237,7 @@ func TestRuntime_SyncHostUsesUpdatedDynamicConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dynamic.MinChange = 2
+	dynamic.UrgencyTolerance = 0.08
 	if err := r.SetDynamicConfig(context.Background(), dynamic); err != nil {
 		t.Fatal(err)
 	}
@@ -1761,7 +1761,6 @@ func TestRuntime_GetSetDynamicConfig(t *testing.T) {
 		AutoApply:                true,
 		Interval:                 "30m",
 		MaxConcurrency:           8,
-		MinChange:                3,
 		UrgencyTolerance:         0.08,
 		RateLimitCooldownMinutes: 5,
 		QuotaSampleCapacity:      10,
@@ -1843,7 +1842,6 @@ func TestRuntime_GetSetDynamicConfig(t *testing.T) {
 		mutate func(*state.DynamicConfig)
 	}{
 		{"max_concurrency=33", func(cfg *state.DynamicConfig) { cfg.MaxConcurrency = 33 }},
-		{"min_change=101", func(cfg *state.DynamicConfig) { cfg.MinChange = 101 }},
 		{"urgency_tolerance=0.51", func(cfg *state.DynamicConfig) { cfg.UrgencyTolerance = 0.51 }},
 		{"cooldown=1441", func(cfg *state.DynamicConfig) { cfg.RateLimitCooldownMinutes = 1441 }},
 		{"inverted priorities", func(cfg *state.DynamicConfig) {
@@ -1887,7 +1885,6 @@ func TestRuntime_DynamicConfig_SurvivesReconfigure(t *testing.T) {
 		AutoApply:                true,
 		Interval:                 "45m",
 		MaxConcurrency:           10,
-		MinChange:                5,
 		UrgencyTolerance:         0.05,
 		RateLimitCooldownMinutes: 5,
 		QuotaSampleCapacity:      6,
@@ -2516,7 +2513,7 @@ func TestRuntime_429CooldownUpdatesLatestSnapshotInPlace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(snap.Groups["gemini"].Items) != 1 || snap.Groups["gemini"].Items[0].Current.Priority != 100 {
+	if len(snap.Groups["gemini"].Items) != 1 || snap.Groups["gemini"].Items[0].Host.Priority != 100 {
 		t.Fatalf("initial snapshot = %+v, want priority 100", snap)
 	}
 
@@ -2533,8 +2530,8 @@ func TestRuntime_429CooldownUpdatesLatestSnapshotInPlace(t *testing.T) {
 	if len(geminiItems) != 1 {
 		t.Fatalf("items count = %d, want 1", len(geminiItems))
 	}
-	if geminiItems[0].Current.Priority != -1 || geminiItems[0].Target.Priority != -1 {
-		t.Fatalf("in-place snapshot priority = %d/%d, want -1/-1", geminiItems[0].Current.Priority, geminiItems[0].Target.Priority)
+	if geminiItems[0].Host.Priority != -1 || geminiItems[0].Target.Priority != -1 {
+		t.Fatalf("in-place snapshot priority = %d/%d, want -1/-1", geminiItems[0].Host.Priority, geminiItems[0].Target.Priority)
 	}
 	if !strings.Contains(geminiItems[0].Reason, "429") {
 		t.Fatalf("in-place snapshot reason = %q, want 429 cooldown", geminiItems[0].Reason)
@@ -2547,8 +2544,8 @@ func TestRuntime_429CooldownUpdatesLatestSnapshotInPlace(t *testing.T) {
 		t.Fatal(err)
 	}
 	recoveredItems := recovered.Groups["gemini"].Items
-	if recoveredItems[0].Current.Priority != 100 || recoveredItems[0].Target.Priority != 100 {
-		t.Fatalf("in-place recovered priority = %d/%d, want 100/100", recoveredItems[0].Current.Priority, recoveredItems[0].Target.Priority)
+	if recoveredItems[0].Host.Priority != 100 || recoveredItems[0].Target.Priority != 100 {
+		t.Fatalf("in-place recovered priority = %d/%d, want 100/100", recoveredItems[0].Host.Priority, recoveredItems[0].Target.Priority)
 	}
 }
 
@@ -2839,7 +2836,7 @@ func TestRuntime_DisabledAccount_ProbeBypassAndSingleProbe(t *testing.T) {
 	if len(items) != 1 || items[0].Reason != "disabled on host" {
 		t.Fatalf("expected reason %q, got %+v", "disabled on host", items)
 	}
-	if !items[0].Current.Disabled || !items[0].Target.Disabled {
+	if !items[0].Host.Disabled || !items[0].Target.Disabled {
 		t.Fatalf("expected both current and target disabled: %+v", items[0])
 	}
 }

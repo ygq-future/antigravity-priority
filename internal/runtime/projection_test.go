@@ -48,7 +48,6 @@ func TestProjectModelGroups_AllPoolsAreActiveAndIndependent(t *testing.T) {
 		PlanningOptions: priority.Options{
 			BoostStartPriority:  999,
 			NormalStartPriority: 100,
-			MinChange:           1,
 		},
 		ProjectionTime: now,
 	})
@@ -124,7 +123,6 @@ func TestProjectModelGroups_QuotaWindowsRemainPerCredentialWhenRedactedIndexesCo
 		PlanningOptions: priority.Options{
 			BoostStartPriority:  999,
 			NormalStartPriority: 100,
-			MinChange:           1,
 		},
 		ProjectionTime: now,
 	})
@@ -182,7 +180,7 @@ func TestProjectModelGroups_MissingGroupRemainsStableAndUnknown(t *testing.T) {
 		EvidenceByGroup: map[config.AntigravityModelGroup]evidence.Result{
 			config.AntigravityModelGroupGemini: {Eligible: []priority.QuotaEvidence{readyEvidence("auth-1", core.PlanTypePlus, 88, now.Add(2*time.Hour))}},
 		},
-		PlanningOptions: priority.Options{NormalStartPriority: 100, MinChange: 1},
+		PlanningOptions: priority.Options{NormalStartPriority: 100},
 		ProjectionTime:  now,
 	})
 	if err != nil {
@@ -195,9 +193,6 @@ func TestProjectModelGroups_MissingGroupRemainsStableAndUnknown(t *testing.T) {
 	if missing.Items[0].PlanType != "unknown" || missing.Items[0].Target.Priority != 42 {
 		t.Fatalf("missing group borrowed or invented data: %#v", missing.Items[0])
 	}
-	if len(missing.Changes) != 0 {
-		t.Fatalf("missing group changes = %#v, want none", missing.Changes)
-	}
 }
 
 func TestProjectModelGroups_HistoricalEvidenceProjectsStoredQuota(t *testing.T) {
@@ -208,7 +203,7 @@ func TestProjectModelGroups_HistoricalEvidenceProjectsStoredQuota(t *testing.T) 
 		EvidenceByGroup: map[config.AntigravityModelGroup]evidence.Result{
 			config.AntigravityModelGroupGemini: historicalEvidenceResult(readyEvidence("auth-1", core.PlanTypePro, 88, now.Add(100*time.Hour))),
 		},
-		PlanningOptions: priority.Options{NormalStartPriority: 100, MinChange: 1},
+		PlanningOptions: priority.Options{NormalStartPriority: 100},
 		ProjectionTime:  now,
 	})
 	if err != nil {
@@ -217,9 +212,6 @@ func TestProjectModelGroups_HistoricalEvidenceProjectsStoredQuota(t *testing.T) 
 	control := projection.Snapshot.Groups[string(config.AntigravityModelGroupGemini)]
 	if len(control.Items) != 1 || control.Items[0].Target.Priority != 100 {
 		t.Fatalf("historical control item = %#v; want stored-quota target 100", control.Items)
-	}
-	if len(control.Changes) != 1 || control.Changes[0].Target.Priority != 100 {
-		t.Fatalf("historical control projection = %#v; want one target diff", control)
 	}
 }
 
@@ -238,7 +230,7 @@ func TestProjectModelGroups_DoesNotMutateInputsOrReturnedSnapshots(t *testing.T)
 		EvidenceByGroup: map[config.AntigravityModelGroup]evidence.Result{
 			config.AntigravityModelGroupGemini: {Eligible: []priority.QuotaEvidence{fresh}},
 		},
-		PlanningOptions: priority.Options{NormalStartPriority: 100, MinChange: 1},
+		PlanningOptions: priority.Options{NormalStartPriority: 100},
 		ProjectionTime:  now,
 	}
 	first, err := runtime.ProjectModelGroups(input)

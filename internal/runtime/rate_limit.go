@@ -235,12 +235,12 @@ func (r *Runtime) triggerFailure(ctx context.Context, input failureInput) error 
 	}
 	r.patchSnapshotCooldown(input.AuthIndex, true, input.Reason, priority.DepletedPriority, credential.Disabled)
 	summary := resultSummary("health cooldown", result)
-	_, projectErr := r.projectRun(ctx, store, result, summary, RunHistoryEntry{
+	_, projectErr := r.projectRun(ctx, store, result, summary, withTransitionStats(result, RunHistoryEntry{
 		Kind:     KindCooldown,
 		Trigger:  failureTrigger(input.Kind),
 		Message:  summary,
 		Snapshot: &result.Snapshot,
-	})
+	}))
 	if projectErr != nil {
 		return projectErr
 	}
@@ -782,7 +782,7 @@ func (r *Runtime) applyCooldownRecovery(ctx context.Context, store *state.Store,
 		r.recordCooldownFailure(ctx, store, entry.AuthIndex, cause, trigger, err)
 		return fmt.Errorf("persist cooldown recovery: %w", err)
 	}
-	_, err = r.projectRun(ctx, store, result, summary, RunHistoryEntry{Kind: KindCooldownRecovery, Trigger: trigger, Message: summary, Snapshot: &result.Snapshot})
+	_, err = r.projectRun(ctx, store, result, summary, withTransitionStats(result, RunHistoryEntry{Kind: KindCooldownRecovery, Trigger: trigger, Message: summary, Snapshot: &result.Snapshot}))
 	return err
 }
 
