@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"math/rand"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -187,6 +188,32 @@ func TestDevHostReturnsBothModelGroupsAndQuotaLifecycle(t *testing.T) {
 	}
 	if !depleted {
 		t.Fatal("deterministic quota simulation did not reach exhaustion")
+	}
+}
+
+func TestDevQuotaAdvanceRollsElapsedResetsForPinnedDepletedAccounts(t *testing.T) {
+	now := time.Date(2026, 11, 11, 10, 0, 0, 0, time.UTC)
+	elapsed := now.Add(-120 * time.Hour)
+	state := devQuotaState{Groups: map[string]devQuotaGroupState{
+		string(antigravity.ModelGroupGemini): {
+			ShortResetAt: elapsed,
+			LongResetAt:  elapsed,
+		},
+		string(antigravity.ModelGroupClaudeGPT): {
+			ShortResetAt: elapsed,
+			LongResetAt:  elapsed,
+		},
+	}}
+
+	state.advance("dev-auth-006", now, rand.New(rand.NewSource(1)))
+
+	for group, quota := range state.Groups {
+		if !quota.ShortResetAt.After(now) || !quota.LongResetAt.After(now) {
+			t.Fatalf("%s kept an elapsed reset timestamp: short=%v long=%v", group, quota.ShortResetAt, quota.LongResetAt)
+		}
+		if quota.Short != 0 || quota.Long != 0 {
+			t.Fatalf("%s pinned depleted account refilled: short=%d long=%d", group, quota.Short, quota.Long)
+		}
 	}
 }
 

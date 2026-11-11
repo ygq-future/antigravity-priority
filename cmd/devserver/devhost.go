@@ -582,17 +582,22 @@ func (s *devQuotaState) advance(authIndex string, now time.Time, rng *rand.Rand)
 
 	for _, group := range simulatedModelGroups {
 		quota := s.Groups[group]
+		// Every elapsed window rolls forward, even for accounts pinned to stay
+		// depleted. Leaving an old reset timestamp in the past while remaining is
+		// zero emits an upstream-impossible snapshot: the plugin treats an elapsed
+		// reset as a fresh full window and boosts it, while the dashboard still
+		// renders 0% with a "ready" countdown.
 		if !now.Before(quota.ShortResetAt) {
+			quota.ShortResetAt = now.Add(5 * time.Hour)
 			if !is004 && !is006 && !isFree {
 				quota.Short = 100
-				quota.ShortResetAt = now.Add(5 * time.Hour)
 			}
 		}
 		if !now.Before(quota.LongResetAt) {
+			quota.LongResetAt = now.Add(7 * 24 * time.Hour)
 			if !is006 {
 				quota.Long = 100
 				quota.ArgonWeekly = 100
-				quota.LongResetAt = now.Add(7 * 24 * time.Hour)
 			}
 		}
 		if isFree {
