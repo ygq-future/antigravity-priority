@@ -827,18 +827,22 @@ func (r *Runtime) findCredential(ctx context.Context, authIndex string) (core.Cr
 	return core.Credential{}, errors.New("cooldown credential not found in Host inventory")
 }
 
-func (r *Runtime) rateLimitDiagnostics() (pending []map[string]any, storm map[string]any) {
+func (r *Runtime) rateLimitDiagnostics(emailsByAuthIndex map[string]string) (pending []map[string]any, storm map[string]any) {
 	r.rateLimitMu.Lock()
 	defer r.rateLimitMu.Unlock()
 	for _, item := range r.pending429 {
-		pending = append(pending, map[string]any{
+		entry := map[string]any{
 			"auth_index":    redactRuntimeIdentifier(item.AuthIndex),
 			"model_group":   item.ModelGroup,
 			"model":         item.Model,
 			"first_seen_at": item.FirstSeen,
 			"updated_at":    item.UpdatedAt,
 			"count":         item.Count,
-		})
+		}
+		if email := emailsByAuthIndex[item.AuthIndex]; email != "" {
+			entry["email"] = email
+		}
+		pending = append(pending, entry)
 	}
 	if !r.stormUntil.IsZero() {
 		recovered := 0

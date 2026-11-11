@@ -41,6 +41,7 @@ const managementPageShellStylesTail = templateStyleOverlays + templateStyleRespo
 const managementPageShellScripts = templateScriptPrelude +
 	templateScriptI18N +
 	templateScriptShellCore +
+	templateScriptAccountDisplay +
 	templateScriptControls +
 	templateScriptModals +
 	templateScriptLiveUI

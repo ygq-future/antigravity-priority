@@ -228,6 +228,7 @@ const templateScriptShellCore = `        const LANG_STORAGE_KEY = "antigravity_p
             const langLabel = document.getElementById("langLabel");
             if (langLabel) langLabel.textContent = currentLang === "zh-CN" ? "EN / 中文" : "中文 / EN";
             updateAllCustomSelectDisplays();
+            updateAccountMaskToggle();
         }
 
 `

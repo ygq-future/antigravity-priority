@@ -309,7 +309,7 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
                 card.setAttribute("data-auth-index", String(authIdx));
                 if (isProbing) card.classList.add("cred-card-probing");
                 const credDisplayName = item.email || "Credential";
-                const maskedEmail = formatMaskedEmail(credDisplayName);
+                const displayName = formatAccountName(credDisplayName);
 
                 let callOrderBadge = "";
                 const customTier = Number(item.custom_tier) || 0;
@@ -353,7 +353,7 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
                 let cardHtml = "<div class=\"cred-info\">" +
                     "<div class=\"cred-name\">" +
                         callOrderBadge +
-                        "<span class=\"cred-email\" title=\"" + escapeHTML(credDisplayName) + "\">" + escapeHTML(maskedEmail) + "</span>" +
+                        "<span class=\"cred-email\" title=\"" + escapeHTML(displayName) + "\">" + escapeHTML(displayName) + "</span>" +
                         "<span class=\"cred-meta\">" + formatPlanBadge(item.plan_type) + "</span>" +
                     "</div>" +
                     "<div class=\"cred-badge-row\">" +

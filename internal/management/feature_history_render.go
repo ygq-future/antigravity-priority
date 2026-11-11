@@ -81,7 +81,7 @@ const templateScriptHistory = `        function renderHistory() {
                 html += "<tr>" +
                     "<td class=\"req-time\" title=\"" + escapeHTML(fullDateStr) + "\">" + escapeHTML(timeStr) + "</td>" +
                     "<td><span class=\"req-model-badge " + modelClass + "\">[" + poolLabel + "] " + escapeHTML(r.model || "-") + "</span></td>" +
-                    "<td class=\"req-cred\">" + escapeHTML(r.email || r.auth_index || "-") + "</td>" +
+                    "<td class=\"req-cred\">" + escapeHTML(formatAccountName(r.email || r.auth_index || "-")) + "</td>" +
                     "<td class=\"req-tokens\">" + tokenBreakdown + " <span class=\"req-tokens-total\">(" + totalTok + " " + tokenLabels.total + ")</span></td>" +
                     "<td>" + statusBadge + "</td>" +
                 "</tr>";

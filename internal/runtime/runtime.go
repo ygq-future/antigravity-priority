@@ -652,6 +652,7 @@ func (r *Runtime) Diagnostics(ctx context.Context) (map[string]any, error) {
 	nextWait := r.nextAutoApplyWait(cfg.Interval)
 	nextRunAt := r.clock.Now().UTC().Add(nextWait)
 
+	emailsByAuthIndex := r.currentSnapshotEmails()
 	activeCooldowns := make([]map[string]any, 0)
 	var loadErrors []string
 	cachePath := cfg.StateCachePath
@@ -663,7 +664,7 @@ func (r *Runtime) Diagnostics(ctx context.Context) (map[string]any, error) {
 		now := r.clock.Now().UTC()
 		for _, c := range store.GetCooldowns() {
 			if now.Before(c.CooldownUntil) {
-				activeCooldowns = append(activeCooldowns, map[string]any{
+				entry := map[string]any{
 					"auth_index":     redactRuntimeIdentifier(c.AuthIndex),
 					"model_group":    c.ModelGroup,
 					"model":          c.Model,
@@ -674,11 +675,15 @@ func (r *Runtime) Diagnostics(ctx context.Context) (map[string]any, error) {
 					"triggered_at":   c.TriggeredAt.Format(time.RFC3339),
 					"cooldown_until": c.CooldownUntil.Format(time.RFC3339),
 					"reason":         c.Reason,
-				})
+				}
+				if email := emailsByAuthIndex[c.AuthIndex]; email != "" {
+					entry["email"] = email
+				}
+				activeCooldowns = append(activeCooldowns, entry)
 			}
 		}
 	}
-	pending429, rateLimitStorm := r.rateLimitDiagnostics()
+	pending429, rateLimitStorm := r.rateLimitDiagnostics(emailsByAuthIndex)
 	requestHistory := r.currentRequestHistory()
 
 	return map[string]any{

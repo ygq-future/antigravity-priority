@@ -97,6 +97,9 @@ const overviewMarkup = `
                 <button type="button" class="btn-secondary" onclick="triggerReset()" id="btnReset" title="重置静态优先级">
                     <span>🔄 <span data-i18n="btnReset">重置静态优先级</span></span>
                 </button>
+                <button type="button" class="btn-secondary" onclick="toggleAccountMasking()" id="btnAccountMask" aria-pressed="true" title="切换账号脱敏显示">
+                    <span>🙈 脱敏显示</span>
+                </button>
                 <span id="scheduleStatusBadge" class="schedule-status active" onclick="toggleSchedulePause()" title="点击切换暂停状态">
                     🟢 <span id="scheduleStatusText" data-i18n="scheduleActive">动态调度运行中</span>
                 </span>

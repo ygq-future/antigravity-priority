@@ -264,7 +264,10 @@ func (r managementRunner) Diagnostics(ctx context.Context) (map[string]any, erro
 		return nil, err
 	}
 	diagnostics["run_history"] = r.runtime.managementRunHistory()
-	overlayManagementCooldownEmails(diagnostics["active_cooldowns"], r.runtime.currentSnapshotEmails())
+	if entries, ok := diagnostics["request_history"].([]state.RequestHistoryEntry); ok {
+		overlayManagementRequestHistoryEmails(entries, r.runtime.currentSnapshotEmails())
+		diagnostics["request_history"] = entries
+	}
 	return diagnostics, nil
 }
 
@@ -335,18 +338,12 @@ func overlayManagementEmail(item map[string]any, identityEmail string, emailByMa
 	item["email"] = ""
 }
 
-func overlayManagementCooldownEmails(raw any, emailsByAuthIndex map[string]string) {
-	cooldowns, ok := raw.([]map[string]any)
-	if !ok {
-		return
-	}
-	emailByAuthMask := uniqueEmailByMask(emailsByAuthIndex, func(authIndex string, _ string) string {
-		return redactRuntimeIdentifier(authIndex)
-	})
-	for _, cooldown := range cooldowns {
-		maskedAuthIndex, _ := cooldown["auth_index"].(string)
-		if email := emailByAuthMask[maskedAuthIndex]; email != "" {
-			cooldown["email"] = email
+// overlayManagementRequestHistoryEmails replaces persisted masked emails with
+// the current full account email for authenticated management responses.
+func overlayManagementRequestHistoryEmails(entries []state.RequestHistoryEntry, emailsByAuthIndex map[string]string) {
+	for index := range entries {
+		if email := strings.TrimSpace(emailsByAuthIndex[entries[index].AuthIndex]); email != "" {
+			entries[index].Email = email
 		}
 	}
 }
@@ -401,7 +398,12 @@ func (r managementRunner) LastProbeOutcomes(ctx context.Context) []management.Pr
 }
 
 func (r managementRunner) GetRequestHistory(ctx context.Context) ([]state.RequestHistoryEntry, error) {
-	return r.runtime.GetRequestHistory(ctx)
+	entries, err := r.runtime.GetRequestHistory(ctx)
+	if err != nil {
+		return nil, err
+	}
+	overlayManagementRequestHistoryEmails(entries, r.runtime.currentSnapshotEmails())
+	return entries, nil
 }
 
 func (r managementRunner) ClearRequestHistory(ctx context.Context) error {

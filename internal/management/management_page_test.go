@@ -47,6 +47,65 @@ func TestOverviewUsesCPAEmailAsCredentialTitle(t *testing.T) {
 	}
 }
 
+func TestAccountMaskingKeepsBothEndsVisible(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not available; account masking behavior is checked in the Node-enabled verification environment")
+	}
+
+	harness := `
+const storage = {
+    items: {},
+    getItem: function(key) {
+        return Object.prototype.hasOwnProperty.call(this.items, key) ? this.items[key] : null;
+    },
+    setItem: function(key, value) { this.items[key] = String(value); },
+    removeItem: function(key) { delete this.items[key]; }
+};
+const localStorage = storage;
+const maskButton = {
+    innerHTML: "",
+    title: "",
+    attrs: {},
+    setAttribute: function(name, value) { this.attrs[name] = value; }
+};
+const document = {
+    getElementById: function(id) { return id === "btnAccountMask" ? maskButton : null; }
+};
+function t(key) { return key; }
+function renderDashboard() {}
+function renderHistory() {}
+function renderDiagnostics() {}
+` + templateScriptAccountDisplay + templateScriptOverviewActionsCore + `
+function assertEqual(actual, expected, label) {
+    if (actual !== expected) {
+        throw new Error(label + ": got " + JSON.stringify(actual) + ", want " + JSON.stringify(expected));
+    }
+}
+
+assertEqual(maskAccountName("user@example.com"), "u***r@example.com", "short local part");
+assertEqual(maskAccountName("a@example.com"), "a***@example.com", "single-char local part");
+assertEqual(maskAccountName("ab@example.com"), "a***@example.com", "two-char local part");
+assertEqual(maskAccountName("abc@example.com"), "a***c@example.com", "three-char local part");
+assertEqual(maskAccountName("abcdefghi@example.com"), "abc***ghi@example.com", "nine-char local part");
+assertEqual(maskAccountName("guoyingwei6@example.com"), "guo***ei6@example.com", "long local part");
+assertEqual(maskAccountName("auth-account-001"), "auth***-001", "non-email identifier");
+assertEqual(formatAccountName(""), "Credential", "credential fallback");
+
+assertEqual(accountMaskingEnabled, true, "masking defaults to on");
+assertEqual(formatAccountName("user@example.com"), "u***r@example.com", "masked display");
+toggleAccountMasking();
+assertEqual(accountMaskingEnabled, false, "toggle disables masking");
+assertEqual(formatAccountName("user@example.com"), "user@example.com", "full display after toggle");
+assertEqual(maskButton.attrs["aria-pressed"], "false", "toggle aria state");
+assertEqual(storage.getItem(ACCOUNT_MASK_STORAGE_KEY), "0", "masking preference persisted");
+toggleAccountMasking();
+assertEqual(storage.getItem(ACCOUNT_MASK_STORAGE_KEY), "1", "masking preference restored");
+assertEqual(maskButton.innerHTML.indexOf("accountMaskOn") >= 0, true, "masked label restored");
+`
+	runNodeFixture(t, node, "account-masking.js", harness)
+}
+
 func TestOverview_SingleProbeButtonAndStatusDisabledBadge(t *testing.T) {
 	if !strings.Contains(StatusHTML, `probeSingleCredential`) {
 		t.Fatal("overview must include probeSingleCredential script function")
@@ -240,7 +299,7 @@ func TestSamplesModalUsesSelectedModelGroupOnly(t *testing.T) {
 		t.Skip("node is not available; samples modal behavior is checked in the Node-enabled verification environment")
 	}
 
-	harness := templateScriptOverviewActionsCore + templateScriptOverviewSamples + `
+	harness := templateScriptAccountDisplay + templateScriptOverviewActionsCore + templateScriptOverviewSamples + `
 function element(initial) {
     return Object.assign({hidden:true,textContent:"",innerHTML:""}, initial || {});
 }
@@ -295,7 +354,7 @@ func TestProbeHistoryDetailsRenderBothModelGroups(t *testing.T) {
 		t.Skip("node is not available; probe history behavior is checked in the Node-enabled verification environment")
 	}
 
-	harness := templateScriptHistoryDetails + templateScriptModals + `
+	harness := templateScriptHistoryDetails + templateScriptModals + templateScriptAccountDisplay + `
 const calls = [];
 function element(initial) {
     return Object.assign({hidden:true,textContent:"",innerHTML:"",children:[],appendChild:function(child){this.children.push(child);}}, initial || {});
@@ -327,6 +386,7 @@ function apiFetch(path) {
     return Promise.resolve({records:[{email:"claude@example.com",sample:{observed_at:"2026-08-23T02:01:00Z",short_window_rem:75,long_window_rem:0}}]});
 }
 function t(key) { return key; }
+accountMaskingEnabled = false;
 (async function() {
     showHistoryDetails(0);
     await new Promise(function(resolve) { setTimeout(resolve, 0); });
@@ -353,7 +413,7 @@ func TestAutoScheduleHistoryCombinesProbeAndHostDetails(t *testing.T) {
 		t.Skip("node is not available; automatic schedule history is checked in the Node-enabled verification environment")
 	}
 
-	harness := templateScriptHistoryDetails + templateScriptModals + `
+	harness := templateScriptHistoryDetails + templateScriptModals + templateScriptAccountDisplay + `
 function element(initial) {
     return Object.assign({hidden:true,textContent:"",innerHTML:"",children:[],appendChild:function(child){this.children.push(child);}}, initial || {});
 }
@@ -385,6 +445,7 @@ function apiFetch(path) {
 function t(key) { return key; }
 function extractChanges(result) { return result && Array.isArray(result.changes) ? result.changes : []; }
 function formatReason(reason) { return reason || ""; }
+accountMaskingEnabled = false;
 (async function() {
     showHistoryDetails(0);
     await new Promise(function(resolve) { setTimeout(resolve, 0); });
@@ -576,7 +637,7 @@ func TestProbeOutcomeToastAndRenderFailureTruth(t *testing.T) {
 		t.Skip("node is not available; probe outcome behavior is checked in the Node-enabled verification environment")
 	}
 
-	harness := templateScriptOverviewActionsCore + templateScriptOverviewRender + templateScriptOverviewReset + templateScriptProbeSchedule + `
+	harness := templateScriptAccountDisplay + templateScriptOverviewActionsCore + templateScriptOverviewRender + templateScriptOverviewReset + templateScriptProbeSchedule + `
 const toastCalls = [];
 function element(initial) {
     return Object.assign({
@@ -795,7 +856,7 @@ func TestTriggerProbe_ListLoadingState(t *testing.T) {
 		t.Skip("node is not available; probe outcome behavior is checked in the Node-enabled verification environment")
 	}
 
-	harness := templateScriptOverviewActionsCore + templateScriptOverviewRender + templateScriptOverviewReset + templateScriptProbeSchedule + `
+	harness := templateScriptAccountDisplay + templateScriptOverviewActionsCore + templateScriptOverviewRender + templateScriptOverviewReset + templateScriptProbeSchedule + `
 function element(initial) {
     return Object.assign({
         hidden: true,
@@ -868,7 +929,7 @@ func TestRefreshDashboard_ManualSyncLoadingState(t *testing.T) {
 		t.Skip("node is not available; refresh dashboard behavior is checked in the Node-enabled verification environment")
 	}
 
-	harness := templateScriptOverviewActionsCore + templateScriptOverviewRender + templateScriptOverviewReset + templateScriptProbeSchedule + `
+	harness := templateScriptAccountDisplay + templateScriptOverviewActionsCore + templateScriptOverviewRender + templateScriptOverviewReset + templateScriptProbeSchedule + `
 function element(initial) {
     return Object.assign({
         hidden: true,
@@ -955,7 +1016,7 @@ func TestRenderScheduleStatus_DiagnosticsFallbackAndSync(t *testing.T) {
 		t.Skip("node is not available; skipping UI JS test")
 	}
 
-	harness := templateScriptOverviewActionsCore + templateScriptProbeSchedule + `
+	harness := templateScriptAccountDisplay + templateScriptOverviewActionsCore + templateScriptProbeSchedule + `
 function element(initial) {
     return Object.assign({
         hidden: true,

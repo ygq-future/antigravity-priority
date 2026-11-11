@@ -316,8 +316,8 @@ func TestStatusHTML_ContainsRequiredUIElements(t *testing.T) {
 	if !strings.Contains(html, `await refreshDashboard({ silent: true });`) {
 		t.Error("automatic Overview refresh must suppress notifications")
 	}
-	if !strings.Contains(html, `const name = c.email || "Credential";`) {
-		t.Error("apply/history details must display the full email identity")
+	if !strings.Contains(html, `const name = formatAccountName(c.email);`) {
+		t.Error("apply/history details must display the full email identity through the shared formatter")
 	}
 	if strings.Contains(html, `const name = c.name || c.auth_index || "Credential";`) {
 		t.Error("apply/history details must not fall back to masked technical identity")

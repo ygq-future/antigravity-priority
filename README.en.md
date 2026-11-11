@@ -40,7 +40,7 @@ A high-performance, single-provider priority scheduler and quota management plug
 - **5-Hour Short-Window Quota Warm-Up**: Automatically dispatches lightweight natural engineering prompts when Gemini or Claude & GPT 5h windows are 100% full with an inactive countdown, starting the 5-hour reset cycle proactively to prevent idle quota waste. Once a window's reset time elapses, warm-up is driven by persisted quota evidence rather than the scheduling cycle, so a paused schedule or a plugin restart never skips it.
 - **Web UI Dynamic Config Center**: CPA host YAML only requires `enabled: true`. All scheduling intervals, concurrency, and scoring rules are visually managed with instant zero-restart hot-reloads.
 - **Independent Pro & Free Tier Physical Separation**: Accounts without a 5-hour burst window (Free tier) are automatically isolated into a dedicated fallback tier (default priority 10 downwards) and barred from Boost elevation, guaranteeing Pro accounts strictly take precedence while allowing customizable baseline priority in the Web UI Config Center.
-- **Embedded Dual-Theme Dashboard**: Zero external CDN and strictly CSP-compliant, providing real-time quota meters, model routing board, complete email identity, and redacted audit summaries.
+- **Embedded Dual-Theme Dashboard**: Zero external CDN and strictly CSP-compliant, providing real-time quota meters, model routing board, complete email identity, and redacted audit summaries, plus a persistent overview account-masking switch that keeps both ends visible and hides only the middle characters.
 ---
 
 ## Workflow

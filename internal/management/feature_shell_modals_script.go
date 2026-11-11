@@ -65,7 +65,7 @@ const templateScriptModals = `        function historyIdentity(value) {
             rowKeys.forEach(function(key) {
                 var row = rows[key];
                 html += "<div class=\"history-comparison-row\">" +
-                    "<div class=\"history-account-cell\">" + escapeHTML(row.email || "Credential") + "</div>" +
+                    "<div class=\"history-account-cell\">" + escapeHTML(formatAccountName(row.email || "Credential")) + "</div>" +
                     "<div>" + historyQuotaCell(row.gemini) + "</div>" +
                     "<div>" + historyQuotaCell(row.argon) + "</div>" +
                     "<div>" + historyQuotaCell(row.claude_gpt) + "</div>" +
@@ -126,7 +126,7 @@ const templateScriptModals = `        function historyIdentity(value) {
                         toP = (c.disabled || (c.target && c.target.disabled)) ? (currentLang === "zh-CN" ? "[已禁用]" : "[Disabled]") : c.priority;
                     }
 
-                    const name = c.email || "Credential";
+                    const name = formatAccountName(c.email);
                     const isBoost = Boolean(c.is_boosted || (c.reason && c.reason.indexOf("boost") >= 0));
                     const reasonText = formatReason(c.reason, isBoost, c.disabled_to || (c.target && c.target.disabled));
 

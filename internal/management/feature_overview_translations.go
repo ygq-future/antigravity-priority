@@ -81,6 +81,9 @@ const featureOverviewTranslations = `        const OVERVIEW_ZH = {
                 dynamicPriority: "动态优先级",
                 estimatedBurn: "预估",
                 tierPrefix: "Tier #",
+                accountMaskOn: "脱敏显示",
+                accountMaskOff: "完整显示",
+                accountMaskToggleTitle: "切换账号脱敏显示（关闭后显示完整账号）",
             }
         };
         const OVERVIEW_EN = {
@@ -164,6 +167,9 @@ const featureOverviewTranslations = `        const OVERVIEW_ZH = {
                 dynamicPriority: "Dynamic Priority",
                 estimatedBurn: "est.",
                 tierPrefix: "Tier #",
+                accountMaskOn: "Masked",
+                accountMaskOff: "Full",
+                accountMaskToggleTitle: "Toggle account masking (off shows full accounts)",
             }
         };
 `

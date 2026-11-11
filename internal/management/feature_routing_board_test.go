@@ -162,7 +162,7 @@ const window = {
 function showToast(msg, type) {
     toastCalls.push({msg: msg, type: type});
 }
-` + templateScriptOverviewActionsCore + templateScriptOverviewRender + templateScriptOverviewReset + templateScriptControls + templateScriptProbeSchedule + templateScriptOverviewSamples + `
+` + templateScriptAccountDisplay + templateScriptOverviewActionsCore + templateScriptOverviewRender + templateScriptOverviewReset + templateScriptControls + templateScriptProbeSchedule + templateScriptOverviewSamples + `
 const ZH = {
     statusActive: "正常活跃",
     statusFailed: "探测失败",
@@ -454,7 +454,7 @@ func TestCredentialCardReorderAndSingleProbeLoading_NodeHarness(t *testing.T) {
 		t.Skip("node is not available; card animation behavior is checked in the Node-enabled verification environment")
 	}
 
-	harness := templateScriptOverviewActionsCore + templateScriptOverviewRender + templateScriptOverviewReset + templateScriptProbeSchedule + `
+	harness := templateScriptAccountDisplay + templateScriptOverviewActionsCore + templateScriptOverviewRender + templateScriptOverviewReset + templateScriptProbeSchedule + `
 const toastCalls = [];
 var activeRects = {};
 var renderStartRects = {};

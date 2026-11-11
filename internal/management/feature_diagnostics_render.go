@@ -358,10 +358,10 @@ const templateScriptDiagnostics = `        let latestDiagnostics = null;
                 var target = diagTargetPriority(item);
                 var reason = String(item.reason || "-");
                 var credDisplayName = item.email || "Credential";
-                var maskedCredential = formatMaskedEmail(credDisplayName);
+                var displayName = formatAccountName(credDisplayName);
                 html += "<tr>" +
                     "<td><div class=\"diag-cred\">" +
-                        "<span class=\"diag-cred-name\" title=\"" + escapeHTML(maskedCredential) + "\">" + escapeHTML(maskedCredential) + "</span>" +
+                        "<span class=\"diag-cred-name\" title=\"" + escapeHTML(displayName) + "\">" + escapeHTML(displayName) + "</span>" +
                         "<span class=\"badge " + diagPoolBadgeClass(entry.group) + " diag-cred-pool\">" + escapeHTML(diagPoolLabel(entry.group)) + "</span>" +
                     "</div></td>" +
                     "<td class=\"diag-mono\">" + escapeHTML(host + " → " + target) + "</td>" +
@@ -406,7 +406,7 @@ const templateScriptDiagnostics = `        let latestDiagnostics = null;
             var html = "<div class=\"diag-subhead\">" + escapeHTML(t("diagPending429Title")) +
                 " <span class=\"badge badge-warning\">" + pending.length + "</span></div><div class=\"diag-mini-list\">";
             pending.forEach(function(item) {
-                var identity = formatMaskedEmail(item.auth_index || "-");
+                var identity = formatAccountName(item.email || item.auth_index || "-");
                 html += "<div class=\"diag-mini-row\">" +
                     "<div class=\"diag-mini-main\"><strong class=\"diag-mono\">" + escapeHTML(identity) + "</strong>" +
                     "<span class=\"diag-mini-meta\">" + escapeHTML((item.model_group || "-") + (item.model ? " · " + item.model : "")) + "</span></div>" +
@@ -431,7 +431,7 @@ const templateScriptDiagnostics = `        let latestDiagnostics = null;
                 var until = item.cooldown_until || "";
                 var kind = item.failure_kind || (item.status_code ? String(item.status_code) : "cooldown");
                 var probe = item.probe_enabled ? " · probe" : "";
-                var identity = formatMaskedEmail(item.email || item.auth_index || "Credential");
+                var identity = formatAccountName(item.email || item.auth_index || "Credential");
                 html += "<div class=\"diag-mini-row\">" +
                     "<div class=\"diag-mini-main\"><strong>" + escapeHTML(identity) + "</strong>" +
                     "<span class=\"diag-mini-meta\">" + escapeHTML((item.model_group || "-") + (item.model ? " · " + item.model : "") + " · " + kind + probe) + "</span></div>" +

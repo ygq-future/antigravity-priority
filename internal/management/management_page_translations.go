@@ -17,6 +17,7 @@ var overviewTranslationKeys = []string{
 	"probeSingleFailed", "probeUnavailable", "probeSingleNoResult", "probeBatchFailed",
 	"poolGemini", "poolArgon", "poolClaudeGPT", "badgeGemini", "badgeArgon", "badgeClaudeGPT",
 	"statusUnsupported", "statusBypassedCooldown", "statusBypassedDepleted", "dynamicPriority", "estimatedBurn", "tierPrefix",
+	"accountMaskOn", "accountMaskOff", "accountMaskToggleTitle",
 }
 
 var historyTranslationKeys = []string{
