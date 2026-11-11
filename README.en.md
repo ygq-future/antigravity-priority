@@ -24,7 +24,7 @@ A high-performance, single-provider priority scheduler and quota management plug
 
 ## Overview
 
-- **Tailored Antigravity Three-Pool Scheduling**: Dedicated exclusively to Google Antigravity (supporting `gemini`, `argon`, and `claude_gpt` independent quota pools) with deep awareness of 5-hour burst and 7-day weekly quota windows.
+- **Tailored Antigravity Three-Pool Scheduling**: Dedicated exclusively to Google Antigravity (supporting `gemini`, `argon`, and `claude_gpt` quota pools) with deep awareness of 5-hour burst and 7-day weekly quota windows; on Ultra / Ultra-lite, Argon reuses measured Gemini dual-window evidence for scheduling and dashboard display instead of fabricating an independent Argon bucket.
 - **Native CPA `scheduler.pick` Pure Memory Dispatch**: Hooks into CPA via `scheduler: true` and `scheduler_across_priorities: true` to resolve inbound model requests dynamically and route traffic to optimal credentials in memory with **zero disk writes and zero static priority conflicts**.
 - **Model-Centric Routing Board & 5-Bar Quota Cards**: Replaces legacy two-group toggles with an intuitive **Model Routing Board**; each credential card displays all five quota progress bars (`Gemini 5h/7d`, `Claude 5h/7d`, `Argon 7d`) with active route highlighting and call-order tier badges.
 - **Session-Sticky Affinity & Equal-Priority Clustering**: Accounts with close urgency metrics share the same priority integer tier, enabling CPA native round-robin distribution with `canonical_session_id` session affinity within the top cluster to eliminate 429 single-point saturation.

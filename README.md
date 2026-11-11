@@ -24,7 +24,7 @@ CLIProxyAPI (CPA) 专精型 **Google Antigravity 凭证智能配额调度与自�
 
 ## 功能概览
 
-- **Antigravity 专精三大配额池调度**：专为 Google Antigravity 体系（`gemini`、`argon` 与 `claude_gpt` 三大独立配额池）深度定制，精准联动 5 小时短窗与 7 天周长窗配额。
+- **Antigravity 专精三大配额池调度**：专为 Google Antigravity 体系（`gemini`、`argon` 与 `claude_gpt` 三大配额池）深度定制，精准联动 5 小时短窗与 7 天周长窗配额；Ultra / Ultra-lite 档位下 Argon 自动复用实测 Gemini 双窗证据参与调度与看板展示，不伪造独立 Argon 桶。
 - **CPA 原生 `scheduler.pick` 纯内存动态调度**：通过注册 `scheduler: true` 与 `scheduler_across_priorities: true`，在收到请求时毫秒级解析目标模型并调度至最优凭证，实现**零磁盘写入、纯内存无冲突调度**。
 - **模型驱动路由看板与五进度条卡片**：彻底取代旧版双组下拉框，提供直观的**具体模型路由看板**；每个凭证卡片同时渲染全部 5 根配额进度条（Gemini 5h/7d、Claude 5h/7d、Argon 7d），并高亮当前选中模型的生效配额与调用次序分档。
 - **会话粘性与同分平级分档**：相近紧迫度账号自动分配相同优先级整数，顶层平级集群内支持 `canonical_session_id` 会话粘性绑定与平滑轮询分流，杜绝单点打穿 429。
