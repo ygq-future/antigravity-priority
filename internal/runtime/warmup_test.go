@@ -161,10 +161,10 @@ func TestRuntime_TriggerWarmupForEligibleCredentials(t *testing.T) {
 	})
 
 	cfg := config.WarmupConfig{
-		GeminiEnabled:  true,
-		ClaudeEnabled:  true,
-		GeminiModel:    "gemini-3-flash",
-		ClaudeModel:    "claude-sonnet-5-5-high",
+		GeminiEnabled: true,
+		ClaudeEnabled: true,
+		GeminiModel:   "gemini-3-flash",
+		ClaudeModel:   "claude-sonnet-5-5-high",
 	}
 	remaining100 := int64(100)
 	resetIn5h := now.Add(5 * time.Hour)
@@ -209,7 +209,6 @@ func TestRuntime_TriggerWarmupForEligibleCredentials(t *testing.T) {
 			t.Fatalf("expected masked email, got unmasked: %s", entry.Email)
 		}
 	}
-
 
 	// 2. Immediate second run: debounced, no calls should happen
 	rt.triggerWarmupForEligibleCredentials(ctx, doer, cfg, evidenceByGroup, materials, nil, store, now.Add(10*time.Minute))
@@ -288,6 +287,12 @@ func (h *warmupStubHost) setBody(body []byte) {
 	h.body = body
 }
 
+func (h *warmupStubHost) addFile(file host.AuthFile) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.files = append(h.files, file)
+}
+
 func (h *warmupStubHost) countCalls(needle string) int {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -298,6 +303,18 @@ func (h *warmupStubHost) countCalls(needle string) int {
 		}
 	}
 	return count
+}
+
+func (h *warmupStubHost) quotaAuthIndexes() map[string]struct{} {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	indexes := make(map[string]struct{})
+	for _, request := range h.httpCalls {
+		if strings.Contains(request.URL, "retrieveUserQuota") {
+			indexes[request.AuthIndex] = struct{}{}
+		}
+	}
+	return indexes
 }
 
 type warmupTestClock struct {
@@ -321,22 +338,31 @@ func (c *warmupTestClock) advance(delta time.Duration) {
 // the recorded 5h reset time already elapsed while the quota still reads full.
 func seedReadyWindow(t *testing.T, cachePath string, now time.Time) {
 	t.Helper()
+	seedWindow(t, cachePath, now, now.Add(-2*time.Hour), now.Add(-30*time.Minute), 100)
+}
+
+func seedWindow(t *testing.T, cachePath string, now, observedAt, shortReset time.Time, remaining int64) {
+	t.Helper()
+	seedGroupWindow(t, cachePath, now, config.AntigravityModelGroupGemini, observedAt, shortReset, remaining)
+}
+
+func seedGroupWindow(t *testing.T, cachePath string, now time.Time, group config.AntigravityModelGroup, observedAt, shortReset time.Time, remaining int64) {
+	t.Helper()
 	ctx := context.Background()
 	store, err := state.Load(ctx, cachePath)
 	if err != nil {
 		t.Fatalf("load state failed: %v", err)
 	}
-	remaining := int64(100)
 	longReset := now.Add(7 * 24 * time.Hour)
 	if err := store.MarkProbeSuccess(ctx, state.ProbeSuccess{
 		AuthIndex:            "idx-a",
 		Provider:             core.ProviderAntigravity,
-		ModelGroup:           string(config.AntigravityModelGroupGemini),
-		ObservedAt:           now.Add(-2 * time.Hour),
+		ModelGroup:           string(group),
+		ObservedAt:           observedAt,
 		ResetAt:              longReset,
-		Remaining:            100,
+		Remaining:            remaining,
 		ShortWindowRemaining: &remaining,
-		ShortWindowResetAt:   now.Add(-30 * time.Minute),
+		ShortWindowResetAt:   shortReset,
 		LongWindowRemaining:  &remaining,
 		LongWindowResetAt:    longReset,
 		PlanType:             core.PlanTypePro,
@@ -399,19 +425,83 @@ func TestRuntime_WarmupSweepWarmsReadyWindowWithoutSchedulingRun(t *testing.T) {
 	}
 }
 
-func TestRuntime_WarmupSweepSkipsDisabledWarmup(t *testing.T) {
+func TestRuntime_ResetSweepProbesOnlyTheResetCredentialWithoutWarmup(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
 	rt, stub, _, cachePath := newWarmupSweepRuntime(t, now)
+	stub.addFile(host.AuthFile{Name: "account-b", AuthIndex: "idx-b", Provider: "antigravity", Status: "active"})
 	seedReadyWindow(t, cachePath, now)
 
 	rt.sweepWarmupResets(ctx)
 
 	if got := stub.countCalls("generateContent"); got != 0 {
-		t.Fatalf("expected no warm-up while warm-up is disabled, got %d", got)
+		t.Fatalf("warm-up is disabled; expected no warm-up request, got %d", got)
+	}
+	probed := stub.quotaAuthIndexes()
+	if _, ok := probed["idx-a"]; !ok {
+		t.Fatalf("reset refresh must probe the credential whose 5h reset elapsed; probed %v", probed)
+	}
+	if _, ok := probed["idx-b"]; ok {
+		t.Fatalf("reset refresh must not probe credentials without an elapsed 5h reset; probed %v", probed)
+	}
+	quotaCalls := stub.countCalls("retrieveUserQuota")
+	persisted, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatalf("reload state failed: %v", err)
+	}
+	entry, ok := persisted.GetEntry("idx-a", string(config.AntigravityModelGroupGemini))
+	if !ok {
+		t.Fatal("expected the refreshed credential entry")
+	}
+	if !entry.ShortWindowResetAt.After(now) {
+		t.Fatalf("expected the refresh to persist the rolled 5h reset, got %v", entry.ShortWindowResetAt)
+	}
+
+	rt.sweepWarmupResets(ctx)
+	if got := stub.countCalls("retrieveUserQuota"); got != quotaCalls {
+		t.Fatalf("expected one refresh per reset boundary, quota requests grew from %d to %d", quotaCalls, got)
+	}
+}
+
+func TestRuntime_ResetSweepProbesCredentialOnceWhenBothPoolsExpire(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	rt, stub, _, cachePath := newWarmupSweepRuntime(t, now)
+	shortReset := now.Add(-30 * time.Minute)
+	seedGroupWindow(t, cachePath, now, config.AntigravityModelGroupGemini, now.Add(-2*time.Hour), shortReset, 100)
+	seedGroupWindow(t, cachePath, now, config.AntigravityModelGroupClaudeGPT, now.Add(-2*time.Hour), shortReset, 100)
+	stub.setBody(fmt.Appendf(nil,
+		`{"models":{"gemini-2.5-pro":{"quotaInfo":{"windows":[{"name":"5h","remainingFraction":1.0,"resetTime":%q},{"name":"7d","remainingFraction":1.0,"resetTime":%q}]}},`+
+			`"claude-3-5-sonnet":{"quotaInfo":{"windows":[{"name":"5h","remainingFraction":1.0,"resetTime":%q},{"name":"7d","remainingFraction":1.0,"resetTime":%q}]}}}}`,
+		now.Add(5*time.Hour).UTC().Format(time.RFC3339),
+		now.Add(7*24*time.Hour).UTC().Format(time.RFC3339),
+		now.Add(5*time.Hour).UTC().Format(time.RFC3339),
+		now.Add(7*24*time.Hour).UTC().Format(time.RFC3339),
+	))
+
+	rt.sweepWarmupResets(ctx)
+
+	if got := stub.countCalls("retrieveUserQuota"); got != 1 {
+		t.Fatalf("expected one targeted probe for a credential with both 5h pools due, got %d quota requests", got)
+	}
+	if got := stub.countCalls("generateContent"); got != 0 {
+		t.Fatalf("warm-up is disabled; expected no warm-up request, got %d", got)
+	}
+}
+
+func TestRuntime_ResetSweepWakesAtResetGraceDeadline(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	rt, stub, _, cachePath := newWarmupSweepRuntime(t, now)
+	seedWindow(t, cachePath, now, now, now.Add(20*time.Second), 100)
+
+	wait := rt.sweepWarmupResets(ctx)
+
+	if want := 20*time.Second + WarmupResetGraceBaseDelay; wait != want {
+		t.Fatalf("expected the watcher to wake at the reset grace deadline (%v), got %v", want, wait)
 	}
 	if got := stub.countCalls("retrieveUserQuota"); got != 0 {
-		t.Fatalf("expected no background probe while warm-up is disabled, got %d", got)
+		t.Fatalf("expected no probe before the reset boundary, got %d", got)
 	}
 }
 

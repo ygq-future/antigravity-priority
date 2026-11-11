@@ -343,20 +343,16 @@ func enabledWarmupGroups(warmup config.WarmupConfig) []config.AntigravityModelGr
 	return groups
 }
 
-// sweepWarmupResets probes every credential pool whose persisted 5h window is
-// due, then returns how long the watcher should wait before sweeping again.
+// sweepWarmupResets refreshes every credential once when a 5h reset boundary
+// passes, then handles warm-up-only candidates. It returns how long the
+// watcher should wait before sweeping again.
 func (r *Runtime) sweepWarmupResets(ctx context.Context) time.Duration {
 	if ctx.Err() != nil {
-		return warmupIdleSweepInterval
+		return WarmupSweepInterval
 	}
 	cfg, err := r.Config()
 	if err != nil {
-		return warmupIdleSweepInterval
-	}
-	groups := enabledWarmupGroups(cfg.Warmup)
-	if len(groups) == 0 {
-		r.clearWarmupAttempts()
-		return warmupIdleSweepInterval
+		return WarmupSweepInterval
 	}
 	if !cfg.Enabled {
 		return WarmupSweepInterval
@@ -366,35 +362,93 @@ func (r *Runtime) sweepWarmupResets(ctx context.Context) time.Duration {
 		return WarmupSweepInterval
 	}
 	now := r.clock.Now().UTC()
-	candidates := r.dueWarmupCandidates(store, groups, now)
-	if len(candidates) == 0 {
-		return WarmupSweepInterval
+
+	groups := enabledWarmupGroups(cfg.Warmup)
+	candidates := mergeCandidates(
+		r.dueResetRefreshCandidates(store, now),
+		r.dueWarmupCandidates(store, groups, now),
+	)
+	maxWait := WarmupSweepInterval
+	if len(groups) == 0 {
+		maxWait = warmupIdleSweepInterval
 	}
-	disabled := r.disabledWarmupAuthIndexes(ctx)
+	if len(candidates) == 0 {
+		return nextResetBoundaryWait(store, now, maxWait)
+	}
+
+	// One targeted probe refreshes every pool owned by a credential, so an
+	// auth index is probed once even when several of its pools are due.
+	byAuth := make(map[string][]warmupCandidate)
+	authOrder := make([]string, 0, len(candidates))
 	for _, candidate := range candidates {
+		if _, seen := byAuth[candidate.authIndex]; !seen {
+			authOrder = append(authOrder, candidate.authIndex)
+		}
+		byAuth[candidate.authIndex] = append(byAuth[candidate.authIndex], candidate)
+	}
+	disabled := r.disabledAuthIndexes(ctx)
+	for _, authIndex := range authOrder {
 		if ctx.Err() != nil {
 			return WarmupSweepInterval
 		}
-		if _, isDisabled := disabled[candidate.authIndex]; isDisabled {
+		if _, isDisabled := disabled[authIndex]; isDisabled {
 			continue
 		}
-		r.recordWarmupAttempt(candidate, now)
-		if err := r.probeWarmupCandidate(ctx, cfg, candidate); errors.Is(err, ErrRunInProgress) {
+		due := byAuth[authIndex]
+		for _, candidate := range due {
+			r.recordWarmupAttempt(candidate, now)
+		}
+		if err := r.probeResetCandidate(ctx, cfg, due[0]); errors.Is(err, ErrRunInProgress) {
 			// Another run owns the lock; do not spend a retry budget on it.
-			r.clearWarmupAttempt(candidate.key)
+			for _, candidate := range due {
+				r.clearWarmupAttempt(candidate.key)
+			}
 		}
 	}
-	return WarmupSweepInterval
+	return nextResetBoundaryWait(store, now, WarmupSweepInterval)
+}
+
+// dueResetRefreshCandidates lists every 5h pool whose reset grace deadline has
+// passed. Argon shares Gemini's physical 5h window, so scanning it would count
+// one credential boundary twice. The refresh probe itself still covers every
+// credential and every pool.
+func (r *Runtime) dueResetRefreshCandidates(store *state.Store, now time.Time) []warmupCandidate {
+	return r.collectCandidates(store, now, candidateFilter{
+		groups: []config.AntigravityModelGroup{
+			config.AntigravityModelGroupGemini,
+			config.AntigravityModelGroupClaudeGPT,
+		},
+		due: func(_ state.Entry, resetAt, now time.Time) bool {
+			return resetBoundaryDue(resetAt, now)
+		},
+	})
 }
 
 // dueWarmupCandidates lists the pools whose 5h window is due for a warm-up probe.
 func (r *Runtime) dueWarmupCandidates(store *state.Store, groups []config.AntigravityModelGroup, now time.Time) []warmupCandidate {
+	return r.collectCandidates(store, now, candidateFilter{
+		groups:          groups,
+		respectDebounce: true,
+		due:             warmupWindowDue,
+	})
+}
+
+// candidateFilter selects persisted credential pools for one watcher pass.
+type candidateFilter struct {
+	groups          []config.AntigravityModelGroup
+	respectDebounce bool
+	due             func(entry state.Entry, resetAt, now time.Time) bool
+}
+
+// collectCandidates owns cooldown, debounce, and retry suppression so reset
+// refreshes and warm-ups share one selection path.
+func (r *Runtime) collectCandidates(store *state.Store, now time.Time, filter candidateFilter) []warmupCandidate {
 	if store == nil {
 		return nil
 	}
-	enabled := make(map[config.AntigravityModelGroup]struct{}, len(groups))
-	cooldowns := make(map[config.AntigravityModelGroup]map[string]state.CooldownEntry, len(groups))
-	for _, group := range groups {
+	enabled := make(map[config.AntigravityModelGroup]struct{}, len(filter.groups))
+	cooldowns := make(map[config.AntigravityModelGroup]map[string]state.CooldownEntry, len(filter.groups))
+	for _, group := range filter.groups {
 		enabled[group] = struct{}{}
 		cooldowns[group] = store.GetActiveCooldownEntriesForGroup(now, string(group))
 	}
@@ -416,10 +470,10 @@ func (r *Runtime) dueWarmupCandidates(store *state.Store, groups []config.Antigr
 		}
 		key := warmupAttemptKey(entry.AuthIndex, string(group))
 		lastWarmup := store.GetLastWarmupAt(entry.AuthIndex, entry.ModelGroup)
-		if !lastWarmup.IsZero() && now.Sub(lastWarmup) < WarmupDebounceDuration {
+		if filter.respectDebounce && !lastWarmup.IsZero() && now.Sub(lastWarmup) < WarmupDebounceDuration {
 			continue
 		}
-		if !warmupWindowDue(entry, resetAt, now) {
+		if !filter.due(entry, resetAt, now) {
 			continue
 		}
 		if _, inCooldown := cooldowns[group][entry.AuthIndex]; inCooldown {
@@ -442,10 +496,65 @@ func (r *Runtime) dueWarmupCandidates(store *state.Store, groups []config.Antigr
 	return candidates
 }
 
+// mergeCandidates deduplicates candidate lists by credential pool and keeps a
+// deterministic probe order.
+func mergeCandidates(lists ...[]warmupCandidate) []warmupCandidate {
+	merged := make([]warmupCandidate, 0)
+	seen := make(map[string]struct{})
+	for _, list := range lists {
+		for _, candidate := range list {
+			if _, ok := seen[candidate.key]; ok {
+				continue
+			}
+			seen[candidate.key] = struct{}{}
+			merged = append(merged, candidate)
+		}
+	}
+	slices.SortFunc(merged, func(left, right warmupCandidate) int {
+		return strings.Compare(left.key, right.key)
+	})
+	return merged
+}
+
+// nextResetBoundaryWait returns the delay until the earliest pending 5h reset
+// grace deadline, capped at maxWait. Waking at the deadline keeps the refresh
+// probe inside the grace window instead of waiting for the next full sweep.
+func nextResetBoundaryWait(store *state.Store, now time.Time, maxWait time.Duration) time.Duration {
+	if store == nil {
+		return maxWait
+	}
+	wait := maxWait
+	for _, entry := range store.Entries() {
+		resetAt := entry.ShortWindowResetAt
+		if resetAt.IsZero() {
+			resetAt = entry.ResetAt
+		}
+		if resetAt.IsZero() {
+			continue
+		}
+		until := resetAt.Add(WarmupResetGraceBaseDelay).Sub(now)
+		if until > 0 && until < wait {
+			wait = until
+		}
+	}
+	if wait < time.Second {
+		return time.Second
+	}
+	return wait
+}
+
+// resetBoundaryDue reports whether a 5h reset has passed the ledger
+// convergence grace, which is when a refresh probe must observe the new
+// window. A full window that never started also lands here once its stale
+// reset timestamp elapses.
+func resetBoundaryDue(resetAt, now time.Time) bool {
+	return !now.Before(resetAt.Add(WarmupResetGraceBaseDelay))
+}
+
 // warmupWindowDue reports whether the stored 5h window either already reset or
 // is a full, un-started window that should be kicked off now.
 func warmupWindowDue(entry state.Entry, resetAt, now time.Time) bool {
-	if !now.Before(resetAt.Add(WarmupResetGraceBaseDelay)) {
+	if resetBoundaryDue(resetAt, now) {
 		return true
 	}
 	if resetAt.Sub(now) < WarmupResetThresholdDuration {
@@ -490,12 +599,6 @@ func (r *Runtime) clearWarmupAttempt(key string) {
 	delete(r.warmupAttempts, key)
 }
 
-func (r *Runtime) clearWarmupAttempts() {
-	r.warmupResetMu.Lock()
-	defer r.warmupResetMu.Unlock()
-	clear(r.warmupAttempts)
-}
-
 // warmupRetryDelay backs off retries after a reset whose warm-up did not land.
 func warmupRetryDelay(attempts int) time.Duration {
 	delay := WarmupResetGraceBaseDelay
@@ -508,9 +611,10 @@ func warmupRetryDelay(attempts int) time.Duration {
 	return delay
 }
 
-// probeWarmupCandidate runs the targeted probe that refreshes evidence and
-// performs the warm-up, then clears retry state once the warm-up landed.
-func (r *Runtime) probeWarmupCandidate(ctx context.Context, cfg config.Config, candidate warmupCandidate) error {
+// probeResetCandidate runs the targeted probe that refreshes one credential's
+// quota evidence and performs a warm-up when the run's eligibility checks
+// allow it, then clears retry state once the warm-up landed.
+func (r *Runtime) probeResetCandidate(ctx context.Context, cfg config.Config, candidate warmupCandidate) error {
 	if err := r.Probe(ctx, []string{candidate.authIndex}); err != nil {
 		return err
 	}
@@ -529,9 +633,9 @@ func warmupAttemptKey(authIndex, modelGroup string) string {
 	return strings.TrimSpace(authIndex) + "::" + strings.TrimSpace(modelGroup)
 }
 
-// disabledWarmupAuthIndexes returns host-disabled credentials, which background
-// warm-up must never probe.
-func (r *Runtime) disabledWarmupAuthIndexes(ctx context.Context) map[string]struct{} {
+// disabledAuthIndexes returns host-disabled credentials, which background
+// refresh and warm-up must never probe.
+func (r *Runtime) disabledAuthIndexes(ctx context.Context) map[string]struct{} {
 	if r.hostCallbacks == nil {
 		return nil
 	}
