@@ -225,6 +225,12 @@ const templateScriptShellCore = `        const LANG_STORAGE_KEY = "antigravity_p
                     el.innerHTML = I18N[currentLang][key];
                 }
             });
+            document.querySelectorAll("[data-i18n-title]").forEach(el => {
+                const key = el.getAttribute("data-i18n-title");
+                if (key && I18N[currentLang] && I18N[currentLang][key]) {
+                    el.setAttribute("title", I18N[currentLang][key]);
+                }
+            });
             const langLabel = document.getElementById("langLabel");
             if (langLabel) langLabel.textContent = currentLang === "zh-CN" ? "EN / 中文" : "中文 / EN";
             updateAllCustomSelectDisplays();

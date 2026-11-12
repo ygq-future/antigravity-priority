@@ -322,7 +322,7 @@ const templateStyleOverviewCards = `        /* Credentials Display (Grid 3 Colum
         }
 
         .sample-table th {
-            padding: 9px 12px;
+            padding: 6px 8px;
             font-weight: 700;
             color: var(--text-muted);
             border-bottom: 1px solid var(--border-color);
@@ -332,20 +332,55 @@ const templateStyleOverviewCards = `        /* Credentials Display (Grid 3 Colum
         }
 
         .sample-table td {
-            padding: 7px 12px;
+            padding: 5px 8px;
             color: var(--text-primary);
             font-family: SFMono-Regular, Consolas, Menlo, monospace;
             font-size: 11.5px;
             white-space: nowrap;
+            border-bottom: 1px solid var(--border-subtle);
             transition: background 0.12s ease;
         }
 
-        .sample-table tbody.sample-group:hover td {
-            background: var(--bg-hover) !important;
+        .sample-table tbody.sample-group:last-child tr:last-child td {
+            border-bottom: none;
         }
 
-        .sample-table tbody.sample-group:not(:last-child) td.sample-group-bottom {
-            border-bottom: 1px solid var(--border-color);
+        .sample-table tbody.sample-group:hover td {
+            background: var(--bg-hover);
+        }
+
+        .sample-index {
+            font-weight: 700;
+            text-align: center;
+            color: var(--text-muted);
+        }
+
+        .sample-time {
+            font-size: 11.5px;
+            color: var(--text-secondary);
+        }
+
+        .sample-meter {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .sample-meter-track {
+            flex: 1 1 auto;
+            min-width: 60px;
+            height: 7px;
+            background: var(--meter-track-bg);
+            border: 1px solid var(--meter-track-border);
+            border-radius: 999px;
+            overflow: hidden;
+        }
+
+        .sample-meter-value {
+            font-size: 11px;
+            font-weight: 700;
+            min-width: 32px;
+            text-align: right;
         }
 
         /* 5-Bar Quota Progress Grid */
@@ -516,15 +551,71 @@ const templateStyleOverviewCards = `        /* Credentials Display (Grid 3 Colum
             margin-left: 4px;
         }
 
-        /* Samples Modal Pool Switcher */
+        /* Samples Modal */
+        .modal.samples-modal {
+            width: min(560px, 100%);
+            padding: 16px 18px;
+            gap: 10px;
+        }
+
+        .samples-modal-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+        }
+
+        .samples-modal-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-width: 0;
+        }
+
+        .samples-modal-title h2 {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .samples-modal-close {
+            flex: 0 0 auto;
+            min-height: 26px;
+            padding: 2px 8px;
+            line-height: 1;
+        }
+
+        .samples-modal-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .samples-modal-subtitle {
+            font-size: 12px;
+            color: var(--text-muted);
+            font-family: monospace;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .modal-body.samples-modal-body {
+            max-height: 320px;
+            padding: 0;
+        }
+
         .samples-pool-switcher {
             display: flex;
-            gap: 6px;
-            margin: 8px 0;
+            gap: 4px;
+            flex: 0 0 auto;
         }
 
         .btn-pool-pill {
-            padding: 3px 10px;
+            padding: 3px 9px;
             font-size: 12px;
             font-weight: 600;
             border-radius: 999px;

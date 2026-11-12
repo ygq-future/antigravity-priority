@@ -212,7 +212,7 @@ const templateStyleDiagnostics = `        /* System Diagnostics Panel Styles */
 
         .diag-lower-grid {
             display: grid;
-            grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+            grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr);
             gap: 12px;
             align-items: stretch;
         }
@@ -332,9 +332,9 @@ const templateStyleDiagnostics = `        /* System Diagnostics Panel Styles */
 
         .diag-timeline-item {
             display: grid;
-            grid-template-columns: 54px 78px minmax(0, 1fr) 48px auto;
+            grid-template-columns: 56px minmax(0, auto) minmax(0, 1fr) auto auto;
             align-items: center;
-            gap: 6px;
+            gap: 8px;
             padding: 6px 8px;
             background: var(--bg-subtle);
             border: 1px solid var(--border-subtle);
@@ -354,10 +354,17 @@ const templateStyleDiagnostics = `        /* System Diagnostics Panel Styles */
             font-family: SFMono-Regular, Consolas, Menlo, monospace;
             color: var(--text-muted);
             font-size: 11px;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         }
 
         .diag-timeline-kind {
             font-weight: 600;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
             white-space: nowrap;
         }
 
@@ -371,6 +378,34 @@ const templateStyleDiagnostics = `        /* System Diagnostics Panel Styles */
         .diag-timeline-outcome {
             font-family: SFMono-Regular, Consolas, Menlo, monospace;
             text-align: right;
+        }
+
+        /* Share one column grid across rows so every row aligns even when the
+           kind or message length differs; the base rules above stay as the
+           per-row fallback for engines without subgrid. */
+        @supports (grid-template-columns: subgrid) {
+            .diag-timeline {
+                display: grid;
+                grid-template-columns: 64px max-content minmax(0, 1fr) max-content max-content;
+                column-gap: 8px;
+                row-gap: 4px;
+                padding: 0 8px;
+            }
+
+            .diag-timeline-item {
+                grid-column: 1 / -1;
+                grid-template-columns: subgrid;
+                gap: 8px;
+                padding: 6px 0;
+            }
+
+            .diag-timeline-time {
+                padding-left: 8px;
+            }
+
+            .diag-timeline-item .badge {
+                margin-right: 8px;
+            }
         }
 
         .diag-storage-list {

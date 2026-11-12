@@ -15,7 +15,8 @@ const templateStyleResponsive = `        @media (max-width: 1100px) {
             .container { padding: 10px; }
             .summary-grid { grid-template-columns: 1fr; }
             .diag-kpi-grid { grid-template-columns: 1fr; }
-            .diag-timeline-item { grid-template-columns: 46px minmax(0, 1fr) auto; }
+            .diag-timeline { display: flex; flex-direction: column; padding: 0; }
+            .diag-timeline-item { grid-template-columns: 46px minmax(0, 1fr) auto auto; padding: 6px 8px; gap: 8px; }
             .diag-timeline-msg { display: none; }
             .topbar { flex-direction: column; align-items: flex-start; }
             .topbar-actions { width: 100%; justify-content: space-between; margin-right: 0; }

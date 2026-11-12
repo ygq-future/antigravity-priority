@@ -3,24 +3,23 @@ package management
 const overviewSamplesMarkup = `
     <!-- Quota Samples History Modal -->
     <div id="samplesModal" class="modal-backdrop" hidden>
-        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="samplesModalTitle" style="max-width: 620px;">
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-                <div style="display:flex; align-items:center; gap:8px;">
-                    <span style="font-size:18px;">📊</span>
-                    <h2 id="samplesModalTitle" style="margin:0; font-size:16px;">自适应时序采样明细</h2>
+        <div class="modal samples-modal" role="dialog" aria-modal="true" aria-labelledby="samplesModalTitle">
+            <div class="samples-modal-head">
+                <div class="samples-modal-title">
+                    <span style="font-size:16px;">📊</span>
+                    <h2 id="samplesModalTitle" style="margin:0; font-size:15px;">自适应时序采样明细</h2>
                 </div>
-                <button type="button" class="btn-secondary" onclick="closeSamplesModal()" style="min-height:28px; padding:3px 8px;">✕</button>
+                <button type="button" class="btn-secondary samples-modal-close" onclick="closeSamplesModal()">✕</button>
             </div>
-            <div id="samplesModalSubtitle" style="font-size:12px; color:var(--text-muted); font-family:monospace;"></div>
-            <div id="samplesPoolSwitcher" class="samples-pool-switcher" style="display:flex; gap:6px; margin:8px 0 4px;">
-                <button type="button" class="btn-pool-pill active" id="btnSamplePoolGemini" onclick="switchSamplesPool('gemini')">Gemini</button>
-                <button type="button" class="btn-pool-pill" id="btnSamplePoolArgon" onclick="switchSamplesPool('argon')">Argon</button>
-                <button type="button" class="btn-pool-pill" id="btnSamplePoolClaude" onclick="switchSamplesPool('claude_gpt')">Claude &amp; GPT</button>
+            <div class="samples-modal-bar">
+                <div id="samplesModalSubtitle" class="samples-modal-subtitle"></div>
+                <div id="samplesPoolSwitcher" class="samples-pool-switcher">
+                    <button type="button" class="btn-pool-pill active" id="btnSamplePoolGemini" onclick="switchSamplesPool('gemini')">Gemini</button>
+                    <button type="button" class="btn-pool-pill" id="btnSamplePoolArgon" onclick="switchSamplesPool('argon')">Argon</button>
+                    <button type="button" class="btn-pool-pill" id="btnSamplePoolClaude" onclick="switchSamplesPool('claude_gpt')">Claude &amp; GPT</button>
+                </div>
             </div>
-            <div id="samplesModalBody" class="modal-body" style="max-height:360px; overflow-y:auto; padding:4px 0;"></div>
-            <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:6px;">
-                <button type="button" class="btn-secondary" onclick="closeSamplesModal()" data-i18n="btnClose">关闭</button>
-            </div>
+            <div id="samplesModalBody" class="modal-body samples-modal-body"></div>
         </div>
     </div>
 `
@@ -38,7 +37,7 @@ const templateScriptOverviewSamples = `        let cachedSamplesData = null;
 
             cachedSamplesEmail = email || "";
             const displayName = formatAccountName(email);
-            title.textContent = (displayName || "Credential") + " - " + t("samplesModalTitle");
+            title.textContent = t("samplesModalTitle");
             if (sub) sub.textContent = email ? "Email: " + displayName : "";
             body.innerHTML = "<div class=\"empty-state\">" + t("loading") + "</div>";
             modal.hidden = false;
@@ -88,11 +87,10 @@ const templateScriptOverviewSamples = `        let cachedSamplesData = null;
                 if (leftValid !== rightValid) return rightValid ? 1 : -1;
                 return Number(right && right.sequence || 0) - Number(left && left.sequence || 0);
             });
-            const groupLabel = selectedGroup === "claude_gpt" ? "Claude/GPT" : (selectedGroup === "argon" ? "Argon" : "Gemini");
+            if (sub) sub.textContent = email ? "Email: " + formatAccountName(email) : "";
 
             if (samples.length === 0) {
                 body.innerHTML = "<div class=\"empty-state\">" + t("noSamples") + "</div>";
-                if (sub) sub.textContent = (email ? "Email: " + formatAccountName(email) : "") + " · " + groupLabel;
                 return;
             }
 
@@ -105,18 +103,18 @@ const templateScriptOverviewSamples = `        let cachedSamplesData = null;
                 if (num <= 10) fillClass = "meter-fill-danger";
                 else if (num <= 30) fillClass = "meter-fill-warning";
 
-                return "<div style=\"display:flex; align-items:center; gap:8px; width:100%; min-width:85px; max-width:140px;\">" +
-                    "<div style=\"flex:1; height:7px; background:var(--meter-track-bg); border:1px solid var(--meter-track-border); border-radius:999px; overflow:hidden;\">" +
+                return "<div class=\"sample-meter\">" +
+                    "<div class=\"sample-meter-track\">" +
                         "<div class=\"meter-fill " + fillClass + "\" style=\"width:" + num + "%; height:100%; border-radius:999px;\"></div>" +
                     "</div>" +
-                    "<strong style=\"font-size:11px; font-family:monospace; min-width:32px; text-align:right;\">" + num + "%</strong>" +
+                    "<strong class=\"sample-meter-value\">" + num + "%</strong>" +
                 "</div>";
             }
 
             let html = "<table class=\"sample-table\">" +
                 "<thead><tr>" +
-                    "<th style=\"width:36px; text-align:center;\">#</th>" +
-                    "<th style=\"width:150px;\">" + t("colObservedAt") + "</th>" +
+                    "<th style=\"width:32px; text-align:center;\">#</th>" +
+                    "<th style=\"width:146px;\">" + t("colObservedAt") + "</th>" +
                     "<th>" + t("shortWindow") + "</th>" +
                     "<th>" + t("longWindow") + "</th>" +
                 "</tr></thead>";
@@ -128,17 +126,16 @@ const templateScriptOverviewSamples = `        let cachedSamplesData = null;
 
                 html += "<tbody class=\"sample-group\">" +
                     "<tr>" +
-                        "<td style=\"font-weight:700; text-align:center; border-bottom:1px solid var(--border-color);\">" + (i + 1) + "</td>" +
-                        "<td style=\"border-bottom:1px solid var(--border-color); font-size:12px; color:var(--text-secondary); font-family:monospace;\">" + escapeHTML(timeStr) + "</td>" +
-                        "<td style=\"border-bottom:1px solid var(--border-color); padding:6px 10px;\">" + renderMiniMeter(sample.short_window_rem) + "</td>" +
-                        "<td style=\"border-bottom:1px solid var(--border-color); padding:6px 10px;\">" + renderMiniMeter(sample.long_window_rem) + "</td>" +
+                        "<td class=\"sample-index\">" + (i + 1) + "</td>" +
+                        "<td class=\"sample-time\">" + escapeHTML(timeStr) + "</td>" +
+                        "<td>" + renderMiniMeter(sample.short_window_rem) + "</td>" +
+                        "<td>" + renderMiniMeter(sample.long_window_rem) + "</td>" +
                     "</tr>" +
                 "</tbody>";
             }
 
             html += "</table>";
             body.innerHTML = html;
-            if (sub) sub.textContent = (email ? "Email: " + formatAccountName(email) : "") + " · " + groupLabel;
         }
 
         function closeSamplesModal() {

@@ -197,7 +197,7 @@ const configMarkup = `
                         <div class="form-row">
                             <div class="form-label-box">
                                 <span class="form-title" data-i18n="cfgWarmupGemini">Gemini 5h 满额自动预热</span>
-                                <span class="form-hint" data-i18n="cfgWarmupGeminiHint">当 Gemini 短窗为 100% 满额且倒计时未激活时，自动发一条微小请求提前触发 5 小时重置倒计时</span>
+                                <span class="form-hint" data-i18n="cfgWarmupGeminiHint" data-i18n-title="cfgWarmupGeminiHintTitle">短窗 100% 满额时自动触发 5h 重置</span>
                             </div>
                             <div class="form-input-group">
                                 <label class="toggle-label">
@@ -231,7 +231,7 @@ const configMarkup = `
                         <div class="form-row">
                             <div class="form-label-box">
                                 <span class="form-title" data-i18n="cfgWarmupClaude">Claude / GPT 5h 满额自动预热</span>
-                                <span class="form-hint" data-i18n="cfgWarmupClaudeHint">当 Claude 短窗为 100% 满额且倒计时未激活时，自动发一条微小请求提前触发 5 小时重置倒计时</span>
+                                <span class="form-hint" data-i18n="cfgWarmupClaudeHint" data-i18n-title="cfgWarmupClaudeHintTitle">短窗 100% 满额时自动触发 5h 重置</span>
                             </div>
                             <div class="form-input-group">
                                 <label class="toggle-label">
