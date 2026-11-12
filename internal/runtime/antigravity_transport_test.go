@@ -13,32 +13,29 @@ import (
 	"antigravity-priority/internal/provider/antigravity"
 )
 
-func TestExecuteAntigravityQuotaRequestOwnsNetworkIOAndFallback(t *testing.T) {
+func TestExecuteAntigravityQuotaRequestReportsUpstreamFailure(t *testing.T) {
 	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
 	calls := 0
 	doer := quotaHTTPDoerFunc(func(_ context.Context, request host.HTTPRequest) (host.HTTPResponse, error) {
 		calls++
-		if calls == 1 {
-			return host.HTTPResponse{StatusCode: http.StatusServiceUnavailable}, nil
-		}
-		if request.Method != http.MethodPost || request.AuthIndex != "auth-1" {
+		if request.Method != http.MethodPost || request.AuthIndex != "auth-1" || request.URL != antigravity.RetrieveUserQuotaSummaryDailyURL {
 			t.Fatalf("unexpected request: %#v", request)
 		}
-		return host.HTTPResponse{
-			StatusCode: http.StatusOK,
-			Body:       []byte(`{"groups":[{"displayName":"Gemini Models","buckets":[{"window":"5h","remainingFraction":0.9,"resetTime":"2026-08-21T17:00:00Z"}]},{"displayName":"Gemini 4 Argon","buckets":[{"bucketId":"gemini-argon-wtu-weekly","window":"weekly","remainingFraction":0.7,"resetTime":"2026-08-27T00:00:00Z"}]},{"displayName":"Claude Models","buckets":[{"window":"5h","remainingFraction":0.8,"resetTime":"2026-08-21T17:00:00Z"}]}]}`),
-		}, nil
+		return host.HTTPResponse{StatusCode: http.StatusServiceUnavailable}, nil
 	})
 
 	results := executeAntigravityQuotaRequest(context.Background(), doer, antigravityQuotaRequest{
 		AuthIndex: "auth-1", AccessToken: "secret", ProjectID: "project-1", ObservedAt: now,
 	})
-	if calls != 2 {
-		t.Fatalf("HTTP calls = %d; want 2", calls)
+	if calls != 1 {
+		t.Fatalf("HTTP calls = %d; want a single summary request", calls)
 	}
-	for _, group := range []antigravity.ModelGroup{antigravity.ModelGroupGemini, antigravity.ModelGroupArgon, antigravity.ModelGroupClaudeGPT} {
-		if results[group].ObservedAt != now || results[group].AuthIndex != "auth-1" {
-			t.Fatalf("result[%s] = %#v", group, results[group])
+	for _, group := range []antigravity.ModelGroup{antigravity.ModelGroupGemini, antigravity.ModelGroupClaudeGPT} {
+		if results[group].Status != antigravity.StatusProbeFailed {
+			t.Fatalf("result[%s] = %#v; want a reported probe failure", group, results[group])
+		}
+		if results[group].Error != "retrieve quota summary status 503" {
+			t.Fatalf("result[%s] error = %q; want the upstream status", group, results[group].Error)
 		}
 	}
 }
@@ -64,43 +61,6 @@ func TestExecuteAntigravityQuotaRequestPropagatesSafeFailure(t *testing.T) {
 		}
 	}
 }
-func TestExecuteAntigravityQuotaRequest_SupplementsGeminiFromAvailableModels(t *testing.T) {
-	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
-	calls := 0
-	doer := quotaHTTPDoerFunc(func(_ context.Context, request host.HTTPRequest) (host.HTTPResponse, error) {
-		calls++
-		if calls == 1 {
-			// 1. Summary returns only Claude and GPT models (new Google behavior)
-			return host.HTTPResponse{
-				StatusCode: http.StatusOK,
-				Body:       []byte(`{"groups":[{"displayName":"Claude and GPT models","buckets":[{"window":"5h","remainingFraction":0.75,"resetTime":"2026-08-21T17:00:00Z"}]}]}`),
-			}, nil
-		}
-		// 2. Fallback to available models queries per-model quotas for Gemini
-		return host.HTTPResponse{
-			StatusCode: http.StatusOK,
-			Body:       []byte(`{"models":{"gemini-2.5-pro":{"modelProvider":"google","quotaInfo":{"windows":[{"name":"7d","remainingFraction":0.92,"resetTime":"2026-08-27T00:00:00Z"}]}}}}`),
-		}, nil
-	})
-
-	results := executeAntigravityQuotaRequest(context.Background(), doer, antigravityQuotaRequest{
-		AuthIndex: "auth-1", AccessToken: "secret", ProjectID: "project-1", ObservedAt: now,
-	})
-
-	if calls != 2 {
-		t.Fatalf("HTTP calls = %d; want 2", calls)
-	}
-	if results[antigravity.ModelGroupClaudeGPT].Status != antigravity.StatusReady {
-		t.Errorf("expected ClaudeGPT StatusReady, got %v", results[antigravity.ModelGroupClaudeGPT].Status)
-	}
-	if results[antigravity.ModelGroupGemini].Status != antigravity.StatusReady {
-		t.Errorf("expected Gemini StatusReady, got %v", results[antigravity.ModelGroupGemini].Status)
-	}
-	if *results[antigravity.ModelGroupGemini].Remaining != 92 {
-		t.Errorf("expected Gemini Remaining 92, got %v", *results[antigravity.ModelGroupGemini].Remaining)
-	}
-}
-
 func TestExecuteAntigravityQuotaRequest_SingleSummaryCoversAllPools(t *testing.T) {
 	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
 	var requestedURLs []string
@@ -144,62 +104,16 @@ func TestExecuteAntigravityQuotaRequest_SingleSummaryCoversAllPools(t *testing.T
 	}
 }
 
-func TestExecuteAntigravityQuotaRequest_GeminiFallsBackWhenSummaryUnavailable(t *testing.T) {
+func TestExecuteAntigravityQuotaRequest_MissingGroupIsNotFabricated(t *testing.T) {
 	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
 	var requestedURLs []string
 	doer := quotaHTTPDoerFunc(func(_ context.Context, request host.HTTPRequest) (host.HTTPResponse, error) {
 		requestedURLs = append(requestedURLs, request.URL)
-		if strings.Contains(request.URL, "fetchAvailableModels") {
-			// Available models still reports per-model Gemini quota
-			return host.HTTPResponse{
-				StatusCode: http.StatusOK,
-				Body:       []byte(`{"models":{"gemini-2.5-pro":{"modelProvider":"google","quotaInfo":{"windows":[{"name":"7d","remainingFraction":0.65,"resetTime":"2026-08-27T00:00:00Z"}]}},"claude-3-5-sonnet":{"quotaInfo":{"remainingFraction":0.8,"resetTime":"2026-08-21T17:00:00Z"}}}}`),
-			}, nil
-		}
-		// All quota summary endpoints fail with 500
-		return host.HTTPResponse{StatusCode: http.StatusInternalServerError}, nil
-	})
-
-	results := executeAntigravityQuotaRequest(context.Background(), doer, antigravityQuotaRequest{
-		AuthIndex:   "auth-1",
-		AccessToken: "secret",
-		ProjectID:   "project-1",
-		ObservedAt:  now,
-	})
-
-	if len(requestedURLs) != 4 {
-		t.Fatalf("HTTP calls = %d; want 4 (3 summary URLs failed + 1 fallback succeeded)", len(requestedURLs))
-	}
-	if requestedURLs[len(requestedURLs)-1] != antigravity.FetchAvailableModelsURL {
-		t.Errorf("fallback URL = %q; want fetchAvailableModels", requestedURLs[len(requestedURLs)-1])
-	}
-	if results[antigravity.ModelGroupGemini].Status != antigravity.StatusReady {
-		t.Fatalf("expected Gemini StatusReady, got %v", results[antigravity.ModelGroupGemini].Status)
-	}
-	if *results[antigravity.ModelGroupGemini].Remaining != 65 {
-		t.Fatalf("expected Gemini Remaining 65, got %v", *results[antigravity.ModelGroupGemini].Remaining)
-	}
-	if !hasCompleteQuota(results) {
-		t.Fatalf("fallback results are incomplete: %#v", results)
-	}
-}
-
-func TestExecuteAntigravityQuotaRequest_GeminiFallsBackWhenGeminiQuotaMissing(t *testing.T) {
-	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
-	calls := 0
-	doer := quotaHTTPDoerFunc(func(_ context.Context, request host.HTTPRequest) (host.HTTPResponse, error) {
-		calls++
-		if strings.Contains(request.URL, "fetchAvailableModels") {
-			// Fallback to available models provides Gemini
-			return host.HTTPResponse{
-				StatusCode: http.StatusOK,
-				Body:       []byte(`{"models":{"gemini-2.5-pro":{"quotaInfo":{"windows":[{"name":"7d","remainingFraction":0.7,"resetTime":"2026-08-27T00:00:00Z"}]}},"claude-3-5-sonnet":{"quotaInfo":{"remainingFraction":0.9,"resetTime":"2026-08-21T17:00:00Z"}}}}`),
-			}, nil
-		}
-		// Quota summary returns 200, but has only Claude models
+		// A summary can answer 200 with only one pool. The other pools were not
+		// observed in this round and must not be filled from another endpoint.
 		return host.HTTPResponse{
 			StatusCode: http.StatusOK,
-			Body:       []byte(`{"models":{"claude-3-5-sonnet":{"quotaInfo":{"remainingFraction":0.9,"resetTime":"2026-08-21T17:00:00Z"}}}}`),
+			Body:       []byte(`{"groups":[{"displayName":"Claude and GPT models","buckets":[{"window":"5h","remainingFraction":0.8,"resetTime":"2026-08-21T17:00:00Z"}]}]}`),
 		}, nil
 	})
 
@@ -210,127 +124,26 @@ func TestExecuteAntigravityQuotaRequest_GeminiFallsBackWhenGeminiQuotaMissing(t 
 		ObservedAt:  now,
 	})
 
-	if calls != 4 {
-		t.Fatalf("HTTP calls = %d; want 4 (3 partial summary URLs + 1 fallback)", calls)
+	if len(requestedURLs) != 1 || requestedURLs[0] != antigravity.RetrieveUserQuotaSummaryDailyURL {
+		t.Fatalf("HTTP calls = %v; want a single summary request", requestedURLs)
 	}
-	if results[antigravity.ModelGroupGemini].Status != antigravity.StatusReady {
-		t.Fatalf("expected Gemini StatusReady, got %v", results[antigravity.ModelGroupGemini].Status)
-	}
-	if !hasCompleteQuota(results) {
-		t.Fatalf("fallback results are incomplete: %#v", results)
-	}
-}
-
-func TestExecuteAntigravityQuotaRequest_PartialSinglePoolSummaryContinuesProbe(t *testing.T) {
-	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
-	var requestedURLs []string
-	doer := quotaHTTPDoerFunc(func(_ context.Context, request host.HTTPRequest) (host.HTTPResponse, error) {
-		requestedURLs = append(requestedURLs, request.URL)
-		if request.URL == antigravity.RetrieveUserQuotaSummaryDailyURL {
-			// A host can answer 200 with only Claude/GPT. That is not proof that
-			// the other pools were observed.
-			return host.HTTPResponse{
-				StatusCode: http.StatusOK,
-				Body:       []byte(`{"groups":[{"displayName":"Claude and GPT models","buckets":[{"window":"5h","remainingFraction":0.8,"resetTime":"2026-08-21T17:00:00Z"}]}]}`),
-			}, nil
-		}
-		return host.HTTPResponse{StatusCode: http.StatusOK, Body: []byte(quotaSummaryWithArgon)}, nil
-	})
-
-	results := executeAntigravityQuotaRequest(context.Background(), doer, antigravityQuotaRequest{
-		AuthIndex:   "auth-1",
-		AccessToken: "secret",
-		ProjectID:   "project-1",
-		ObservedAt:  now,
-	})
-
-	if len(requestedURLs) != 2 {
-		t.Fatalf("HTTP calls = %d; want 2 (partial daily summary + complete production summary)", len(requestedURLs))
-	}
-	if requestedURLs[0] != antigravity.RetrieveUserQuotaSummaryDailyURL || requestedURLs[1] != antigravity.RetrieveUserQuotaSummaryURL {
-		t.Fatalf("call URLs = %v; want daily then production", requestedURLs)
-	}
-	if !hasCompleteQuota(results) {
-		t.Fatalf("partial summary must not finalize the probe: %#v", results)
-	}
-}
-
-func TestHasCompleteQuota_ArgonIsEntitlementGated(t *testing.T) {
-	geminiPro := antigravity.ProbeResult{ModelGroup: antigravity.ModelGroupGemini, Status: antigravity.StatusReady, PlanType: core.PlanTypePro}
-	claudeReady := antigravity.ProbeResult{ModelGroup: antigravity.ModelGroupClaudeGPT, Status: antigravity.StatusReady}
-	argonReady := antigravity.ProbeResult{ModelGroup: antigravity.ModelGroupArgon, Status: antigravity.StatusReady}
-	argonMissing := antigravity.ProbeResult{ModelGroup: antigravity.ModelGroupArgon, Status: antigravity.StatusProbeFailed}
-
-	if !hasCompleteQuota(map[antigravity.ModelGroup]antigravity.ProbeResult{
-		antigravity.ModelGroupGemini:    geminiPro,
-		antigravity.ModelGroupArgon:     argonMissing,
-		antigravity.ModelGroupClaudeGPT: claudeReady,
-	}) {
-		t.Fatal("a Pro account without Argon must still be complete")
-	}
-	if hasCompleteQuota(map[antigravity.ModelGroup]antigravity.ProbeResult{
-		antigravity.ModelGroupGemini: geminiPro,
-		antigravity.ModelGroupArgon:  argonReady,
-	}) {
-		t.Fatal("a missing Claude/GPT pool must be incomplete")
-	}
-}
-
-func TestExecuteAntigravityQuotaRequest_AllPoolsReadyAvoidsSecondRequest(t *testing.T) {
-	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
-	calls := 0
-	doer := quotaHTTPDoerFunc(func(_ context.Context, request host.HTTPRequest) (host.HTTPResponse, error) {
-		calls++
-		return host.HTTPResponse{
-			StatusCode: http.StatusOK,
-			Body: []byte(`{"groups":[
-				{"displayName":"Gemini Models","buckets":[{"window":"5h","remainingFraction":0.9,"resetTime":"2026-08-21T17:00:00Z"}]},
-				{"displayName":"Gemini 4 Argon","buckets":[{"bucketId":"gemini-argon-wtu-weekly","window":"weekly","remainingFraction":0.7,"resetTime":"2026-08-27T00:00:00Z"}]},
-				{"displayName":"Claude Models","buckets":[{"window":"5h","remainingFraction":0.8,"resetTime":"2026-08-21T17:00:00Z"}]}
-			]}`),
-		}, nil
-	})
-
-	results := executeAntigravityQuotaRequest(context.Background(), doer, antigravityQuotaRequest{
-		AuthIndex:   "auth-1",
-		AccessToken: "secret",
-		ProjectID:   "project-1",
-		ObservedAt:  now,
-	})
-
-	if calls != 1 {
-		t.Fatalf("HTTP calls = %d; want 1 when all pools are ready", calls)
-	}
-	if !hasCompleteQuota(results) {
-		t.Fatalf("expected complete quota, got %#v", results)
-	}
-	if results[antigravity.ModelGroupGemini].Status != antigravity.StatusReady {
-		t.Fatalf("expected Gemini StatusReady, got %v", results[antigravity.ModelGroupGemini].Status)
+	if results[antigravity.ModelGroupGemini].Status == antigravity.StatusReady {
+		t.Fatalf("Gemini = %#v; an omitted pool must not become ready", results[antigravity.ModelGroupGemini])
 	}
 	if results[antigravity.ModelGroupClaudeGPT].Status != antigravity.StatusReady {
-		t.Fatalf("expected ClaudeGPT StatusReady, got %v", results[antigravity.ModelGroupClaudeGPT].Status)
+		t.Fatalf("ClaudeGPT = %#v; want the observed pool", results[antigravity.ModelGroupClaudeGPT])
 	}
 }
 
 // TestExecuteAntigravityQuotaRequest_GeminiProbePreservesDualWindowEvidence guards the
 // dashboard evidence contract: a Gemini-targeted probe must surface the canonical
 // 5h/weekly windows (and therefore the reset countdowns and plan type) carried by the
-// quota summary. The per-model available-models payload has no window names, so
-// preferring it degrades evidence into one unclassified window.
+// quota summary.
 func TestExecuteAntigravityQuotaRequest_GeminiProbePreservesDualWindowEvidence(t *testing.T) {
 	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
 	var requestedURLs []string
 	doer := quotaHTTPDoerFunc(func(_ context.Context, request host.HTTPRequest) (host.HTTPResponse, error) {
 		requestedURLs = append(requestedURLs, request.URL)
-		if strings.Contains(request.URL, "fetchAvailableModels") {
-			return host.HTTPResponse{
-				StatusCode: http.StatusOK,
-				Body: []byte(`{"models":{
-					"gemini-2.5-pro":{"modelProvider":"google","quotaInfo":{"remainingFraction":0.88,"resetTime":"2026-08-21T17:00:00Z"}},
-					"claude-3-5-sonnet":{"quotaInfo":{"remainingFraction":0.9,"resetTime":"2026-08-21T17:00:00Z"}}
-				}}`),
-			}, nil
-		}
 		return host.HTTPResponse{
 			StatusCode: http.StatusOK,
 			Body: []byte(`{"groups":[
@@ -370,8 +183,8 @@ func TestExecuteAntigravityQuotaRequest_GeminiProbePreservesDualWindowEvidence(t
 	}
 }
 
-// Consumer Antigravity traffic is measured on the daily host. Production is a
-// fallback because it reports consumer buckets as unmeasured placeholders.
+// Consumer Antigravity traffic is measured on the daily host, so that is the only
+// host the probe may ask.
 func TestExecuteAntigravityQuotaRequest_PrefersDailySummaryHost(t *testing.T) {
 	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
 	var requestedURLs []string
@@ -401,45 +214,27 @@ func TestExecuteAntigravityQuotaRequest_PrefersDailySummaryHost(t *testing.T) {
 	}
 }
 
-// Consumer Antigravity accounts run real traffic against the daily host. The
-// production host reports the same buckets as unmeasured (remainingFraction 1)
-// with rolling reset times, so using it first makes every meter read 100% and
-// restarts the countdown at the full window length.
-func TestExecuteAntigravityQuotaRequest_PrefersDailyMeasuredSummaryOverProductionPlaceholders(t *testing.T) {
+// Untouched buckets are reported at full quota with a reset time that every probe
+// pushes back by a whole window. That reset is the only signal warm-up has, so the
+// probe must keep the buckets as measured evidence instead of rejecting them.
+func TestExecuteAntigravityQuotaRequest_UntouchedBucketsStayReady(t *testing.T) {
 	now := time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)
-	const dailyMeasured = `{"groups":[
-		{"displayName":"Gemini Models","buckets":[
-			{"bucketId":"gemini-5h","window":"5h","remainingFraction":0.21,"resetTime":"2026-11-11T15:47:00Z"},
-			{"bucketId":"gemini-weekly","window":"weekly","remainingFraction":0.21,"resetTime":"2026-11-13T14:00:00Z"}
-		]},
-		{"displayName":"Gemini 4 Argon","description":"For paid Pro plans, Argon quota is separate.","buckets":[
-			{"bucketId":"gemini-argon-wtu-weekly","window":"weekly","remainingFraction":0.08,"resetTime":"2026-11-13T14:00:00Z"}
-		]},
-		{"displayName":"Claude and GPT models","buckets":[
-			{"bucketId":"3p-5h","window":"5h","remainingFraction":1,"resetTime":"2026-11-11T15:47:00Z"},
-			{"bucketId":"3p-weekly","window":"weekly","remainingFraction":1,"resetTime":"2026-11-13T00:00:00Z"}
-		]}
-	]}`
-	const productionPlaceholder = `{"groups":[
-		{"displayName":"Gemini Models","buckets":[
-			{"bucketId":"gemini-5h","window":"5h","remainingFraction":1,"resetTime":"2026-11-11T17:00:00Z"},
-			{"bucketId":"gemini-weekly","window":"weekly","remainingFraction":1,"resetTime":"2026-11-18T12:00:00Z"}
-		]},
-		{"displayName":"Gemini 4 Argon","buckets":[
-			{"bucketId":"gemini-argon-wtu-weekly","window":"weekly","remainingFraction":1,"resetTime":"2026-11-18T12:00:00Z"}
-		]},
-		{"displayName":"Claude and GPT models","buckets":[
-			{"bucketId":"3p-5h","window":"5h","remainingFraction":1,"resetTime":"2026-11-11T17:00:00Z"},
-			{"bucketId":"3p-weekly","window":"weekly","remainingFraction":1,"resetTime":"2026-11-13T00:00:00Z"}
-		]}
-	]}`
 	var requestedURLs []string
 	doer := quotaHTTPDoerFunc(func(_ context.Context, request host.HTTPRequest) (host.HTTPResponse, error) {
 		requestedURLs = append(requestedURLs, request.URL)
-		if request.URL == antigravity.RetrieveUserQuotaSummaryDailyURL {
-			return host.HTTPResponse{StatusCode: http.StatusOK, Body: []byte(dailyMeasured)}, nil
-		}
-		return host.HTTPResponse{StatusCode: http.StatusOK, Body: []byte(productionPlaceholder)}, nil
+		return host.HTTPResponse{
+			StatusCode: http.StatusOK,
+			Body: []byte(`{"groups":[
+				{"displayName":"Gemini Models","buckets":[
+					{"bucketId":"gemini-5h","window":"5h","remainingFraction":1,"resetTime":"2026-11-11T17:00:00Z"},
+					{"bucketId":"gemini-weekly","window":"weekly","remainingFraction":1,"resetTime":"2026-11-18T12:00:00Z"}
+				]},
+				{"displayName":"Claude and GPT models","buckets":[
+					{"bucketId":"3p-5h","window":"5h","remainingFraction":1,"resetTime":"2026-11-11T17:00:00Z"},
+					{"bucketId":"3p-weekly","window":"weekly","remainingFraction":1,"resetTime":"2026-11-18T12:00:00Z"}
+				]}
+			]}`),
+		}, nil
 	})
 
 	results := executeAntigravityQuotaRequest(context.Background(), doer, antigravityQuotaRequest{
@@ -447,111 +242,17 @@ func TestExecuteAntigravityQuotaRequest_PrefersDailyMeasuredSummaryOverProductio
 	})
 
 	if len(requestedURLs) != 1 || requestedURLs[0] != antigravity.RetrieveUserQuotaSummaryDailyURL {
-		t.Fatalf("HTTP calls = %v; want exactly the measured daily summary first", requestedURLs)
-	}
-	gemini := results[antigravity.ModelGroupGemini]
-	if gemini.ShortWindowRemaining == nil || *gemini.ShortWindowRemaining != 21 {
-		t.Fatalf("Gemini 5h remaining = %v; want 21 from daily", gemini.ShortWindowRemaining)
-	}
-	if gemini.LongWindowRemaining == nil || *gemini.LongWindowRemaining != 21 {
-		t.Fatalf("Gemini weekly remaining = %v; want 21 from daily", gemini.LongWindowRemaining)
-	}
-	if argon := results[antigravity.ModelGroupArgon]; argon.LongWindowRemaining == nil || *argon.LongWindowRemaining != 8 {
-		t.Fatalf("Argon weekly remaining = %v; want 8 from daily", argon.LongWindowRemaining)
-	}
-	if gemini.ShortWindowResetAt == nil || gemini.ShortWindowResetAt.Format(time.RFC3339) != "2026-11-11T15:47:00Z" {
-		t.Fatalf("Gemini 5h reset = %v; want 2026-11-11T15:47:00Z", gemini.ShortWindowResetAt)
-	}
-}
-
-func TestExecuteAntigravityQuotaRequest_UnmeasuredProductionFallsBackToAvailableModels(t *testing.T) {
-	now := time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)
-	const productionPlaceholder = `{"groups":[
-		{"displayName":"Gemini Models","buckets":[
-			{"bucketId":"gemini-5h","window":"5h","remainingFraction":1,"resetTime":"2026-11-11T17:00:00Z"},
-			{"bucketId":"gemini-weekly","window":"weekly","remainingFraction":1,"resetTime":"2026-11-18T12:00:00Z"}
-		]},
-		{"displayName":"Claude and GPT models","buckets":[
-			{"bucketId":"3p-5h","window":"5h","remainingFraction":1,"resetTime":"2026-11-11T17:00:00Z"},
-			{"bucketId":"3p-weekly","window":"weekly","remainingFraction":1,"resetTime":"2026-11-18T12:00:00Z"}
-		]}
-	]}`
-	var requestedURLs []string
-	doer := quotaHTTPDoerFunc(func(_ context.Context, request host.HTTPRequest) (host.HTTPResponse, error) {
-		requestedURLs = append(requestedURLs, request.URL)
-		if strings.Contains(request.URL, "fetchAvailableModels") {
-			return host.HTTPResponse{
-				StatusCode: http.StatusOK,
-				Body:       []byte(`{"models":{"gemini-2.5-pro":{"quotaInfo":{"windows":[{"name":"7d","remainingFraction":0.65,"resetTime":"2026-11-18T00:00:00Z"}]}},"claude-3-5-sonnet":{"quotaInfo":{"remainingFraction":0.9,"resetTime":"2026-11-11T17:00:00Z"}}}}`),
-			}, nil
-		}
-		if request.URL == antigravity.RetrieveUserQuotaSummaryURL {
-			return host.HTTPResponse{StatusCode: http.StatusOK, Body: []byte(productionPlaceholder)}, nil
-		}
-		return host.HTTPResponse{StatusCode: http.StatusInternalServerError}, nil
-	})
-
-	results := executeAntigravityQuotaRequest(context.Background(), doer, antigravityQuotaRequest{
-		AuthIndex: "auth-1", AccessToken: "secret", ProjectID: "project-1", ObservedAt: now,
-	})
-
-	if len(requestedURLs) != 4 {
-		t.Fatalf("HTTP calls = %v; want 3 summary hosts + available models", requestedURLs)
+		t.Fatalf("HTTP calls = %v; want a single daily summary call", requestedURLs)
 	}
 	gemini := results[antigravity.ModelGroupGemini]
 	if gemini.Status != antigravity.StatusReady {
-		t.Fatalf("Gemini status = %v; want available-models fallback", gemini.Status)
+		t.Fatalf("Gemini status = %v; untouched buckets are still measured evidence", gemini.Status)
 	}
-	if gemini.LongWindowRemaining == nil || *gemini.LongWindowRemaining != 65 {
-		t.Fatalf("Gemini weekly = %v; want 65, not the production placeholder 100", gemini.LongWindowRemaining)
+	if gemini.ShortWindowRemaining == nil || *gemini.ShortWindowRemaining != 100 {
+		t.Fatalf("Gemini 5h remaining = %v; want 100", gemini.ShortWindowRemaining)
 	}
-	if results[antigravity.ModelGroupClaudeGPT].Status != antigravity.StatusReady {
-		t.Fatalf("Claude/GPT status = %v; want available-models fallback", results[antigravity.ModelGroupClaudeGPT].Status)
-	}
-}
-
-// A 200 from a fallback host is not proof of completeness: its partial groups must not
-// end the probe while the requested group is still missing.
-func TestExecuteAntigravityQuotaRequest_PartialSummaryIsNotFinal(t *testing.T) {
-	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
-	var requestedURLs []string
-	doer := quotaHTTPDoerFunc(func(_ context.Context, request host.HTTPRequest) (host.HTTPResponse, error) {
-		requestedURLs = append(requestedURLs, request.URL)
-		switch request.URL {
-		case antigravity.RetrieveUserQuotaSummaryDailyURL:
-			return host.HTTPResponse{StatusCode: http.StatusInternalServerError}, nil
-		case antigravity.RetrieveUserQuotaSummaryURL:
-			return host.HTTPResponse{
-				StatusCode: http.StatusOK,
-				Body:       []byte(`{"groups":[{"displayName":"Claude and GPT models","buckets":[{"bucketId":"3p-5h","window":"5h","remainingFraction":0.93,"resetTime":"2026-10-28T17:00:00Z"}]}]}`),
-			}, nil
-		default:
-			return host.HTTPResponse{StatusCode: http.StatusOK, Body: []byte(quotaSummaryWithArgon)}, nil
-		}
-	})
-
-	results := executeAntigravityQuotaRequest(context.Background(), doer, antigravityQuotaRequest{
-		AuthIndex:   "auth-1",
-		AccessToken: "secret",
-		ProjectID:   "project-1",
-		ObservedAt:  now,
-	})
-
-	if len(requestedURLs) != 3 {
-		t.Fatalf("HTTP calls = %v; want 3 (daily failure + partial production + sandbox)", requestedURLs)
-	}
-	gemini := results[antigravity.ModelGroupGemini]
-	if gemini.Status != antigravity.StatusReady {
-		t.Fatalf("expected Gemini StatusReady, got %#v", gemini)
-	}
-	if gemini.ShortWindowRemaining == nil || *gemini.ShortWindowRemaining != 99 {
-		t.Fatalf("ShortWindowRemaining = %v; want 99", gemini.ShortWindowRemaining)
-	}
-	if gemini.ArgonWindowRemaining == nil || *gemini.ArgonWindowRemaining != 71 {
-		t.Fatalf("ArgonWindowRemaining = %v; want 71", gemini.ArgonWindowRemaining)
-	}
-	if results[antigravity.ModelGroupClaudeGPT].Status != antigravity.StatusReady {
-		t.Fatalf("expected ClaudeGPT StatusReady, got %#v", results[antigravity.ModelGroupClaudeGPT])
+	if gemini.ShortWindowResetAt == nil || gemini.ShortWindowResetAt.Format(time.RFC3339) != "2026-11-11T17:00:00Z" {
+		t.Fatalf("Gemini 5h reset = %v; want the upstream untouched-window reset", gemini.ShortWindowResetAt)
 	}
 }
 
@@ -620,8 +321,8 @@ func TestExecuteAntigravityQuotaRequest_RetriesLegacyIdentityOnForbidden(t *test
 	if results[antigravity.ModelGroupGemini].ShortWindowRemaining == nil || *results[antigravity.ModelGroupGemini].ShortWindowRemaining != 99 {
 		t.Fatalf("ShortWindowRemaining = %v; want 99", results[antigravity.ModelGroupGemini].ShortWindowRemaining)
 	}
-	if !hasCompleteQuota(results) {
-		t.Fatalf("legacy identity fallback must restore complete quota: %#v", results)
+	if results[antigravity.ModelGroupClaudeGPT].Status != antigravity.StatusReady {
+		t.Fatalf("legacy identity retry must restore the Claude/GPT pool: %#v", results[antigravity.ModelGroupClaudeGPT])
 	}
 }
 

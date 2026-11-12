@@ -632,7 +632,9 @@ func (r *Runtime) probeHealth(ctx context.Context, entry state.CooldownEntry, cf
 		accessTokenFromJSON(credential.RawJSON),
 		projectIDFromJSON(credential.RawJSON),
 		model,
-		RenderWarmupPrompt(cfg.Warmup, ""),
+		// Health probes only verify that the credential serves traffic, so they keep
+		// the short prompt instead of paying for a full warm-up completion.
+		GenerateNaturalWarmupPrompt(),
 	)
 	status := result.StatusCode
 	now := r.clock.Now().UTC()

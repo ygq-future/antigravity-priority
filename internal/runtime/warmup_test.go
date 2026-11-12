@@ -16,6 +16,7 @@ import (
 	"antigravity-priority/internal/evidence"
 	"antigravity-priority/internal/host"
 	"antigravity-priority/internal/priority"
+	"antigravity-priority/internal/provider/antigravity"
 	"antigravity-priority/internal/state"
 )
 
@@ -34,7 +35,7 @@ func TestGenerateNaturalWarmupPrompt(t *testing.T) {
 	}
 
 	// RenderWarmupPrompt wrapper
-	p2 := RenderWarmupPrompt(config.DefaultWarmupConfig(), "")
+	p2 := RenderWarmupPrompt(config.AntigravityModelGroupClaudeGPT)
 	if len(p2) == 0 {
 		t.Fatal("expected non-empty RenderWarmupPrompt output")
 	}
@@ -118,7 +119,7 @@ func TestExecuteAntigravityWarmup(t *testing.T) {
 	if err != nil || res.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 OK, got code=%d err=%v", res.StatusCode, err)
 	}
-	if len(calledURLs) != 1 || calledURLs[0] != antigravityWarmupURLs[0] {
+	if len(calledURLs) != 1 || calledURLs[0] != antigravity.GenerateContentDailyURL {
 		t.Fatalf("unexpected called URLs: %v", calledURLs)
 	}
 
@@ -139,6 +140,75 @@ func TestExecuteAntigravityWarmup(t *testing.T) {
 	}
 	if len(calledUserAgents) < 2 || calledUserAgents[1] != antigravityLegacyHubUserAgent {
 		t.Fatalf("expected legacy user agent fallback, got: %v", calledUserAgents)
+	}
+}
+
+func TestExecuteAntigravityWarmup_SendsConsumerShapeAndGeminiLengthConstraint(t *testing.T) {
+	ctx := context.Background()
+	var body []byte
+	var headerUserAgent string
+	doer := quotaHTTPDoerFunc(func(_ context.Context, req host.HTTPRequest) (host.HTTPResponse, error) {
+		body = req.Body
+		headerUserAgent = req.Headers.Get("User-Agent")
+		return host.HTTPResponse{
+			StatusCode: http.StatusOK,
+			Body:       []byte(`{"response":{"usageMetadata":{"promptTokenCount":31,"candidatesTokenCount":700,"totalTokenCount":731}}}`),
+		}, nil
+	})
+
+	prompt := RenderWarmupPrompt(config.AntigravityModelGroupGemini)
+	res, err := executeAntigravityWarmup(ctx, doer, "auth-1", "token-1", "proj-1", "gemini-3.5-flash-lite", prompt)
+	if err != nil || res.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK, got code=%d err=%v", res.StatusCode, err)
+	}
+	if res.InputTokens != 31 || res.OutputTokens != 700 || res.TotalTokens != 731 {
+		t.Fatalf("usage = in %d out %d total %d; want the response metadata", res.InputTokens, res.OutputTokens, res.TotalTokens)
+	}
+	if headerUserAgent != antigravityWarmupUserAgent {
+		t.Fatalf("HTTP User-Agent = %q; want the consumer identity %q", headerUserAgent, antigravityWarmupUserAgent)
+	}
+
+	var payload struct {
+		UserAgent   string `json:"userAgent"`
+		RequestType string `json:"requestType"`
+		RequestID   string `json:"requestId"`
+		Request     struct {
+			SessionID string `json:"sessionId"`
+			Contents  []struct {
+				Role  string `json:"role"`
+				Parts []struct {
+					Text string `json:"text"`
+				} `json:"parts"`
+			} `json:"contents"`
+			GenerationConfig struct {
+				MaxOutputTokens int `json:"maxOutputTokens"`
+			} `json:"generationConfig"`
+		} `json:"request"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("decode warmup body: %v", err)
+	}
+	if payload.UserAgent != warmupEnvelopeUserAgent || payload.RequestType != "agent" {
+		t.Fatalf("envelope identity = %q/%q; want the consumer agent request", payload.UserAgent, payload.RequestType)
+	}
+	if !strings.HasPrefix(payload.RequestID, "agent-") || len(payload.RequestID) != len("agent-")+32 {
+		t.Fatalf("requestId = %q; want an agent request id", payload.RequestID)
+	}
+	if !strings.HasPrefix(payload.Request.SessionID, "-") {
+		t.Fatalf("sessionId = %q; want the consumer session format", payload.Request.SessionID)
+	}
+	if payload.Request.GenerationConfig.MaxOutputTokens != warmupMaxOutputTokens {
+		t.Fatalf("maxOutputTokens = %d; want %d", payload.Request.GenerationConfig.MaxOutputTokens, warmupMaxOutputTokens)
+	}
+	if len(payload.Request.Contents) != 1 || len(payload.Request.Contents[0].Parts) != 1 {
+		t.Fatalf("contents = %#v; want one user turn", payload.Request.Contents)
+	}
+	text := payload.Request.Contents[0].Parts[0].Text
+	if !strings.Contains(text, "at least 600 tokens") {
+		t.Fatalf("Gemini warmup prompt = %q; want a minimum output length constraint", text)
+	}
+	if strings.Contains(RenderWarmupPrompt(config.AntigravityModelGroupClaudeGPT), "at least 600 tokens") {
+		t.Fatal("Claude/GPT warm-ups must keep the short natural prompt")
 	}
 }
 

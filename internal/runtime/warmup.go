@@ -9,6 +9,7 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"antigravity-priority/internal/evidence"
 	"antigravity-priority/internal/host"
 	"antigravity-priority/internal/priority"
+	"antigravity-priority/internal/provider/antigravity"
 	"antigravity-priority/internal/state"
 )
 
@@ -76,9 +78,31 @@ func GenerateNaturalWarmupPrompt() string {
 	}
 }
 
-// RenderWarmupPrompt renders a natural warmup prompt.
-func RenderWarmupPrompt(_ config.WarmupConfig, _ string) string {
-	return GenerateNaturalWarmupPrompt()
+// geminiWarmupMinOutputTokens is the completion length requested from Gemini warm-ups.
+// Gemini short-window accounting only registers measurable usage once the completion is
+// substantial; the concise prompts that are enough for Claude/GPT stay too small here.
+const geminiWarmupMinOutputTokens = 600
+
+// GenerateDetailedGeminiWarmupPrompt creates a long-answer engineering query for Gemini pools.
+func GenerateDetailedGeminiWarmupPrompt() string {
+	lang := warmupLanguages[rand.IntN(len(warmupLanguages))]
+	aspect := warmupAspects[rand.IntN(len(warmupAspects))]
+	concept := warmupConcepts[rand.IntN(len(warmupConcepts))]
+	return fmt.Sprintf(
+		"In %s, explain in depth how %s works with respect to %s, with concrete examples. "+
+			"Write at least %d tokens across several paragraphs. Do not summarize, do not shorten, and do not stop early.",
+		lang, concept, aspect, geminiWarmupMinOutputTokens,
+	)
+}
+
+// RenderWarmupPrompt renders the warm-up prompt for one quota pool.
+func RenderWarmupPrompt(group config.AntigravityModelGroup) string {
+	switch group {
+	case config.AntigravityModelGroupGemini, config.AntigravityModelGroupArgon:
+		return GenerateDetailedGeminiWarmupPrompt()
+	default:
+		return GenerateNaturalWarmupPrompt()
+	}
 }
 
 // WarmupDebounceDuration is the minimum interval before a credential in the same pool can be warmed up again.
@@ -90,21 +114,19 @@ const WarmupResetGraceBaseDelay = 35 * time.Second
 // WarmupResetThresholdDuration is the threshold reset-countdown duration indicating a full un-started 5h window.
 const WarmupResetThresholdDuration = 4 * time.Hour
 
-var antigravityWarmupURLs = []string{
-	"https://cloudcode-pa.googleapis.com/v1internal:generateContent",
-	"https://daily-cloudcode-pa.googleapis.com/v1internal:generateContent",
-	"https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:generateContent",
-}
-
 type antigravityGenerateEnvelope struct {
-	Project string                          `json:"project,omitempty"`
-	Model   string                          `json:"model"`
-	Request antigravityGenerateInnerRequest `json:"request"`
+	Project     string                          `json:"project,omitempty"`
+	Model       string                          `json:"model"`
+	UserAgent   string                          `json:"userAgent,omitempty"`
+	RequestType string                          `json:"requestType,omitempty"`
+	RequestID   string                          `json:"requestId,omitempty"`
+	Request     antigravityGenerateInnerRequest `json:"request"`
 }
 
 type antigravityGenerateInnerRequest struct {
 	Contents         []antigravityContentPart   `json:"contents"`
 	GenerationConfig antigravityGenerationParam `json:"generationConfig"`
+	SessionID        string                     `json:"sessionId,omitempty"`
 }
 
 type antigravityContentPart struct {
@@ -117,8 +139,18 @@ type antigravityPartEntry struct {
 }
 
 type antigravityGenerationParam struct {
-	Temperature float64 `json:"temperature,omitempty"`
+	Temperature     float64 `json:"temperature,omitempty"`
+	MaxOutputTokens int     `json:"maxOutputTokens,omitempty"`
 }
+
+// warmupMaxOutputTokens bounds the warm-up completion so the requested long answer
+// cannot run into an upstream default cap.
+const warmupMaxOutputTokens = 2048
+
+// warmupEnvelopeUserAgent is the top-level envelope field the desktop client sends for
+// every generation request; it is separate from the HTTP User-Agent header.
+const warmupEnvelopeUserAgent = "antigravity"
+
 type warmupExecutionResult struct {
 	StatusCode   int
 	InputTokens  int64
@@ -194,12 +226,16 @@ func isWarmupEligible(ev *priority.QuotaEvidence, now time.Time, lastWarmup time
 	return remainingDuration >= WarmupResetThresholdDuration
 }
 
-// executeAntigravityWarmup sends an unconstrained natural content generation request to kick off the 5h window.
+// executeAntigravityWarmup sends a consumer-shaped generation request that kicks off the 5h window.
 func executeAntigravityWarmup(ctx context.Context, doer quotaHTTPDoer, authIndex, accessToken, projectID, model, prompt string) (warmupExecutionResult, error) {
 	reqBody := antigravityGenerateEnvelope{
-		Project: strings.TrimSpace(projectID),
-		Model:   model,
+		Project:     strings.TrimSpace(projectID),
+		Model:       model,
+		UserAgent:   warmupEnvelopeUserAgent,
+		RequestType: "agent",
+		RequestID:   newWarmupRequestID(),
 		Request: antigravityGenerateInnerRequest{
+			SessionID: newWarmupSessionID(),
 			Contents: []antigravityContentPart{
 				{
 					Role: "user",
@@ -209,7 +245,8 @@ func executeAntigravityWarmup(ctx context.Context, doer quotaHTTPDoer, authIndex
 				},
 			},
 			GenerationConfig: antigravityGenerationParam{
-				Temperature: 0.7,
+				Temperature:     0.7,
+				MaxOutputTokens: warmupMaxOutputTokens,
 			},
 		},
 	}
@@ -218,54 +255,54 @@ func executeAntigravityWarmup(ctx context.Context, doer quotaHTTPDoer, authIndex
 		return warmupExecutionResult{}, fmt.Errorf("marshal warmup request: %w", err)
 	}
 
-	var lastStatus int
-	var lastErr error
-
-	for _, url := range antigravityWarmupURLs {
-		resp, err := doer.HTTPDoRaw(ctx, host.HTTPRequest{
+	resp, err := doer.HTTPDoRaw(ctx, host.HTTPRequest{
+		AuthIndex: authIndex,
+		Method:    http.MethodPost,
+		URL:       antigravity.GenerateContentDailyURL,
+		Headers:   antigravityQuotaHeadersForUserAgent(accessToken, antigravityWarmupUserAgent),
+		Body:      bodyBytes,
+	})
+	if err != nil {
+		return warmupExecutionResult{}, err
+	}
+	if resp.StatusCode == http.StatusOK {
+		return warmupResultFromBody(resp.Body), nil
+	}
+	if resp.StatusCode == http.StatusForbidden {
+		// The legacy identity is retried only after the consumer identity is rejected.
+		legacyResp, legacyErr := doer.HTTPDoRaw(ctx, host.HTTPRequest{
 			AuthIndex: authIndex,
 			Method:    http.MethodPost,
-			URL:       url,
-			Headers:   antigravityQuotaHeaders(accessToken),
+			URL:       antigravity.GenerateContentDailyURL,
+			Headers:   antigravityQuotaHeadersForUserAgent(accessToken, antigravityLegacyHubUserAgent),
 			Body:      bodyBytes,
 		})
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		lastStatus = resp.StatusCode
-		if resp.StatusCode == http.StatusOK {
-			in, out, total := parseWarmupTokenUsage(resp.Body)
-			return warmupExecutionResult{
-				StatusCode:   resp.StatusCode,
-				InputTokens:  in,
-				OutputTokens: out,
-				TotalTokens:  total,
-			}, nil
-		}
-
-		if resp.StatusCode == http.StatusForbidden {
-			// Upstream client identity fallback retry
-			legacyResp, legacyErr := doer.HTTPDoRaw(ctx, host.HTTPRequest{
-				AuthIndex: authIndex,
-				Method:    http.MethodPost,
-				URL:       url,
-				Headers:   antigravityQuotaHeadersForUserAgent(accessToken, antigravityLegacyHubUserAgent),
-				Body:      bodyBytes,
-			})
-			if legacyErr == nil && legacyResp.StatusCode == http.StatusOK {
-				in, out, total := parseWarmupTokenUsage(legacyResp.Body)
-				return warmupExecutionResult{
-					StatusCode:   legacyResp.StatusCode,
-					InputTokens:  in,
-					OutputTokens: out,
-					TotalTokens:  total,
-				}, nil
-			}
+		if legacyErr == nil && legacyResp.StatusCode == http.StatusOK {
+			return warmupResultFromBody(legacyResp.Body), nil
 		}
 	}
+	return warmupExecutionResult{StatusCode: resp.StatusCode}, nil
+}
 
-	return warmupExecutionResult{StatusCode: lastStatus}, lastErr
+// warmupResultFromBody reports the token usage of a successful warm-up generation.
+func warmupResultFromBody(body []byte) warmupExecutionResult {
+	in, out, total := parseWarmupTokenUsage(body)
+	return warmupExecutionResult{
+		StatusCode:   http.StatusOK,
+		InputTokens:  in,
+		OutputTokens: out,
+		TotalTokens:  total,
+	}
+}
+
+// newWarmupRequestID builds the per-request identifier the consumer client sends.
+func newWarmupRequestID() string {
+	return fmt.Sprintf("agent-%016x%016x", rand.Uint64(), rand.Uint64())
+}
+
+// newWarmupSessionID builds the conversation identifier the consumer client sends.
+func newWarmupSessionID() string {
+	return "-" + strconv.FormatUint(rand.Uint64()&0x7FFFFFFFFFFFFFFF, 10)
 }
 
 // WarmupSweepInterval is how often the warm-up watcher re-evaluates persisted
@@ -726,7 +763,7 @@ func (r *Runtime) triggerWarmupForEligibleCredentials(
 				continue
 			}
 
-			prompt := RenderWarmupPrompt(cfg, "")
+			prompt := RenderWarmupPrompt(target.group)
 			res, err := executeAntigravityWarmup(ctx, doer, authIdx, material.accessToken, material.projectID, target.model, prompt)
 
 			errMsg := ""

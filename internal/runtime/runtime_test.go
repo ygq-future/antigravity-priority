@@ -749,10 +749,6 @@ func TestRuntime_ProbeKeepsDualWindowCountdownsAndPlanTier(t *testing.T) {
 				{"window":"5h","remainingFraction":0.6,"resetTime":"2026-08-22T16:00:00Z"}
 			]}]}`),
 		},
-		antigravity.FetchAvailableModelsURL: {
-			StatusCode: http.StatusOK,
-			Body:       []byte(`{"models":{"gemini-2.0-flash":{"modelProvider":"google","quotaInfo":{"remainingFraction":0.15,"resetTime":"2026-08-22T11:00:00Z"}}}}`),
-		},
 		antigravity.LoadCodeAssistDailyURL: {
 			StatusCode: http.StatusOK,
 			Body:       []byte(`{"currentTier":{"id":"free-tier"},"paidTier":{"id":"g1-pro-tier","name":"Google AI Pro"}}`),

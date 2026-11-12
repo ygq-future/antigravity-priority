@@ -120,7 +120,7 @@ func TestDevHostReturnsBothModelGroupsAndQuotaLifecycle(t *testing.T) {
 		response, err := hostAdapter.HTTPDo(context.Background(), host.HTTPRequest{
 			AuthIndex: files[0].AuthIndex,
 			Method:    http.MethodPost,
-			URL:       antigravity.RetrieveUserQuotaSummaryURL,
+			URL:       antigravity.RetrieveUserQuotaSummaryDailyURL,
 			Body:      []byte(`{"project":"dev-project-001"}`),
 		})
 		if err != nil {

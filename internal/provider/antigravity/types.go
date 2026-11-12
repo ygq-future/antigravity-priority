@@ -19,25 +19,17 @@ const (
 	ModelGroupClaudeGPT = config.AntigravityModelGroupClaudeGPT
 )
 
-// RetrieveUserQuotaSummaryURL is the production Antigravity quota summary endpoint.
+// RetrieveUserQuotaSummaryDailyURL is the Antigravity consumer quota summary endpoint.
 //
-// It is a fallback, not the primary host. For consumer accounts production reports
-// every bucket as unmeasured (remainingFraction 1) with a rolling reset time, so
-// asking it first makes the dashboard read 100% with a full-window countdown.
-const RetrieveUserQuotaSummaryURL = "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary"
-
-// RetrieveUserQuotaSummaryDailyURL is the primary Antigravity quota summary endpoint.
-//
-// Consumer traffic runs against this host. With the current hub User-Agent it returns
-// the measured Gemini, Argon, and Claude/GPT buckets; older identities can receive
-// only the Claude/GPT group.
+// Consumer Antigravity traffic runs against this host, and only this host reports the
+// measured Gemini, Argon, and Claude/GPT buckets. The production host serves the
+// separate Gemini CLI quota, so its buckets are not interchangeable with these.
 const RetrieveUserQuotaSummaryDailyURL = "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary"
 
-// RetrieveUserQuotaSummarySandboxURL is the sandbox Antigravity quota summary endpoint.
-const RetrieveUserQuotaSummarySandboxURL = "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:retrieveUserQuotaSummary"
-
-// FetchAvailableModelsURL is the fallback Antigravity available models endpoint providing per-model quotas.
-const FetchAvailableModelsURL = "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels"
+// GenerateContentDailyURL is the Antigravity consumer generation endpoint. Warm-up
+// generations must use this surface: tokens consumed on another host never reach the
+// measured consumer quota ledger.
+const GenerateContentDailyURL = "https://daily-cloudcode-pa.googleapis.com/v1internal:generateContent"
 
 // WindowType indicates the quota window type classified from upstream responses.
 type WindowType string

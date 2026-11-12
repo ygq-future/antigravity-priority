@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -303,20 +302,10 @@ func TestCollectFreshEvidence_SummaryUsesOneCallPerAccount(t *testing.T) {
 	}
 }
 
-func TestCollectFreshEvidence_FallsBackToAvailableModelsWhenSummaryFails(t *testing.T) {
+func TestCollectFreshEvidence_SummaryFailureYieldsNoEligibleEvidence(t *testing.T) {
 	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
 	mock := &probeEvidenceMockHost{
-		doFn: func(ctx context.Context, req host.HTTPRequest) (host.HTTPResponse, error) {
-			if strings.Contains(req.URL, "fetchAvailableModels") {
-				return host.HTTPResponse{
-					StatusCode: http.StatusOK,
-					Body: []byte(`{
-						"models": {
-							"gemini-2.5-pro": {"modelProvider": "google", "quotaInfo": {"remainingFraction": 0.77, "resetTime": "2026-08-21T17:00:00Z"}}
-						}
-					}`),
-				}, nil
-			}
+		doFn: func(_ context.Context, _ host.HTTPRequest) (host.HTTPResponse, error) {
 			return host.HTTPResponse{StatusCode: http.StatusInternalServerError}, nil
 		},
 	}
@@ -328,10 +317,10 @@ func TestCollectFreshEvidence_FallsBackToAvailableModelsWhenSummaryFails(t *test
 	}
 
 	credentials := []core.Credential{
-		{AuthIndex: "auth-fallback", Provider: core.ProviderAntigravity},
+		{AuthIndex: "auth-failed", Provider: core.ProviderAntigravity},
 	}
 	authMaterials := map[string]authMaterial{
-		"auth-fallback": {accessToken: "tok", projectID: "proj"},
+		"auth-failed": {accessToken: "tok", projectID: "proj"},
 	}
 
 	collected, err := collectFreshEvidence(context.Background(), collectInput{
@@ -347,30 +336,30 @@ func TestCollectFreshEvidence_FallsBackToAvailableModelsWhenSummaryFails(t *test
 		t.Fatalf("collectFreshEvidence failed: %v", err)
 	}
 
-	geminiResult := collected.ByGroup[config.AntigravityModelGroupGemini]
-	if len(geminiResult.Eligible) != 1 {
-		t.Fatalf("expected 1 eligible credential after fallback, got %d", len(geminiResult.Eligible))
+	mock.mu.Lock()
+	calls := len(mock.httpCalls)
+	mock.mu.Unlock()
+	if calls != 1 {
+		t.Fatalf("total HTTP calls = %d; want a single summary attempt", calls)
 	}
-	if geminiResult.Eligible[0].Remaining == nil || *geminiResult.Eligible[0].Remaining != 77 {
-		t.Fatalf("expected remaining 77, got %v", geminiResult.Eligible[0].Remaining)
+	geminiResult := collected.ByGroup[config.AntigravityModelGroupGemini]
+	if len(geminiResult.Eligible) != 0 {
+		t.Fatalf("eligible evidence = %#v; a failed probe must not become eligible", geminiResult.Eligible)
 	}
 }
 
-func TestCollectFreshEvidence_PartialSummaryContinuesProbe(t *testing.T) {
+func TestCollectFreshEvidence_PartialSummaryReportsOnlyObservedPools(t *testing.T) {
 	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
 	mock := &probeEvidenceMockHost{
-		doFn: func(_ context.Context, request host.HTTPRequest) (host.HTTPResponse, error) {
-			if request.URL == antigravity.RetrieveUserQuotaSummaryDailyURL {
-				return host.HTTPResponse{
-					StatusCode: http.StatusOK,
-					Body: []byte(`{
-						"groups": [
-							{"displayName": "Claude and GPT models", "buckets": [{"window": "5h", "remainingFraction": 0.82, "resetTime": "2026-08-21T17:00:00Z"}]}
-						]
-					}`),
-				}, nil
-			}
-			return host.HTTPResponse{StatusCode: http.StatusOK, Body: []byte(quotaSummaryWithArgon)}, nil
+		doFn: func(_ context.Context, _ host.HTTPRequest) (host.HTTPResponse, error) {
+			return host.HTTPResponse{
+				StatusCode: http.StatusOK,
+				Body: []byte(`{
+					"groups": [
+						{"displayName": "Claude and GPT models", "buckets": [{"window": "5h", "remainingFraction": 0.82, "resetTime": "2026-08-21T17:00:00Z"}]}
+					]
+				}`),
+			}, nil
 		},
 	}
 
@@ -402,27 +391,19 @@ func TestCollectFreshEvidence_PartialSummaryContinuesProbe(t *testing.T) {
 
 	mock.mu.Lock()
 	calls := len(mock.httpCalls)
-	calledURLs := make([]string, 0, calls)
-	for _, call := range mock.httpCalls {
-		calledURLs = append(calledURLs, call.URL)
-	}
 	mock.mu.Unlock()
-
-	if calls != 2 {
-		t.Fatalf("total HTTP calls = %d; want 2 (partial daily + complete production)", calls)
-	}
-	if calledURLs[0] != antigravity.RetrieveUserQuotaSummaryDailyURL || calledURLs[1] != antigravity.RetrieveUserQuotaSummaryURL {
-		t.Fatalf("called URLs = %v; want daily then production", calledURLs)
+	if calls != 1 {
+		t.Fatalf("total HTTP calls = %d; want a single summary attempt", calls)
 	}
 
-	for _, group := range config.AllAntigravityModelGroups {
-		result := collected.ByGroup[group]
-		if len(result.Eligible) != 1 {
-			t.Fatalf("group %s: expected 1 eligible credential, got %d", group, len(result.Eligible))
-		}
-	}
 	claudeResult := collected.ByGroup[config.AntigravityModelGroupClaudeGPT]
+	if len(claudeResult.Eligible) != 1 {
+		t.Fatalf("Claude/GPT eligible = %d; want the observed pool", len(claudeResult.Eligible))
+	}
 	if claudeResult.Eligible[0].Remaining == nil || *claudeResult.Eligible[0].Remaining != 82 {
 		t.Fatalf("expected remaining 82, got %v", claudeResult.Eligible[0].Remaining)
+	}
+	if geminiResult := collected.ByGroup[config.AntigravityModelGroupGemini]; len(geminiResult.Eligible) != 0 {
+		t.Fatalf("Gemini eligible = %#v; an unobserved pool must not become eligible", geminiResult.Eligible)
 	}
 }
