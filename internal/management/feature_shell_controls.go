@@ -134,7 +134,7 @@ const templateStyleControls = `        /* KPI Cards Grid */
             display: flex;
             flex-direction: column;
             gap: 2px;
-            min-width: 160px;
+            min-width: 100%;
             max-height: 320px;
             overflow-y: auto;
             scrollbar-width: thin;
