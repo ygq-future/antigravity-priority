@@ -160,49 +160,67 @@ type antigravityPartEntry struct {
 }
 
 type antigravityGenerationParam struct {
-	Temperature     float64 `json:"temperature,omitempty"`
-	MaxOutputTokens int     `json:"maxOutputTokens,omitempty"`
+	Temperature float64 `json:"temperature,omitempty"`
 }
-
-// warmupMaxOutputTokens bounds the warm-up completion so the requested long answer
-// cannot run into an upstream default cap.
-const warmupMaxOutputTokens = 2048
 
 // warmupEnvelopeUserAgent is the top-level envelope field the desktop client sends for
 // every generation request; it is separate from the HTTP User-Agent header.
 const warmupEnvelopeUserAgent = "antigravity"
 
 type warmupExecutionResult struct {
-	StatusCode   int
-	InputTokens  int64
-	OutputTokens int64
-	TotalTokens  int64
+	StatusCode      int
+	InputTokens     int64
+	OutputTokens    int64
+	ReasoningTokens int64
+	CachedTokens    int64
+	TotalTokens     int64
 }
 
 type antigravityGenerateResponse struct {
 	Response struct {
 		UsageMetadata struct {
-			PromptTokenCount     int `json:"promptTokenCount"`
-			CandidatesTokenCount int `json:"candidatesTokenCount"`
-			TotalTokenCount      int `json:"totalTokenCount"`
+			PromptTokenCount        int `json:"promptTokenCount"`
+			CandidatesTokenCount    int `json:"candidatesTokenCount"`
+			ThoughtsTokenCount      int `json:"thoughtsTokenCount"`
+			CachedContentTokenCount int `json:"cachedContentTokenCount"`
+			TotalTokenCount         int `json:"totalTokenCount"`
 		} `json:"usageMetadata"`
 	} `json:"response"`
 }
 
-func parseWarmupTokenUsage(body []byte) (int64, int64, int64) {
+// parseWarmupTokenUsage reports the consumption of one warm-up generation.
+// Thinking models bill their reasoning as output tokens, so history must carry
+// that bucket or the row shows 0 output next to a total that looks unexplained.
+func parseWarmupTokenUsage(body []byte) warmupExecutionResult {
 	var resp antigravityGenerateResponse
 	if err := json.Unmarshal(body, &resp); err == nil {
-		in := int64(resp.Response.UsageMetadata.PromptTokenCount)
-		out := int64(resp.Response.UsageMetadata.CandidatesTokenCount)
-		total := int64(resp.Response.UsageMetadata.TotalTokenCount)
-		if total == 0 && (in > 0 || out > 0) {
-			total = in + out
+		usage := resp.Response.UsageMetadata
+		result := warmupExecutionResult{
+			StatusCode:      http.StatusOK,
+			InputTokens:     int64(usage.PromptTokenCount),
+			OutputTokens:    int64(usage.CandidatesTokenCount),
+			ReasoningTokens: int64(usage.ThoughtsTokenCount),
+			CachedTokens:    int64(usage.CachedContentTokenCount),
+			TotalTokens:     int64(usage.TotalTokenCount),
 		}
-		if total > 0 {
-			return in, out, total
+		if result.ReasoningTokens == 0 {
+			if diff := result.TotalTokens - result.InputTokens - result.OutputTokens; diff > 0 {
+				result.ReasoningTokens = diff
+			}
+		}
+		if result.TotalTokens == 0 {
+			result.TotalTokens = result.InputTokens + result.OutputTokens + result.ReasoningTokens
+		}
+		if result.TotalTokens > 0 {
+			return result
 		}
 	}
-	return 2, 8, 10
+	return warmupExecutionResult{
+		StatusCode:   http.StatusOK,
+		InputTokens:  2,
+		OutputTokens: 8,
+		TotalTokens:  10,
+	}
 }
 
 // warmupWeeklyExhausted reports whether an exhausted 7d pool blocks a warm-up.
@@ -279,8 +297,7 @@ func executeAntigravityWarmup(ctx context.Context, doer quotaHTTPDoer, authIndex
 				},
 			},
 			GenerationConfig: antigravityGenerationParam{
-				Temperature:     0.7,
-				MaxOutputTokens: warmupMaxOutputTokens,
+				Temperature: 0.7,
 			},
 		},
 	}
@@ -320,13 +337,7 @@ func executeAntigravityWarmup(ctx context.Context, doer quotaHTTPDoer, authIndex
 
 // warmupResultFromBody reports the token usage of a successful warm-up generation.
 func warmupResultFromBody(body []byte) warmupExecutionResult {
-	in, out, total := parseWarmupTokenUsage(body)
-	return warmupExecutionResult{
-		StatusCode:   http.StatusOK,
-		InputTokens:  in,
-		OutputTokens: out,
-		TotalTokens:  total,
-	}
+	return parseWarmupTokenUsage(body)
 }
 
 // newWarmupRequestID builds the per-request identifier the consumer client sends.
@@ -907,22 +918,24 @@ func (r *Runtime) triggerWarmupForEligibleCredentials(
 			}
 
 			r.appendRequestHistory(state.RequestHistoryEntry{
-				ID:           fmt.Sprintf("warmup-%s-%d", authIdx, now.UnixNano()),
-				At:           now,
-				Model:        target.model,
-				ModelPool:    string(target.group),
-				AuthIndex:    authIdx,
-				Email:        maskedEmail,
-				InputTokens:  res.InputTokens,
-				OutputTokens: res.OutputTokens,
-				TotalTokens:  res.TotalTokens,
-				Failed:       res.StatusCode != http.StatusOK || err != nil,
-				StatusCode:   res.StatusCode,
-				ErrorMessage: errMsg,
+				ID:              fmt.Sprintf("warmup-%s-%d", authIdx, now.UnixNano()),
+				At:              now,
+				Model:           target.model,
+				ModelPool:       string(target.group),
+				AuthIndex:       authIdx,
+				Email:           maskedEmail,
+				InputTokens:     res.InputTokens,
+				OutputTokens:    res.OutputTokens,
+				ReasoningTokens: res.ReasoningTokens,
+				CachedTokens:    res.CachedTokens,
+				TotalTokens:     res.TotalTokens,
+				Failed:          res.StatusCode != http.StatusOK || err != nil,
+				StatusCode:      res.StatusCode,
+				ErrorMessage:    errMsg,
 			})
 
-			log.Printf("[antigravity-priority] 5h warmup: auth=%s (%s) pool=%s model=%s status=%d err=%v in=%d out=%d total=%d",
-				authIdx, maskedEmail, target.group, target.model, res.StatusCode, err, res.InputTokens, res.OutputTokens, res.TotalTokens)
+			log.Printf("[antigravity-priority] 5h warmup: auth=%s (%s) pool=%s model=%s status=%d err=%v in=%d out=%d think=%d total=%d",
+				authIdx, maskedEmail, target.group, target.model, res.StatusCode, err, res.InputTokens, res.OutputTokens, res.ReasoningTokens, res.TotalTokens)
 
 			if err == nil && res.StatusCode == http.StatusOK {
 				warmed++

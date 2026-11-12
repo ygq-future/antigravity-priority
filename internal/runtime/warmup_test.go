@@ -181,7 +181,7 @@ func TestExecuteAntigravityWarmup_SendsConsumerShapeAndGeminiLengthConstraint(t 
 				} `json:"parts"`
 			} `json:"contents"`
 			GenerationConfig struct {
-				MaxOutputTokens int `json:"maxOutputTokens"`
+				Temperature float64 `json:"temperature"`
 			} `json:"generationConfig"`
 		} `json:"request"`
 	}
@@ -197,8 +197,11 @@ func TestExecuteAntigravityWarmup_SendsConsumerShapeAndGeminiLengthConstraint(t 
 	if !strings.HasPrefix(payload.Request.SessionID, "-") {
 		t.Fatalf("sessionId = %q; want the consumer session format", payload.Request.SessionID)
 	}
-	if payload.Request.GenerationConfig.MaxOutputTokens != warmupMaxOutputTokens {
-		t.Fatalf("maxOutputTokens = %d; want %d", payload.Request.GenerationConfig.MaxOutputTokens, warmupMaxOutputTokens)
+	// Thinking models bill reasoning against maxOutputTokens, so a cap here would
+	// starve the visible answer exactly when the model thinks a lot. Warm-ups must
+	// let the model finish both phases on its own budget.
+	if strings.Contains(string(body), "maxOutputTokens") {
+		t.Fatalf("warmup body = %s; want no output-token cap", body)
 	}
 	if len(payload.Request.Contents) != 1 || len(payload.Request.Contents[0].Parts) != 1 {
 		t.Fatalf("contents = %#v; want one user turn", payload.Request.Contents)
@@ -212,10 +215,51 @@ func TestExecuteAntigravityWarmup_SendsConsumerShapeAndGeminiLengthConstraint(t 
 	}
 }
 
+func TestParseWarmupTokenUsage(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want warmupExecutionResult
+	}{
+		{
+			name: "thinking model consumes the output budget",
+			body: `{"response":{"usageMetadata":{"promptTokenCount":80,"candidatesTokenCount":0,"thoughtsTokenCount":2048,"cachedContentTokenCount":12,"totalTokenCount":2128}}}`,
+			want: warmupExecutionResult{StatusCode: http.StatusOK, InputTokens: 80, OutputTokens: 0, ReasoningTokens: 2048, CachedTokens: 12, TotalTokens: 2128},
+		},
+		{
+			name: "reasoning inferred from the total gap",
+			body: `{"response":{"usageMetadata":{"promptTokenCount":100,"candidatesTokenCount":0,"totalTokenCount":2500}}}`,
+			want: warmupExecutionResult{StatusCode: http.StatusOK, InputTokens: 100, OutputTokens: 0, ReasoningTokens: 2400, TotalTokens: 2500},
+		},
+		{
+			name: "explicit reasoning wins over the gap",
+			body: `{"response":{"usageMetadata":{"promptTokenCount":31,"candidatesTokenCount":700,"thoughtsTokenCount":120,"totalTokenCount":851}}}`,
+			want: warmupExecutionResult{StatusCode: http.StatusOK, InputTokens: 31, OutputTokens: 700, ReasoningTokens: 120, TotalTokens: 851},
+		},
+		{
+			name: "missing total is derived",
+			body: `{"response":{"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":20}}}`,
+			want: warmupExecutionResult{StatusCode: http.StatusOK, InputTokens: 10, OutputTokens: 20, TotalTokens: 30},
+		},
+		{
+			name: "no usage metadata falls back to the minimum record",
+			body: `not json`,
+			want: warmupExecutionResult{StatusCode: http.StatusOK, InputTokens: 2, OutputTokens: 8, TotalTokens: 10},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := parseWarmupTokenUsage([]byte(tc.body)); got != tc.want {
+				t.Fatalf("usage = %+v; want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestRuntime_TriggerWarmupForEligibleCredentials(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
-	rt := New(Options{})
+	rt := New(Options{StateCachePath: filepath.Join(t.TempDir(), "runtime-cache.json")})
 	store, err := state.Load(ctx, filepath.Join(t.TempDir(), "cache.json"))
 	if err != nil {
 		t.Fatalf("load state store failed: %v", err)
@@ -225,7 +269,18 @@ func TestRuntime_TriggerWarmupForEligibleCredentials(t *testing.T) {
 	doer := quotaHTTPDoerFunc(func(_ context.Context, req host.HTTPRequest) (host.HTTPResponse, error) {
 		if strings.Contains(req.URL, "generateContent") {
 			warmupCount++
-			return host.HTTPResponse{StatusCode: http.StatusOK}, nil
+			if strings.Contains(string(req.Body), "at least 600 tokens") {
+				// Upstream can report a thinking-only completion; the recorded
+				// row must still attribute the consumed tokens.
+				return host.HTTPResponse{
+					StatusCode: http.StatusOK,
+					Body:       []byte(`{"response":{"usageMetadata":{"promptTokenCount":80,"candidatesTokenCount":0,"thoughtsTokenCount":2048,"totalTokenCount":2128}}}`),
+				}, nil
+			}
+			return host.HTTPResponse{
+				StatusCode: http.StatusOK,
+				Body:       []byte(`{"response":{"usageMetadata":{"promptTokenCount":95,"candidatesTokenCount":190,"totalTokenCount":285}}}`),
+			}, nil
 		}
 		return host.HTTPResponse{StatusCode: http.StatusOK}, nil
 	})
@@ -282,10 +337,22 @@ func TestRuntime_TriggerWarmupForEligibleCredentials(t *testing.T) {
 	if err != nil || len(history) < 2 {
 		t.Fatalf("expected at least 2 request history entries, got %d err=%v", len(history), err)
 	}
+	byPool := make(map[string]state.RequestHistoryEntry, len(history))
 	for _, entry := range history {
 		if strings.Contains(entry.Email, "@") {
 			t.Fatalf("expected masked email, got unmasked: %s", entry.Email)
 		}
+		byPool[entry.ModelPool] = entry
+	}
+	geminiEntry := byPool[string(config.AntigravityModelGroupGemini)]
+	if geminiEntry.OutputTokens != 0 || geminiEntry.ReasoningTokens != 2048 || geminiEntry.TotalTokens != 2128 {
+		t.Fatalf("gemini history = out %d think %d total %d; want the thinking-only accounting",
+			geminiEntry.OutputTokens, geminiEntry.ReasoningTokens, geminiEntry.TotalTokens)
+	}
+	claudeEntry := byPool[string(config.AntigravityModelGroupClaudeGPT)]
+	if claudeEntry.OutputTokens != 190 || claudeEntry.ReasoningTokens != 0 || claudeEntry.TotalTokens != 285 {
+		t.Fatalf("claude history = out %d think %d total %d; want the plain completion accounting",
+			claudeEntry.OutputTokens, claudeEntry.ReasoningTokens, claudeEntry.TotalTokens)
 	}
 
 	// 2. Immediate second run: debounced, no calls should happen
