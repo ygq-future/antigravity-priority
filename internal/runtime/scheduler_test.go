@@ -492,7 +492,8 @@ func TestScheduler_LazyTransitionRefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	r := runtime.New(runtime.Options{Host: mock, Clock: clock, StateCachePath: cachePath})
+	r := runtime.New(runtime.Options{Host: mock, Clock: clock, StateCachePath: cachePath, DisableBackgroundWorkers: true})
+	t.Cleanup(func() { _ = r.Shutdown(context.Background()) })
 	if _, err := r.Register(ctx, runtime.RegisterRequest{ConfigYAML: "enabled: true\nstate_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
 		t.Fatal(err)
 	}

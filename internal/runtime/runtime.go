@@ -168,8 +168,12 @@ func New(options Options) *Runtime {
 		// Unconditionally ensure cache file exists on disk upon initialization
 		_ = store.SaveAtomic(context.Background())
 	}
-	go rt.runRateLimitWorker()
-	go rt.runWarmupResetWatcher()
+	if options.DisableBackgroundWorkers {
+		close(rt.rateLimitDone)
+	} else {
+		go rt.runRateLimitWorker()
+		go rt.runWarmupResetWatcher()
+	}
 
 	return rt
 }

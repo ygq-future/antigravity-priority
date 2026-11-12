@@ -382,7 +382,7 @@ func newWarmupSweepRuntime(t *testing.T, now time.Time) (*Runtime, *warmupStubHo
 		body:  warmupQuotaBody(now.Add(5*time.Hour), now.Add(7*24*time.Hour)),
 	}
 	clock := &warmupTestClock{now: now}
-	rt := New(Options{Host: stub, StateCachePath: cachePath, Clock: clock})
+	rt := New(Options{Host: stub, StateCachePath: cachePath, Clock: clock, DisableBackgroundWorkers: true})
 	t.Cleanup(func() { _ = rt.Shutdown(context.Background()) })
 	if _, err := rt.Register(context.Background(), RegisterRequest{ConfigYAML: "enabled: true"}); err != nil {
 		t.Fatalf("register failed: %v", err)

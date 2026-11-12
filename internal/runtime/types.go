@@ -178,4 +178,7 @@ type Options struct {
 	// to isolate runtime instances in tests; production callers may leave it
 	// empty to use the configured default path.
 	StateCachePath string
+	// DisableBackgroundWorkers keeps the rate-limit and warm-up watcher
+	// goroutines stopped so tests can drive both sweeps deterministically.
+	DisableBackgroundWorkers bool
 }
