@@ -13,5 +13,6 @@ const templateScriptPrelude = `
         const SAMPLES_PATH = BASE_PATH + "/samples";
         const REQUEST_HISTORY_CLEAR_PATH = BASE_PATH + "/request-history/clear";
         const CUSTOM_TIER_PATH = BASE_PATH + "/custom-tier";
+        const WARMUP_CREDENTIAL_PATH = BASE_PATH + "/warmup-credential";
 
 `

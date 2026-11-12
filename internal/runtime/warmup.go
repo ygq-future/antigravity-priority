@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"antigravity-priority/internal/config"
+	"antigravity-priority/internal/core"
 	"antigravity-priority/internal/evidence"
 	"antigravity-priority/internal/host"
 	"antigravity-priority/internal/priority"
@@ -108,6 +109,26 @@ func RenderWarmupPrompt(group config.AntigravityModelGroup) string {
 // WarmupDebounceDuration is the minimum interval before a credential in the same pool can be warmed up again.
 const WarmupDebounceDuration = 4*time.Hour + 30*time.Minute
 
+// Reset warm-ups are serialized through one global lane so the 5h refresh
+// points of different credentials never coincide. The gap depends on whether
+// the next pool belongs to the same credential: pools of one account may warm
+// 30-60 minutes apart, while switching to another credential waits 60-120.
+const (
+	WarmupLaneSameCredentialMinGap  = 30 * time.Minute
+	WarmupLaneSameCredentialMaxGap  = 60 * time.Minute
+	WarmupLaneCrossCredentialMinGap = 60 * time.Minute
+	WarmupLaneCrossCredentialMaxGap = 120 * time.Minute
+)
+
+// warmupLaneGap returns the randomized delay before the next reset warm-up
+// slot opens.
+func warmupLaneGap(sameCredential bool) time.Duration {
+	if sameCredential {
+		return WarmupLaneSameCredentialMinGap + rand.N(WarmupLaneSameCredentialMaxGap-WarmupLaneSameCredentialMinGap)
+	}
+	return WarmupLaneCrossCredentialMinGap + rand.N(WarmupLaneCrossCredentialMaxGap-WarmupLaneCrossCredentialMinGap)
+}
+
 // WarmupResetGraceBaseDelay is the buffer delay after upstream reset timestamp to accommodate ledger convergence.
 const WarmupResetGraceBaseDelay = 35 * time.Second
 
@@ -184,6 +205,13 @@ func parseWarmupTokenUsage(body []byte) (int64, int64, int64) {
 	return 2, 8, 10
 }
 
+// warmupWeeklyExhausted reports whether an exhausted 7d pool blocks a warm-up.
+// Both the watcher candidate pass and the execution-time eligibility check use
+// the same rule; a nil reading means "unknown" and does not block.
+func warmupWeeklyExhausted(remaining *int64) bool {
+	return remaining != nil && *remaining <= 0
+}
+
 // isWarmupEligible evaluates whether a credential's evidence meets 5h full-quota and unstarted window criteria.
 func isWarmupEligible(ev *priority.QuotaEvidence, now time.Time, lastWarmup time.Time) bool {
 	if ev == nil {
@@ -195,7 +223,13 @@ func isWarmupEligible(ev *priority.QuotaEvidence, now time.Time, lastWarmup time
 		return false
 	}
 
-	// 2. Quota remaining must be at full capacity (100% or >= 99%)
+	// 2. Weekly pool must still have quota: one warm-up consumes both pools, so
+	// an exhausted 7d window makes the request pointless.
+	if warmupWeeklyExhausted(ev.LongWindowRemaining) {
+		return false
+	}
+
+	// 3. Quota remaining must be at full capacity (100% or >= 99%)
 	hasFullRemaining := false
 	if ev.ShortWindowRemaining != nil && *ev.ShortWindowRemaining >= warmupFullRemainingPct {
 		hasFullRemaining = true
@@ -206,7 +240,7 @@ func isWarmupEligible(ev *priority.QuotaEvidence, now time.Time, lastWarmup time
 		return false
 	}
 
-	// 3. Reset countdown must indicate that the 5h window is un-started or fully elapsed
+	// 4. Reset countdown must indicate that the 5h window is un-started or fully elapsed
 	resetAt := ev.ShortWindowResetAt
 	if resetAt == nil {
 		resetAt = ev.ResetAt
@@ -320,9 +354,10 @@ const warmupResetMaxAttempts = 5
 // warmable 5h window.
 const warmupFullRemainingPct = 99
 
-// warmupAttempt tracks retry state for one credential pool window so a
-// non-converging upstream cannot turn the watcher into a probe loop.
-type warmupAttempt struct {
+// probeAttempt tracks retry state for the reset-boundary evidence refresh of one
+// credential pool, so a non-converging upstream cannot turn the watcher into a
+// probe loop. Warm-up dispatch itself keeps no failure state.
+type probeAttempt struct {
 	resetAt   time.Time
 	attempts  int
 	nextAt    time.Time
@@ -331,11 +366,10 @@ type warmupAttempt struct {
 
 // warmupCandidate is a credential pool whose 5h window is due for a warm-up probe.
 type warmupCandidate struct {
-	key        string
-	authIndex  string
-	group      config.AntigravityModelGroup
-	resetAt    time.Time
-	lastWarmup time.Time
+	key       string
+	authIndex string
+	group     config.AntigravityModelGroup
+	resetAt   time.Time
 }
 
 func (r *Runtime) signalWarmupResetWatcher() {
@@ -347,7 +381,8 @@ func (r *Runtime) signalWarmupResetWatcher() {
 
 // runWarmupResetWatcher re-derives warm-up deadlines from persisted quota
 // evidence instead of relying on an in-flight scheduling run, so a paused auto
-// schedule (or a restart) cannot suppress a 5h window warm-up.
+// schedule (or a restart) cannot suppress a 5h window warm-up. The global lane
+// stored alongside the runtime document spreads those warm-ups apart.
 func (r *Runtime) runWarmupResetWatcher() {
 	for {
 		wait := r.sweepWarmupResets(r.rootCtx)
@@ -366,18 +401,6 @@ func (r *Runtime) runWarmupResetWatcher() {
 		case <-timer.C:
 		}
 	}
-}
-
-// enabledWarmupGroups returns the quota pools the operator enabled warm-up for.
-func enabledWarmupGroups(warmup config.WarmupConfig) []config.AntigravityModelGroup {
-	groups := make([]config.AntigravityModelGroup, 0, 2)
-	if warmup.GeminiEnabled {
-		groups = append(groups, config.AntigravityModelGroupGemini)
-	}
-	if warmup.ClaudeEnabled {
-		groups = append(groups, config.AntigravityModelGroupClaudeGPT)
-	}
-	return groups
 }
 
 // sweepWarmupResets refreshes every credential once when a 5h reset boundary
@@ -400,14 +423,31 @@ func (r *Runtime) sweepWarmupResets(ctx context.Context) time.Duration {
 	}
 	now := r.clock.Now().UTC()
 
-	groups := enabledWarmupGroups(cfg.Warmup)
-	candidates := mergeCandidates(
-		r.dueResetRefreshCandidates(store, now),
-		r.dueWarmupCandidates(store, groups, now),
-	)
+	groups := warmupCandidateGroups(cfg.Warmup)
 	maxWait := WarmupSweepInterval
 	if len(groups) == 0 {
 		maxWait = warmupIdleSweepInterval
+	}
+
+	refresh := r.dueResetRefreshCandidates(store, now)
+	warm := r.dueWarmupCandidates(store, cfg.Warmup, now)
+	if len(refresh) == 0 && len(warm) == 0 {
+		return nextResetBoundaryWait(store, now, maxWait)
+	}
+	disabled := r.disabledAuthIndexes(ctx)
+	if len(disabled) > 0 {
+		warm = slices.DeleteFunc(warm, func(candidate warmupCandidate) bool {
+			_, isDisabled := disabled[candidate.authIndex]
+			return isDisabled
+		})
+	}
+
+	// At most one reset warm-up may leave per lane slot, and the slot is
+	// reserved before the probe so no other pool can warm in the same window.
+	target, hasTarget := r.allocateWarmupSlot(ctx, cfg, store, warm, now)
+	candidates := refresh
+	if hasTarget {
+		candidates = mergeCandidates(refresh, []warmupCandidate{target})
 	}
 	if len(candidates) == 0 {
 		return nextResetBoundaryWait(store, now, maxWait)
@@ -423,7 +463,6 @@ func (r *Runtime) sweepWarmupResets(ctx context.Context) time.Duration {
 		}
 		byAuth[candidate.authIndex] = append(byAuth[candidate.authIndex], candidate)
 	}
-	disabled := r.disabledAuthIndexes(ctx)
 	for _, authIndex := range authOrder {
 		if ctx.Err() != nil {
 			return WarmupSweepInterval
@@ -432,17 +471,72 @@ func (r *Runtime) sweepWarmupResets(ctx context.Context) time.Duration {
 			continue
 		}
 		due := byAuth[authIndex]
-		for _, candidate := range due {
-			r.recordWarmupAttempt(candidate, now)
+		probeCandidate := due[0]
+		scope := WarmupScope{Suppress: true}
+		isTarget := hasTarget && authIndex == target.authIndex
+		if isTarget {
+			probeCandidate = target
+			scope = WarmupScope{Group: target.group}
 		}
-		if err := r.probeResetCandidate(ctx, cfg, due[0]); errors.Is(err, ErrRunInProgress) {
+		for _, candidate := range due {
+			r.recordProbeAttempt(candidate, now)
+		}
+		if err := r.probeResetCandidate(ctx, probeCandidate, scope); errors.Is(err, ErrRunInProgress) {
 			// Another run owns the lock; do not spend a retry budget on it.
 			for _, candidate := range due {
-				r.clearWarmupAttempt(candidate.key)
+				r.clearProbeAttempt(candidate.key)
 			}
 		}
 	}
 	return nextResetBoundaryWait(store, now, WarmupSweepInterval)
+}
+
+// allocateWarmupSlot decides whether the global lane admits one reset warm-up.
+// The gap is drawn once per pending pool and persisted, so per-minute sweeps
+// cannot re-roll a shorter wait. The slot is reserved before the probe is
+// issued, so a restart or a slow upstream can never let two pools warm inside
+// the same window.
+func (r *Runtime) allocateWarmupSlot(ctx context.Context, cfg config.Config, store *state.Store, candidates []warmupCandidate, now time.Time) (warmupCandidate, bool) {
+	if len(candidates) == 0 {
+		return warmupCandidate{}, false
+	}
+	target := candidates[0]
+	lane := store.GetWarmupLane()
+
+	gate := lane.NextAt
+	if lane.NextAuth != target.authIndex || gate.IsZero() {
+		gate = lane.LastAt.Add(warmupLaneGap(lane.LastAuth == target.authIndex))
+	}
+
+	// A deadline farther out than one maximum gap can only come from a backward
+	// clock correction; treat it as stale instead of starving warm-ups.
+	if !lane.LastAt.IsZero() && now.Before(gate) && gate.Sub(now) <= WarmupLaneCrossCredentialMaxGap {
+		if lane.NextAuth != target.authIndex || lane.NextAt.IsZero() {
+			lane.NextAt = gate
+			lane.NextAuth = target.authIndex
+			if err := r.saveWarmupLane(ctx, cfg, lane); err != nil {
+				log.Printf("[antigravity-priority] 5h warmup lane reservation failed: %v", err)
+				return warmupCandidate{}, false
+			}
+		}
+		return warmupCandidate{}, false
+	}
+
+	if err := r.saveWarmupLane(ctx, cfg, state.WarmupLane{LastAt: now, LastAuth: target.authIndex}); err != nil {
+		log.Printf("[antigravity-priority] 5h warmup lane reservation failed: %v", err)
+		return warmupCandidate{}, false
+	}
+	return target, true
+}
+
+// saveWarmupLane persists the global reset warm-up gate.
+func (r *Runtime) saveWarmupLane(ctx context.Context, cfg config.Config, lane state.WarmupLane) error {
+	store, err := state.Load(ctx, warmupStatePath(cfg))
+	if err != nil {
+		return err
+	}
+	store.SetWarmupLane(lane)
+	return store.SaveRuntimeAtomic(ctx)
 }
 
 // dueResetRefreshCandidates lists every 5h pool whose reset grace deadline has
@@ -458,23 +552,45 @@ func (r *Runtime) dueResetRefreshCandidates(store *state.Store, now time.Time) [
 		due: func(_ state.Entry, resetAt, now time.Time) bool {
 			return resetBoundaryDue(resetAt, now)
 		},
+		attemptBlocked: r.probeAttemptBlocked,
 	})
 }
 
 // dueWarmupCandidates lists the pools whose 5h window is due for a warm-up probe.
-func (r *Runtime) dueWarmupCandidates(store *state.Store, groups []config.AntigravityModelGroup, now time.Time) []warmupCandidate {
+func (r *Runtime) dueWarmupCandidates(store *state.Store, warmup config.WarmupConfig, now time.Time) []warmupCandidate {
 	return r.collectCandidates(store, now, candidateFilter{
-		groups:          groups,
+		groups:          warmupCandidateGroups(warmup),
 		respectDebounce: true,
+		excludeFreePlan: true,
 		due:             warmupWindowDue,
+		allow: func(authIndex string, group config.AntigravityModelGroup) bool {
+			return warmupEffectiveEnabled(warmup, authIndex, group)
+		},
 	})
+}
+
+// warmupCandidateGroups lists the pools the watcher may probe: globally enabled
+// pools plus any pool that a card-level override may force on.
+func warmupCandidateGroups(warmup config.WarmupConfig) []config.AntigravityModelGroup {
+	overrideOn := warmup.HasEnabledOverride()
+	groups := make([]config.AntigravityModelGroup, 0, 2)
+	if warmup.GeminiEnabled || overrideOn {
+		groups = append(groups, config.AntigravityModelGroupGemini)
+	}
+	if warmup.ClaudeEnabled || overrideOn {
+		groups = append(groups, config.AntigravityModelGroupClaudeGPT)
+	}
+	return groups
 }
 
 // candidateFilter selects persisted credential pools for one watcher pass.
 type candidateFilter struct {
 	groups          []config.AntigravityModelGroup
 	respectDebounce bool
+	excludeFreePlan bool
 	due             func(entry state.Entry, resetAt, now time.Time) bool
+	allow           func(authIndex string, group config.AntigravityModelGroup) bool
+	attemptBlocked  func(key string, resetAt, now time.Time) bool
 }
 
 // collectCandidates owns cooldown, debounce, and retry suppression so reset
@@ -498,6 +614,12 @@ func (r *Runtime) collectCandidates(store *state.Store, now time.Time, filter ca
 		if strings.TrimSpace(entry.AuthIndex) == "" {
 			continue
 		}
+		if filter.allow != nil && !filter.allow(entry.AuthIndex, group) {
+			continue
+		}
+		if filter.excludeFreePlan && entry.PlanType == core.PlanTypeFree {
+			continue
+		}
 		resetAt := entry.ShortWindowResetAt
 		if resetAt.IsZero() {
 			resetAt = entry.ResetAt
@@ -505,7 +627,7 @@ func (r *Runtime) collectCandidates(store *state.Store, now time.Time, filter ca
 		if resetAt.IsZero() {
 			continue
 		}
-		key := warmupAttemptKey(entry.AuthIndex, string(group))
+		key := warmupCandidateKey(entry.AuthIndex, string(group))
 		lastWarmup := store.GetLastWarmupAt(entry.AuthIndex, entry.ModelGroup)
 		if filter.respectDebounce && !lastWarmup.IsZero() && now.Sub(lastWarmup) < WarmupDebounceDuration {
 			continue
@@ -516,15 +638,14 @@ func (r *Runtime) collectCandidates(store *state.Store, now time.Time, filter ca
 		if _, inCooldown := cooldowns[group][entry.AuthIndex]; inCooldown {
 			continue
 		}
-		if r.warmupAttemptBlocked(key, resetAt, now) {
+		if filter.attemptBlocked != nil && filter.attemptBlocked(key, resetAt, now) {
 			continue
 		}
 		candidates = append(candidates, warmupCandidate{
-			key:        key,
-			authIndex:  entry.AuthIndex,
-			group:      group,
-			resetAt:    resetAt,
-			lastWarmup: lastWarmup,
+			key:       key,
+			authIndex: entry.AuthIndex,
+			group:     group,
+			resetAt:   resetAt,
 		})
 	}
 	slices.SortFunc(candidates, func(left, right warmupCandidate) int {
@@ -591,6 +712,11 @@ func resetBoundaryDue(resetAt, now time.Time) bool {
 // warmupWindowDue reports whether the stored 5h window either already reset or
 // is a full, un-started window that should be kicked off now.
 func warmupWindowDue(entry state.Entry, resetAt, now time.Time) bool {
+	// A warm-up consumes the weekly pool too; never probe a 5h window when the
+	// 7d quota is already exhausted.
+	if warmupWeeklyExhausted(entry.LongWindowRemaining) {
+		return false
+	}
 	if resetBoundaryDue(resetAt, now) {
 		return true
 	}
@@ -604,22 +730,25 @@ func warmupWindowDue(entry state.Entry, resetAt, now time.Time) bool {
 	return remaining >= warmupFullRemainingPct
 }
 
-func (r *Runtime) warmupAttemptBlocked(key string, resetAt, now time.Time) bool {
-	r.warmupResetMu.Lock()
-	defer r.warmupResetMu.Unlock()
-	attempt, ok := r.warmupAttempts[key]
+// probeAttemptBlocked bounds the evidence-refresh loop for a reset boundary the
+// upstream never converges. It gates probes only; warm-up dispatch keeps no
+// attempt state.
+func (r *Runtime) probeAttemptBlocked(key string, resetAt, now time.Time) bool {
+	r.probeMu.Lock()
+	defer r.probeMu.Unlock()
+	attempt, ok := r.probeAttempts[key]
 	if !ok || !attempt.resetAt.Equal(resetAt) {
 		return false
 	}
 	return attempt.exhausted || now.Before(attempt.nextAt)
 }
 
-func (r *Runtime) recordWarmupAttempt(candidate warmupCandidate, now time.Time) {
-	r.warmupResetMu.Lock()
-	defer r.warmupResetMu.Unlock()
-	attempt := r.warmupAttempts[candidate.key]
+func (r *Runtime) recordProbeAttempt(candidate warmupCandidate, now time.Time) {
+	r.probeMu.Lock()
+	defer r.probeMu.Unlock()
+	attempt := r.probeAttempts[candidate.key]
 	if !attempt.resetAt.Equal(candidate.resetAt) {
-		attempt = warmupAttempt{resetAt: candidate.resetAt}
+		attempt = probeAttempt{resetAt: candidate.resetAt}
 	}
 	attempt.attempts++
 	if attempt.attempts >= warmupResetMaxAttempts {
@@ -627,16 +756,16 @@ func (r *Runtime) recordWarmupAttempt(candidate warmupCandidate, now time.Time) 
 	} else {
 		attempt.nextAt = now.Add(warmupRetryDelay(attempt.attempts))
 	}
-	r.warmupAttempts[candidate.key] = attempt
+	r.probeAttempts[candidate.key] = attempt
 }
 
-func (r *Runtime) clearWarmupAttempt(key string) {
-	r.warmupResetMu.Lock()
-	defer r.warmupResetMu.Unlock()
-	delete(r.warmupAttempts, key)
+func (r *Runtime) clearProbeAttempt(key string) {
+	r.probeMu.Lock()
+	defer r.probeMu.Unlock()
+	delete(r.probeAttempts, key)
 }
 
-// warmupRetryDelay backs off retries after a reset whose warm-up did not land.
+// warmupRetryDelay backs off repeated evidence-refresh probes at one reset boundary.
 func warmupRetryDelay(attempts int) time.Duration {
 	delay := WarmupResetGraceBaseDelay
 	for i := 1; i < attempts; i++ {
@@ -649,24 +778,19 @@ func warmupRetryDelay(attempts int) time.Duration {
 }
 
 // probeResetCandidate runs the targeted probe that refreshes one credential's
-// quota evidence and performs a warm-up when the run's eligibility checks
-// allow it, then clears retry state once the warm-up landed.
-func (r *Runtime) probeResetCandidate(ctx context.Context, cfg config.Config, candidate warmupCandidate) error {
-	if err := r.Probe(ctx, []string{candidate.authIndex}); err != nil {
-		return err
-	}
-	store, err := state.Load(ctx, warmupStatePath(cfg))
-	if err != nil {
-		return err
-	}
-	if store.GetLastWarmupAt(candidate.authIndex, string(candidate.group)).After(candidate.lastWarmup) {
-		r.clearWarmupAttempt(candidate.key)
-	}
-	return nil
+// quota evidence. The scope decides whether that probe may warm one specific
+// pool, while lane-spacing probes only refresh evidence. Warm-up failures keep
+// no state: the next natural candidate pass decides what happens next.
+func (r *Runtime) probeResetCandidate(ctx context.Context, candidate warmupCandidate, scope WarmupScope) error {
+	return r.runTaskRequest(ctx, TaskRequest{
+		Trigger:     TriggerProbe,
+		AuthIndexes: []string{candidate.authIndex},
+		Warmup:      scope,
+	})
 }
 
-// warmupAttemptKey identifies retry state for one credential pool.
-func warmupAttemptKey(authIndex, modelGroup string) string {
+// warmupCandidateKey identifies retry state for one credential pool.
+func warmupCandidateKey(authIndex, modelGroup string) string {
 	return strings.TrimSpace(authIndex) + "::" + strings.TrimSpace(modelGroup)
 }
 
@@ -703,13 +827,14 @@ func (r *Runtime) triggerWarmupForEligibleCredentials(
 	ctx context.Context,
 	doer quotaHTTPDoer,
 	cfg config.WarmupConfig,
+	groupFilter config.AntigravityModelGroup,
 	evidenceByGroup map[config.AntigravityModelGroup]evidence.Result,
 	authMaterials map[string]authMaterial,
 	disabledAuthIndexes map[string]struct{},
 	store *state.Store,
 	now time.Time,
 ) int {
-	if !cfg.GeminiEnabled && !cfg.ClaudeEnabled {
+	if !cfg.GeminiEnabled && !cfg.ClaudeEnabled && !cfg.HasEnabledOverride() {
 		return 0
 	}
 	cfg.Normalize()
@@ -718,17 +843,15 @@ func (r *Runtime) triggerWarmupForEligibleCredentials(
 		group config.AntigravityModelGroup
 		model string
 	}
-	var targets []targetTask
-	if cfg.GeminiEnabled {
-		targets = append(targets, targetTask{
-			group: config.AntigravityModelGroupGemini,
-			model: cfg.GeminiModel,
-		})
+	// Both pools are considered; the per-credential effective state below
+	// decides whether a globally disabled pool still warms a local override.
+	targets := []targetTask{
+		{group: config.AntigravityModelGroupGemini, model: cfg.GeminiModel},
+		{group: config.AntigravityModelGroupClaudeGPT, model: cfg.ClaudeModel},
 	}
-	if cfg.ClaudeEnabled {
-		targets = append(targets, targetTask{
-			group: config.AntigravityModelGroupClaudeGPT,
-			model: cfg.ClaudeModel,
+	if groupFilter != "" {
+		targets = slices.DeleteFunc(targets, func(target targetTask) bool {
+			return target.group != groupFilter
 		})
 	}
 
@@ -743,13 +866,18 @@ func (r *Runtime) triggerWarmupForEligibleCredentials(
 			if authIdx == "" {
 				continue
 			}
+			if ev.PlanType == core.PlanTypeFree {
+				continue
+			}
+			if !warmupEffectiveEnabled(cfg, authIdx, target.group) {
+				continue
+			}
 			if len(disabledAuthIndexes) > 0 {
 				if _, isDisabled := disabledAuthIndexes[authIdx]; isDisabled {
 					continue
 				}
 			}
 
-			key := warmupAttemptKey(authIdx, string(target.group))
 			var lastWarmup time.Time
 			if store != nil {
 				lastWarmup = store.GetLastWarmupAt(authIdx, string(target.group))
@@ -801,7 +929,6 @@ func (r *Runtime) triggerWarmupForEligibleCredentials(
 				if store != nil {
 					store.SetWarmupCompleted(authIdx, string(target.group), now)
 				}
-				r.clearWarmupAttempt(key)
 			}
 		}
 	}

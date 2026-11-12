@@ -33,6 +33,7 @@ type Runner interface {
 	ClearRequestHistory(ctx context.Context) error
 	GetCustomTiers(ctx context.Context) (map[string]int, error)
 	SetCustomTier(ctx context.Context, authIndex string, tier int) error
+	SetWarmupCredentialState(ctx context.Context, authIndex, group string, enabled bool) error
 }
 
 // ProbeOutcome reports the diagnostic outcome of one credential probe for the management UI.
@@ -86,6 +87,7 @@ const (
 	PathRequestHistory      = "/request-history"
 	PathRequestHistoryClear = "/request-history/clear"
 	PathCustomTier          = "/custom-tier"
+	PathWarmupCredential    = "/warmup-credential"
 
 	// URL Prefixes
 	PrefixResourcePlugin   = "/v0/resource/plugins/" + config.PluginID
@@ -138,6 +140,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleGetCustomTiers(w, r)
 	case (path == PathCustomTier || path == PrefixManagementPlugin+PathCustomTier || path == PrefixLegacyPlugin+PathCustomTier) && method == http.MethodPost:
 		h.handleSetCustomTier(w, r)
+	case (path == PathWarmupCredential || path == PrefixManagementPlugin+PathWarmupCredential || path == PrefixLegacyPlugin+PathWarmupCredential) && method == http.MethodPost:
+		h.handleSetWarmupCredential(w, r)
 	default:
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(http.StatusNotFound)
@@ -395,6 +399,45 @@ func overlaySnapshotIdentities(rawItems any, identities []apply.SnapshotIdentity
 		item["email"] = identity.Email
 		item["auth_index"] = identity.AuthIndex
 	}
+}
+
+type warmupCredentialRequest struct {
+	AuthIndex string `json:"auth_index"`
+	Group     string `json:"group"`
+	Enabled   *bool  `json:"enabled"`
+}
+
+func (h *Handler) handleSetWarmupCredential(w http.ResponseWriter, r *http.Request) {
+	var req warmupCredentialRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.writeJSONError(w, http.StatusBadRequest, "invalid request JSON: "+err.Error())
+		return
+	}
+	cleanIdx := strings.TrimSpace(req.AuthIndex)
+	if cleanIdx == "" {
+		h.writeJSONError(w, http.StatusBadRequest, "auth_index must not be empty")
+		return
+	}
+	modelGroup, err := config.ParseAntigravityModelGroup(req.Group)
+	if err != nil {
+		h.writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.Enabled == nil {
+		h.writeJSONError(w, http.StatusBadRequest, "enabled is required")
+		return
+	}
+	if err := h.runner.SetWarmupCredentialState(r.Context(), cleanIdx, string(modelGroup), *req.Enabled); err != nil {
+		h.writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ok":         true,
+		"auth_index": cleanIdx,
+		"group":      string(modelGroup),
+		"enabled":    *req.Enabled,
+	})
 }
 
 func (h *Handler) handleGetSamples(w http.ResponseWriter, r *http.Request) {

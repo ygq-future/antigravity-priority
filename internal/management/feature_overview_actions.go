@@ -265,6 +265,32 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
             }
         }
 
+        async function toggleCredentialWarmup(authIndex, group, enabled, button) {
+            if (isAuthBlocked || !authIndex || !group || !button) return;
+            const wasOn = button.classList.contains("is-on");
+            button.classList.add("is-pending");
+            button.disabled = true;
+            button.classList.toggle("is-on", enabled);
+            button.classList.toggle("is-off", !enabled);
+            button.setAttribute("aria-pressed", enabled ? "true" : "false");
+            try {
+                await apiFetch(WARMUP_CREDENTIAL_PATH, {
+                    method: "POST",
+                    body: JSON.stringify({ auth_index: authIndex, group: group, enabled: enabled })
+                });
+                showToast(t(enabled ? "warmupCardEnabled" : "warmupCardDisabled"), "success");
+                await refreshDashboard({ withSync: true, silent: true });
+            } catch (err) {
+                button.classList.toggle("is-on", wasOn);
+                button.classList.toggle("is-off", !wasOn);
+                button.setAttribute("aria-pressed", wasOn ? "true" : "false");
+                showToast(err.message, "error");
+            } finally {
+                button.classList.remove("is-pending");
+                button.disabled = false;
+            }
+        }
+
         function extractChanges(result) {
             if (!result) return [];
             if (Array.isArray(result.changes) && result.changes.length > 0) {

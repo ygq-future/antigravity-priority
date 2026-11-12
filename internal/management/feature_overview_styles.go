@@ -92,6 +92,54 @@ const templateStyleOverviewCards = `        /* Credentials Display (Grid 3 Colum
             border-radius: 4px;
         }
 
+        .cred-warmup-icon {
+            flex: 0 0 auto;
+            padding: 0;
+            border: 0;
+            background: transparent;
+            font-size: 12px;
+            line-height: 1;
+            cursor: pointer;
+            filter: grayscale(1);
+            opacity: 0.4;
+            transition: opacity 0.18s ease, filter 0.18s ease, transform 0.12s ease;
+        }
+
+        .cred-warmup-icon.is-on {
+            filter: grayscale(0);
+            opacity: 1;
+        }
+
+        .cred-warmup-icon:hover {
+            opacity: 0.8;
+        }
+
+        .cred-warmup-icon.is-on:hover {
+            opacity: 1;
+        }
+
+        .cred-warmup-icon:active {
+            transform: scale(0.85);
+        }
+
+        .cred-warmup-icon.is-pending {
+            cursor: progress;
+            animation: cred-warmup-pulse 0.9s ease-in-out infinite;
+        }
+
+        .cred-warmup-icon.is-pending:disabled {
+            opacity: 1;
+        }
+
+        @keyframes cred-warmup-pulse {
+            0%, 100% {
+                transform: scale(1);
+            }
+            50% {
+                transform: scale(1.22);
+            }
+        }
+
         .cred-info {
             display: flex;
             flex-direction: column;

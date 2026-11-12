@@ -237,6 +237,7 @@ func TestRuntime_TriggerWarmupForEligibleCredentials(t *testing.T) {
 		ClaudeModel:   "claude-sonnet-5-5-high",
 	}
 	remaining100 := int64(100)
+	remainingZero := int64(0)
 	resetIn5h := now.Add(5 * time.Hour)
 
 	evidenceByGroup := map[config.AntigravityModelGroup]evidence.Result{
@@ -246,6 +247,12 @@ func TestRuntime_TriggerWarmupForEligibleCredentials(t *testing.T) {
 					AuthIndex:            "auth-gemini-1",
 					ShortWindowRemaining: &remaining100,
 					ShortWindowResetAt:   &resetIn5h,
+				},
+				{
+					AuthIndex:            "auth-gemini-2",
+					ShortWindowRemaining: &remaining100,
+					ShortWindowResetAt:   &resetIn5h,
+					LongWindowRemaining:  &remainingZero,
 				},
 			},
 		},
@@ -262,11 +269,12 @@ func TestRuntime_TriggerWarmupForEligibleCredentials(t *testing.T) {
 
 	materials := map[string]authMaterial{
 		"auth-gemini-1": {accessToken: "token-g", projectID: "proj-g"},
+		"auth-gemini-2": {accessToken: "token-g2", projectID: "proj-g2"},
 		"auth-claude-1": {accessToken: "token-c", projectID: "proj-c"},
 	}
 
 	// 1. Initial run: both should be warmed up
-	rt.triggerWarmupForEligibleCredentials(ctx, doer, cfg, evidenceByGroup, materials, nil, store, now)
+	rt.triggerWarmupForEligibleCredentials(ctx, doer, cfg, "", evidenceByGroup, materials, nil, store, now)
 	if warmupCount != 2 {
 		t.Fatalf("expected 2 warmup calls (gemini and claude), got %d", warmupCount)
 	}
@@ -281,13 +289,13 @@ func TestRuntime_TriggerWarmupForEligibleCredentials(t *testing.T) {
 	}
 
 	// 2. Immediate second run: debounced, no calls should happen
-	rt.triggerWarmupForEligibleCredentials(ctx, doer, cfg, evidenceByGroup, materials, nil, store, now.Add(10*time.Minute))
+	rt.triggerWarmupForEligibleCredentials(ctx, doer, cfg, "", evidenceByGroup, materials, nil, store, now.Add(10*time.Minute))
 	if warmupCount != 2 {
 		t.Fatalf("expected still 2 warmup calls due to debounce, got %d", warmupCount)
 	}
 
 	// 3. After debounce expiration (5 hours later): should trigger again
-	rt.triggerWarmupForEligibleCredentials(ctx, doer, cfg, evidenceByGroup, materials, nil, store, now.Add(5*time.Hour))
+	rt.triggerWarmupForEligibleCredentials(ctx, doer, cfg, "", evidenceByGroup, materials, nil, store, now.Add(5*time.Hour))
 	if warmupCount != 4 {
 		t.Fatalf("expected 4 warmup calls after debounce expired, got %d", warmupCount)
 	}
@@ -297,9 +305,14 @@ func TestRuntime_TriggerWarmupForEligibleCredentials(t *testing.T) {
 		"auth-gemini-1": {},
 		"auth-claude-1": {},
 	}
-	rt.triggerWarmupForEligibleCredentials(ctx, doer, cfg, evidenceByGroup, materials, disabledAuth, store, now.Add(11*time.Hour))
+	rt.triggerWarmupForEligibleCredentials(ctx, doer, cfg, "", evidenceByGroup, materials, disabledAuth, store, now.Add(11*time.Hour))
 	if warmupCount != 4 {
 		t.Fatalf("expected warmup calls to remain 4 for disabled credentials, got %d", warmupCount)
+	}
+
+	// 5. A credential whose 7d pool is exhausted must not be warmed up
+	if last := store.GetLastWarmupAt("auth-gemini-2", string(config.AntigravityModelGroupGemini)); !last.IsZero() {
+		t.Fatalf("expected the weekly-exhausted credential to be skipped, got warm-up at %v", last)
 	}
 }
 
@@ -418,6 +431,11 @@ func seedWindow(t *testing.T, cachePath string, now, observedAt, shortReset time
 
 func seedGroupWindow(t *testing.T, cachePath string, now time.Time, group config.AntigravityModelGroup, observedAt, shortReset time.Time, remaining int64) {
 	t.Helper()
+	seedGroupWindowForAuth(t, cachePath, "idx-a", now, group, observedAt, shortReset, remaining)
+}
+
+func seedGroupWindowForAuth(t *testing.T, cachePath, authIndex string, now time.Time, group config.AntigravityModelGroup, observedAt, shortReset time.Time, remaining int64) {
+	t.Helper()
 	ctx := context.Background()
 	store, err := state.Load(ctx, cachePath)
 	if err != nil {
@@ -425,7 +443,7 @@ func seedGroupWindow(t *testing.T, cachePath string, now time.Time, group config
 	}
 	longReset := now.Add(7 * 24 * time.Hour)
 	if err := store.MarkProbeSuccess(ctx, state.ProbeSuccess{
-		AuthIndex:            "idx-a",
+		AuthIndex:            authIndex,
 		Provider:             core.ProviderAntigravity,
 		ModelGroup:           string(group),
 		ObservedAt:           observedAt,
@@ -575,7 +593,7 @@ func TestRuntime_ResetSweepWakesAtResetGraceDeadline(t *testing.T) {
 	}
 }
 
-func TestRuntime_WarmupSweepBoundsRetriesWhenWindowDoesNotConverge(t *testing.T) {
+func TestRuntime_WarmupSweepBoundsResetProbesWhenWindowDoesNotConverge(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
 	rt, stub, clock, cachePath := newWarmupSweepRuntime(t, now)
@@ -595,15 +613,326 @@ func TestRuntime_WarmupSweepBoundsRetriesWhenWindowDoesNotConverge(t *testing.T)
 		now.Add(5*time.Hour).UTC().Format(time.RFC3339),
 	))
 
-	for range 7 {
+	for range 12 {
 		rt.sweepWarmupResets(ctx)
-		clock.advance(20 * time.Minute)
+		clock.advance(time.Minute)
 	}
 
 	if got := stub.countCalls("generateContent"); got != 0 {
 		t.Fatalf("expected no warm-up while the window is not full, got %d", got)
 	}
 	if got := stub.countCalls("retrieveUserQuota"); got != warmupResetMaxAttempts {
-		t.Fatalf("expected retries to stop after %d probes, got %d", warmupResetMaxAttempts, got)
+		t.Fatalf("expected reset probes to stop after %d probes, got %d", warmupResetMaxAttempts, got)
+	}
+}
+
+func enableAllWarmup(t *testing.T, rt *Runtime) {
+	t.Helper()
+	dyn := config.Default().Dynamic()
+	dyn.Warmup = config.WarmupConfig{
+		GeminiEnabled: true,
+		GeminiModel:   "gemini-3-flash",
+		ClaudeEnabled: true,
+		ClaudeModel:   "claude-sonnet-5-5-high",
+	}
+	if err := rt.SetDynamicConfig(context.Background(), dyn); err != nil {
+		t.Fatalf("enable warm-up failed: %v", err)
+	}
+}
+
+func TestWarmupLaneGapBounds(t *testing.T) {
+	for range 200 {
+		gap := warmupLaneGap(true)
+		if gap < WarmupLaneSameCredentialMinGap || gap >= WarmupLaneSameCredentialMaxGap {
+			t.Fatalf("same-credential lane gap %v outside [%v, %v)", gap, WarmupLaneSameCredentialMinGap, WarmupLaneSameCredentialMaxGap)
+		}
+		gap = warmupLaneGap(false)
+		if gap < WarmupLaneCrossCredentialMinGap || gap >= WarmupLaneCrossCredentialMaxGap {
+			t.Fatalf("cross-credential lane gap %v outside [%v, %v)", gap, WarmupLaneCrossCredentialMinGap, WarmupLaneCrossCredentialMaxGap)
+		}
+	}
+}
+
+// warmupUnstartedBody keeps the 5h window full with a reset timestamp in the
+// past, the shape of a window that never started and stays warm-eligible while
+// it waits for a lane slot.
+func warmupUnstartedBody(now time.Time) []byte {
+	return warmupQuotaBody(now.Add(-30*time.Minute), now.Add(7*24*time.Hour))
+}
+
+func warmupUnstartedBothPoolsBody(now time.Time) []byte {
+	past := now.Add(-30 * time.Minute).UTC().Format(time.RFC3339)
+	weekly := now.Add(7 * 24 * time.Hour).UTC().Format(time.RFC3339)
+	return fmt.Appendf(nil,
+		`{"models":{"gemini-2.5-pro":{"quotaInfo":{"windows":[{"name":"5h","remainingFraction":1.0,"resetTime":%q}]}},`+
+			`"gemini-2.5-flash":{"quotaInfo":{"windows":[{"name":"7d","remainingFraction":1.0,"resetTime":%q}]}},`+
+			`"claude-3-5-sonnet":{"quotaInfo":{"windows":[{"name":"5h","remainingFraction":1.0,"resetTime":%q},{"name":"7d","remainingFraction":1.0,"resetTime":%q}]}}}}`,
+		past, weekly, past, weekly,
+	)
+}
+
+func TestRuntime_WarmupSweepStaggersCredentialsThroughGlobalLane(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	rt, stub, clock, cachePath := newWarmupSweepRuntime(t, now)
+	stub.addFile(host.AuthFile{Name: "account-b", AuthIndex: "idx-b", Provider: "antigravity", Status: "active"})
+	enableGeminiWarmup(t, rt)
+	stub.setBody(warmupUnstartedBody(now))
+	for _, authIndex := range []string{"idx-a", "idx-b"} {
+		seedGroupWindowForAuth(t, cachePath, authIndex, now, config.AntigravityModelGroupGemini, now.Add(-2*time.Hour), now.Add(-30*time.Minute), 100)
+	}
+
+	rt.sweepWarmupResets(ctx)
+	if got := stub.countCalls("generateContent"); got != 1 {
+		t.Fatalf("expected one warm-up per global lane slot, got %d", got)
+	}
+	persisted, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatalf("reload state failed: %v", err)
+	}
+	lane := persisted.GetWarmupLane()
+	if !lane.LastAt.Equal(now) || lane.LastAuth != "idx-a" {
+		t.Fatalf("expected the first warm-up to anchor the lane at idx-a, got %+v", lane)
+	}
+
+	rt.sweepWarmupResets(ctx)
+	if got := stub.countCalls("generateContent"); got != 1 {
+		t.Fatalf("expected the lane to block a second warm-up in the same slot, got %d", got)
+	}
+	persisted, err = state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatalf("reload state failed: %v", err)
+	}
+	lane = persisted.GetWarmupLane()
+	if lane.NextAuth != "idx-b" {
+		t.Fatalf("expected the pending slot to target idx-b, got %+v", lane)
+	}
+	wait := lane.NextAt.Sub(now)
+	if wait < WarmupLaneCrossCredentialMinGap || wait >= WarmupLaneCrossCredentialMaxGap {
+		t.Fatalf("expected the cross-credential gate in [%v, %v), got %v", WarmupLaneCrossCredentialMinGap, WarmupLaneCrossCredentialMaxGap, wait)
+	}
+
+	clock.advance(WarmupLaneCrossCredentialMaxGap)
+	rt.sweepWarmupResets(ctx)
+	if got := stub.countCalls("generateContent"); got != 2 {
+		t.Fatalf("expected the next credential to warm after the lane reopened, got %d", got)
+	}
+}
+
+func TestRuntime_WarmupSweepStaggersPoolsOfOneCredential(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	rt, stub, clock, cachePath := newWarmupSweepRuntime(t, now)
+	enableAllWarmup(t, rt)
+	for _, group := range []config.AntigravityModelGroup{config.AntigravityModelGroupGemini, config.AntigravityModelGroupClaudeGPT} {
+		seedGroupWindowForAuth(t, cachePath, "idx-a", now, group, now.Add(-2*time.Hour), now.Add(-30*time.Minute), 100)
+	}
+	stub.setBody(warmupUnstartedBothPoolsBody(now))
+
+	rt.sweepWarmupResets(ctx)
+	if got := stub.countCalls("generateContent"); got != 1 {
+		t.Fatalf("expected pools of one credential to warm one lane slot at a time, got %d", got)
+	}
+
+	rt.sweepWarmupResets(ctx)
+	persisted, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatalf("reload state failed: %v", err)
+	}
+	lane := persisted.GetWarmupLane()
+	if lane.NextAuth != "idx-a" {
+		t.Fatalf("expected the pending slot to stay on the same credential, got %+v", lane)
+	}
+	wait := lane.NextAt.Sub(now)
+	if wait < WarmupLaneSameCredentialMinGap || wait >= WarmupLaneSameCredentialMaxGap {
+		t.Fatalf("expected the same-credential gate in [%v, %v), got %v", WarmupLaneSameCredentialMinGap, WarmupLaneSameCredentialMaxGap, wait)
+	}
+
+	clock.advance(WarmupLaneSameCredentialMaxGap)
+	rt.sweepWarmupResets(ctx)
+	if got := stub.countCalls("generateContent"); got != 2 {
+		t.Fatalf("expected the sibling pool to warm in the next lane slot, got %d", got)
+	}
+}
+
+func TestRuntime_SetWarmupCredentialStateFollowsGlobalWhenCoinciding(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	rt, _, _, _ := newWarmupSweepRuntime(t, now)
+	enableGeminiWarmup(t, rt)
+
+	// Local off while the global toggle is on keeps a local override.
+	if err := rt.SetWarmupCredentialState(ctx, "idx-a", string(config.AntigravityModelGroupGemini), false); err != nil {
+		t.Fatalf("set local warm-up off failed: %v", err)
+	}
+	runtimeCfg, err := rt.Config()
+	if err != nil {
+		t.Fatalf("read runtime config failed: %v", err)
+	}
+	if enabled, ok := runtimeCfg.Warmup.WarmupOverride("idx-a"); !ok || enabled {
+		t.Fatalf("expected a local off override, got enabled=%v present=%v", enabled, ok)
+	}
+
+	// Clicking on while the global toggle is on clears the override.
+	if err := rt.SetWarmupCredentialState(ctx, "idx-a", string(config.AntigravityModelGroupGemini), true); err != nil {
+		t.Fatalf("set local warm-up on failed: %v", err)
+	}
+	runtimeCfg, err = rt.Config()
+	if err != nil {
+		t.Fatalf("read runtime config failed: %v", err)
+	}
+	if _, ok := runtimeCfg.Warmup.WarmupOverride("idx-a"); ok {
+		t.Fatal("expected the override to be cleared when it matches the global state")
+	}
+
+	// Clicking on while the global toggle is off keeps a local override.
+	dyn := runtimeCfg.Dynamic()
+	dyn.Warmup.GeminiEnabled = false
+	dyn.Warmup.Overrides = nil
+	if err := rt.SetDynamicConfig(ctx, dyn); err != nil {
+		t.Fatalf("disable global warm-up failed: %v", err)
+	}
+	if err := rt.SetWarmupCredentialState(ctx, "idx-a", string(config.AntigravityModelGroupGemini), true); err != nil {
+		t.Fatalf("set local warm-up on failed: %v", err)
+	}
+	runtimeCfg, err = rt.Config()
+	if err != nil {
+		t.Fatalf("read runtime config failed: %v", err)
+	}
+	if enabled, ok := runtimeCfg.Warmup.WarmupOverride("idx-a"); !ok || !enabled {
+		t.Fatalf("expected a local on override while global is off, got enabled=%v present=%v", enabled, ok)
+	}
+}
+
+func TestRuntime_SetWarmupCredentialStateClearsDebounceAndWarmsLocally(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	rt, stub, clock, cachePath := newWarmupSweepRuntime(t, now)
+	stub.setBody(warmupUnstartedBody(now))
+	seedReadyWindow(t, cachePath, now)
+
+	// Global warm-up stays off; the local override alone activates the pool.
+	if err := rt.SetWarmupCredentialState(ctx, "idx-a", string(config.AntigravityModelGroupGemini), true); err != nil {
+		t.Fatalf("set local warm-up on failed: %v", err)
+	}
+	rt.sweepWarmupResets(ctx)
+	if got := stub.countCalls("generateContent"); got != 1 {
+		t.Fatalf("expected a local override to warm with the global toggle off, got %d", got)
+	}
+
+	// Turning it off while the global is off coincides, so the override clears.
+	if err := rt.SetWarmupCredentialState(ctx, "idx-a", string(config.AntigravityModelGroupGemini), false); err != nil {
+		t.Fatalf("set local warm-up off failed: %v", err)
+	}
+	runtimeCfg, err := rt.Config()
+	if err != nil {
+		t.Fatalf("read runtime config failed: %v", err)
+	}
+	if _, ok := runtimeCfg.Warmup.WarmupOverride("idx-a"); ok {
+		t.Fatal("expected the local override to be cleared when it matches the global off state")
+	}
+
+	// Turning it on again clears the 4h30m debounce and warms at the next lane slot.
+	if err := rt.SetWarmupCredentialState(ctx, "idx-a", string(config.AntigravityModelGroupGemini), true); err != nil {
+		t.Fatalf("set local warm-up on failed: %v", err)
+	}
+	persisted, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatalf("reload state failed: %v", err)
+	}
+	if !persisted.GetLastWarmupAt("idx-a", string(config.AntigravityModelGroupGemini)).IsZero() {
+		t.Fatal("expected enabling warm-up locally to clear the 4h30m debounce")
+	}
+	clock.advance(WarmupLaneSameCredentialMaxGap)
+	rt.sweepWarmupResets(ctx)
+	if got := stub.countCalls("generateContent"); got != 2 {
+		t.Fatalf("expected warm-up to resume immediately after the local override, got %d", got)
+	}
+}
+
+func TestRuntime_TriggerWarmupSkipsCardDisabledAndFiltersGroup(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	rt := New(Options{})
+	store, err := state.Load(ctx, filepath.Join(t.TempDir(), "cache.json"))
+	if err != nil {
+		t.Fatalf("load state store failed: %v", err)
+	}
+	warmupCount := 0
+	doer := quotaHTTPDoerFunc(func(_ context.Context, req host.HTTPRequest) (host.HTTPResponse, error) {
+		if strings.Contains(req.URL, "generateContent") {
+			warmupCount++
+		}
+		return host.HTTPResponse{StatusCode: http.StatusOK}, nil
+	})
+
+	remaining100 := int64(100)
+	resetIn5h := now.Add(5 * time.Hour)
+	evidenceByGroup := map[config.AntigravityModelGroup]evidence.Result{
+		config.AntigravityModelGroupGemini: {
+			Eligible: []priority.QuotaEvidence{{
+				AuthIndex:            "auth-gemini-1",
+				ShortWindowRemaining: &remaining100,
+				ShortWindowResetAt:   &resetIn5h,
+			}},
+		},
+		config.AntigravityModelGroupClaudeGPT: {
+			Eligible: []priority.QuotaEvidence{
+				{
+					AuthIndex:            "auth-claude-1",
+					ShortWindowRemaining: &remaining100,
+					ShortWindowResetAt:   &resetIn5h,
+				},
+				{
+					AuthIndex:            "auth-claude-2",
+					ShortWindowRemaining: &remaining100,
+					ShortWindowResetAt:   &resetIn5h,
+				},
+				{
+					AuthIndex:            "auth-claude-3",
+					PlanType:             core.PlanTypeFree,
+					ShortWindowRemaining: &remaining100,
+					ShortWindowResetAt:   &resetIn5h,
+				},
+			},
+		},
+	}
+	materials := map[string]authMaterial{
+		"auth-gemini-1": {accessToken: "token-g", projectID: "proj-g"},
+		"auth-claude-1": {accessToken: "token-c1", projectID: "proj-c1"},
+		"auth-claude-2": {accessToken: "token-c2", projectID: "proj-c2"},
+		"auth-claude-3": {accessToken: "token-c3", projectID: "proj-c3"},
+	}
+	cfg := config.WarmupConfig{
+		GeminiEnabled: true,
+		ClaudeEnabled: true,
+		GeminiModel:   "gemini-3-flash",
+		ClaudeModel:   "claude-sonnet-5-5-high",
+		Overrides:     map[string]bool{"auth-claude-1": false},
+	}
+
+	rt.triggerWarmupForEligibleCredentials(ctx, doer, cfg, config.AntigravityModelGroupClaudeGPT, evidenceByGroup, materials, nil, store, now)
+	if warmupCount != 1 {
+		t.Fatalf("expected only the enabled Claude credential to warm, got %d", warmupCount)
+	}
+	if got := store.GetLastWarmupAt("auth-claude-1", string(config.AntigravityModelGroupClaudeGPT)); !got.IsZero() {
+		t.Fatal("expected the locally disabled credential to be skipped")
+	}
+	if got := store.GetLastWarmupAt("auth-gemini-1", string(config.AntigravityModelGroupGemini)); !got.IsZero() {
+		t.Fatal("expected the group filter to keep the Gemini pool untouched")
+	}
+
+	// A local on override must warm even when the global pool toggle is off.
+	cfg.ClaudeEnabled = false
+	cfg.Overrides = map[string]bool{"auth-claude-1": true}
+	rt.triggerWarmupForEligibleCredentials(ctx, doer, cfg, config.AntigravityModelGroupClaudeGPT, evidenceByGroup, materials, nil, store, now)
+	if warmupCount != 2 {
+		t.Fatalf("expected a local override to warm with the global toggle off, got %d", warmupCount)
+	}
+	if got := store.GetLastWarmupAt("auth-claude-1", string(config.AntigravityModelGroupClaudeGPT)); got.IsZero() {
+		t.Fatal("expected the locally enabled credential to be warmed")
+	}
+	if got := store.GetLastWarmupAt("auth-gemini-1", string(config.AntigravityModelGroupGemini)); !got.IsZero() {
+		t.Fatal("expected the group filter to keep the Gemini pool untouched")
 	}
 }

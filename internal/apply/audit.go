@@ -54,6 +54,8 @@ type SnapshotItem struct {
 	Reason                string           `json:"reason"`
 	IsBoosted             bool             `json:"is_boosted"`
 	CustomTier            int              `json:"custom_tier,omitempty"`
+	WarmupOverridden      bool             `json:"warmup_overridden,omitempty"`
+	WarmupActive          bool             `json:"warmup_active,omitempty"`
 	Urgency               float64          `json:"urgency"`
 	R7d                   float64          `json:"r7d"`
 	T7d                   float64          `json:"t7d"`

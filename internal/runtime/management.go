@@ -73,6 +73,7 @@ func (r *Runtime) registerManagement() []byte {
 			{Method: http.MethodPost, Path: management.PrefixLegacyPlugin + management.PathRequestHistoryClear},
 			{Method: http.MethodGet, Path: management.PrefixLegacyPlugin + management.PathCustomTier},
 			{Method: http.MethodPost, Path: management.PrefixLegacyPlugin + management.PathCustomTier},
+			{Method: http.MethodPost, Path: management.PrefixLegacyPlugin + management.PathWarmupCredential},
 		},
 		Resources: []managementResource{
 			{Path: management.PathStatus, Menu: "Antigravity Priority", Description: "Shows Antigravity priority status and audit summary."},
@@ -416,6 +417,10 @@ func (r managementRunner) GetCustomTiers(ctx context.Context) (map[string]int, e
 
 func (r managementRunner) SetCustomTier(ctx context.Context, authIndex string, tier int) error {
 	return r.runtime.SetCustomTier(ctx, authIndex, tier)
+}
+
+func (r managementRunner) SetWarmupCredentialState(ctx context.Context, authIndex, group string, enabled bool) error {
+	return r.runtime.SetWarmupCredentialState(ctx, authIndex, group, enabled)
 }
 
 func probeOutcomes(probes []evidence.ProbeObservation, byGroup map[config.AntigravityModelGroup]evidence.Result) []management.ProbeOutcome {

@@ -58,11 +58,21 @@ const (
 	TriggerManualReset Trigger = "manual_reset"
 )
 
+// WarmupScope narrows the 5h reset warm-up a run may perform. The reset
+// watcher dispatches one credential pool per global lane slot, and runs that
+// only refresh evidence suppress warm-up so the lane spacing cannot be
+// bypassed by the quota probe that precedes it.
+type WarmupScope struct {
+	Suppress bool
+	Group    config.AntigravityModelGroup
+}
+
 // TaskRequest holds parameters for an internal scheduling run.
 type TaskRequest struct {
 	Config      config.Config
 	Trigger     Trigger
 	AuthIndexes []string
+	Warmup      WarmupScope
 }
 
 // TaskRunner executes a scheduling task.

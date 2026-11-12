@@ -567,4 +567,47 @@ func TestWarmupConfig(t *testing.T) {
 	if !applied.Warmup.GeminiEnabled || !applied.Warmup.ClaudeEnabled {
 		t.Fatalf("expected applied warmup enabled, got: %+v", applied.Warmup)
 	}
+
+	// Per-credential override normalization, lookup, and deep cloning.
+	overridden := config.WarmupConfig{Overrides: map[string]bool{" idx-a ": true, "": true, "idx-b": false}}
+	overridden.Normalize()
+	if got := overridden.Overrides; len(got) != 2 || !got["idx-a"] || got["idx-b"] {
+		t.Fatalf("unexpected normalized overrides: %#v", got)
+	}
+	if enabled, ok := overridden.WarmupOverride("idx-a"); !ok || !enabled {
+		t.Fatalf("unexpected override lookup result: enabled=%v present=%v", enabled, ok)
+	}
+	if _, ok := overridden.WarmupOverride("idx-c"); ok {
+		t.Fatal("expected an absent override for an unknown credential")
+	}
+	if !overridden.HasEnabledOverride() {
+		t.Fatal("expected the overrides to report an enabled local state")
+	}
+	clone := overridden.Clone()
+	clone.SetWarmupOverride("idx-b", true)
+	if enabled, _ := overridden.WarmupOverride("idx-b"); enabled {
+		t.Fatal("expected the clone to be independent of the source overrides")
+	}
+	clone.ClearWarmupOverride("idx-a")
+	if _, ok := clone.WarmupOverride("idx-a"); ok {
+		t.Fatalf("expected the clone override to be cleared, got %#v", clone.Overrides)
+	}
+	clone.ClearWarmupOverride("idx-b")
+	if clone.HasEnabledOverride() || clone.Overrides != nil {
+		t.Fatalf("expected an empty override map after clearing, got %#v", clone.Overrides)
+	}
+
+	// The overrides must survive the dynamic-config JSON round trip.
+	dyn.Warmup.Overrides = map[string]bool{"idx-a": false}
+	raw, err := json.Marshal(dyn)
+	if err != nil {
+		t.Fatalf("marshal dynamic config failed: %v", err)
+	}
+	var decoded config.DynamicConfig
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("unmarshal dynamic config failed: %v", err)
+	}
+	if enabled, ok := decoded.Warmup.WarmupOverride("idx-a"); !ok || enabled {
+		t.Fatalf("expected the override to survive the JSON round trip, got %#v", decoded.Warmup.Overrides)
+	}
 }

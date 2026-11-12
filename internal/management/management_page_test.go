@@ -790,6 +790,7 @@ async function fetchDiagnostics() {}
                     {
                         auth_index: "fail-403",
                         email: "test-403@example.com",
+                        warmup_active: true,
                         reason: "probe failed: retrieve quota summary status 403; fresh remaining positive",
                         host: { priority: 99, disabled: false },
                         target: { priority: 99, disabled: false },
@@ -801,6 +802,7 @@ async function fetchDiagnostics() {}
                     {
                         auth_index: "cooldown-429",
                         email: "test-429@example.com",
+                        warmup_overridden: true,
                         reason: "probe failed: retrieve quota summary status 429; 429 rate limit cooldown",
                         host: { priority: -1, disabled: false },
                         target: { priority: -1, disabled: false },
@@ -812,6 +814,7 @@ async function fetchDiagnostics() {}
                     {
                         auth_index: "healthy-cached",
                         email: "cached@example.com",
+                        plan_type: "free",
                         reason: "fresh remaining positive",
                         short_window_reset_at: "2026-10-16T08:00:00Z",
                         long_window_reset_at: "2026-10-23T08:00:00Z",
@@ -857,11 +860,32 @@ async function fetchDiagnostics() {}
     if (card1HTML.indexOf("探测失败: retrieve quota summary status 429") < 0) {
         throw new Error("card 1 reason line should display failure cause: " + card1HTML);
     }
+    if (card0HTML.indexOf("cred-warmup-icon is-on") < 0) {
+        throw new Error("card 0 should render the warm-up icon lit: " + card0HTML);
+    }
+    if (card0HTML.indexOf("toggleCredentialWarmup('fail-403', 'gemini', ") < 0) {
+        throw new Error("card 0 warm-up icon should carry the selected model group: " + card0HTML);
+    }
+    if (card0HTML.indexOf("warmupIconFollowTitle") < 0) {
+        throw new Error("card 0 should describe the icon as following the global state: " + card0HTML);
+    }
+    if (card1HTML.indexOf("cred-warmup-icon is-off") < 0) {
+        throw new Error("card 1 should render the warm-up icon greyed out: " + card1HTML);
+    }
+    if (card1HTML.indexOf("warmupIconOverrideTitle") < 0) {
+        throw new Error("card 1 should describe the icon as a local override: " + card1HTML);
+    }
+    if (card0HTML.indexOf("cred-warmup-toggle") >= 0 || card1HTML.indexOf("cred-warmup-toggle") >= 0) {
+        throw new Error("the footer warm-up switch must be gone: " + card0HTML + card1HTML);
+    }
 
     // Card 2: cached credential with valid latest probe observation (when another credential was probed)
     const card2HTML = renderedCards[2].innerHTML;
     if (card2HTML.indexOf("meter-container-stale") >= 0 || card2HTML.indexOf("历史数据") >= 0) {
         throw new Error("card 2 with valid latest probe observation must NOT show stale '历史数据' tag: " + card2HTML);
+    }
+    if (card2HTML.indexOf("cred-warmup-toggle") >= 0 || card2HTML.indexOf("cred-warmup-icon") >= 0) {
+        throw new Error("Free plans must not expose the warm-up icon or switch: " + card2HTML);
     }
     // 3. Test triggerProbe with batch failure
     elements.btnProbe.querySelector = function() { return element(); };
@@ -1129,4 +1153,52 @@ apiFetch = async function(path) {
 `
 
 	runNodeFixture(t, node, "render-schedule-diagnostics-fallback.js", harness)
+}
+
+func TestCredentialWarmupIconOptimisticToggle(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not available; warm-up icon feedback is checked in the Node-enabled verification environment")
+	}
+
+	harness := templateScriptAccountDisplay + templateScriptOverviewActionsCore + `
+const WARMUP_CREDENTIAL_PATH = "/warmup-credential";
+let isAuthBlocked = false;
+function t(key) { return key; }
+function showToast() {}
+async function refreshDashboard() {}
+let captured = null;
+async function apiFetch(path, options) {
+    captured = { path: path, options: options };
+    return {};
+}
+(async function() {
+    const classes = new Set(["is-off"]);
+    const attrs = {};
+    const button = {
+        disabled: false,
+        classList: {
+            contains: function(c) { return classes.has(c); },
+            add: function(c) { classes.add(c); },
+            remove: function(c) { classes.delete(c); },
+            toggle: function(c, on) { if (on) classes.add(c); else classes.delete(c); }
+        },
+        setAttribute: function(k, v) { attrs[k] = v; }
+    };
+    await toggleCredentialWarmup("auth-1", "gemini", true, button);
+    if (!classes.has("is-on") || classes.has("is-off")) throw new Error("icon did not flip to on");
+    if (classes.has("is-pending")) throw new Error("pending animation class was not cleared");
+    if (button.disabled) throw new Error("icon stayed disabled after the request");
+    if (attrs["aria-pressed"] !== "true") throw new Error("aria-pressed did not follow the state");
+    if (!captured || captured.path !== WARMUP_CREDENTIAL_PATH) throw new Error("click did not call the warm-up endpoint");
+    const body = JSON.parse(captured.options.body);
+    if (body.auth_index !== "auth-1" || body.group !== "gemini" || body.enabled !== true) {
+        throw new Error("unexpected warm-up payload: " + captured.options.body);
+    }
+})().catch(function(err) {
+    console.error(err.stack || err.message);
+    process.exit(1);
+});
+`
+	runNodeFixture(t, node, "warmup_icon_toggle.js", harness)
 }

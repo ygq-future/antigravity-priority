@@ -567,3 +567,100 @@ func historicalEvidenceResult(values ...priority.QuotaEvidence) evidence.Result 
 type fixedClock struct{ now time.Time }
 
 func (c fixedClock) Now() time.Time { return c.now }
+
+func TestProjectModelGroups_CarriesPerCredentialWarmupState(t *testing.T) {
+	now := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
+	credentials := []core.Credential{
+		{Name: "account-1", AuthIndex: "auth-1", Provider: core.ProviderAntigravity, Type: core.CredentialTypeAntigravity, Priority: 100},
+		{Name: "account-2", AuthIndex: "auth-2", Provider: core.ProviderAntigravity, Type: core.CredentialTypeAntigravity, Priority: 100},
+		{Name: "account-3", AuthIndex: "auth-3", Provider: core.ProviderAntigravity, Type: core.CredentialTypeAntigravity, Priority: 100, PlanType: core.PlanTypeFree},
+	}
+	groupEvidence := map[config.AntigravityModelGroup]evidence.Result{
+		config.AntigravityModelGroupGemini: {Eligible: []priority.QuotaEvidence{
+			readyEvidence("auth-1", core.PlanTypePro, 90, now.Add(3*time.Hour)),
+			readyEvidence("auth-2", core.PlanTypePro, 80, now.Add(3*time.Hour)),
+			readyEvidence("auth-3", core.PlanTypeFree, 70, now.Add(3*time.Hour)),
+		}},
+	}
+
+	projection, err := runtime.ProjectModelGroups(runtime.ProjectionInput{
+		Credentials:     credentials,
+		EvidenceByGroup: groupEvidence,
+		PlanningOptions: priority.Options{
+			BoostStartPriority:  999,
+			NormalStartPriority: 100,
+		},
+		ProjectionTime: now,
+		Warmup: config.WarmupConfig{
+			GeminiEnabled: true,
+			Overrides:     map[string]bool{"auth-2": false},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, group := range config.AllAntigravityModelGroups {
+		geminiToggle := group == config.AntigravityModelGroupGemini || group == config.AntigravityModelGroupArgon
+		pool := projection.Snapshot.Groups[string(group)]
+		if len(pool.Items) != 3 {
+			t.Fatalf("%s items = %d, want 3", group, len(pool.Items))
+		}
+		for _, item := range pool.Items {
+			switch item.Identity.AuthIndex {
+			case "auth-1":
+				if item.WarmupOverridden {
+					t.Errorf("%s auth-1 warmup should follow the global toggle", group)
+				}
+				if item.WarmupActive != geminiToggle {
+					t.Errorf("%s auth-1 warmup active = %v, want %v", group, item.WarmupActive, geminiToggle)
+				}
+			case "auth-2":
+				if !item.WarmupOverridden {
+					t.Errorf("%s auth-2 warmup should carry a local override", group)
+				}
+				if item.WarmupActive {
+					t.Errorf("%s auth-2 warmup active = true, want false for a local off override", group)
+				}
+			case "auth-3":
+				if item.WarmupOverridden {
+					t.Errorf("%s auth-3 must not expose a warm-up state for a Free plan", group)
+				}
+				if item.WarmupActive {
+					t.Errorf("%s auth-3 warmup active = true, want false for a Free plan", group)
+				}
+			default:
+				t.Fatalf("%s unexpected credential %q", group, item.Identity.AuthIndex)
+			}
+		}
+	}
+}
+
+func TestProjectModelGroups_LocalWarmupOverrideBeatsGlobalOff(t *testing.T) {
+	now := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
+	credentials := []core.Credential{
+		{Name: "account-1", AuthIndex: "auth-1", Provider: core.ProviderAntigravity, Type: core.CredentialTypeAntigravity, Priority: 100},
+	}
+	projection, err := runtime.ProjectModelGroups(runtime.ProjectionInput{
+		Credentials: credentials,
+		PlanningOptions: priority.Options{
+			BoostStartPriority:  999,
+			NormalStartPriority: 100,
+		},
+		ProjectionTime: now,
+		Warmup:         config.WarmupConfig{Overrides: map[string]bool{"auth-1": true}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, group := range config.AllAntigravityModelGroups {
+		pool := projection.Snapshot.Groups[string(group)]
+		if len(pool.Items) != 1 {
+			t.Fatalf("%s items = %d, want 1", group, len(pool.Items))
+		}
+		item := pool.Items[0]
+		if !item.WarmupOverridden || !item.WarmupActive {
+			t.Errorf("%s local override = true must stay active while the global toggle is off (overridden=%v active=%v)", group, item.WarmupOverridden, item.WarmupActive)
+		}
+	}
+}

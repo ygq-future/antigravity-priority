@@ -112,14 +112,16 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 			return err
 		}
 	}
-	if request.Config.Warmup.GeminiEnabled || request.Config.Warmup.ClaudeEnabled {
+	if !request.Warmup.Suppress && (request.Config.Warmup.GeminiEnabled ||
+		request.Config.Warmup.ClaudeEnabled ||
+		request.Config.Warmup.HasEnabledOverride()) {
 		disabledAuth := make(map[string]struct{})
 		for _, c := range allCredentials {
 			if c.Disabled {
 				disabledAuth[c.AuthIndex] = struct{}{}
 			}
 		}
-		if r.triggerWarmupForEligibleCredentials(ctx, client, request.Config.Warmup, evidence.ByGroup, allAuthMaterials, disabledAuth, store, now) > 0 {
+		if r.triggerWarmupForEligibleCredentials(ctx, client, request.Config.Warmup, request.Warmup.Group, evidence.ByGroup, allAuthMaterials, disabledAuth, store, now) > 0 {
 			if err := store.SaveStateAtomic(ctx); err != nil {
 				return fmt.Errorf("persist warm-up state: %w", err)
 			}
@@ -200,6 +202,7 @@ func projectCurrentHost(
 		EvidenceByGroup: effectiveEvidence,
 		PlanningOptions: priorityOptions(request.Config, store, now),
 		ProjectionTime:  now,
+		Warmup:          request.Config.Warmup,
 	})
 }
 

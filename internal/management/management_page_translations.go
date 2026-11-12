@@ -18,6 +18,7 @@ var overviewTranslationKeys = []string{
 	"poolGemini", "poolArgon", "poolClaudeGPT", "badgeGemini", "badgeArgon", "badgeClaudeGPT",
 	"statusUnsupported", "statusBypassedCooldown", "statusBypassedDepleted", "dynamicPriority", "estimatedBurn", "tierPrefix",
 	"accountMaskOn", "accountMaskOff", "accountMaskToggleTitle",
+	"warmupIconFollowTitle", "warmupIconOverrideTitle", "warmupCardEnabled", "warmupCardDisabled",
 }
 
 var historyTranslationKeys = []string{

@@ -125,6 +125,11 @@ type WarmupConfig struct {
 	ClaudeEnabled bool   `json:"claude_enabled"`
 	GeminiModel   string `json:"gemini_model"`
 	ClaudeModel   string `json:"claude_model"`
+	// Overrides holds card-level warm-up states keyed by auth_index. Presence
+	// means a local override of the global pool toggle; absence means the card
+	// follows the global switch. A local value equal to the global is cleared by
+	// the setter so the card rejoins the global state.
+	Overrides map[string]bool `json:"overrides,omitempty"`
 }
 
 // DefaultWarmupConfig returns the default warm-up configuration.
@@ -137,7 +142,8 @@ func DefaultWarmupConfig() WarmupConfig {
 	}
 }
 
-// Normalize ensures empty model names fall back to canonical defaults.
+// Normalize ensures empty model names fall back to canonical defaults and the
+// per-credential override list holds only unique, non-empty auth indexes.
 func (w *WarmupConfig) Normalize() {
 	if strings.TrimSpace(w.GeminiModel) == "" {
 		w.GeminiModel = DefaultGeminiWarmupModel
@@ -148,6 +154,86 @@ func (w *WarmupConfig) Normalize() {
 		w.ClaudeModel = DefaultClaudeWarmupModel
 	} else {
 		w.ClaudeModel = strings.TrimSpace(w.ClaudeModel)
+	}
+	w.Overrides = normalizeWarmupOverrides(w.Overrides)
+}
+
+func normalizeWarmupOverrides(src map[string]bool) map[string]bool {
+	if len(src) == 0 {
+		return nil
+	}
+	out := make(map[string]bool, len(src))
+	for raw, enabled := range src {
+		idx := strings.TrimSpace(raw)
+		if idx == "" {
+			continue
+		}
+		out[idx] = enabled
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// Clone returns a deep copy so configuration snapshots never share the
+// override map with the persisted document.
+func (w WarmupConfig) Clone() WarmupConfig {
+	clone := w
+	if len(w.Overrides) == 0 {
+		clone.Overrides = nil
+		return clone
+	}
+	clone.Overrides = make(map[string]bool, len(w.Overrides))
+	for idx, enabled := range w.Overrides {
+		clone.Overrides[idx] = enabled
+	}
+	return clone
+}
+
+// HasEnabledOverride reports whether any credential is locally forced on, which
+// keeps warm-up active even when both global pool toggles are off.
+func (w WarmupConfig) HasEnabledOverride() bool {
+	for _, enabled := range w.Overrides {
+		if enabled {
+			return true
+		}
+	}
+	return false
+}
+
+// WarmupOverride returns the card-level warm-up state of one credential.
+func (w WarmupConfig) WarmupOverride(authIndex string) (bool, bool) {
+	idx := strings.TrimSpace(authIndex)
+	if idx == "" || len(w.Overrides) == 0 {
+		return false, false
+	}
+	enabled, ok := w.Overrides[idx]
+	return enabled, ok
+}
+
+// SetWarmupOverride records one credential's local warm-up state.
+func (w *WarmupConfig) SetWarmupOverride(authIndex string, enabled bool) {
+	idx := strings.TrimSpace(authIndex)
+	if idx == "" {
+		return
+	}
+	if w.Overrides == nil {
+		w.Overrides = make(map[string]bool, 1)
+	}
+	w.Overrides[idx] = enabled
+}
+
+// ClearWarmupOverride removes one credential's local override so it follows
+// the global pool toggles again.
+func (w *WarmupConfig) ClearWarmupOverride(authIndex string) {
+	idx := strings.TrimSpace(authIndex)
+	if idx == "" || len(w.Overrides) == 0 {
+		return
+	}
+	delete(w.Overrides, idx)
+	if len(w.Overrides) == 0 {
+		w.Overrides = nil
 	}
 }
 
@@ -275,7 +361,7 @@ func (cfg Config) Dynamic() DynamicConfig {
 		},
 		Schedule:    cfg.Schedule,
 		CustomTiers: cloneCustomTiers(cfg.CustomTiers),
-		Warmup:      cfg.Warmup,
+		Warmup:      cfg.Warmup.Clone(),
 	}
 }
 
@@ -372,7 +458,7 @@ func (dyn DynamicConfig) ApplyTo(base Config) (Config, error) {
 	res.PriorityRules.FreeStartPriority = dyn.PriorityRules.FreeStartPriority
 	res.Schedule = dyn.Schedule
 	res.CustomTiers = cloneCustomTiers(dyn.CustomTiers)
-	res.Warmup = dyn.Warmup
+	res.Warmup = dyn.Warmup.Clone()
 	res.Warmup.Normalize()
 	return res, nil
 }

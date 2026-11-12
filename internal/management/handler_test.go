@@ -25,6 +25,7 @@ type mockRunner struct {
 	probeOutcomes   []management.ProbeOutcome
 	requestHistory  []state.RequestHistoryEntry
 	customTiers     map[string]int
+	warmupSwitches  map[string]bool
 }
 
 func (m *mockRunner) Run(ctx context.Context, req management.RunRequest) (apply.Result, error) {
@@ -97,6 +98,14 @@ func (m *mockRunner) SetCustomTier(ctx context.Context, authIndex string, tier i
 	} else {
 		m.customTiers[authIndex] = tier
 	}
+	return nil
+}
+
+func (m *mockRunner) SetWarmupCredentialState(ctx context.Context, authIndex, group string, enabled bool) error {
+	if m.warmupSwitches == nil {
+		m.warmupSwitches = make(map[string]bool)
+	}
+	m.warmupSwitches[authIndex+"|"+group] = enabled
 	return nil
 }
 
@@ -849,5 +858,50 @@ func TestHandler_CustomTier_GetAndSet(t *testing.T) {
 	}
 	if runner.customTiers["auth-2"] != 2 {
 		t.Errorf("expected runner customTiers auth-2 to be 2, got %v", runner.customTiers)
+	}
+}
+
+func TestHandler_WarmupCredential_EnableDisable(t *testing.T) {
+	runner := &mockRunner{}
+	handler := management.NewHandler(runner)
+
+	// 1. Turn one credential's card state off for the Gemini pool.
+	body := `{"auth_index":"auth-1","group":"gemini","enabled":false}`
+	req := httptest.NewRequest(http.MethodPost, "/warmup-credential", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if enabled, ok := runner.warmupSwitches["auth-1|gemini"]; !ok || enabled {
+		t.Fatalf("expected auth-1 gemini state stored as disabled, got %v", runner.warmupSwitches)
+	}
+
+	// 2. Re-enable it through the management prefix.
+	body = `{"auth_index":"auth-1","group":"gemini","enabled":true}`
+	req = httptest.NewRequest(http.MethodPost, "/v0/management/plugins/antigravity-priority/warmup-credential", strings.NewReader(body))
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if enabled := runner.warmupSwitches["auth-1|gemini"]; !enabled {
+		t.Fatalf("expected auth-1 gemini state stored as enabled, got %v", runner.warmupSwitches)
+	}
+
+	// 3. Missing enabled flag is a client error.
+	req = httptest.NewRequest(http.MethodPost, "/warmup-credential", strings.NewReader(`{"auth_index":"auth-1","group":"gemini"}`))
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 when enabled is omitted, got %d", rec.Code)
+	}
+
+	// 4. Unknown model group is a client error.
+	req = httptest.NewRequest(http.MethodPost, "/warmup-credential", strings.NewReader(`{"auth_index":"auth-1","group":"nope","enabled":true}`))
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for an unknown group, got %d", rec.Code)
 	}
 }

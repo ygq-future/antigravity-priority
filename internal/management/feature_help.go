@@ -35,7 +35,7 @@ const helpMarkup = `
                     </div>
                     <div class="help-feature-item">
                         <div class="help-feature-title" data-i18n="helpWarmupTitle">♨️ 5 小时短窗满额自动预热</div>
-                        <div data-i18n="helpWarmupDesc">Gemini 或 Claude &amp; GPT 短窗 100% 满额且重置倒计时未激活时，自动发送一条轻量自然请求提前开启 5 小时周期；重置到点后依据持久化配额证据补发，内置防抖、随机抖动与独立开关。</div>
+                        <div data-i18n="helpWarmupDesc">Gemini 或 Claude &amp; GPT 短窗 100% 满额、7d 仍有余量且重置倒计时未激活时，自动发送一条轻量自然请求提前开启 5 小时周期；重置到点后依据持久化配额证据补发，凭证之间随机间隔 60–120 分钟、同凭证不同分组 30–60 分钟，避免 5h 刷新时间点重合；构建防抖、随机抖动与卡片顶部图标可局部覆盖全局状态（点击结果与全局一致时自动恢复跟随），FREE 账号不参与预热。</div>
                     </div>
                     <div class="help-feature-item">
                         <div class="help-feature-title" data-i18n="helpTierTitle">🎯 梯队分层与自定义覆盖</div>

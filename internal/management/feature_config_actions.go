@@ -314,7 +314,10 @@ const templateScriptConfig = `        let originalConfigState = null;
                         gemini_enabled: Boolean(document.getElementById("cfgWarmupGeminiEnabled") && document.getElementById("cfgWarmupGeminiEnabled").checked),
                         gemini_model: (document.getElementById("cfgWarmupGeminiModelSelect") && document.getElementById("cfgWarmupGeminiModelSelect").value) || "gemini-3-flash",
                         claude_enabled: Boolean(document.getElementById("cfgWarmupClaudeEnabled") && document.getElementById("cfgWarmupClaudeEnabled").checked),
-                        claude_model: (document.getElementById("cfgWarmupClaudeModelSelect") && document.getElementById("cfgWarmupClaudeModelSelect").value) || "claude-sonnet-5-5-high"
+                        claude_model: (document.getElementById("cfgWarmupClaudeModelSelect") && document.getElementById("cfgWarmupClaudeModelSelect").value) || "claude-sonnet-5-5-high",
+                        overrides: (dynamicConfig && dynamicConfig.warmup && dynamicConfig.warmup.overrides && typeof dynamicConfig.warmup.overrides === "object")
+                            ? dynamicConfig.warmup.overrides
+                            : undefined
                     },
                 };
 

@@ -61,8 +61,8 @@ type Runtime struct {
 	modelCatalog            []ModelCatalogItem
 	rrCursorByPool          map[config.AntigravityModelGroup]string
 	sessionAffinity         map[string]sessionBinding
-	warmupResetMu           sync.Mutex
-	warmupAttempts          map[string]warmupAttempt
+	probeMu           sync.Mutex
+	probeAttempts           map[string]probeAttempt
 	warmupResetWake         chan struct{}
 }
 
@@ -95,7 +95,7 @@ func New(options Options) *Runtime {
 		modelCatalog:          append([]ModelCatalogItem(nil), builtInAntigravityModels...),
 		rrCursorByPool:        make(map[config.AntigravityModelGroup]string),
 		sessionAffinity:       make(map[string]sessionBinding),
-		warmupAttempts:        make(map[string]warmupAttempt),
+		probeAttempts:         make(map[string]probeAttempt),
 		warmupResetWake:       make(chan struct{}, 1),
 	}
 	if strings.TrimSpace(options.StateCachePath) != "" {
@@ -326,6 +326,7 @@ func (r *Runtime) ResetAllPriorities(ctx context.Context) (map[string]any, error
 		EvidenceByGroup: evidenceByGroup,
 		PlanningOptions: priorityOptions(cfg, store, now),
 		ProjectionTime:  now,
+		Warmup:          cfg.Warmup,
 	})
 	if err != nil {
 		return nil, err
@@ -423,6 +424,7 @@ func (r *Runtime) SyncHost(ctx context.Context) (apply.SnapshotSet, error) {
 		EvidenceByGroup: evidenceByGroup,
 		PlanningOptions: priorityOptions(cfg, store, now),
 		ProjectionTime:  now,
+		Warmup:          cfg.Warmup,
 	})
 	if err != nil {
 		return apply.SnapshotSet{}, err
@@ -476,6 +478,15 @@ func (r *Runtime) AutoApply(ctx context.Context) error {
 }
 
 func (r *Runtime) run(ctx context.Context, trigger Trigger, authIndexes []string) error {
+	return r.runTaskRequest(ctx, TaskRequest{
+		Trigger:     trigger,
+		AuthIndexes: authIndexes,
+	})
+}
+
+// runTaskRequest executes one scheduling run under the single-flight lock.
+// Callers own the trigger semantics; the runner fills in the live config.
+func (r *Runtime) runTaskRequest(ctx context.Context, request TaskRequest) error {
 	if !r.runMu.TryLock() {
 		return ErrRunInProgress
 	}
@@ -491,12 +502,10 @@ func (r *Runtime) run(ctx context.Context, trigger Trigger, authIndexes []string
 		return errors.New("plugin is disabled")
 	}
 
-	if err := runner(taskCtx, TaskRequest{
-		Config:      cfg,
-		Trigger:     trigger,
-		AuthIndexes: append([]string(nil), authIndexes...),
-	}); err != nil && !errors.Is(err, context.Canceled) {
-		return fmt.Errorf("run %s: %w", trigger, err)
+	request.Config = cfg
+	request.AuthIndexes = append([]string(nil), request.AuthIndexes...)
+	if err := runner(taskCtx, request); err != nil && !errors.Is(err, context.Canceled) {
+		return fmt.Errorf("run %s: %w", request.Trigger, err)
 	}
 	return nil
 }
@@ -1204,6 +1213,67 @@ func (r *Runtime) SetCustomTier(ctx context.Context, authIndex string, tier int)
 	r.recomputeRoutingTablesLocked(r.clock.Now().UTC())
 	r.routingMu.Unlock()
 
+	return nil
+}
+
+// SetWarmupCredentialState applies one card-icon click. The local state wins
+// over the global pool toggle; when the clicked state equals the global state
+// the local override is cleared so the credential follows global changes again.
+// Turning the credential on clears its persisted 4h30m debounce so it can take
+// the next warm-up slot immediately.
+func (r *Runtime) SetWarmupCredentialState(ctx context.Context, authIndex, group string, enabled bool) error {
+	cleanIdx := strings.TrimSpace(authIndex)
+	if cleanIdx == "" {
+		return errors.New("auth_index must not be empty")
+	}
+	modelGroup, err := config.ParseAntigravityModelGroup(group)
+	if err != nil {
+		return err
+	}
+	runtimeCfg, err := r.Config()
+	if err != nil {
+		return err
+	}
+	dyn, err := r.GetDynamicConfig(ctx)
+	if err != nil {
+		return err
+	}
+	dyn.Warmup.Normalize()
+	globalEnabled := warmupEnabledForGroup(dyn.Warmup, modelGroup)
+	dyn.Warmup.ClearWarmupOverride(cleanIdx)
+	if enabled != globalEnabled {
+		dyn.Warmup.SetWarmupOverride(cleanIdx, enabled)
+	}
+	if err := dyn.Validate(); err != nil {
+		return err
+	}
+
+	cachePath := runtimeCfg.StateCachePath
+	if strings.TrimSpace(cachePath) == "" {
+		cachePath = config.DefaultStateCachePath
+	}
+	store, err := state.Load(ctx, cachePath)
+	if err != nil {
+		return fmt.Errorf("load state for warm-up switch: %w", err)
+	}
+	store.SetDynamicConfig(dyn)
+	if err := store.SaveRuntimeAtomic(ctx); err != nil {
+		return fmt.Errorf("persist warm-up switch: %w", err)
+	}
+	if enabled {
+		if store.ClearWarmupCompleted(cleanIdx) > 0 {
+			if err := store.SaveStateAtomic(ctx); err != nil {
+				return fmt.Errorf("clear warm-up debounce: %w", err)
+			}
+		}
+	}
+
+	r.mu.Lock()
+	r.cfg.Warmup = dyn.Warmup.Clone()
+	r.latestSnapshotSet = nil
+	r.mu.Unlock()
+
+	r.signalWarmupResetWatcher()
 	return nil
 }
 

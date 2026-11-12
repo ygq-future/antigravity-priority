@@ -84,6 +84,10 @@ const featureOverviewTranslations = `        const OVERVIEW_ZH = {
                 accountMaskOn: "脱敏显示",
                 accountMaskOff: "完整显示",
                 accountMaskToggleTitle: "切换账号脱敏显示（关闭后显示完整账号）",
+                warmupIconFollowTitle: "跟随全局预热状态（点击创建局部状态）",
+                warmupIconOverrideTitle: "局部覆盖全局预热（点击切换）",
+                warmupCardEnabled: "该凭证 5h 预热已开启",
+                warmupCardDisabled: "该凭证 5h 预热已关闭",
             }
         };
         const OVERVIEW_EN = {
@@ -170,6 +174,10 @@ const featureOverviewTranslations = `        const OVERVIEW_ZH = {
                 accountMaskOn: "Masked",
                 accountMaskOff: "Full",
                 accountMaskToggleTitle: "Toggle account masking (off shows full accounts)",
+                warmupIconFollowTitle: "Following the global warm-up state (click to override locally)",
+                warmupIconOverrideTitle: "Local override of the global warm-up state (click to toggle)",
+                warmupCardEnabled: "5h warm-up enabled for this credential",
+                warmupCardDisabled: "5h warm-up disabled for this credential",
             }
         };
 `

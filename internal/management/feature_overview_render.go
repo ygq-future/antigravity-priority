@@ -314,6 +314,14 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
 
                 let callOrderBadge = "";
                 const customTier = Number(item.custom_tier) || 0;
+                const warmupOverridden = Boolean(item.warmup_overridden);
+                const warmupActive = Boolean(item.warmup_active);
+                const isFreePlan = String(item.plan_type || "").trim().toLowerCase() === "free";
+                const warmupIcon = isFreePlan ? "" :
+                    "<button type=\"button\" class=\"cred-warmup-icon " + (warmupActive ? "is-on" : "is-off") + "\" " +
+                    "aria-pressed=\"" + (warmupActive ? "true" : "false") + "\" " +
+                    "title=\"" + escapeHTML(t(warmupOverridden ? "warmupIconOverrideTitle" : "warmupIconFollowTitle")) + "\" " +
+                    "onclick=\"toggleCredentialWarmup('" + escapeHTML(authIdx) + "', '" + escapeHTML(pool) + "', " + (warmupActive ? "false" : "true") + ", this)\">♨️</button>";
                 if (!isBypassed) {
                     let tierText = "";
                     if (customTier > 0) {
@@ -356,6 +364,7 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
                         callOrderBadge +
                         "<span class=\"cred-email\" title=\"" + escapeHTML(displayName) + "\">" + escapeHTML(displayName) + "</span>" +
                         "<span class=\"cred-meta\">" + formatPlanBadge(item.plan_type) + "</span>" +
+                        warmupIcon +
                     "</div>" +
                     "<div class=\"cred-badge-row\">" +
                         "<div class=\"metric-pill metric-pill-priority\">" + (currentLang === "zh-CN" ? "动态优先级: " : "Priority: ") + "<strong>" + priorityDisplay + "</strong></div>" +

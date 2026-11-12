@@ -23,6 +23,9 @@ type ProjectionInput struct {
 	EvidenceByGroup map[config.AntigravityModelGroup]evidence.Result
 	PlanningOptions priority.Options
 	ProjectionTime  time.Time
+	// Warmup carries the global pool toggles and the card-level switches so
+	// every pool snapshot renders the same effective warm-up state.
+	Warmup config.WarmupConfig
 }
 
 // ModelGroupProjection is the projection result exposed to Runtime callers.
@@ -69,6 +72,10 @@ func ProjectModelGroups(input ProjectionInput) (ModelGroupProjection, error) {
 			if qw, ok := quotaWindowsByAuth[authIndex]; ok {
 				snap.Items[index].QuotaWindows = qw
 			}
+			_, overridden := input.Warmup.WarmupOverride(authIndex)
+			isFree := snap.Items[index].PlanType == string(core.PlanTypeFree)
+			snap.Items[index].WarmupOverridden = overridden && !isFree
+			snap.Items[index].WarmupActive = !isFree && warmupEffectiveEnabled(input.Warmup, authIndex, group)
 		}
 		snapshotsByGroup[group] = snap
 	}
@@ -87,6 +94,29 @@ func ProjectModelGroups(input ProjectionInput) (ModelGroupProjection, error) {
 			Groups:     groups,
 		},
 	}, nil
+}
+
+// warmupEnabledForGroup reports whether the global warm-up toggle covers this
+// pool. Argon shares Gemini's physical 5h window, so it follows the Gemini
+// toggle.
+func warmupEnabledForGroup(warmup config.WarmupConfig, group config.AntigravityModelGroup) bool {
+	switch group {
+	case config.AntigravityModelGroupClaudeGPT:
+		return warmup.ClaudeEnabled
+	case config.AntigravityModelGroupGemini, config.AntigravityModelGroupArgon:
+		return warmup.GeminiEnabled
+	default:
+		return false
+	}
+}
+
+// warmupEffectiveEnabled reports the effective warm-up state for one pool:
+// a card-level override wins over the global pool toggle.
+func warmupEffectiveEnabled(warmup config.WarmupConfig, authIndex string, group config.AntigravityModelGroup) bool {
+	if enabled, ok := warmup.WarmupOverride(authIndex); ok {
+		return enabled
+	}
+	return warmupEnabledForGroup(warmup, group)
 }
 
 func filterCooldownsForGroup(cooldowns map[string]time.Time, group config.AntigravityModelGroup) map[string]time.Time {

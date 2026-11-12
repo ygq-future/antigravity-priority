@@ -165,6 +165,7 @@ type Store struct {
 	scheduleConfig  *ScheduleConfig
 	dynamicConfig   *DynamicConfig
 	lastAutoApplyAt time.Time
+	warmupLane      WarmupLane
 	cooldowns       map[string]CooldownEntry
 	requestHistory  []RequestHistoryEntry
 	warmupCompleted map[string]time.Time
@@ -194,12 +195,28 @@ type legacyStateDocument struct {
 	RequestHistory  []RequestHistoryEntry `json:"request_history,omitempty"`
 }
 
+// WarmupLane persists the global gate that spaces reset-triggered 5h warm-ups.
+// NextAt/NextAuth hold the random deadline already drawn for the pool that is
+// first in line, so repeated sweeps cannot re-roll a shorter wait.
+type WarmupLane struct {
+	LastAt   time.Time `json:"last_at,omitzero"`
+	LastAuth string    `json:"last_auth,omitempty"`
+	NextAt   time.Time `json:"next_at,omitzero"`
+	NextAuth string    `json:"next_auth,omitempty"`
+}
+
+// IsZero reports whether no warm-up has been dispatched yet.
+func (l WarmupLane) IsZero() bool {
+	return l.LastAt.IsZero() && l.LastAuth == "" && l.NextAt.IsZero() && l.NextAuth == ""
+}
+
 // runtimeDocument holds low-frequency scheduling configuration.
 type runtimeDocument struct {
 	SchemaVersion   int             `json:"schema_version"`
 	ScheduleConfig  *ScheduleConfig `json:"schedule_config,omitempty"`
 	DynamicConfig   *DynamicConfig  `json:"app_config,omitempty"`
 	LastAutoApplyAt time.Time       `json:"last_auto_apply_at,omitzero"`
+	WarmupLane      *WarmupLane     `json:"warmup_lane,omitempty"`
 }
 
 // runsDocument holds the latest execution result and bounded run history.
@@ -447,6 +464,15 @@ func (s *Store) applyStateDocument(doc legacyStateDocument) {
 func (s *Store) applyRuntimeDocument(doc runtimeDocument) {
 	s.applyConfigDocuments(doc.ScheduleConfig, doc.DynamicConfig)
 	s.lastAutoApplyAt = utcOrZero(doc.LastAutoApplyAt)
+	s.warmupLane = WarmupLane{}
+	if doc.WarmupLane != nil {
+		s.warmupLane = WarmupLane{
+			LastAt:   utcOrZero(doc.WarmupLane.LastAt),
+			LastAuth: doc.WarmupLane.LastAuth,
+			NextAt:   utcOrZero(doc.WarmupLane.NextAt),
+			NextAuth: doc.WarmupLane.NextAuth,
+		}
+	}
 }
 
 func (s *Store) applyRunsDocument(doc runsDocument) {
@@ -526,11 +552,17 @@ func (s *Store) SaveStateAtomic(ctx context.Context) error {
 // SaveRuntimeAtomic writes only scheduling configuration.
 func (s *Store) SaveRuntimeAtomic(ctx context.Context) error {
 	return s.saveDocument(ctx, "runtime cache", s.paths.Runtime, func() any {
+		var lane *WarmupLane
+		if !s.warmupLane.IsZero() {
+			cloned := s.warmupLane
+			lane = &cloned
+		}
 		return runtimeDocument{
 			SchemaVersion:   SchemaVersion,
 			ScheduleConfig:  s.scheduleConfig,
 			DynamicConfig:   s.dynamicConfig,
 			LastAutoApplyAt: s.lastAutoApplyAt,
+			WarmupLane:      lane,
 		}
 	})
 }
@@ -675,6 +707,26 @@ func (s *Store) SetWarmupCompleted(authIndex, modelGroup string, at time.Time) {
 		s.warmupCompleted = make(map[string]time.Time)
 	}
 	s.warmupCompleted[key] = at.UTC()
+}
+
+// ClearWarmupCompleted drops every persisted debounce entry of one credential
+// and reports how many pools were cleared.
+func (s *Store) ClearWarmupCompleted(authIndex string) int {
+	authKey := authIndexKey(authIndex)
+	if authKey == "" {
+		return 0
+	}
+	prefix := authKey + "|model_group="
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cleared := 0
+	for key := range s.warmupCompleted {
+		if key == authKey || strings.HasPrefix(key, prefix) {
+			delete(s.warmupCompleted, key)
+			cleared++
+		}
+	}
+	return cleared
 }
 
 // MarkProbeSuccess records a successful probe, adaptively updates cycle burn rate, and resets errors.
@@ -1097,6 +1149,23 @@ func (s *Store) SetLastAutoApplyAt(at time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.lastAutoApplyAt = utcOrZero(at)
+}
+
+// GetWarmupLane returns the global reset warm-up gate.
+func (s *Store) GetWarmupLane() WarmupLane {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.warmupLane
+}
+
+// SetWarmupLane records the global reset warm-up gate. Persisting the lane
+// keeps the randomized spacing intact across restarts.
+func (s *Store) SetWarmupLane(lane WarmupLane) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	lane.LastAt = utcOrZero(lane.LastAt)
+	lane.NextAt = utcOrZero(lane.NextAt)
+	s.warmupLane = lane
 }
 
 // GetDynamicConfig returns a copy of the persisted dynamic configuration and true if present.
