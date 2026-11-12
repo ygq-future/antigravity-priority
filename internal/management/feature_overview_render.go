@@ -172,7 +172,7 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
 
             rawItems.forEach(function(item) {
                 const eligibility = isModelEligible(item, selectedModel, pool);
-                const isCooldown = Boolean(item.reason && (item.reason.indexOf("rate limit cooldown") >= 0 || item.reason.indexOf("cooldown") >= 0));
+                const isCooldown = Boolean(item.cooldown_until);
                 const targetP = (item.target && item.target.priority !== undefined) ? item.target.priority : (item.priority !== undefined ? item.priority : 0);
                 const isManuallyDisabled = item.reason && item.reason.indexOf("disabled on host") >= 0;
                 const isWeeklyDepleted = (item.target && item.target.disabled && !isManuallyDisabled) || targetP <= -2;
@@ -239,7 +239,7 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
             let renderItems;
             if (!modelInput) {
                 renderItems = rawItems.map(function(item, idx) {
-                    const isCooldown = Boolean(item.reason && (item.reason.indexOf("rate limit cooldown") >= 0 || item.reason.indexOf("cooldown") >= 0));
+                    const isCooldown = Boolean(item.cooldown_until);
                     const targetP = (item.target && item.target.priority !== undefined) ? item.target.priority : (item.priority !== undefined ? item.priority : 0);
                     const isWeeklyDepleted = (item.target && item.target.disabled) || targetP <= -2;
                     const isSoftDepleted = targetP === -1;
@@ -343,7 +343,7 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
                     callOrderBadge = "<span class=\"badge badge-danger\">" + (currentLang === "zh-CN" ? "🚫 耗尽避让" : "🚫 Depleted") + "</span>";
                 }
 
-                const isCooldown = Boolean(item.reason && (item.reason.indexOf("rate limit cooldown") >= 0 || item.reason.indexOf("cooldown") >= 0));
+                const isCooldown = Boolean(item.cooldown_until);
                 const probeFailed = item.reason && (item.reason.indexOf("probe failed") >= 0 || item.reason.indexOf("probe invalid") >= 0);
                 let reasonColorClass = "cred-reason-normal";
                 if (isCooldown) {

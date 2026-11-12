@@ -800,14 +800,15 @@ async function fetchDiagnostics() {}
                         cycle_burn_rate: 0.16
                     },
                     {
-                        auth_index: "cooldown-429",
-                        email: "test-429@example.com",
+                        auth_index: "cooldown-health",
+                        email: "health-cooldown@example.com",
                         warmup_overridden: true,
-                        reason: "probe failed: retrieve quota summary status 429; 429 rate limit cooldown",
+                        reason: "health probe HTTP 404",
+                        cooldown_until: "2026-10-16T08:30:00Z",
                         host: { priority: -1, disabled: false },
                         target: { priority: -1, disabled: false },
-                        r5h: 0.8,
-                        r7d: 0.9,
+                        r5h: 1.0,
+                        r7d: 1.0,
                         urgency: 1.1,
                         cycle_burn_rate: 0.15
                     },
@@ -852,13 +853,16 @@ async function fetchDiagnostics() {}
         throw new Error("card 0 must NOT show the removed stale '历史数据' tag: " + card0HTML);
     }
 
-    // Card 1: health cooldown badge must win over the probe-failed state
+    // Card 1: health probe cooldown must classify as cooldown, not depletion
     const card1HTML = renderedCards[1].innerHTML;
     if (card1HTML.indexOf("badge-warning") < 0) {
-        throw new Error("card 1 should prioritize the cooldown badge over probe failed: " + card1HTML);
+        throw new Error("card 1 should render the cooldown badge from cooldown_until: " + card1HTML);
     }
-    if (card1HTML.indexOf("探测失败: retrieve quota summary status 429") < 0) {
-        throw new Error("card 1 reason line should display failure cause: " + card1HTML);
+    if (card1HTML.indexOf("健康冷却避让") < 0) {
+        throw new Error("card 1 should be labeled as health cooldown: " + card1HTML);
+    }
+    if (card1HTML.indexOf("health probe HTTP 404") < 0) {
+        throw new Error("card 1 reason line should display the health probe failure: " + card1HTML);
     }
     if (card0HTML.indexOf("cred-warmup-icon is-on") < 0) {
         throw new Error("card 0 should render the warm-up icon lit: " + card0HTML);

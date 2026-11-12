@@ -52,6 +52,7 @@ type SnapshotItem struct {
 	Host                  Target           `json:"host"`
 	Target                Target           `json:"target"`
 	Reason                string           `json:"reason"`
+	CooldownUntil         *time.Time       `json:"cooldown_until,omitempty"`
 	IsBoosted             bool             `json:"is_boosted"`
 	CustomTier            int              `json:"custom_tier,omitempty"`
 	WarmupOverridden      bool             `json:"warmup_overridden,omitempty"`
@@ -133,6 +134,7 @@ func snapshotItem(item priority.PlanItem) SnapshotItem {
 		Host:                 hostState(credential.Priority, credential.PriorityMissing, credential.Disabled),
 		Target:               target(item.Priority, item.Disabled),
 		Reason:               redactString(item.Reason),
+		CooldownUntil:        item.CooldownUntil,
 		IsBoosted:            item.IsBoosted,
 		CustomTier:           item.CustomTier,
 		Urgency:              item.Urgency,

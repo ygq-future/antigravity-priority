@@ -310,7 +310,8 @@ const sampleSnapshot = {
                     email: "cooling-d@example.com",
                     plan_type: "pro",
                     is_boosted: false,
-                    reason: "429 rate limit cooldown",
+                    reason: "health probe HTTP 404",
+                    cooldown_until: "2026-11-05T18:05:00Z",
                     target: { priority: -1, disabled: false },
                     host: { priority: -1, disabled: false },
                     quota_windows: {

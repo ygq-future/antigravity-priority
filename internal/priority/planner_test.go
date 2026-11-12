@@ -171,7 +171,7 @@ func TestPlanFreshOnly(t *testing.T) {
 		}
 	})
 
-	t.Run("429 rate limit cooldown sets priority to -1 while keeping disabled false", func(t *testing.T) {
+	t.Run("pool cooldown sets priority to -1 while keeping disabled false", func(t *testing.T) {
 		creds := []core.Credential{
 			{AuthIndex: "acc-healthy", Priority: 50, Disabled: false},
 			{AuthIndex: "acc-cooldown", Priority: 50, Disabled: false},
@@ -186,8 +186,12 @@ func TestPlanFreshOnly(t *testing.T) {
 		}
 
 		opts := defaultOptions
+		cooldownUntil := now.Add(5 * time.Minute)
 		opts.CooldownAuthIndexes = map[string]time.Time{
-			"acc-cooldown": now.Add(5 * time.Minute),
+			"acc-cooldown": cooldownUntil,
+		}
+		opts.CooldownReasons = map[string]string{
+			"acc-cooldown": "health probe HTTP 404",
 		}
 
 		plan := planFreshOnly(creds, evidence, opts)
@@ -205,8 +209,14 @@ func TestPlanFreshOnly(t *testing.T) {
 		if itemMap["acc-cooldown"].Disabled {
 			t.Errorf("cooldown account should NOT be disabled, got Disabled=true")
 		}
-		if itemMap["acc-cooldown"].Reason != "429 rate limit cooldown" {
-			t.Errorf("cooldown reason = %q; want '429 rate limit cooldown'", itemMap["acc-cooldown"].Reason)
+		if itemMap["acc-cooldown"].Reason != "health probe HTTP 404" {
+			t.Errorf("cooldown reason = %q; want 'health probe HTTP 404'", itemMap["acc-cooldown"].Reason)
+		}
+		if itemMap["acc-cooldown"].CooldownUntil == nil || !itemMap["acc-cooldown"].CooldownUntil.Equal(cooldownUntil) {
+			t.Errorf("cooldown deadline = %v; want %v", itemMap["acc-cooldown"].CooldownUntil, cooldownUntil)
+		}
+		if itemMap["acc-healthy"].CooldownUntil != nil {
+			t.Errorf("healthy account should not carry a cooldown deadline, got %v", itemMap["acc-healthy"].CooldownUntil)
 		}
 	})
 

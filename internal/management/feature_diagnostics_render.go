@@ -102,7 +102,7 @@ const templateScriptDiagnostics = `        let latestDiagnostics = null;
         }
 
         function diagIsCooldown(item) {
-            return String((item && item.reason) || "").toLowerCase().indexOf("cooldown") >= 0;
+            return Boolean(item && item.cooldown_until);
         }
 
         function diagDecision(item) {

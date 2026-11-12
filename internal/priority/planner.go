@@ -96,6 +96,7 @@ type PlanItem struct {
 	ArgonWindowResetAt   *time.Time
 	ArgonWindowRemaining *int64
 	Reason               string
+	CooldownUntil        *time.Time
 	IsBoosted            bool
 	Urgency              float64
 	R7d                  float64
@@ -293,10 +294,13 @@ func planPositive(items []PlanItem, options Options) {
 		if item.Disabled || !item.hasQuotaEvidence || item.quotaState != quotaStateHealthy {
 			continue
 		}
-		// Check 429 Cooldown
+		// Active pool cooldown outranks quota: the credential must not serve this pool
+		// until the health probe or a successful request clears the cooldown.
 		if cooldownUntil, inCooldown := options.CooldownAuthIndexes[item.Credential.AuthIndex]; inCooldown && options.Now.Before(cooldownUntil) {
+			until := cooldownUntil.UTC()
 			items[index].Priority = DepletedPriority
 			items[index].Disabled = false
+			items[index].CooldownUntil = &until
 			reason := Reason429Cooldown
 			if specific := options.CooldownReasons[item.Credential.AuthIndex]; specific != "" {
 				reason = specific

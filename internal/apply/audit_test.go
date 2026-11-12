@@ -151,6 +151,41 @@ func TestRedactedErrors(t *testing.T) {
 	}
 }
 
+func TestSnapshot_ExposesCooldownDeadline(t *testing.T) {
+	until := time.Date(2026, 11, 12, 6, 30, 0, 0, time.UTC)
+	plan := priority.Plan{
+		Items: []priority.PlanItem{
+			{
+				Credential:    core.Credential{AuthIndex: "idx-cool", Provider: core.ProviderAntigravity},
+				Priority:      -1,
+				Reason:        "health probe HTTP 404",
+				CooldownUntil: &until,
+			},
+			{
+				Credential: core.Credential{AuthIndex: "idx-active", Provider: core.ProviderAntigravity},
+				Priority:   100,
+				Reason:     "fresh remaining positive",
+			},
+		},
+	}
+
+	snapshot := apply.Snapshot(plan)
+	if snapshot.Items[0].CooldownUntil == nil || !snapshot.Items[0].CooldownUntil.Equal(until) {
+		t.Fatalf("snapshot cooldown deadline = %v; want %v", snapshot.Items[0].CooldownUntil, until)
+	}
+	if snapshot.Items[1].CooldownUntil != nil {
+		t.Fatalf("active snapshot item must not carry a cooldown deadline: %v", snapshot.Items[1].CooldownUntil)
+	}
+
+	encoded, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatalf("marshal snapshot: %v", err)
+	}
+	if !strings.Contains(string(encoded), `"cooldown_until":"2026-11-12T06:30:00Z"`) {
+		t.Fatalf("snapshot JSON is missing the cooldown deadline: %s", encoded)
+	}
+}
+
 func TestSnapshot_PriorityMissing_Preservation(t *testing.T) {
 	plan := priority.Plan{
 		Items: []priority.PlanItem{
