@@ -62,21 +62,21 @@ _Avoid_: Margin of error, floating threshold, priority gap
 ### Quota Depletion & Cooldown States
 
 **Host Transition**:
-A deliberate change to one credential's persisted priority and/or disabled state in CPA Host, limited to 429 Reactive Cooldown and explicit priority reset. Scheduling plans never write to the Host; they only drive in-memory routing and display. All target fields belong to one transition outcome, whose success is determined by the resulting credential state rather than request completion alone.
+A deliberate change to one credential's persisted priority and/or disabled state in CPA Host, limited solely to explicit user-triggered priority reset (`ResetAllPriorities`). Scheduling plans and health/cooldown state transitions never write to the Host; they only drive in-memory routing and display. All target fields belong to one transition outcome, whose success is determined by the resulting credential state rather than request completion alone.
 _Avoid_: Host write, patch operation, mutation
 
 **Pool-Scoped 429 Reactive Cooldown (Circuit Breaker)**:
-Temporarily demoting an account's priority to `-1` for a specific quota pool upon encountering an upstream Google 429 Rate Limit error for a configurable duration (default 5 minutes), isolating the credential into that pool's fallback tier while preserving its enabled state and allowing other pools on the same account to continue serving traffic uninterrupted. Cooldown expiry enters the exponential-backoff probe queue; priority restores after a successful probe or a successful same-pool request.
+Temporarily demoting an account's in-memory routing score to `-1` for a specific quota pool upon encountering an upstream Google 429 Rate Limit error for a configurable duration (default 5 minutes), isolating the credential into that pool's fallback tier without modifying Host credential files and allowing other pools on the same account to continue serving traffic uninterrupted. Cooldown expiry enters the exponential-backoff probe queue; routing score restores after a successful probe or a successful same-pool request.
 _Avoid_: Global account ban, indiscriminate multi-pool disable
 
 **Credential Health Failover**:
-Classifying upstream failures by scope and cause — 401 and 403 as account-level quarantine (credential failure with immediate soft demotion and no retry probes), 5xx as pool-scoped transient cooldown, and 429 as pool-scoped rate-limit cooldown — and demoting only the affected routing score to `-1` while preserving the configured tier. 401/403 are quarantined without active refresh; 429/5xx enter an exponential-backoff probe queue that reuses the warmup generation request, and one successful probe restores the original tier.
+Classifying upstream failures by scope and cause — 401 and 403 as account-level quarantine (credential failure with immediate in-memory soft demotion and no retry probes), 5xx as pool-scoped transient cooldown, and 429 as pool-scoped rate-limit cooldown — and demoting only the affected in-memory routing score to `-1` while leaving Host files untouched. 401/403 are quarantined without active refresh; 429/5xx enter an exponential-backoff probe queue that reuses the warmup generation request, and one successful probe restores the original routing tier.
 _Avoid_: Global account ban, unconditional refresh storm, permanent tier rewrite
 
 **Soft Depletion**:
-Setting priority to `-1` while maintaining `disabled = false` when the 5-hour short window is exhausted ($R_{\text{5h}} \le 0$), enabling automatic self-healing upon the 5-hour reset.
+Setting the in-memory routing score to `-1` while leaving `disabled = false` untouched on the Host when the 5-hour short window is exhausted ($R_{\text{5h}} \le 0$), enabling automatic self-healing upon the 5-hour reset.
 _Avoid_: Temporary ban, mute, hard disable
 
 **Hard Depletion**:
-Setting priority to `-1` while leaving `disabled` unchanged when the 7-day weekly quota is completely exhausted ($R_{\text{7d}} \le 0$); the credential recovers automatically when the weekly window resets or fresh evidence shows remaining quota.
+Setting the in-memory routing score to `-1` while leaving Host `disabled` unchanged when the 7-day weekly quota is completely exhausted ($R_{\text{7d}} \le 0$); the credential recovers automatically when the weekly window resets or fresh evidence shows remaining quota.
 _Avoid_: Account ban, credential deletion, permanent lockout, host-level disable

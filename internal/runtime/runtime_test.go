@@ -2199,15 +2199,15 @@ func TestRuntime_UsageHandle_429Cooldown(t *testing.T) {
 		t.Fatalf("expected repeated usage event to confirm cooldown, got %s", string(resBytes))
 	}
 
-	// 2. Verify priority was immediately patched to -1
+	// 2. Verify host auth file priority was NOT mutated
 	updatedData, err := os.ReadFile(authFilePath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var updatedMap map[string]any
 	_ = json.Unmarshal(updatedData, &updatedMap)
-	if updatedMap["priority"] != float64(-1) {
-		t.Errorf("expected priority to be patched to -1 on 429, got %v", updatedMap["priority"])
+	if updatedMap["priority"] != float64(100) {
+		t.Errorf("expected host priority to remain untouched at 100 on 429, got %v", updatedMap["priority"])
 	}
 
 	// 3. Verify cooldown persisted in store
@@ -2267,30 +2267,36 @@ func TestRuntime_UsageHandle_429Cooldown(t *testing.T) {
 	_ = r.Handle(context.Background(), runtime.MethodUsageHandle, []byte(`{"Provider":"antigravity","AuthIndex":"auth_429","Failed":false}`))
 	deadline := time.Now().Add(time.Second)
 	for {
-		restoredData, readErr := os.ReadFile(authFilePath)
-		if readErr != nil {
-			t.Fatal(readErr)
-		}
-		var restored map[string]any
-		_ = json.Unmarshal(restoredData, &restored)
-		if restored["priority"] == float64(100) {
+		reloaded, loadErr := state.Load(context.Background(), cachePath)
+		if loadErr == nil && len(reloaded.GetCooldowns()) == 0 {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("cooldown expiry did not restore previous priority: %s", restoredData)
+			t.Fatalf("cooldown expiry did not clear persisted cooldown")
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	reloaded, err = state.Load(context.Background(), cachePath)
-	if err != nil {
-		t.Fatal(err)
+	restoredData, readErr := os.ReadFile(authFilePath)
+	if readErr != nil {
+		t.Fatal(readErr)
 	}
-	if _, exists := reloaded.GetCooldowns()["auth_429"]; exists {
-		t.Fatal("completed cooldown transaction was not removed")
+	var restored map[string]any
+	_ = json.Unmarshal(restoredData, &restored)
+	if restored["priority"] != float64(100) {
+		t.Fatalf("host priority was unexpectedly modified during cooldown lifecycle: %s", restoredData)
+	}
+	diag, err = r.Diagnostics(context.Background())
+	if err != nil {
+		t.Fatalf("diagnostics failed: %v", err)
+	}
+	history = diag["run_history"].([]runtime.RunHistoryEntry)
+	if len(history) == 0 || history[0].Kind != runtime.KindCooldownRecovery {
+		t.Fatalf("expected cooldown recovery audit record, got %#v", history)
 	}
 }
 
 func TestRuntime_UsageSuccessCancelsPending429(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
 	authFilePath := filepath.Join(t.TempDir(), "auth.json")
 	if err := os.WriteFile(authFilePath, []byte(`{"priority":100,"disabled":false}`), 0o600); err != nil {
 		t.Fatal(err)
@@ -2298,18 +2304,28 @@ func TestRuntime_UsageSuccessCancelsPending429(t *testing.T) {
 	mock := newMockHost()
 	mock.files = []host.AuthFile{{Name: "account", AuthIndex: "auth", Provider: "antigravity", Priority: 100}}
 	mock.authDocs["auth"] = host.AuthDocument{AuthIndex: "auth", Path: authFilePath}
-	r := newTestRuntime(t, runtime.Options{Host: mock})
+	r := newTestRuntime(t, runtime.Options{Host: mock, StateCachePath: cachePath})
+	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
+		t.Fatal(err)
+	}
 	failurePayload := []byte(`{"Provider":"antigravity","AuthIndex":"auth","Failed":true,"Failure":{"StatusCode":429}}`)
 	successPayload := []byte(`{"Provider":"antigravity","AuthIndex":"auth","Failed":false}`)
 	_ = r.Handle(context.Background(), runtime.MethodUsageHandle, failurePayload)
 	_ = r.Handle(context.Background(), runtime.MethodUsageHandle, successPayload)
 	_ = r.Handle(context.Background(), runtime.MethodUsageHandle, failurePayload)
+	store, err := state.Load(context.Background(), cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(store.GetCooldowns()) != 0 {
+		t.Fatalf("transient 429 was not cancelled by a successful request: %#v", store.GetCooldowns())
+	}
 	document, err := os.ReadFile(authFilePath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(document), `"priority":-1`) {
-		t.Fatalf("transient 429 was not cancelled by a successful request: %s", document)
+	if !strings.Contains(string(document), `"priority":100`) {
+		t.Fatalf("host priority changed unexpectedly: %s", document)
 	}
 }
 
@@ -2332,12 +2348,19 @@ func TestRuntime_SameModelSuccessRestoresActiveCooldownImmediately(t *testing.T)
 
 	// A success from another model group does not prove that Gemini recovered.
 	_ = r.Handle(context.Background(), runtime.MethodUsageHandle, []byte(`{"Provider":"antigravity","Model":"claude-opus-4-6-thinking","AuthIndex":"auth","Failed":false}`))
+	store, err := state.Load(context.Background(), cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := store.GetCooldowns()[state.CooldownKey("auth", "gemini")]; !exists {
+		t.Fatalf("cross-group success incorrectly ended gemini cooldown: %#v", store.GetCooldowns())
+	}
 	document, err := os.ReadFile(authFilePath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(document), `"priority":-1`) {
-		t.Fatalf("cross-group success incorrectly ended cooldown: %s", document)
+	if !strings.Contains(string(document), `"priority":999`) {
+		t.Fatalf("host priority mutated unexpectedly: %s", document)
 	}
 
 	response := r.Handle(context.Background(), runtime.MethodUsageHandle, []byte(`{"Provider":"antigravity","Model":"gemini-3.7-flash-high","AuthIndex":"auth","Failed":false}`))
@@ -2350,13 +2373,13 @@ func TestRuntime_SameModelSuccessRestoresActiveCooldownImmediately(t *testing.T)
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(document), `"priority":999`) {
-		t.Fatalf("same-group success did not restore prior priority: %s", document)
+		t.Fatalf("host priority mutated unexpectedly after recovery: %s", document)
 	}
-	store, err := state.Load(context.Background(), cachePath)
+	store, err = state.Load(context.Background(), cachePath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, exists := store.GetCooldowns()["auth"]; exists {
+	if _, exists := store.GetCooldowns()[state.CooldownKey("auth", "gemini")]; exists {
 		t.Fatal("successful recovery left an active cooldown record")
 	}
 }
@@ -2437,18 +2460,30 @@ func TestRuntime_Probe429TriggersCooldown(t *testing.T) {
 	if err := json.Unmarshal(document, &stateAfter); err != nil {
 		t.Fatal(err)
 	}
-	if stateAfter.Priority != -1 {
-		t.Fatalf("probe 429 did not apply cooldown: %s", document)
+	if stateAfter.Priority != 100 {
+		t.Fatalf("host priority mutated unexpectedly: %s", document)
+	}
+	store, err := state.Load(context.Background(), cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := store.GetCooldowns()[state.CooldownKey("auth-probe-429", "claude_gpt")]; !exists {
+		t.Fatalf("probe 429 did not record cooldown: %#v", store.GetCooldowns())
 	}
 }
 
 func TestRuntime_UsageHandle_429FailureIsReportedAndAudited(t *testing.T) {
-	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	tempDir := t.TempDir()
+	cachePath := filepath.Join(tempDir, "cache.json")
 	mock := newMockHost()
 	mock.files = []host.AuthFile{{Name: "broken", AuthIndex: "auth-broken", Provider: "antigravity", Priority: 100}}
-	mock.authDocs["auth-broken"] = host.AuthDocument{AuthIndex: "auth-broken", Path: filepath.Join(t.TempDir(), "missing", "auth.json")}
 	r := newTestRuntime(t, runtime.Options{Host: mock, Clock: &testClock{now: time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)}})
 	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
+		t.Fatal(err)
+	}
+	// Replace cachePath with a directory so SaveStateAtomic fails when recording cooldown state.
+	_ = os.Remove(cachePath)
+	if err := os.Mkdir(cachePath, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	var envelope runtime.Envelope
@@ -2525,8 +2560,15 @@ func TestRuntime_UsageHandle_429WaitsForSingleFlightBoundary(t *testing.T) {
 	if err := json.Unmarshal(finalDocument, &finalState); err != nil {
 		t.Fatal(err)
 	}
-	if finalState.Priority != -1 || finalState.Disabled {
-		t.Fatalf("final Host state is not deterministic cooldown state: %s", finalDocument)
+	if finalState.Priority != 50 || finalState.Disabled {
+		t.Fatalf("final Host state was modified unexpectedly: %s", finalDocument)
+	}
+	store, err := state.Load(context.Background(), cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := store.GetCooldowns()[state.CooldownKey("auth-serial", "gemini")]; !exists {
+		t.Fatalf("429 cooldown was not recorded after single-flight boundary: %#v", store.GetCooldowns())
 	}
 }
 
@@ -2567,8 +2609,15 @@ func TestRuntime_MultiAccountRoundRobinConsecutive429(t *testing.T) {
 	// Step 3: Round-robin returns to Account A after 45s, and it encounters 429 again (strike 2)
 	_ = r.Handle(context.Background(), runtime.MethodUsageHandle, []byte(`{"Provider":"antigravity","AuthIndex":"auth_a","Failed":true,"Failure":{"StatusCode":429}}`))
 	docA, _ = os.ReadFile(authPathA)
-	if !strings.Contains(string(docA), `"priority":-1`) {
-		t.Fatalf("second consecutive 429 after 45s across round-robin must trigger cooldown: %s", docA)
+	if !strings.Contains(string(docA), `"priority":100`) {
+		t.Fatalf("host priority mutated unexpectedly: %s", docA)
+	}
+	store, err := state.Load(context.Background(), cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := store.GetCooldowns()[state.CooldownKey("auth_a", "gemini")]; !exists {
+		t.Fatalf("second consecutive 429 after 45s across round-robin must trigger cooldown: %#v", store.GetCooldowns())
 	}
 }
 
@@ -2583,22 +2632,41 @@ func TestRuntime_429CooldownUpdatesLatestSnapshotInPlace(t *testing.T) {
 		{Name: "account", AuthIndex: "auth_snap", Provider: "antigravity", Priority: 100},
 	}
 	mock.authDocs["auth_snap"] = host.AuthDocument{AuthIndex: "auth_snap", Path: authPath}
-	mock.httpResponse = host.HTTPResponse{
-		StatusCode: 200,
-		Body:       []byte(`{"userQuotaConfigs":[{"userQuotaSummary":{"windowQuotas":[{"windowType":"USER_QUOTA_WINDOW_TYPE_5_HOUR","remainingQuota":100},{"windowType":"USER_QUOTA_WINDOW_TYPE_WEEKLY","remainingQuota":100}]}}]}`),
+	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	seedStore, err := state.Load(context.Background(), cachePath)
+	if err != nil {
+		t.Fatal(err)
 	}
-	r := newTestRuntime(t, runtime.Options{Host: mock})
+	rem80 := int64(80)
+	if err := seedStore.MarkProbeSuccess(context.Background(), state.ProbeSuccess{
+		AuthIndex:            "auth_snap",
+		Provider:             core.ProviderAntigravity,
+		ModelGroup:           "gemini",
+		ObservedAt:           now,
+		ShortWindowResetAt:   now.Add(4 * time.Hour),
+		ShortWindowRemaining: &rem80,
+		LongWindowResetAt:    now.Add(72 * time.Hour),
+		LongWindowRemaining:  &rem80,
+		PlanType:             core.PlanTypePro,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := seedStore.SaveAtomic(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	r := newTestRuntime(t, runtime.Options{Host: mock, Clock: &testClock{now: now}, StateCachePath: cachePath})
 	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
 		t.Fatal(err)
 	}
 
-	// Prime initial snapshot
+	// Prime initial snapshot from cached quota evidence
 	snap, err := r.SyncHost(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(snap.Groups["gemini"].Items) != 1 || snap.Groups["gemini"].Items[0].Host.Priority != 100 {
-		t.Fatalf("initial snapshot = %+v, want priority 100", snap)
+	if len(snap.Groups["gemini"].Items) != 1 || snap.Groups["gemini"].Items[0].Host.Priority != 100 || snap.Groups["gemini"].Items[0].Target.Priority != 100 {
+		t.Fatalf("initial snapshot = %+v, want host/target priority 100/100", snap)
 	}
 
 	// Trigger 2 consecutive 429s on auth_snap
@@ -2614,22 +2682,25 @@ func TestRuntime_429CooldownUpdatesLatestSnapshotInPlace(t *testing.T) {
 	if len(geminiItems) != 1 {
 		t.Fatalf("items count = %d, want 1", len(geminiItems))
 	}
-	if geminiItems[0].Host.Priority != -1 || geminiItems[0].Target.Priority != -1 {
-		t.Fatalf("in-place snapshot priority = %d/%d, want -1/-1", geminiItems[0].Host.Priority, geminiItems[0].Target.Priority)
+	if geminiItems[0].Host.Priority != 100 {
+		t.Fatalf("in-place snapshot host priority = %d, want untouched 100", geminiItems[0].Host.Priority)
+	}
+	if geminiItems[0].Target.Priority != -1 || geminiItems[0].CooldownUntil == nil {
+		t.Fatalf("in-place snapshot target = %+v, want priority -1 with cooldown_until", geminiItems[0])
 	}
 	if !strings.Contains(geminiItems[0].Reason, "429") {
 		t.Fatalf("in-place snapshot reason = %q, want 429 cooldown", geminiItems[0].Reason)
 	}
 
-	// Send success and verify snapshot restores priority in-place
+	// Send success and verify snapshot restores target priority in-place
 	_ = r.Handle(context.Background(), runtime.MethodUsageHandle, []byte(`{"Provider":"antigravity","Model":"gemini-3.7-flash","AuthIndex":"auth_snap","Failed":false}`))
 	recovered, err := r.LatestSnapshot(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	recoveredItems := recovered.Groups["gemini"].Items
-	if recoveredItems[0].Host.Priority != 100 || recoveredItems[0].Target.Priority != 100 {
-		t.Fatalf("in-place recovered priority = %d/%d, want 100/100", recoveredItems[0].Host.Priority, recoveredItems[0].Target.Priority)
+	if recoveredItems[0].Host.Priority != 100 || recoveredItems[0].Target.Priority != 100 || recoveredItems[0].CooldownUntil != nil {
+		t.Fatalf("in-place recovered item = %+v, want host/target 100/100 and nil cooldown_until", recoveredItems[0])
 	}
 }
 
@@ -2654,8 +2725,15 @@ func TestRuntime_UsageHandle_ProviderAliases(t *testing.T) {
 	_ = r.Handle(context.Background(), runtime.MethodUsageHandle, []byte(`{"Provider":"google","Model":"gemini-3.7-flash","AuthIndex":"auth_alias","Failed":true,"Failure":{"StatusCode":429}}`))
 
 	doc, _ := os.ReadFile(authPath)
-	if !strings.Contains(string(doc), `"priority":-1`) {
-		t.Fatalf("usage events with provider aliases 'gemini' and 'google' should trigger cooldown: %s", doc)
+	if !strings.Contains(string(doc), `"priority":100`) {
+		t.Fatalf("host priority mutated unexpectedly: %s", doc)
+	}
+	store, err := state.Load(context.Background(), cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := store.GetCooldowns()[state.CooldownKey("auth_alias", "gemini")]; !exists {
+		t.Fatalf("usage events with provider aliases 'gemini' and 'google' should trigger cooldown: %#v", store.GetCooldowns())
 	}
 }
 

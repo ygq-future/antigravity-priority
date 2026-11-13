@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"antigravity-priority/internal/apply"
-	"antigravity-priority/internal/core"
 	"antigravity-priority/internal/host"
 )
 
@@ -217,26 +216,3 @@ func TestHostTransition_SetUnsetAndCancellationSemantics(t *testing.T) {
 	}
 }
 
-func TestCooldownRecoveryIntentRestoresPriorityWithoutTouchingDisabled(t *testing.T) {
-	credential := core.Credential{AuthIndex: "idx-1", Name: "credential-idx-1", Priority: -1}
-	for _, testCase := range []struct {
-		name            string
-		priority        int
-		priorityMissing bool
-		wantOperation   apply.FieldOperation
-		wantValue       int
-	}{
-		{name: "set captured priority", priority: 42, wantOperation: apply.FieldSet, wantValue: 42},
-		{name: "unset missing priority", priorityMissing: true, wantOperation: apply.FieldUnset},
-	} {
-		t.Run(testCase.name, func(t *testing.T) {
-			intent := apply.CooldownRecoveryIntent(credential, testCase.priority, testCase.priorityMissing, "cooldown recovered")
-			if intent.Target.Priority.Operation != testCase.wantOperation || intent.Target.Priority.Value != testCase.wantValue {
-				t.Fatalf("unexpected priority target: %#v", intent.Target.Priority)
-			}
-			if intent.Target.Disabled.Operation != apply.FieldUnchanged {
-				t.Fatalf("recovery must leave disabled unchanged: %#v", intent.Target.Disabled)
-			}
-		})
-	}
-}

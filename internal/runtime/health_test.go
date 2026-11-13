@@ -110,15 +110,25 @@ func TestHealth_429CooldownsArePoolScoped(t *testing.T) {
 	if _, ok := entries[claudeKey]; !ok {
 		t.Fatalf("claude cooldown was suppressed by gemini cooldown: %#v", entries)
 	}
-	if got := readPriority(t, paths["idx-a"]); got != -1 {
-		t.Fatalf("host priority = %d; want -1", got)
+	if got := readPriority(t, paths["idx-a"]); got != 100 {
+		t.Fatalf("host priority = %d; want untouched 100", got)
 	}
 }
 
 func TestHealth_401DemotesAccountWithoutProbe(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
-	r, _, mock, cachePath, paths := newHealthRuntime(t, now, "idx-a")
+	r, _, mock, cachePath, paths := newHealthRuntime(t, now, "idx-a", "idx-b")
+	if _, err := r.SyncHost(ctx); err != nil {
+		t.Fatal(err)
+	}
+	seedHealthEvidence(t, ctx, cachePath, now, "idx-a", "idx-b")
+	if err := r.SetCustomTier(ctx, "idx-a", 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.SetCustomTier(ctx, "idx-b", 2); err != nil {
+		t.Fatal(err)
+	}
 
 	mustOK(t, r.Handle(ctx, runtime.MethodUsageHandle, usageFailurePayload("idx-a", "gemini-3.8-flash-high", http.StatusUnauthorized)))
 
@@ -133,11 +143,14 @@ func TestHealth_401DemotesAccountWithoutProbe(t *testing.T) {
 	if entry.FailureKind != state.FailureUnauthorized || entry.ProbeEnabled {
 		t.Fatalf("401 entry = %#v; want unauthorized without probe", entry)
 	}
-	if got := readPriority(t, paths["idx-a"]); got != -1 {
-		t.Fatalf("host priority = %d; want -1", got)
+	if got := readPriority(t, paths["idx-a"]); got != 100 {
+		t.Fatalf("host priority = %d; want untouched 100", got)
 	}
 	if len(mock.httpCalls) != 0 {
 		t.Fatalf("401 must not trigger an active refresh/probe, got %d HTTP calls", len(mock.httpCalls))
+	}
+	if got := pickModel(t, r, "gemini-3.8-flash-high"); got != "account-b" {
+		t.Fatalf("401 failed over to %q; want account-b", got)
 	}
 
 	mustOK(t, r.Handle(ctx, runtime.MethodUsageHandle, usageSuccessPayload("idx-a", "gemini-3.8-flash-high")))
@@ -149,7 +162,10 @@ func TestHealth_401DemotesAccountWithoutProbe(t *testing.T) {
 		t.Fatalf("successful request did not clear 401 quarantine: %#v", store.GetCooldowns())
 	}
 	if got := readPriority(t, paths["idx-a"]); got != 100 {
-		t.Fatalf("host priority = %d; want restored 100", got)
+		t.Fatalf("host priority = %d; want untouched 100", got)
+	}
+	if got := pickModel(t, r, "gemini-3.8-flash-high"); got != "account-a" {
+		t.Fatalf("recovered account picked %q; want account-a", got)
 	}
 }
 
@@ -181,8 +197,8 @@ func TestHealth_403DemotesAccountWithoutProbe(t *testing.T) {
 	if entry.FailureKind != state.FailureForbidden || entry.ProbeEnabled {
 		t.Fatalf("403 entry = %#v; want forbidden without probe", entry)
 	}
-	if got := readPriority(t, paths["idx-a"]); got != -1 {
-		t.Fatalf("host priority = %d; want -1", got)
+	if got := readPriority(t, paths["idx-a"]); got != 100 {
+		t.Fatalf("host priority = %d; want untouched 100", got)
 	}
 	if len(mock.httpCalls) != 0 {
 		t.Fatalf("403 must not trigger an active refresh/probe, got %d HTTP calls", len(mock.httpCalls))
@@ -206,7 +222,10 @@ func TestHealth_403DemotesAccountWithoutProbe(t *testing.T) {
 		t.Fatalf("successful request did not clear 403 quarantine: %#v", store.GetCooldowns())
 	}
 	if got := readPriority(t, paths["idx-a"]); got != 100 {
-		t.Fatalf("host priority = %d; want restored 100", got)
+		t.Fatalf("host priority = %d; want untouched 100", got)
+	}
+	if got := pickModel(t, r, "gemini-3.8-flash-high"); got != "account-a" {
+		t.Fatalf("recovered account picked %q; want account-a", got)
 	}
 }
 
@@ -218,8 +237,8 @@ func TestHealth_Probe403EscalatesToAccountQuarantineWithoutRetry(t *testing.T) {
 
 	// Trigger 5xx to start probe backoff
 	mustOK(t, r.Handle(ctx, runtime.MethodUsageHandle, usageFailurePayload("idx-a", "gemini-3.8-flash-high", http.StatusServiceUnavailable)))
-	if got := readPriority(t, paths["idx-a"]); got != -1 {
-		t.Fatalf("host priority = %d; want -1", got)
+	if got := readPriority(t, paths["idx-a"]); got != 100 {
+		t.Fatalf("host priority = %d; want untouched 100", got)
 	}
 
 	store, err := state.Load(ctx, cachePath)
@@ -274,8 +293,8 @@ func TestHealth_5xxDemotesPoolAndFailsOver(t *testing.T) {
 	if got := pickModel(t, r, "gemini-3.8-flash-high"); got != "account-b" {
 		t.Fatalf("5xx failover picked %q; want account-b", got)
 	}
-	if got := readPriority(t, paths["idx-a"]); got != -1 {
-		t.Fatalf("host priority = %d; want -1", got)
+	if got := readPriority(t, paths["idx-a"]); got != 100 {
+		t.Fatalf("host priority = %d; want untouched 100", got)
 	}
 }
 
@@ -298,10 +317,20 @@ func TestHealth_499IsIgnored(t *testing.T) {
 	}
 }
 
-func TestHealth_NestedCooldownsRestoreOnlyAfterLastRecovery(t *testing.T) {
+func TestHealth_NestedCooldownsRestorePerPoolIndependently(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
-	r, _, _, cachePath, paths := newHealthRuntime(t, now, "idx-a")
+	r, _, _, cachePath, paths := newHealthRuntime(t, now, "idx-a", "idx-b")
+	if _, err := r.SyncHost(ctx); err != nil {
+		t.Fatal(err)
+	}
+	seedHealthEvidence(t, ctx, cachePath, now, "idx-a", "idx-b")
+	if err := r.SetCustomTier(ctx, "idx-a", 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.SetCustomTier(ctx, "idx-b", 2); err != nil {
+		t.Fatal(err)
+	}
 
 	for range 2 {
 		mustOK(t, r.Handle(ctx, runtime.MethodUsageHandle, usageFailurePayload("idx-a", "gemini-3.8-flash-high", http.StatusTooManyRequests)))
@@ -309,8 +338,14 @@ func TestHealth_NestedCooldownsRestoreOnlyAfterLastRecovery(t *testing.T) {
 	for range 2 {
 		mustOK(t, r.Handle(ctx, runtime.MethodUsageHandle, usageFailurePayload("idx-a", "claude-sonnet-5-5-high", http.StatusTooManyRequests)))
 	}
-	if got := readPriority(t, paths["idx-a"]); got != -1 {
-		t.Fatalf("host priority = %d; want -1", got)
+	if got := readPriority(t, paths["idx-a"]); got != 100 {
+		t.Fatalf("host priority = %d; want untouched 100", got)
+	}
+	if got := pickModel(t, r, "gemini-3.8-flash-high"); got != "account-b" {
+		t.Fatalf("cooling gemini picked %q; want account-b", got)
+	}
+	if got := pickModel(t, r, "claude-sonnet-5-5-high"); got != "account-b" {
+		t.Fatalf("cooling claude picked %q; want account-b", got)
 	}
 
 	mustOK(t, r.Handle(ctx, runtime.MethodUsageHandle, usageSuccessPayload("idx-a", "gemini-3.8-flash-high")))
@@ -324,8 +359,11 @@ func TestHealth_NestedCooldownsRestoreOnlyAfterLastRecovery(t *testing.T) {
 	if _, ok := store.GetCooldowns()[state.CooldownKey("idx-a", "claude_gpt")]; !ok {
 		t.Fatalf("claude cooldown was cleared by gemini success: %#v", store.GetCooldowns())
 	}
-	if got := readPriority(t, paths["idx-a"]); got != -1 {
-		t.Fatalf("host priority = %d after partial recovery; want -1", got)
+	if got := pickModel(t, r, "gemini-3.8-flash-high"); got != "account-a" {
+		t.Fatalf("recovered gemini picked %q; want account-a", got)
+	}
+	if got := pickModel(t, r, "claude-sonnet-5-5-high"); got != "account-b" {
+		t.Fatalf("still-cooling claude picked %q; want account-b", got)
 	}
 
 	mustOK(t, r.Handle(ctx, runtime.MethodUsageHandle, usageSuccessPayload("idx-a", "claude-sonnet-5-5-high")))
@@ -336,8 +374,11 @@ func TestHealth_NestedCooldownsRestoreOnlyAfterLastRecovery(t *testing.T) {
 	if len(store.GetCooldowns()) != 0 {
 		t.Fatalf("health entries remain after full recovery: %#v", store.GetCooldowns())
 	}
+	if got := pickModel(t, r, "claude-sonnet-5-5-high"); got != "account-a" {
+		t.Fatalf("recovered claude picked %q; want account-a", got)
+	}
 	if got := readPriority(t, paths["idx-a"]); got != 100 {
-		t.Fatalf("host priority = %d after full recovery; want 100", got)
+		t.Fatalf("host priority = %d after full recovery; want untouched 100", got)
 	}
 }
 
@@ -377,7 +418,15 @@ func TestHealth_ProbeBackoffAndRecovery(t *testing.T) {
 	}
 	waitForHealthClear(t, cachePath, "idx-a")
 	if got := readPriority(t, paths["idx-a"]); got != 100 {
-		t.Fatalf("host priority = %d; want restored 100", got)
+		t.Fatalf("host priority = %d; want untouched 100", got)
+	}
+	diag, err := r.Diagnostics(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	history, _ := diag["run_history"].([]runtime.RunHistoryEntry)
+	if len(history) == 0 || history[0].Kind != runtime.KindCooldownRecovery {
+		t.Fatalf("expected cooldown recovery audit after probe success, got %#v", history)
 	}
 }
 
@@ -391,20 +440,22 @@ func seedHealthEvidence(t *testing.T, ctx context.Context, cachePath string, now
 	reset5h := now.Add(4 * time.Hour)
 	reset7d := now.Add(72 * time.Hour)
 	for _, authIndex := range authIndexes {
-		if err := store.MarkProbeSuccess(ctx, state.ProbeSuccess{
-			AuthIndex:            authIndex,
-			Provider:             core.ProviderAntigravity,
-			ModelGroup:           "gemini",
-			ObservedAt:           now,
-			ResetAt:              reset7d,
-			Remaining:            remaining,
-			ShortWindowRemaining: &remaining,
-			ShortWindowResetAt:   reset5h,
-			LongWindowRemaining:  &remaining,
-			LongWindowResetAt:    reset7d,
-			PlanType:             core.PlanTypePro,
-		}); err != nil {
-			t.Fatal(err)
+		for _, modelGroup := range []string{"gemini", "claude_gpt"} {
+			if err := store.MarkProbeSuccess(ctx, state.ProbeSuccess{
+				AuthIndex:            authIndex,
+				Provider:             core.ProviderAntigravity,
+				ModelGroup:           modelGroup,
+				ObservedAt:           now,
+				ResetAt:              reset7d,
+				Remaining:            remaining,
+				ShortWindowRemaining: &remaining,
+				ShortWindowResetAt:   reset5h,
+				LongWindowRemaining:  &remaining,
+				LongWindowResetAt:    reset7d,
+				PlanType:             core.PlanTypePro,
+			}); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 	if err := store.SaveAtomic(ctx); err != nil {

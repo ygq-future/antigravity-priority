@@ -67,21 +67,6 @@ type CredentialTarget struct {
 	Disabled DisabledTarget `json:"disabled"`
 }
 
-// KeepPriority, SetPriority, and UnsetPriority make the explicit operation
-// contract readable at call sites.
-func KeepPriority() PriorityTarget { return PriorityTarget{Operation: FieldUnchanged} }
-func SetPriority(value int) PriorityTarget {
-	return PriorityTarget{Operation: FieldSet, Value: value}
-}
-func UnsetPriority() PriorityTarget { return PriorityTarget{Operation: FieldUnset} }
-
-// KeepDisabled, SetDisabled, and UnsetDisabled are the disabled equivalents.
-func KeepDisabled() DisabledTarget { return DisabledTarget{Operation: FieldUnchanged} }
-func SetDisabled(value bool) DisabledTarget {
-	return DisabledTarget{Operation: FieldSet, Value: value}
-}
-func UnsetDisabled() DisabledTarget { return DisabledTarget{Operation: FieldUnset} }
-
 // CredentialState is the decision-relevant state observed on a credential.
 // DisabledKnown describes whether the field was present in the document; the
 // semantic value of a missing disabled field is false.
@@ -114,39 +99,6 @@ func ExpectedState(credential core.Credential) CredentialState {
 		PriorityPresent: !credential.PriorityMissing,
 		Disabled:        credential.Disabled,
 		DisabledKnown:   true,
-	}
-}
-
-// CooldownIntent creates the non-destructive 429 Reactive Cooldown target.
-func CooldownIntent(credential core.Credential, cause string) TransitionIntent {
-	return TransitionIntent{
-		AuthIndex: credential.AuthIndex,
-		Name:      credential.Name,
-		Expected:  ExpectedState(credential),
-		Target: CredentialTarget{
-			Priority: PriorityTarget{Operation: FieldSet, Value: -1},
-			Disabled: DisabledTarget{Operation: FieldUnchanged},
-		},
-		Cause: cause,
-	}
-}
-
-// CooldownRecoveryIntent restores the priority captured before a 429 cooldown.
-// Cooldowns never mutate disabled, so recovery leaves it untouched.
-func CooldownRecoveryIntent(credential core.Credential, priorityValue int, priorityMissing bool, cause string) TransitionIntent {
-	priorityTarget := SetPriority(priorityValue)
-	if priorityMissing {
-		priorityTarget = UnsetPriority()
-	}
-	return TransitionIntent{
-		AuthIndex: credential.AuthIndex,
-		Name:      credential.Name,
-		Expected:  ExpectedState(credential),
-		Target: CredentialTarget{
-			Priority: priorityTarget,
-			Disabled: KeepDisabled(),
-		},
-		Cause: cause,
 	}
 }
 
@@ -530,4 +482,59 @@ func redactIdentifier(value string) string {
 		return value + "***"
 	}
 	return value[:4] + "***"
+}
+
+// ResultFromTransition derives execution counters and audit events from Host
+// transition details for explicit Host reset rounds.
+func ResultFromTransition(round TransitionRoundResult) Result {
+	derived := TransitionTotals{}
+	for _, detail := range round.Details {
+		derived.add(detail.Outcome)
+	}
+	round.Totals = derived
+	result := Result{
+		Transitions: round,
+		Changes:     make([]ChangeResult, 0, len(round.Details)),
+		Record:      RecordResult{Status: RecordNotAttempted},
+	}
+	result.Event = eventFromTransitionDetails(round.Details)
+	for _, detail := range round.Details {
+		change := ChangeResult{
+			Name:              detail.Name,
+			AuthIndex:         detail.AuthIndex,
+			Status:            ChangeStatus(detail.Outcome),
+			HostOutcome:       detail.Outcome,
+			Success:           detail.Outcome == OutcomeCommitted || detail.Outcome == OutcomeNoChange,
+			Reason:            detail.Reason,
+			PriorityAttempted: detail.PriorityAttempted,
+			DisabledAttempted: detail.DisabledAttempted,
+			Error:             detail.Error,
+			PriorityFrom:      detail.Before.Priority,
+			PriorityMissing:   !detail.Before.PriorityPresent,
+			PriorityTo:        detail.Target.Priority,
+			DisabledFrom:      detail.Before.Disabled,
+			DisabledTo:        detail.Target.Disabled,
+		}
+		result.Changes = append(result.Changes, change)
+		summarizeChange(&result, change)
+	}
+	return result
+}
+
+func eventFromTransitionDetails(details []TransitionResult) AuditEvent {
+	event := AuditEvent{
+		Action:       "host.transition",
+		TotalChanges: len(details),
+		Changes:      make([]AuditChange, 0, len(details)),
+	}
+	for _, detail := range details {
+		event.Changes = append(event.Changes, AuditChange{
+			Name:      detail.Name,
+			AuthIndex: detail.AuthIndex,
+			Reason:    detail.Reason,
+			Outcome:   detail.Outcome,
+			Cause:     detail.Cause,
+		})
+	}
+	return event
 }

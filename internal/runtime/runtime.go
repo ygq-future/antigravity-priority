@@ -538,16 +538,16 @@ func (r *Runtime) LatestSnapshot(ctx context.Context) (apply.SnapshotSet, error)
 	if _, err := r.Config(); err != nil {
 		return apply.SnapshotSet{}, err
 	}
+	models, supportedMap := r.snapshotModelCatalog()
 	r.mu.Lock()
 	snap := r.latestSnapshotSet
 	if snap != nil {
-		r.enrichSnapshotWithModelsLocked(snap)
+		enrichSnapshotWithModels(snap, models, supportedMap)
 		cloned := cloneSnapshotSet(*snap)
 		r.mu.Unlock()
 		return cloned, nil
 	}
 	r.mu.Unlock()
-	// projection seam until a shared projection is available.
 	now := r.clock.Now().UTC()
 	projection, err := ProjectModelGroups(ProjectionInput{
 		ProjectionTime: now,
@@ -797,11 +797,9 @@ func (r *Runtime) snapshotRunEntry(result apply.Result, audit string, entry RunH
 	r.state.SnapshotRunEntry(result, audit, entry)
 }
 
-func (r *Runtime) enrichSnapshotWithModelsLocked(snap *apply.SnapshotSet) {
-	if snap == nil {
-		return
-	}
+func (r *Runtime) snapshotModelCatalog() ([]apply.ModelOption, map[string][]string) {
 	r.routingMu.RLock()
+	defer r.routingMu.RUnlock()
 	catalog := r.modelCatalog
 	if len(catalog) == 0 {
 		catalog = builtInAntigravityModels
@@ -825,8 +823,13 @@ func (r *Runtime) enrichSnapshotWithModelsLocked(snap *apply.SnapshotSet) {
 			supportedMap[authIdx] = supported
 		}
 	}
-	r.routingMu.RUnlock()
+	return models, supportedMap
+}
 
+func enrichSnapshotWithModels(snap *apply.SnapshotSet, models []apply.ModelOption, supportedMap map[string][]string) {
+	if snap == nil {
+		return
+	}
 	snap.Models = models
 	for groupKey, group := range snap.Groups {
 		for i, item := range group.Items {
@@ -842,32 +845,36 @@ func (r *Runtime) enrichSnapshotWithModelsLocked(snap *apply.SnapshotSet) {
 }
 
 func (r *Runtime) setSnapshotSet(snap apply.SnapshotSet) {
+	models, supportedMap := r.snapshotModelCatalog()
+	cloned := cloneSnapshotSet(snap)
+	enrichSnapshotWithModels(&cloned, models, supportedMap)
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	cloned := cloneSnapshotSet(snap)
-	r.enrichSnapshotWithModelsLocked(&cloned)
 	r.latestSnapshotSet = &cloned
 }
 
-func (r *Runtime) patchSnapshotCooldown(authIndex string, inCooldown bool, reason string, restoredPriority int) {
+func (r *Runtime) syncSnapshotCooldown(authIndex string, candidatesByPool map[string]PrecomputedCandidate) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.latestSnapshotSet == nil {
 		return
 	}
 	for groupKey, group := range r.latestSnapshotSet.Groups {
+		cand, ok := candidatesByPool[groupKey]
+		if !ok {
+			continue
+		}
 		for i, item := range group.Items {
-			if item.Identity.AuthIndex == authIndex || item.Name == authIndex || item.Identity.Email == authIndex || item.Email == authIndex || strings.EqualFold(item.AuthIndex, authIndex) {
-				if inCooldown {
-					group.Items[i].Host.Priority = priority.DepletedPriority
-					group.Items[i].Target.Priority = priority.DepletedPriority
-					group.Items[i].Reason = reason
-					group.Items[i].IsBoosted = false
+			if snapshotAuthIndex(item) == authIndex || item.Name == authIndex || item.Identity.Email == authIndex {
+				group.Items[i].Target.Priority = cand.Priority
+				group.Items[i].Reason = cand.Reason
+				if !cand.CooldownUntil.IsZero() {
+					until := cand.CooldownUntil
+					group.Items[i].CooldownUntil = &until
 				} else {
-					group.Items[i].Host.Priority = restoredPriority
-					group.Items[i].Target.Priority = restoredPriority
-					group.Items[i].Reason = reason
+					group.Items[i].CooldownUntil = nil
 				}
+				group.Items[i].IsBoosted = cand.Reason == priority.ReasonFreshBoosted
 			}
 		}
 		r.latestSnapshotSet.Groups[groupKey] = group
@@ -1357,24 +1364,21 @@ func (r *Runtime) recordCooldownFailure(ctx context.Context, persist bool, authI
 	if strings.TrimSpace(trigger) == "" {
 		trigger = "health_cooldown"
 	}
-	message := reason + ": " + host.RedactBytes([]byte(err.Error()))
-	result := apply.ResultFromTransition(apply.TransitionRoundResult{Details: []apply.TransitionResult{{
-		AuthIndex: redactRuntimeIdentifier(authIndex),
-		Outcome:   apply.OutcomeFailed,
-		Reason:    apply.ReasonCommitFailed,
-		Cause:     reason,
-		Error:     host.RedactBytes([]byte(err.Error())),
-	}}})
+	redactedErr := host.RedactBytes([]byte(err.Error()))
+	message := reason + ": " + redactedErr
+	if redactedAuth := redactRuntimeIdentifier(authIndex); redactedAuth != "" {
+		message = fmt.Sprintf("%s auth=%s: %s", reason, redactedAuth, redactedErr)
+	}
+	result := apply.Result{
+		Attempted: 1,
+		Failed:    1,
+		Record:    apply.RecordResult{Status: apply.RecordNotAttempted},
+	}
 	entry := RunHistoryEntry{
 		Kind:      KindCooldown,
 		Trigger:   trigger,
-		Attempted: result.Attempted,
-		Succeeded: result.Succeeded,
-		Failed:    result.Failed,
-		Skipped:   result.Skipped,
-		NoChange:  result.NoChange,
-		Conflicts: result.Conflicts,
-		Uncertain: result.Uncertain,
+		Attempted: 1,
+		Failed:    1,
 		Message:   message,
 	}
 	if !persist {

@@ -412,6 +412,9 @@ func TestDevServer_SimulationEndpoints(t *testing.T) {
 		_ = dev.runtime.Shutdown(context.Background())
 	}()
 
+	if _, err := dev.runtime.SyncHost(context.Background()); err != nil {
+		t.Fatalf("initial sync host failed: %v", err)
+	}
 	handler := dev.Handler()
 	files, err := dev.host.ListAuthFiles(context.Background())
 	if err != nil || len(files) == 0 {
@@ -419,7 +422,6 @@ func TestDevServer_SimulationEndpoints(t *testing.T) {
 	}
 	targetAuth := files[0].AuthIndex
 	origPriority := files[0].Priority
-
 	// 1. First 429 using fuzzy match "auth-001" (matching dev-auth-001): strike 1 (pending)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/dev/simulate-429?auth_index=auth-001", nil)
@@ -440,18 +442,18 @@ func TestDevServer_SimulationEndpoints(t *testing.T) {
 		t.Fatalf("second simulate-429 status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 	curFiles, _ = dev.host.ListAuthFiles(context.Background())
-	if curFiles[0].Priority != -1 {
-		t.Fatalf("priority after second 429 = %d, want -1", curFiles[0].Priority)
+	if curFiles[0].Priority != origPriority {
+		t.Fatalf("host priority mutated after second 429 = %d, want untouched %d", curFiles[0].Priority, origPriority)
 	}
 
-	// Also verify snapshot has the cooldown item
+	// Also verify snapshot has the cooldown item in target state
 	snap, err := dev.runtime.LatestSnapshot(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	items := snap.Groups["gemini"].Items
-	if len(items) > 0 && items[0].Host.Priority != -1 {
-		t.Fatalf("snapshot priority = %d, want -1", items[0].Host.Priority)
+	if len(items) == 0 || items[0].Target.Priority != -1 || items[0].CooldownUntil == nil {
+		t.Fatalf("snapshot target = %+v, want priority -1 and cooldown_until", items)
 	}
 
 	// 3. Success using fuzzy match: immediate recovery
@@ -465,7 +467,14 @@ func TestDevServer_SimulationEndpoints(t *testing.T) {
 	if curFiles[0].Priority != origPriority {
 		t.Fatalf("priority after success = %d, want %d", curFiles[0].Priority, origPriority)
 	}
-
+	snap, err = dev.runtime.LatestSnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	items = snap.Groups["gemini"].Items
+	if len(items) == 0 || items[0].Target.Priority == -1 || items[0].CooldownUntil != nil {
+		t.Fatalf("snapshot target after success = %+v, want cleared cooldown", items)
+	}
 	// 3. Success: immediate recovery
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPost, "/dev/simulate-success?auth_index="+targetAuth, nil)

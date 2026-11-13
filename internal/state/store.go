@@ -144,9 +144,7 @@ type CooldownEntry struct {
 	NextRecoveryAt          time.Time   `json:"next_recovery_at,omitzero"`
 	BackoffStep             int         `json:"backoff_step,omitempty"`
 	ProbeEnabled            bool        `json:"probe_enabled,omitempty"`
-	Reason                  string      `json:"reason"`
-	PreviousPriority        int         `json:"previous_priority,omitempty"`
-	PreviousPriorityMissing bool        `json:"previous_priority_missing,omitempty"`
+	Reason        string      `json:"reason"`
 }
 
 // PriorityRulesConfig holds priority rule settings for DynamicConfig.

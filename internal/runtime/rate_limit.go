@@ -131,39 +131,27 @@ func (r *Runtime) triggerFailure(ctx context.Context, input failureInput) error 
 		r.recordCooldownFailure(ctx, false, input.AuthIndex, input.Reason, failureTrigger(input.Kind), err)
 		return fmt.Errorf("record health state: %w", err)
 	}
-	entries := store.GetCooldowns()
 	key := state.FailureKey(input.AuthIndex, input.ModelGroup, input.Model)
-	if existing, active := entries[key]; active && now.Before(existing.CooldownUntil) {
+	if existing, active := store.GetCooldown(key); active && now.Before(existing.CooldownUntil) {
 		return nil
 	}
 	if input.Kind != state.FailureUnauthorized && input.Kind != state.FailureForbidden {
-		if existing, active := entries[state.CooldownKey(input.AuthIndex, "")]; active && now.Before(existing.CooldownUntil) {
+		if existing, active := store.GetCooldown(state.CooldownKey(input.AuthIndex, "")); active && now.Before(existing.CooldownUntil) {
 			return nil
 		}
 	}
 
-	credential, findErr := r.findCredential(ctx, input.AuthIndex)
-	if findErr != nil {
-		r.recordCooldownFailure(ctx, true, input.AuthIndex, input.Reason, failureTrigger(input.Kind), findErr)
-		return findErr
-	}
-	if credential.Disabled {
+	credential, allCreds, found := r.findCredentialSummary(ctx, input.AuthIndex)
+	if found && credential.Disabled {
 		return nil
 	}
-
-	previousPriority := credential.Priority
-	previousPriorityMissing := credential.PriorityMissing
-	baselineFound := false
-	for _, existing := range entries {
-		if existing.AuthIndex != input.AuthIndex {
-			continue
+	if !found {
+		credential = core.Credential{
+			AuthIndex: input.AuthIndex,
+			Name:      input.AuthIndex,
+			Provider:  core.ProviderAntigravity,
+			Status:    core.CredentialStatusActive,
 		}
-		if baselineFound && existing.PreviousPriority == priority.DepletedPriority {
-			continue
-		}
-		previousPriority = existing.PreviousPriority
-		previousPriorityMissing = existing.PreviousPriorityMissing
-		baselineFound = true
 	}
 
 	probeEnabled := input.ProbeEnabled
@@ -171,19 +159,17 @@ func (r *Runtime) triggerFailure(ctx context.Context, input failureInput) error 
 		probeEnabled = false
 	}
 	entry := state.CooldownEntry{
-		AuthIndex:               input.AuthIndex,
-		ModelGroup:              input.ModelGroup,
-		Model:                   input.Model,
-		ProbeModel:              input.ProbeModel,
-		FailureKind:             input.Kind,
-		StatusCode:              input.StatusCode,
-		TriggeredAt:             now,
-		CooldownUntil:           now.Add(input.Cooldown),
-		NextRecoveryAt:          now.Add(input.Cooldown),
-		ProbeEnabled:            probeEnabled,
-		Reason:                  input.Reason,
-		PreviousPriority:        previousPriority,
-		PreviousPriorityMissing: previousPriorityMissing,
+		AuthIndex:      input.AuthIndex,
+		ModelGroup:     input.ModelGroup,
+		Model:          input.Model,
+		ProbeModel:     input.ProbeModel,
+		FailureKind:    input.Kind,
+		StatusCode:     input.StatusCode,
+		TriggeredAt:    now,
+		CooldownUntil:  now.Add(input.Cooldown),
+		NextRecoveryAt: now.Add(input.Cooldown),
+		ProbeEnabled:   probeEnabled,
+		Reason:         input.Reason,
 	}
 	if !probeEnabled {
 		entry.NextRecoveryAt = time.Time{}
@@ -194,30 +180,31 @@ func (r *Runtime) triggerFailure(ctx context.Context, input failureInput) error 
 		return fmt.Errorf("persist health cooldown: %w", err)
 	}
 
-	if r.hostCallbacks == nil {
-		err := errMissingHostCallbacks
-		r.recordCooldownFailure(ctx, true, input.AuthIndex, input.Reason, failureTrigger(input.Kind), err)
-		return err
+	var candidatesByPool map[string]PrecomputedCandidate
+	if len(allCreds) > 0 {
+		candidatesByPool, _, _ = r.recomputeAndCaptureRouting(now, input.AuthIndex, allCreds)
+	} else {
+		candidatesByPool, _, _ = r.recomputeAndCaptureRouting(now, input.AuthIndex)
 	}
-	client := host.NewClient(r.hostCallbacks)
-	result, applyErr := apply.ExecuteRound(ctx, apply.NewHostTransition(client), apply.TransitionRound{
-		Intents: []apply.TransitionIntent{apply.CooldownIntent(credential, input.Reason)},
-	})
-	result.Snapshot = apply.Snapshot(priority.Plan{
+	r.syncSnapshotCooldown(input.AuthIndex, candidatesByPool)
+
+	snapshot := apply.Snapshot(priority.Plan{
 		DecidedAt: now,
 		Items: []priority.PlanItem{{
-			Credential: credential,
-			Priority:   priority.DepletedPriority,
-			Disabled:   false,
-			Reason:     input.Reason,
+			Credential:    credential,
+			Priority:      priority.DepletedPriority,
+			Disabled:      false,
+			CooldownUntil: &entry.CooldownUntil,
+			Reason:        input.Reason,
 		}},
 	})
-	if applyErr != nil {
-		r.recordCooldownFailure(ctx, true, input.AuthIndex, input.Reason, failureTrigger(input.Kind), applyErr)
-		return applyErr
+	summary := healthIsolationSummary("health cooldown", input.AuthIndex, input.ModelGroup, input.Reason)
+	result := apply.Result{
+		Snapshot:  snapshot,
+		Record:    apply.RecordResult{Status: apply.RecordNotAttempted},
+		Attempted: 1,
+		Succeeded: 1,
 	}
-	r.patchSnapshotCooldown(input.AuthIndex, true, input.Reason, priority.DepletedPriority)
-	summary := resultSummary("health cooldown", result)
 	_, projectErr := r.state.ProjectRun(ctx, result, summary, withTransitionStats(result, RunHistoryEntry{
 		Kind:     KindCooldown,
 		Trigger:  failureTrigger(input.Kind),
@@ -227,13 +214,7 @@ func (r *Runtime) triggerFailure(ctx context.Context, input failureInput) error 
 	if projectErr != nil {
 		return projectErr
 	}
-	r.routingMu.Lock()
-	r.recomputeRoutingTablesLocked(now)
-	r.routingMu.Unlock()
 	r.signalRateLimitWorker()
-	if result.Transitions.Totals.Failed > 0 || result.Transitions.Totals.Conflicts > 0 || result.Transitions.Totals.Uncertain > 0 {
-		return errors.New("health cooldown host mutation failed")
-	}
 	return nil
 }
 
@@ -278,7 +259,6 @@ func (r *Runtime) observeUsageSuccess(ctx context.Context, authIndex, modelGroup
 		}
 	}
 	r.rateLimitMu.Unlock()
-	r.signalRateLimitWorker()
 
 	if storeErr != nil {
 		r.routingMu.Lock()
@@ -316,20 +296,13 @@ func (r *Runtime) observeUsageSuccess(ctx context.Context, authIndex, modelGroup
 		r.routingMu.Lock()
 		r.recomputeRoutingTablesLocked(now)
 		r.routingMu.Unlock()
-		return nil
-	}
-	if hasActiveFailureForAuth(store, authIndex, now) {
-		if err := store.SaveStateAtomic(ctx); err != nil {
-			return err
-		}
-		r.routingMu.Lock()
-		r.recomputeRoutingTablesLocked(now)
-		r.routingMu.Unlock()
+		r.signalRateLimitWorker()
 		return nil
 	}
 	r.runMu.Lock()
 	err := r.applyCooldownRecovery(ctx, store, cleared[0], "recovered by successful request", "success_recovery")
 	r.runMu.Unlock()
+	r.signalRateLimitWorker()
 	return err
 }
 
@@ -541,9 +514,8 @@ func (r *Runtime) escalateAuthProblem(ctx context.Context, store *state.Store, e
 	accountKey := state.CooldownKey(entry.AuthIndex, "")
 	if existing, active := store.GetCooldown(accountKey); active && now.Before(existing.CooldownUntil) {
 		_ = store.SaveStateAtomic(ctx)
-		r.routingMu.Lock()
-		r.recomputeRoutingTablesLocked(now)
-		r.routingMu.Unlock()
+		candidatesByPool, _, _ := r.recomputeAndCaptureRouting(now, entry.AuthIndex)
+		r.syncSnapshotCooldown(entry.AuthIndex, candidatesByPool)
 		return
 	}
 	kind := state.FailureUnauthorized
@@ -553,21 +525,18 @@ func (r *Runtime) escalateAuthProblem(ctx context.Context, store *state.Store, e
 		reason = priority.ReasonForbiddenCooldown
 	}
 	accountEntry := state.CooldownEntry{
-		AuthIndex:               entry.AuthIndex,
-		FailureKind:             kind,
-		StatusCode:              status,
-		TriggeredAt:             now,
-		CooldownUntil:           now.Add(unauthorizedQuarantine),
-		Reason:                  reason,
-		PreviousPriority:        entry.PreviousPriority,
-		PreviousPriorityMissing: entry.PreviousPriorityMissing,
-		ProbeEnabled:            false,
+		AuthIndex:     entry.AuthIndex,
+		FailureKind:   kind,
+		StatusCode:    status,
+		TriggeredAt:   now,
+		CooldownUntil: now.Add(unauthorizedQuarantine),
+		Reason:        reason,
+		ProbeEnabled:  false,
 	}
 	store.SetCooldown(accountEntry)
 	_ = store.SaveStateAtomic(ctx)
-	r.routingMu.Lock()
-	r.recomputeRoutingTablesLocked(now)
-	r.routingMu.Unlock()
+	candidatesByPool, _, _ := r.recomputeAndCaptureRouting(now, entry.AuthIndex)
+	r.syncSnapshotCooldown(entry.AuthIndex, candidatesByPool)
 	r.signalRateLimitWorker()
 }
 
@@ -684,73 +653,106 @@ func failureTrigger(kind state.FailureKind) string {
 
 func (r *Runtime) restoreCooldown(ctx context.Context, store *state.Store, entry state.CooldownEntry, cause, trigger string) error {
 	key := state.FailureKey(entry.AuthIndex, entry.ModelGroup, entry.Model)
-	credential, err := r.findCredential(ctx, entry.AuthIndex)
-	if err != nil {
-		return err
-	}
-	now := r.clock.Now().UTC()
-	manualChange := credential.Priority != priority.DepletedPriority
 	store.DeleteCooldownExact(key)
-	if manualChange {
-		_ = store.SaveStateAtomic(ctx)
-		r.routingMu.Lock()
-		r.recomputeRoutingTablesLocked(now)
-		r.routingMu.Unlock()
-		return nil
-	}
-	if hasActiveFailureForAuth(store, entry.AuthIndex, now) {
-		_ = store.SaveStateAtomic(ctx)
-		r.routingMu.Lock()
-		r.recomputeRoutingTablesLocked(now)
-		r.routingMu.Unlock()
-		return nil
-	}
 	return r.applyCooldownRecovery(ctx, store, entry, cause, trigger)
 }
 
 func (r *Runtime) applyCooldownRecovery(ctx context.Context, store *state.Store, entry state.CooldownEntry, cause, trigger string) error {
-	credential, err := r.findCredential(ctx, entry.AuthIndex)
-	if err != nil {
-		return err
-	}
-	if credential.Priority != priority.DepletedPriority {
-		_ = store.SaveStateAtomic(ctx)
-		r.routingMu.Lock()
-		r.recomputeRoutingTablesLocked(r.clock.Now().UTC())
-		r.routingMu.Unlock()
-		return nil
-	}
-	client := host.NewClient(r.hostCallbacks)
-	intent := apply.CooldownRecoveryIntent(credential, entry.PreviousPriority, entry.PreviousPriorityMissing, cause)
-	result, applyErr := apply.ExecuteRound(ctx, apply.NewHostTransition(client), apply.TransitionRound{Intents: []apply.TransitionIntent{intent}})
-	if applyErr != nil {
-		return applyErr
-	}
-	reason := entry.Reason
-	if strings.TrimSpace(reason) == "" {
-		reason = priority.Reason429Cooldown
-	}
-	r.patchSnapshotCooldown(entry.AuthIndex, false, "cooldown recovered", entry.PreviousPriority)
-	result.Snapshot = apply.Snapshot(priority.Plan{DecidedAt: r.clock.Now().UTC(), Items: []priority.PlanItem{{Credential: credential, Priority: entry.PreviousPriority, Disabled: credential.Disabled, Reason: reason}}})
-	r.routingMu.Lock()
-	r.recomputeRoutingTablesLocked(r.clock.Now().UTC())
-	r.routingMu.Unlock()
-	summary := resultSummary("cooldown recovery", result)
+	now := r.clock.Now().UTC()
 	if err := store.SaveStateAtomic(ctx); err != nil {
 		r.recordCooldownFailure(ctx, true, entry.AuthIndex, cause, trigger, err)
 		return fmt.Errorf("persist cooldown recovery: %w", err)
 	}
-	_, err = r.state.ProjectRun(ctx, result, summary, withTransitionStats(result, RunHistoryEntry{Kind: KindCooldownRecovery, Trigger: trigger, Message: summary, Snapshot: &result.Snapshot}))
+	candidatesByPool, credential, found := r.recomputeAndCaptureRouting(now, entry.AuthIndex)
+	r.syncSnapshotCooldown(entry.AuthIndex, candidatesByPool)
+	if !found {
+		credential = core.Credential{
+			AuthIndex: entry.AuthIndex,
+			Name:      entry.AuthIndex,
+			Provider:  core.ProviderAntigravity,
+			Status:    core.CredentialStatusActive,
+		}
+	}
+	recoveredPriority := coldStartRoutingTier
+	if poolKey := strings.TrimSpace(entry.ModelGroup); poolKey != "" {
+		if cand, ok := candidatesByPool[poolKey]; ok {
+			recoveredPriority = cand.Priority
+		}
+	} else if cand, ok := candidatesByPool[string(config.AntigravityModelGroupGemini)]; ok {
+		recoveredPriority = cand.Priority
+	}
+	snapshot := apply.Snapshot(priority.Plan{
+		DecidedAt: now,
+		Items: []priority.PlanItem{{
+			Credential: credential,
+			Priority:   recoveredPriority,
+			Disabled:   credential.Disabled,
+			Reason:     cause,
+		}},
+	})
+	summary := healthIsolationSummary("cooldown recovery", entry.AuthIndex, entry.ModelGroup, cause)
+	result := apply.Result{
+		Snapshot:  snapshot,
+		Record:    apply.RecordResult{Status: apply.RecordNotAttempted},
+		Attempted: 1,
+		Succeeded: 1,
+	}
+	_, err := r.state.ProjectRun(ctx, result, summary, withTransitionStats(result, RunHistoryEntry{
+		Kind:     KindCooldownRecovery,
+		Trigger:  trigger,
+		Message:  summary,
+		Snapshot: &result.Snapshot,
+	}))
 	return err
 }
 
-func hasActiveFailureForAuth(store *state.Store, authIndex string, now time.Time) bool {
-	for _, entry := range store.GetCooldowns() {
-		if entry.AuthIndex == authIndex && now.Before(entry.CooldownUntil) {
-			return true
+func (r *Runtime) recomputeAndCaptureRouting(now time.Time, authIndex string, existingCreds ...[]core.Credential) (map[string]PrecomputedCandidate, core.Credential, bool) {
+	r.routingMu.Lock()
+	defer r.routingMu.Unlock()
+	var credentials []core.Credential
+	if len(existingCreds) > 0 {
+		credentials = existingCreds[0]
+	} else {
+		credentials = r.currentCredentialsLocked()
+	}
+	r.recomputeRoutingTablesLocked(now, credentials)
+	captured := make(map[string]PrecomputedCandidate, len(r.plansByPool))
+	for pool, table := range r.plansByPool {
+		if cand, ok := table.ByAuthIndex[authIndex]; ok {
+			captured[string(pool)] = cand
 		}
 	}
-	return false
+	for _, cred := range credentials {
+		if cred.AuthIndex == authIndex || cred.Name == authIndex || cred.Email == authIndex {
+			return captured, cred, true
+		}
+	}
+	return captured, core.Credential{}, false
+}
+
+func healthIsolationSummary(prefix, authIndex, modelGroup, reason string) string {
+	scope := strings.TrimSpace(modelGroup)
+	if scope == "" {
+		scope = "account"
+	}
+	return fmt.Sprintf("%s auth=%s pool=%s reason=%s", prefix, redactRuntimeIdentifier(authIndex), scope, reason)
+}
+
+func (r *Runtime) findCredentialSummary(ctx context.Context, authIndex string) (core.Credential, []core.Credential, bool) {
+	if r.hostCallbacks == nil {
+		return core.Credential{}, nil, false
+	}
+	files, err := host.NewClient(r.hostCallbacks).ListAuthFiles(ctx)
+	if err != nil {
+		return core.Credential{}, nil, false
+	}
+	credentials := credentialsFromAuthFiles(files)
+	for _, candidate := range credentials {
+		if candidate.AuthIndex == authIndex || candidate.Name == authIndex || candidate.Email == authIndex {
+			return candidate, credentials, true
+		}
+	}
+	return core.Credential{}, credentials, false
 }
 
 func (r *Runtime) findCredential(ctx context.Context, authIndex string) (core.Credential, error) {

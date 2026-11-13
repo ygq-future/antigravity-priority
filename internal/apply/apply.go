@@ -1,8 +1,5 @@
 package apply
 
-import (
-	"errors"
-)
 
 // ChangeStatus represents the execution status of an individual planned change.
 type ChangeStatus string
@@ -19,10 +16,6 @@ const (
 	// ChangeStatusUncertain indicates the post-commit Host state could not be proven.
 	ChangeStatusUncertain ChangeStatus = ChangeStatus(OutcomeUncertain)
 )
-
-// ErrMissingTransition indicates that a Host-changing execution did not
-// provide the single Host Transition seam.
-var ErrMissingTransition = errors.New("apply: host transition is required")
 
 // Result summarizes the execution result of an apply round.
 type Result struct {

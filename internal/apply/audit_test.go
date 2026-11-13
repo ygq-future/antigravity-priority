@@ -83,15 +83,15 @@ func TestSnapshot_And_AuditEvent_Redaction(t *testing.T) {
 		"idx-auth-123":  `{"priority":20,"disabled":false}`,
 		"idx-stale-456": `{"priority":10,"disabled":false}`,
 	})
-	result, err := apply.ExecuteRound(context.Background(), apply.NewHostTransition(transitionStore), apply.TransitionRound{
+	transitionResult, err := apply.NewHostTransition(transitionStore).Execute(context.Background(), apply.TransitionRound{
 		Intents: []apply.TransitionIntent{
 			apply.ResetIntent(core.Credential{Name: "secret-acc", AuthIndex: "idx-auth-123", Priority: 20}, "reset token=supersecret"),
 		},
 	})
 	if err != nil {
-		t.Fatalf("execute round error: %v", err)
+		t.Fatalf("execute transition error: %v", err)
 	}
-
+	result := apply.ResultFromTransition(transitionResult)
 	event := result.Event
 	if event.Action != "host.transition" {
 		t.Errorf("expected action 'host.transition', got %s", event.Action)
