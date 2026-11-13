@@ -36,8 +36,8 @@
   - `priority.Planner` 必须为**无副作用纯函数**，只输出不可变 `Plan` 对象；
   - 严禁在领域核心层调用 CPA 宿主写回或外部网络请求。
 - **Apply Layer (`internal/apply`, `internal/host`)**：
-  - 仅负责通过统一 Host Transition 执行显式运维意图（429 冷却、优先级重置）并落盘全脱敏审计；
-  - 调度计划只驱动内存路由与展示，**严禁依据 `Plan` 写回宿主优先级**。
+  - 仅负责通过统一 Host Transition 执行显式运维意图（用户触发的优先级重置）并落盘全脱敏审计；
+  - 调度计划与健康/冷却状态转换只驱动内存路由与展示，**严禁依据 `Plan` 写回宿主优先级**。
 - **Application Layer (`internal/runtime`)**：
   - 唯一拥有调度用例执行所有权（`AutoApply` / `Probe` / `SyncHost` / `ResetAllPriorities`）；
   - 统一协调 Ticker 定时器与单飞互斥锁（`runMu`）。

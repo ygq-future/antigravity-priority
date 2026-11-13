@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"slices"
 	"strings"
@@ -168,9 +169,7 @@ func (w WarmupConfig) Clone() WarmupConfig {
 		return clone
 	}
 	clone.Overrides = make(map[string]bool, len(w.Overrides))
-	for idx, enabled := range w.Overrides {
-		clone.Overrides[idx] = enabled
-	}
+	maps.Copy(clone.Overrides, w.Overrides)
 	return clone
 }
 
