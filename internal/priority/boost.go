@@ -7,8 +7,6 @@ const (
 	DefaultNormalStartPriority = 100
 	// DefaultFreeStartPriority is the default starting priority for free tier credentials.
 	DefaultFreeStartPriority = 10
-	// MaxPriority is the upper bound for any assignable positive priority.
-	MaxPriority = 999
 	// MinPriority is the lower bound for active positive priorities.
 	MinPriority = 1
 	// DepletedPriority is the negative priority assigned to depleted credentials.

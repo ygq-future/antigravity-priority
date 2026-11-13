@@ -69,9 +69,6 @@ func (evidence plannerEvidence) HistoricalQuotaEvidence() []QuotaEvidence {
 // Options defines configuration options for the priority planner.
 type Options struct {
 	Now                 time.Time
-	BoostStartPriority  int
-	NormalStartPriority int
-	FreeStartPriority   int
 	UrgencyTolerance    float64
 	CooldownAuthIndexes map[string]time.Time
 	CooldownReasons     map[string]string
@@ -140,7 +137,7 @@ func PlanWithEvidence(credentials []core.Credential, source EvidenceSource, opti
 	if options.Now.IsZero() {
 		panic("priority: explicit decision time is required")
 	}
-	normalizedOptions := normalizeOptions(options)
+	options.Now = options.Now.UTC()
 	evidence := plannerEvidence{}
 	if source != nil {
 		evidence = plannerEvidence{
@@ -148,7 +145,7 @@ func PlanWithEvidence(credentials []core.Credential, source EvidenceSource, opti
 			Historical: source.HistoricalQuotaEvidence(),
 		}
 	}
-	return planWithEvidence(credentials, evidence, normalizedOptions)
+	return planWithEvidence(credentials, evidence, options)
 }
 
 func planWithEvidence(credentials []core.Credential, evidence plannerEvidence, options Options) Plan {
@@ -161,28 +158,6 @@ func planWithEvidence(credentials []core.Credential, evidence plannerEvidence, o
 	}
 }
 
-func normalizeOptions(options Options) Options {
-	options.Now = options.Now.UTC()
-	if options.BoostStartPriority <= 0 {
-		options.BoostStartPriority = DefaultBoostStartPriority
-	}
-	if options.BoostStartPriority > MaxPriority {
-		options.BoostStartPriority = MaxPriority
-	}
-	if options.NormalStartPriority <= 0 {
-		options.NormalStartPriority = DefaultNormalStartPriority
-	}
-	if options.NormalStartPriority > MaxPriority {
-		options.NormalStartPriority = MaxPriority
-	}
-	if options.FreeStartPriority <= 0 {
-		options.FreeStartPriority = DefaultFreeStartPriority
-	}
-	if options.FreeStartPriority > MaxPriority {
-		options.FreeStartPriority = MaxPriority
-	}
-	return options
-}
 
 func planItems(credentials []core.Credential, evidence plannerEvidence, options Options) []PlanItem {
 	freshByAuthIndex := quotaEvidenceByAuthIndex(evidence.Fresh)
@@ -323,7 +298,7 @@ func planPositive(items []PlanItem, options Options) {
 
 	// 1. Plan Custom Tiers: user-defined tiers take absolute precedence over auto tiers.
 	// Candidates sharing the identical custom tier receive equal priority for balanced load-sharing.
-	minCustomPriority := options.BoostStartPriority
+	minCustomPriority := DefaultBoostStartPriority
 	if len(customIndicesByTier) > 0 {
 		customTiers := make([]int, 0, len(customIndicesByTier))
 		for tier := range customIndicesByTier {
@@ -343,9 +318,9 @@ func planPositive(items []PlanItem, options Options) {
 		}
 	}
 
-	boostStart := options.BoostStartPriority
-	normalStart := options.NormalStartPriority
-	freeStart := options.FreeStartPriority
+	boostStart := DefaultBoostStartPriority
+	normalStart := DefaultNormalStartPriority
+	freeStart := DefaultFreeStartPriority
 
 	if len(customIndicesByTier) > 0 {
 		if boostStart >= minCustomPriority {

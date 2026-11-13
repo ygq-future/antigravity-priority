@@ -1780,11 +1780,6 @@ func TestRuntime_GetSetDynamicConfig(t *testing.T) {
 		RateLimitCooldownMinutes: 5,
 		QuotaSampleCapacity:      10,
 		RequestHistoryLimit:      150,
-		PriorityRules: state.PriorityRulesConfig{
-			BoostStartPriority:  990,
-			NormalStartPriority: 120,
-			FreeStartPriority:   15,
-		},
 		Schedule: state.ScheduleConfig{
 			Paused: false,
 		},
@@ -1818,9 +1813,6 @@ func TestRuntime_GetSetDynamicConfig(t *testing.T) {
 	}
 	if runtimeCfg.RequestHistoryLimit != 150 {
 		t.Errorf("expected RequestHistoryLimit=150, got %d", runtimeCfg.RequestHistoryLimit)
-	}
-	if runtimeCfg.PriorityRules.FreeStartPriority != 15 {
-		t.Errorf("expected FreeStartPriority=15, got %d", runtimeCfg.PriorityRules.FreeStartPriority)
 	}
 	if !runtimeCfg.Warmup.GeminiEnabled || !runtimeCfg.Warmup.ClaudeEnabled {
 		t.Errorf("expected warmup enabled in runtime config, got: %+v", runtimeCfg.Warmup)
@@ -1856,9 +1848,6 @@ func TestRuntime_GetSetDynamicConfig(t *testing.T) {
 		{"max_concurrency=33", func(cfg *state.DynamicConfig) { cfg.MaxConcurrency = 33 }},
 		{"urgency_tolerance=0.51", func(cfg *state.DynamicConfig) { cfg.UrgencyTolerance = 0.51 }},
 		{"cooldown=1441", func(cfg *state.DynamicConfig) { cfg.RateLimitCooldownMinutes = 1441 }},
-		{"inverted priorities", func(cfg *state.DynamicConfig) {
-			cfg.PriorityRules.BoostStartPriority, cfg.PriorityRules.NormalStartPriority = 100, 101
-		}},
 	}
 	for _, testCase := range invalidCases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -1901,11 +1890,6 @@ func TestRuntime_DynamicConfig_SurvivesReconfigure(t *testing.T) {
 		RateLimitCooldownMinutes: 5,
 		QuotaSampleCapacity:      6,
 		RequestHistoryLimit:      80,
-		PriorityRules: state.PriorityRulesConfig{
-			BoostStartPriority:  980,
-			NormalStartPriority: 200,
-			FreeStartPriority:   20,
-		},
 		Schedule: state.ScheduleConfig{
 			Paused: false,
 		},
@@ -1925,9 +1909,6 @@ func TestRuntime_DynamicConfig_SurvivesReconfigure(t *testing.T) {
 	cfg, err := r.Config()
 	if err != nil {
 		t.Fatal(err)
-	}
-	if cfg.PriorityRules.FreeStartPriority != 20 {
-		t.Errorf("expected FreeStartPriority=20, got %d", cfg.PriorityRules.FreeStartPriority)
 	}
 	if !cfg.AutoApply {
 		t.Error("expected AutoApply=true to be preserved after Reconfigure")

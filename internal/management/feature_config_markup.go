@@ -128,47 +128,7 @@ const configMarkup = `
                     </div>
                 </div>
 
-                <!-- Card 3: Priority Rules -->
-                <div class="config-card">
-                    <h3 class="config-card-title">
-                        <span>🎯</span>
-                        <span data-i18n="cfgCardRulesTitle">优先级分值规则</span>
-                    </h3>
-
-                    <div class="config-form-grid">
-                        <div class="form-row">
-                            <div class="form-label-box">
-                                <span class="form-title" data-i18n="cfgBoostStart">🚀 动态 Boost 起始优先级</span>
-                                <span class="form-hint" data-i18n="cfgBoostStartHint">充裕且即将重置的第一梯队凭证起始优先级 (1-999)</span>
-                            </div>
-                            <div class="form-input-group">
-                                <input type="number" id="cfgBoostStartPriority" class="config-num-input" min="1" max="999" value="999">
-                            </div>
-                        </div>
-
-                        <div class="form-row">
-                            <div class="form-label-box">
-                                <span class="form-title" data-i18n="cfgNormalStart">常规健康凭证起始优先级</span>
-                                <span class="form-hint" data-i18n="cfgNormalStartHint">常规可用梯队凭证的起始基准优先级 (1-999)</span>
-                            </div>
-                            <div class="form-input-group">
-                                <input type="number" id="cfgNormalStartPriority" class="config-num-input" min="1" max="999" value="100">
-                            </div>
-                        </div>
-
-                        <div class="form-row">
-                            <div class="form-label-box">
-                                <span class="form-title" data-i18n="cfgFreeStart">🎁 Free 账号兜底起始优先级</span>
-                                <span class="form-hint" data-i18n="cfgFreeStartHint">仅有周额度、无 5h 短窗的 Free 账号基准优先级，排在 Pro 之后兜底 (1-999)</span>
-                            </div>
-                            <div class="form-input-group">
-                                <input type="number" id="cfgFreeStartPriority" class="config-num-input" min="1" max="999" value="10">
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Card 4: 5-Hour Window Warm-Up -->
+                <!-- Card 3: 5-Hour Window Warm-Up -->
                 <div class="config-card">
                     <h3 class="config-card-title">
                         <span>🔥</span>

@@ -527,10 +527,6 @@ func TestHandler_GetDynamicConfig(t *testing.T) {
 			MaxConcurrency:           8,
 			UrgencyTolerance:         0.05,
 			RateLimitCooldownMinutes: 5,
-			PriorityRules: state.PriorityRulesConfig{
-				BoostStartPriority:  990,
-				NormalStartPriority: 150,
-			},
 			Schedule: state.ScheduleConfig{
 				Paused: false,
 			},
@@ -559,17 +555,14 @@ func TestHandler_GetDynamicConfig(t *testing.T) {
 	if cfg.MaxConcurrency != 8 {
 		t.Errorf("expected MaxConcurrency=8, got %d", cfg.MaxConcurrency)
 	}
-	if cfg.PriorityRules.BoostStartPriority != 990 {
-		t.Errorf("expected BoostStartPriority=990, got %d", cfg.PriorityRules.BoostStartPriority)
-	}
 	if cfg.UrgencyTolerance != 0.05 {
 		t.Errorf("expected UrgencyTolerance=0.05, got %v", cfg.UrgencyTolerance)
 	}
 	if cfg.RateLimitCooldownMinutes != 5 {
 		t.Errorf("expected RateLimitCooldownMinutes=5, got %d", cfg.RateLimitCooldownMinutes)
 	}
-	if strings.Contains(rec.Body.String(), `"priority_rules":{"enabled"`) {
-		t.Fatalf("GET /runtime-config exposed removed priority_rules.enabled: %s", rec.Body.String())
+	if strings.Contains(rec.Body.String(), `"priority_rules"`) {
+		t.Fatalf("GET /runtime-config exposed removed priority_rules: %s", rec.Body.String())
 	}
 }
 
@@ -577,7 +570,7 @@ func TestHandler_SetDynamicConfig_Success(t *testing.T) {
 	runner := &mockRunner{}
 	handler := management.NewHandler(runner)
 
-	body := `{"auto_apply":true,"interval":"20m","max_concurrency":4,"urgency_tolerance":0.08,"rate_limit_cooldown_minutes":10,"quota_sample_capacity":6,"priority_rules":{"boost_start_priority":995,"normal_start_priority":120},"schedule":{"paused":false}}`
+	body := `{"auto_apply":true,"interval":"20m","max_concurrency":4,"urgency_tolerance":0.08,"rate_limit_cooldown_minutes":10,"quota_sample_capacity":6,"schedule":{"paused":false}}`
 	req := httptest.NewRequest(http.MethodPost, "/runtime-config", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 
@@ -606,7 +599,7 @@ func TestHandler_DynamicConfig_WarmupRoundTrip(t *testing.T) {
 	runner := &mockRunner{}
 	handler := management.NewHandler(runner)
 
-	body := `{"auto_apply":true,"interval":"15m","max_concurrency":6,"urgency_tolerance":0.05,"rate_limit_cooldown_minutes":5,"quota_sample_capacity":6,"priority_rules":{"boost_start_priority":999,"normal_start_priority":100},"schedule":{"paused":false},"warmup":{"gemini_enabled":true,"gemini_model":"gemini-2.0-flash","claude_enabled":true,"claude_model":"claude-3-7-sonnet"}}`
+	body := `{"auto_apply":true,"interval":"15m","max_concurrency":6,"urgency_tolerance":0.05,"rate_limit_cooldown_minutes":5,"quota_sample_capacity":6,"schedule":{"paused":false},"warmup":{"gemini_enabled":true,"gemini_model":"gemini-2.0-flash","claude_enabled":true,"claude_model":"claude-3-7-sonnet"}}`
 	req := httptest.NewRequest(http.MethodPost, "/runtime-config", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 

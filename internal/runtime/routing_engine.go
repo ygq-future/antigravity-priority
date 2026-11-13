@@ -457,9 +457,6 @@ func planningOptionsForEngine(cfg config.Config, store *state.Store, now time.Ti
 	}
 	return priority.Options{
 		Now:                 now,
-		BoostStartPriority:  cfg.PriorityRules.BoostStartPriority,
-		NormalStartPriority: cfg.PriorityRules.NormalStartPriority,
-		FreeStartPriority:   cfg.PriorityRules.FreeStartPriority,
 		UrgencyTolerance:    cfg.UrgencyTolerance,
 		CustomTiers:         customTiers,
 	}

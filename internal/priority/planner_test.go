@@ -16,7 +16,8 @@ func planFreshOnly(credentials []core.Credential, evidence []QuotaEvidence, opti
 	if options.Now.IsZero() {
 		panic("priority: explicit decision time is required")
 	}
-	return planWithEvidence(credentials, plannerEvidence{Fresh: evidence}, normalizeOptions(options))
+	options.Now = options.Now.UTC()
+	return planWithEvidence(credentials, plannerEvidence{Fresh: evidence}, options)
 }
 
 func TestPlanFreshOnlyRequiresExplicitDecisionTime(t *testing.T) {
@@ -31,7 +32,7 @@ func TestPlanFreshOnlyRequiresExplicitDecisionTime(t *testing.T) {
 
 	t.Run("identical inputs produce identical replayable plans", func(t *testing.T) {
 		now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
-		options := Options{Now: now, BoostStartPriority: 999, NormalStartPriority: 100}
+		options := Options{Now: now}
 		first := planFreshOnly(nil, nil, options)
 		second := planFreshOnly(nil, nil, options)
 		if !reflect.DeepEqual(first, second) {
@@ -53,7 +54,7 @@ func TestPlanFreshOnlyZeroToleranceClustersOnlyExactlyEqualScores(t *testing.T) 
 		{AuthIndex: "equal-b", ShortWindowRemaining: int64Ptr(80), ShortWindowResetAt: &reset5h, LongWindowRemaining: int64Ptr(80), LongWindowResetAt: &reset7d},
 		{AuthIndex: "different", ShortWindowRemaining: int64Ptr(80), ShortWindowResetAt: &reset5h, LongWindowRemaining: int64Ptr(79), LongWindowResetAt: &reset7d},
 	}
-	plan := planFreshOnly(credentials, evidence, Options{Now: now, BoostStartPriority: 999, NormalStartPriority: 100, UrgencyTolerance: 0})
+	plan := planFreshOnly(credentials, evidence, Options{Now: now, UrgencyTolerance: 0})
 	priorities := map[string]int{}
 	for _, item := range plan.Items {
 		priorities[item.Credential.AuthIndex] = item.Priority
@@ -70,8 +71,6 @@ func TestPlanFreshOnly(t *testing.T) {
 	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
 	defaultOptions := Options{
 		Now:                 now,
-		BoostStartPriority:  999,
-		NormalStartPriority: 100,
 		UrgencyTolerance:    0.05,
 	}
 
@@ -569,28 +568,10 @@ func TestPlanFreshOnly(t *testing.T) {
 		}
 	})
 
-	t.Run("handles empty credentials and options normalization gracefully", func(t *testing.T) {
+	t.Run("handles empty credentials gracefully", func(t *testing.T) {
 		emptyPlan := planFreshOnly(nil, nil, Options{Now: now})
 		if len(emptyPlan.Items) != 0 {
 			t.Errorf("empty plan should have 0 items")
-		}
-
-		opts := normalizeOptions(Options{
-			BoostStartPriority:  -5,
-			NormalStartPriority: 2000,
-		})
-		if opts.BoostStartPriority != DefaultBoostStartPriority {
-			t.Errorf("BoostStartPriority = %d; want %d", opts.BoostStartPriority, DefaultBoostStartPriority)
-		}
-		if opts.NormalStartPriority != MaxPriority {
-			t.Errorf("NormalStartPriority = %d; want %d", opts.NormalStartPriority, MaxPriority)
-		}
-
-		optsMaxBoost := normalizeOptions(Options{
-			BoostStartPriority: 10000,
-		})
-		if optsMaxBoost.BoostStartPriority != MaxPriority {
-			t.Errorf("BoostStartPriority = %d; want %d", optsMaxBoost.BoostStartPriority, MaxPriority)
 		}
 	})
 
@@ -647,42 +628,35 @@ func TestPlanFreshOnly(t *testing.T) {
 	})
 
 	t.Run("priority decrements clamp at MinPriority (1)", func(t *testing.T) {
-		creds := []core.Credential{
-			{AuthIndex: "c1", Priority: 50},
-			{AuthIndex: "c2", Priority: 50},
-			{AuthIndex: "c3", Priority: 50},
-		}
-		reset7d := now.Add(80 * time.Hour)
-		reset5h := now.Add(2 * time.Hour)
-		evidence := []QuotaEvidence{
-			{
-				AuthIndex:            "c1",
-				LongWindowRemaining:  int64Ptr(90),
-				LongWindowResetAt:    &reset7d,
+		const count = DefaultNormalStartPriority + 2
+		creds := make([]core.Credential, count)
+		evidence := make([]QuotaEvidence, count)
+		reset5h := now.Add(4 * time.Hour)
+		reset7d := now.Add(1000 * time.Hour)
+		for i := range count {
+			authIndex := "c" + string(rune('a'+i/26)) + string(rune('a'+i%26))
+			creds[i] = core.Credential{AuthIndex: authIndex, Priority: 50}
+			rem := int64(100 - i%99)
+			longReset := reset7d.Add(time.Duration(i) * time.Hour)
+			evidence[i] = QuotaEvidence{
+				AuthIndex:            authIndex,
+				LongWindowRemaining:  &rem,
+				LongWindowResetAt:    &longReset,
 				ShortWindowRemaining: int64Ptr(90),
 				ShortWindowResetAt:   &reset5h,
-			},
-			{
-				AuthIndex:            "c2",
-				LongWindowRemaining:  int64Ptr(80),
-				LongWindowResetAt:    &reset7d,
-				ShortWindowRemaining: int64Ptr(80),
-				ShortWindowResetAt:   &reset5h,
-			},
-			{
-				AuthIndex:            "c3",
-				LongWindowRemaining:  int64Ptr(70),
-				LongWindowResetAt:    &reset7d,
-				ShortWindowRemaining: int64Ptr(70),
-				ShortWindowResetAt:   &reset5h,
-			},
+			}
 		}
 
 		opts := defaultOptions
-		opts.NormalStartPriority = 2 // start at 2 -> c1 gets 2, c2 gets 1, c3 gets 1 (before uniqueness) -> uniqueness assigns unique slots
+		opts.UrgencyTolerance = 0
 		plan := planFreshOnly(creds, evidence, opts)
-		if len(plan.Items) != 3 {
-			t.Fatalf("expected 3 items, got %d", len(plan.Items))
+		if len(plan.Items) != count {
+			t.Fatalf("expected %d items, got %d", count, len(plan.Items))
+		}
+		for _, item := range plan.Items {
+			if item.Priority < MinPriority {
+				t.Fatalf("priority %d dropped below MinPriority (%d)", item.Priority, MinPriority)
+			}
 		}
 	})
 }
@@ -720,7 +694,7 @@ func TestPlanWithEvidence_FreshEvidenceTakesPrecedenceOverHistorical(t *testing.
 	plan := PlanWithEvidence(credentials, plannerEvidence{
 		Fresh:      []QuotaEvidence{fresh, preferred},
 		Historical: []QuotaEvidence{historical, depleted},
-	}, Options{Now: now, NormalStartPriority: 100})
+	}, Options{Now: now})
 
 	items := make(map[string]PlanItem, len(plan.Items))
 	for _, item := range plan.Items {
@@ -754,8 +728,6 @@ func TestPlanFreshOnly_DepletedPriorityUsesExplicitRuntimeState(t *testing.T) {
 	}
 	options := Options{
 		Now:                 now,
-		BoostStartPriority:  999,
-		NormalStartPriority: 100,
 	}
 
 	t.Run("healthy credential recovers from current minus one", func(t *testing.T) {
@@ -843,9 +815,6 @@ func TestPlanWithEvidence_FreeTierIsolatedBelowPro(t *testing.T) {
 
 	opts := Options{
 		Now:                 now,
-		BoostStartPriority:  999,
-		NormalStartPriority: 100,
-		FreeStartPriority:   10,
 	}
 
 	plan := planFreshOnly(creds, evidence, opts)
@@ -941,9 +910,6 @@ func TestPlanWithEvidence_CustomTierOverridesAutoAndBalancesLoad(t *testing.T) {
 	// User sets: C: custom tier 1, a: 2, b: 2
 	options := Options{
 		Now:                 now,
-		BoostStartPriority:  999,
-		NormalStartPriority: 100,
-		FreeStartPriority:   10,
 		UrgencyTolerance:    0.05,
 		CustomTiers: map[string]int{
 			"account-c": 1,

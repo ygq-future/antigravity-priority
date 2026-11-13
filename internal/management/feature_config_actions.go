@@ -27,9 +27,6 @@ const templateScriptConfig = `        let originalConfigState = null;
             var urgencyTol = (document.getElementById("cfgUrgencyTolerance") && document.getElementById("cfgUrgencyTolerance").value) || "";
             var sampleCapacity = (document.getElementById("cfgSampleCapacity") && document.getElementById("cfgSampleCapacity").value) || "";
             var cooldownMin = (document.getElementById("cfgCooldownMinutes") && document.getElementById("cfgCooldownMinutes").value) || "";
-            var boostStart = (document.getElementById("cfgBoostStartPriority") && document.getElementById("cfgBoostStartPriority").value) || "";
-            var normalStart = (document.getElementById("cfgNormalStartPriority") && document.getElementById("cfgNormalStartPriority").value) || "";
-            var freeStart = (document.getElementById("cfgFreeStartPriority") && document.getElementById("cfgFreeStartPriority").value) || "";
             var warmupGeminiEnabled = Boolean(document.getElementById("cfgWarmupGeminiEnabled") && document.getElementById("cfgWarmupGeminiEnabled").checked);
             var warmupGeminiModel = (document.getElementById("cfgWarmupGeminiModelSelect") && document.getElementById("cfgWarmupGeminiModelSelect").value) || "gemini-3-flash";
             var warmupClaudeEnabled = Boolean(document.getElementById("cfgWarmupClaudeEnabled") && document.getElementById("cfgWarmupClaudeEnabled").checked);
@@ -37,7 +34,7 @@ const templateScriptConfig = `        let originalConfigState = null;
 
             return JSON.stringify({
                 autoApply, interval,
-                maxConcurrency, urgencyTol, sampleCapacity, cooldownMin, boostStart, normalStart, freeStart,
+                maxConcurrency, urgencyTol, sampleCapacity, cooldownMin,
                 warmupGeminiEnabled, warmupGeminiModel, warmupClaudeEnabled, warmupClaudeModel
             });
         }
@@ -92,16 +89,6 @@ const templateScriptConfig = `        let originalConfigState = null;
 
             var cooldownMin = document.getElementById("cfgCooldownMinutes");
             if (cooldownMin) cooldownMin.value = cfg.rate_limit_cooldown_minutes !== undefined ? cfg.rate_limit_cooldown_minutes : 5;
-
-            var rules = cfg.priority_rules || {};
-            var boostStart = document.getElementById("cfgBoostStartPriority");
-            if (boostStart) boostStart.value = rules.boost_start_priority || 999;
-
-            var normalStart = document.getElementById("cfgNormalStartPriority");
-            if (normalStart) normalStart.value = rules.normal_start_priority || 100;
-
-            var freeStart = document.getElementById("cfgFreeStartPriority");
-            if (freeStart) freeStart.value = rules.free_start_priority || 10;
 
             var warmup = cfg.warmup || {};
             var wGemini = document.getElementById("cfgWarmupGeminiEnabled");
@@ -232,25 +219,6 @@ const templateScriptConfig = `        let originalConfigState = null;
                     return;
                 }
 
-				var boostStart = parseStrictInteger((document.getElementById("cfgBoostStartPriority") && document.getElementById("cfgBoostStartPriority").value) || "999");
-				var normalStart = parseStrictInteger((document.getElementById("cfgNormalStartPriority") && document.getElementById("cfgNormalStartPriority").value) || "100");
-				var freeStart = parseStrictInteger((document.getElementById("cfgFreeStartPriority") && document.getElementById("cfgFreeStartPriority").value) || "10");
-
-                if (isNaN(boostStart) || boostStart < 1 || boostStart > 999 || isNaN(normalStart) || normalStart < 1 || normalStart > 999 || isNaN(freeStart) || freeStart < 1 || freeStart > 999) {
-                    showToast(t("valErrPriorityRange"), "error");
-                    updateSaveButtonState();
-                    return;
-                }
-                if (normalStart > boostStart) {
-                    showToast(t("valErrPriorityOrder"), "error");
-                    updateSaveButtonState();
-                    return;
-                }
-                if (freeStart > normalStart) {
-                    showToast(t("valErrFreePriorityOrder"), "error");
-                    updateSaveButtonState();
-                    return;
-                }
                 var reqBody = {
                     auto_apply: autoApply,
                     interval: interval,
@@ -259,11 +227,6 @@ const templateScriptConfig = `        let originalConfigState = null;
                     rate_limit_cooldown_minutes: cooldownMin,
                     quota_sample_capacity: sampleCapacity,
                     request_history_limit: (dynamicConfig && dynamicConfig.request_history_limit !== undefined) ? dynamicConfig.request_history_limit : 100,
-                    priority_rules: {
-                        boost_start_priority: boostStart,
-                        normal_start_priority: normalStart,
-                        free_start_priority: freeStart
-                    },
                     schedule: {
                         paused: Boolean(
                             (typeof scheduleConfig !== "undefined" && scheduleConfig && scheduleConfig.paused) ||
@@ -314,10 +277,6 @@ const templateScriptConfig = `        let originalConfigState = null;
                 urgency_tolerance: 0.05,
                 quota_sample_capacity: 6,
                 rate_limit_cooldown_minutes: 5,
-                priority_rules: {
-                    boost_start_priority: 999,
-                    normal_start_priority: 100
-                },
                 schedule: {
                     paused: false
                 },

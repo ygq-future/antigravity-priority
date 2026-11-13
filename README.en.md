@@ -142,9 +142,6 @@ In the **`⚙️ Config Center`** tab of the management dashboard, the following
 | **Urgency Bucket Tolerance (`urgency_tolerance`)** | `0.05` | `0.00 ~ 0.50` | Accounts within this tolerance share the same priority for round-robin balancing. |
 | **Adaptive Sample Capacity (`quota_sample_capacity`)** | `6` | `2 ~ 30` | FIFO history retained for both consumption-trend inspection and burn-rate learning. |
 | **429 Cooldown Duration (`rate_limit_cooldown_minutes`)** | `5` | `1 ~ 1440` min | Cooldown duration isolating rate-limited quota pool into fallback tier on 429 errors. |
-| **Boost Start Priority (`boost_start_priority`)** | `999` | `1 ~ 999` | Base priority for tier-1 boosted credentials. |
-| **Normal Healthy Start Priority (`normal_start_priority`)** | `100` | `1 ~ 999`, not above Boost start | Base priority for tier-2 regular healthy credentials. |
-| **Free Tier Fallback Start Priority (`free_start_priority`)** | `10` | `1 ~ 999`, not above Normal start | Base priority for Free accounts without 5h window, serving as fallback after Pro. |
 | **Gemini 5h Auto Warm-Up (`warmup.gemini_enabled`)** | `false` | On / Off | Automatically sends a long-form prompt (with a minimum 600-token constraint) when Gemini 5h quota is 100% full, the 7d pool still has quota, and the window is inactive; credentials are spaced 60–120 minutes apart, pools of one credential 30–60 minutes apart. |
 | **Gemini Warm-Up Model (`warmup.gemini_model`)** | `gemini-3-flash` | Selectable | Model used to trigger the Gemini 5h reset countdown. |
 | **Claude 5h Auto Warm-Up (`warmup.claude_enabled`)** | `false` | On / Off | Automatically sends a short prompt when Claude 5h quota is 100% full, the 7d pool still has quota, and the window is inactive; credentials are spaced 60–120 minutes apart, pools of one credential 30–60 minutes apart. |

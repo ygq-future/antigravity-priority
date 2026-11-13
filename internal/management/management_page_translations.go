@@ -55,11 +55,9 @@ var configTranslationKeys = []string{
 	"cfgCardPerfTitle", "cfgMaxConcurrency", "cfgMaxConcurrencyHint",
 	"cfgUrgencyTolerance", "cfgUrgencyToleranceHint", "cfgSampleCapacity", "cfgSampleCapacityHint",
 	"cfgCooldownMinutes", "cfgCooldownMinutesHint",
-	"cfgCardRulesTitle", "cfgBoostStart", "cfgBoostStartHint", "cfgNormalStart",
-	"cfgNormalStartHint", "cfgFreeStart", "cfgFreeStartHint", "btnSaveConfig", "btnResetToDefaults", "configSaveSuccess", "confirmResetConfigTitle", "confirmResetConfigMsg",
+	"btnSaveConfig", "btnResetToDefaults", "configSaveSuccess", "confirmResetConfigTitle", "confirmResetConfigMsg",
 	"optInterval5m", "optInterval15m", "optInterval30m", "optInterval1h", "optIntervalCustom", "valErrInterval",
-	"valErrConcurrency", "valErrUrgencyTol", "valErrSampleCapacity", "valErrCooldown", "valErrPriorityRange",
-	"valErrPriorityOrder", "valErrFreePriorityOrder",
+	"valErrConcurrency", "valErrUrgencyTol", "valErrSampleCapacity", "valErrCooldown",
 	"cfgCardWarmupTitle", "cfgWarmupGemini", "cfgWarmupGeminiHint", "cfgWarmupGeminiHintTitle", "cfgWarmupGeminiModel", "cfgWarmupGeminiModelHint",
 	"cfgWarmupClaude", "cfgWarmupClaudeHint", "cfgWarmupClaudeHintTitle", "cfgWarmupClaudeModel", "cfgWarmupClaudeModelHint",
 

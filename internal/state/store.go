@@ -148,9 +148,6 @@ type CooldownEntry struct {
 	Reason         string      `json:"reason"`
 }
 
-// PriorityRulesConfig holds priority rule settings for DynamicConfig.
-type PriorityRulesConfig = config.PriorityRulesConfig
-
 // Store manages the in-memory and on-disk state cache document.
 type Store struct {
 	mu                 sync.RWMutex

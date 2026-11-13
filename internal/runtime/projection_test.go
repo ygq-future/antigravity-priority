@@ -46,10 +46,7 @@ func TestProjectModelGroups_AllPoolsAreActiveAndIndependent(t *testing.T) {
 	projection, err := runtime.ProjectModelGroups(runtime.ProjectionInput{
 		Credentials:     credentials,
 		EvidenceByGroup: groupEvidence,
-		PlanningOptions: priority.Options{
-			BoostStartPriority:  999,
-			NormalStartPriority: 100,
-		},
+		PlanningOptions: priority.Options{},
 		ProjectionTime: now,
 	})
 	if err != nil {
@@ -121,10 +118,7 @@ func TestProjectModelGroups_QuotaWindowsRemainPerCredentialWhenRedactedIndexesCo
 	projection, err := runtime.ProjectModelGroups(runtime.ProjectionInput{
 		Credentials:     credentials,
 		EvidenceByGroup: groupEvidence,
-		PlanningOptions: priority.Options{
-			BoostStartPriority:  999,
-			NormalStartPriority: 100,
-		},
+		PlanningOptions: priority.Options{},
 		ProjectionTime: now,
 	})
 	if err != nil {
@@ -181,7 +175,7 @@ func TestProjectModelGroups_MissingGroupRemainsStableAndUnknown(t *testing.T) {
 		EvidenceByGroup: map[config.AntigravityModelGroup]evidence.Result{
 			config.AntigravityModelGroupGemini: {Eligible: []priority.QuotaEvidence{readyEvidence("auth-1", core.PlanTypePlus, 88, now.Add(2*time.Hour))}},
 		},
-		PlanningOptions: priority.Options{NormalStartPriority: 100},
+		PlanningOptions: priority.Options{},
 		ProjectionTime:  now,
 	})
 	if err != nil {
@@ -204,7 +198,7 @@ func TestProjectModelGroups_HistoricalEvidenceProjectsStoredQuota(t *testing.T) 
 		EvidenceByGroup: map[config.AntigravityModelGroup]evidence.Result{
 			config.AntigravityModelGroupGemini: historicalEvidenceResult(readyEvidence("auth-1", core.PlanTypePro, 88, now.Add(100*time.Hour))),
 		},
-		PlanningOptions: priority.Options{NormalStartPriority: 100},
+		PlanningOptions: priority.Options{},
 		ProjectionTime:  now,
 	})
 	if err != nil {
@@ -231,7 +225,7 @@ func TestProjectModelGroups_DoesNotMutateInputsOrReturnedSnapshots(t *testing.T)
 		EvidenceByGroup: map[config.AntigravityModelGroup]evidence.Result{
 			config.AntigravityModelGroupGemini: {Eligible: []priority.QuotaEvidence{fresh}},
 		},
-		PlanningOptions: priority.Options{NormalStartPriority: 100},
+		PlanningOptions: priority.Options{},
 		ProjectionTime:  now,
 	}
 	first, err := runtime.ProjectModelGroups(input)
@@ -346,7 +340,7 @@ func TestProjectModelGroups_ThreePoolIndependentPlansAndQuotaWindows(t *testing.
 	projection, err := runtime.ProjectModelGroups(runtime.ProjectionInput{
 		Credentials:     credentials,
 		EvidenceByGroup: evidenceByGroup,
-		PlanningOptions: priority.Options{NormalStartPriority: 100},
+		PlanningOptions: priority.Options{},
 		ProjectionTime:  now,
 	})
 	if err != nil {
@@ -444,7 +438,7 @@ func TestProjectModelGroups_NoArgonBucketDoesNotFabricateArgon7d(t *testing.T) {
 	projection, err := runtime.ProjectModelGroups(runtime.ProjectionInput{
 		Credentials:     credentials,
 		EvidenceByGroup: evidenceByGroup,
-		PlanningOptions: priority.Options{NormalStartPriority: 100},
+		PlanningOptions: priority.Options{},
 		ProjectionTime:  now,
 	})
 	if err != nil {
@@ -507,7 +501,7 @@ func TestProjectModelGroups_UltraSharedArgonMarksGeminiWindow(t *testing.T) {
 			// Argon has no independent bucket; the probe copied the Gemini pool.
 			config.AntigravityModelGroupArgon: {Eligible: []priority.QuotaEvidence{sharedEvidence(config.AntigravityModelGroupArgon)}},
 		},
-		PlanningOptions: priority.Options{NormalStartPriority: 100},
+		PlanningOptions: priority.Options{},
 		ProjectionTime:  now,
 	})
 	if err != nil {
@@ -587,10 +581,7 @@ func TestProjectModelGroups_CarriesPerCredentialWarmupState(t *testing.T) {
 	projection, err := runtime.ProjectModelGroups(runtime.ProjectionInput{
 		Credentials:     credentials,
 		EvidenceByGroup: groupEvidence,
-		PlanningOptions: priority.Options{
-			BoostStartPriority:  999,
-			NormalStartPriority: 100,
-		},
+		PlanningOptions: priority.Options{},
 		ProjectionTime: now,
 		Warmup: config.WarmupConfig{
 			GeminiEnabled: true,
@@ -644,10 +635,7 @@ func TestProjectModelGroups_LocalWarmupOverrideBeatsGlobalOff(t *testing.T) {
 	}
 	projection, err := runtime.ProjectModelGroups(runtime.ProjectionInput{
 		Credentials: credentials,
-		PlanningOptions: priority.Options{
-			BoostStartPriority:  999,
-			NormalStartPriority: 100,
-		},
+		PlanningOptions: priority.Options{},
 		ProjectionTime: now,
 		Warmup:         config.WarmupConfig{Overrides: map[string]bool{"auth-1": true}},
 	})

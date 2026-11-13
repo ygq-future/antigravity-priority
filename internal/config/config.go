@@ -43,14 +43,6 @@ const (
 	KeyRequestHistoryLimit = "request_history_limit"
 	// KeyStateCachePath is the JSON/YAML key for state_cache_path.
 	KeyStateCachePath = "state_cache_path"
-	// KeyPriorityRules is the JSON key for priority_rules.
-	KeyPriorityRules = "priority_rules"
-	// KeyBoostStartPriority is the JSON key for boost_start_priority.
-	KeyBoostStartPriority = "boost_start_priority"
-	// KeyNormalStartPriority is the JSON key for normal_start_priority.
-	KeyNormalStartPriority = "normal_start_priority"
-	// KeyFreeStartPriority is the JSON key for free_start_priority.
-	KeyFreeStartPriority = "free_start_priority"
 	// KeySchedule is the JSON key for schedule.
 	KeySchedule = "schedule"
 	// KeyPaused is the JSON key for paused.
@@ -88,10 +80,6 @@ const (
 	MinRateLimitCooldownMinutes = 1
 	// MaxRateLimitCooldownMinutes is the maximum 429 cooldown duration.
 	MaxRateLimitCooldownMinutes = 1440
-	// MinPriorityValue is the minimum allowed priority setting.
-	MinPriorityValue = 1
-	// MaxPriorityValue is the maximum allowed priority setting.
-	MaxPriorityValue = 999
 )
 
 // ErrInvalidConfig indicates configuration parsing or validation failure.
@@ -108,7 +96,6 @@ type Config struct {
 	QuotaSampleCapacity      int
 	RequestHistoryLimit      int
 	StateCachePath           string
-	PriorityRules            PriorityRules
 	Schedule                 ScheduleConfig
 	CustomTiers              map[string]int
 	Warmup                   WarmupConfig
@@ -233,55 +220,6 @@ func (w *WarmupConfig) ClearWarmupOverride(authIndex string) {
 	}
 }
 
-// PriorityRules contains the priority scoring configurations.
-type PriorityRules struct {
-	BoostStartPriority  int
-	NormalStartPriority int
-	FreeStartPriority   int
-}
-
-// PriorityRulesConfig holds priority rule settings for DynamicConfig.
-type PriorityRulesConfig struct {
-	BoostStartPriority  int `json:"boost_start_priority"`
-	NormalStartPriority int `json:"normal_start_priority"`
-	FreeStartPriority   int `json:"free_start_priority"`
-}
-
-// UnmarshalJSON migrates legacy priority_rules.enabled documents. Custom
-// values from enabled=false configurations were previously inactive, so they
-// resolve to the canonical defaults instead of becoming active unexpectedly.
-func (cfg *PriorityRulesConfig) UnmarshalJSON(data []byte) error {
-	var raw struct {
-		Enabled             *bool `json:"enabled"`
-		BoostStartPriority  *int  `json:"boost_start_priority"`
-		NormalStartPriority *int  `json:"normal_start_priority"`
-		FreeStartPriority   *int  `json:"free_start_priority"`
-	}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-	defaults := defaultPriorityRules()
-	cfg.BoostStartPriority = defaults.BoostStartPriority
-	cfg.NormalStartPriority = defaults.NormalStartPriority
-	cfg.FreeStartPriority = defaults.FreeStartPriority
-	if raw.Enabled != nil && !*raw.Enabled {
-		return nil
-	}
-	if raw.BoostStartPriority != nil {
-		cfg.BoostStartPriority = *raw.BoostStartPriority
-	}
-	if raw.NormalStartPriority != nil {
-		cfg.NormalStartPriority = *raw.NormalStartPriority
-	}
-	if raw.FreeStartPriority != nil {
-		cfg.FreeStartPriority = *raw.FreeStartPriority
-	}
-	return nil
-}
-
-func defaultPriorityRules() PriorityRules {
-	return PriorityRules{BoostStartPriority: 999, NormalStartPriority: 100, FreeStartPriority: 10}
-}
 
 // DynamicConfig contains all runtime-customizable configuration parameters
 // that can be modified via the UI Config Center without restarting the plugin (REQ-09).
@@ -293,7 +231,6 @@ type DynamicConfig struct {
 	RateLimitCooldownMinutes int                 `json:"rate_limit_cooldown_minutes"` // e.g. 5
 	QuotaSampleCapacity      int                 `json:"quota_sample_capacity"`       // e.g. 6 (range 2..30)
 	RequestHistoryLimit      int                 `json:"request_history_limit"`       // e.g. 100 (range 1..1000)
-	PriorityRules            PriorityRulesConfig `json:"priority_rules"`
 	Schedule                 ScheduleConfig      `json:"schedule"`
 	CustomTiers              map[string]int      `json:"custom_tiers,omitempty"`
 	Warmup                   WarmupConfig        `json:"warmup"`
@@ -301,8 +238,7 @@ type DynamicConfig struct {
 }
 
 // UnmarshalJSON seeds omitted fields from the canonical defaults before
-// applying persisted dynamic overrides. This keeps older documents that lack
-// priority_rules (or newer fields) round-trip valid.
+// applying persisted dynamic overrides. This keeps older documents round-trip valid.
 func (dyn *DynamicConfig) UnmarshalJSON(data []byte) error {
 	type dynamicConfigAlias DynamicConfig
 	seeded := dynamicConfigAlias(Default().Dynamic())
@@ -330,7 +266,6 @@ func Default() Config {
 		QuotaSampleCapacity:      DefaultQuotaSampleCapacity,
 		RequestHistoryLimit:      DefaultRequestHistoryLimit,
 		StateCachePath:           DefaultStateCachePath,
-		PriorityRules:            defaultPriorityRules(),
 		Schedule: ScheduleConfig{
 			Paused: false,
 		},
@@ -348,11 +283,6 @@ func (cfg Config) Dynamic() DynamicConfig {
 		RateLimitCooldownMinutes: cfg.RateLimitCooldownMinutes,
 		QuotaSampleCapacity:      cfg.QuotaSampleCapacity,
 		RequestHistoryLimit:      cfg.RequestHistoryLimit,
-		PriorityRules: PriorityRulesConfig{
-			BoostStartPriority:  cfg.PriorityRules.BoostStartPriority,
-			NormalStartPriority: cfg.PriorityRules.NormalStartPriority,
-			FreeStartPriority:   cfg.PriorityRules.FreeStartPriority,
-		},
 		Schedule:       cfg.Schedule,
 		CustomTiers:    cloneCustomTiers(cfg.CustomTiers),
 		Warmup:         cfg.Warmup.Clone(),
@@ -434,21 +364,6 @@ func (dyn DynamicConfig) Validate() error {
 	if dyn.RateLimitCooldownMinutes < MinRateLimitCooldownMinutes || dyn.RateLimitCooldownMinutes > MaxRateLimitCooldownMinutes {
 		return fmt.Errorf("rate_limit_cooldown_minutes must be between %d and %d, got %d", MinRateLimitCooldownMinutes, MaxRateLimitCooldownMinutes, dyn.RateLimitCooldownMinutes)
 	}
-	if dyn.PriorityRules.BoostStartPriority < MinPriorityValue || dyn.PriorityRules.BoostStartPriority > MaxPriorityValue {
-		return fmt.Errorf("boost_start_priority must be between %d and %d, got %d", MinPriorityValue, MaxPriorityValue, dyn.PriorityRules.BoostStartPriority)
-	}
-	if dyn.PriorityRules.NormalStartPriority < MinPriorityValue || dyn.PriorityRules.NormalStartPriority > MaxPriorityValue {
-		return fmt.Errorf("normal_start_priority must be between %d and %d, got %d", MinPriorityValue, MaxPriorityValue, dyn.PriorityRules.NormalStartPriority)
-	}
-	if dyn.PriorityRules.FreeStartPriority < MinPriorityValue || dyn.PriorityRules.FreeStartPriority > MaxPriorityValue {
-		return fmt.Errorf("free_start_priority must be between %d and %d, got %d", MinPriorityValue, MaxPriorityValue, dyn.PriorityRules.FreeStartPriority)
-	}
-	if dyn.PriorityRules.FreeStartPriority > dyn.PriorityRules.NormalStartPriority {
-		return fmt.Errorf("free_start_priority must not exceed normal_start_priority, got %d > %d", dyn.PriorityRules.FreeStartPriority, dyn.PriorityRules.NormalStartPriority)
-	}
-	if dyn.PriorityRules.NormalStartPriority > dyn.PriorityRules.BoostStartPriority {
-		return fmt.Errorf("normal_start_priority must not exceed boost_start_priority, got %d > %d", dyn.PriorityRules.NormalStartPriority, dyn.PriorityRules.BoostStartPriority)
-	}
 	if dyn.QuotaSampleCapacity < MinQuotaSampleCapacity || dyn.QuotaSampleCapacity > MaxQuotaSampleCapacity {
 		return fmt.Errorf("quota_sample_capacity must be between %d and %d, got %d", MinQuotaSampleCapacity, MaxQuotaSampleCapacity, dyn.QuotaSampleCapacity)
 	}
@@ -493,9 +408,6 @@ func (dyn DynamicConfig) ApplyTo(base Config) (Config, error) {
 	res.RateLimitCooldownMinutes = dyn.RateLimitCooldownMinutes
 	res.QuotaSampleCapacity = dyn.QuotaSampleCapacity
 	res.RequestHistoryLimit = dyn.RequestHistoryLimit
-	res.PriorityRules.BoostStartPriority = dyn.PriorityRules.BoostStartPriority
-	res.PriorityRules.NormalStartPriority = dyn.PriorityRules.NormalStartPriority
-	res.PriorityRules.FreeStartPriority = dyn.PriorityRules.FreeStartPriority
 	res.Schedule = dyn.Schedule
 	res.CustomTiers = cloneCustomTiers(dyn.CustomTiers)
 	res.Warmup = dyn.Warmup.Clone()

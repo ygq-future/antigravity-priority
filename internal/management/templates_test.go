@@ -295,8 +295,8 @@ func TestStatusHTML_ContainsRequiredUIElements(t *testing.T) {
 	if strings.Contains(html, "priority <= 0") {
 		t.Errorf("StatusHTML should not contain 'priority <= 0'")
 	}
-	if strings.Contains(html, "cfgRulesEnabled") || strings.Contains(html, "enabled: rulesEnabled") {
-		t.Error("StatusHTML must not expose the removed priority_rules.enabled switch")
+	if strings.Contains(html, "cfgBoostStartPriority") || strings.Contains(html, "cfgNormalStartPriority") || strings.Contains(html, "cfgFreeStartPriority") || strings.Contains(html, "priority_rules") {
+		t.Error("StatusHTML must not expose removed priority_rules configuration controls")
 	}
 	if !strings.Contains(html, `if (tabId === "overview") refreshDashboard({ withSync: true, silent: true })`) {
 		t.Error("returning to Overview must synchronize silently")
