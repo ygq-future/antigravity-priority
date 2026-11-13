@@ -147,9 +147,63 @@ func TestOverview_SingleProbeButtonAndStatusDisabledBadge(t *testing.T) {
 	if !strings.Contains(StatusHTML, `t("statusDisabled")`) {
 		t.Fatal("overview card must render statusDisabled badge for manually disabled accounts")
 	}
-	if !strings.Contains(StatusHTML, `item.target && item.target.disabled && !isManuallyDisabled`) {
-		t.Fatal("overview depleted count must exclude manually disabled accounts")
+
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not available; disabled card rendering is checked in the Node-enabled verification environment")
 	}
+	harness := templateScriptAccountDisplay + templateScriptOverviewActionsCore + templateScriptOverviewRender + templateScriptOverviewReset + `
+function element(initial) {
+    return Object.assign({ textContent: "", _innerHTML: "", children: [], setAttribute: function() {}, getAttribute: function() { return null; }, classList: { add: function(){}, remove: function(){}, contains: function(){ return false; } }, appendChild: function(c) { this.children.push(c); this._innerHTML += c.innerHTML; } }, initial || {});
+}
+const elements = {
+    modelSelect: element({ value: "gemini-3.8-flash-high" }),
+    credentialsContainer: element(),
+    valTotalCreds: element(),
+    valTotalDesc: element(),
+    valBoosted: element(),
+    valDepleted: element()
+};
+const document = {
+    getElementById: function(id) { return elements[id] || null; },
+    createElement: function(tag) { return element({ tagName: tag }); }
+};
+function t(key) { return key === "statusDisabled" ? "已禁用" : key; }
+function escapeHTML(s) { return String(s || ""); }
+function formatCountdown() { return "-"; }
+const currentLang = "zh-CN";
+const dynamicConfig = null;
+const latestDiagnostics = null;
+const scheduleConfig = null;
+latestSnapshot = {
+    models: [{ id: "gemini-3.8-flash-high", quota_pool: "gemini" }],
+    groups: {
+        gemini: {
+            items: [
+                { auth_index: "cold-1", email: "cold@example.com", routing_status: "cold_start", pool_eligible: true, host: { priority: 999, disabled: false }, target: { priority: 0, disabled: false }, reason: "keep current state" },
+                { auth_index: "act-1", email: "active@example.com", routing_status: "active", pool_eligible: true, host: { priority: 50, disabled: false }, target: { priority: 100, disabled: false }, reason: "fresh remaining positive" },
+                { auth_index: "dis-1", email: "dis@example.com", routing_status: "disabled", pool_eligible: false, host: { priority: 100, disabled: true }, target: { priority: -2, disabled: true }, reason: "disabled on host" }
+            ]
+        }
+    }
+};
+renderDashboard();
+const cards = elements.credentialsContainer.children;
+if (cards.length !== 3) {
+    throw new Error("expected 3 cards, got " + cards.length);
+}
+if (cards[0].innerHTML.indexOf("active@example.com") < 0) {
+    throw new Error("active account with target.priority=100 must rank ahead of cold-start with stale host.priority=999: " + cards[0].innerHTML);
+}
+if (cards[1].innerHTML.indexOf("cold@example.com") < 0 || cards[1].innerHTML.indexOf("待探测") < 0) {
+    throw new Error("cold-start account must rank second with 待探测 indicator: " + cards[1].innerHTML);
+}
+const disabledCardHTML = cards[2].innerHTML;
+if (disabledCardHTML.indexOf("已禁用") < 0 || disabledCardHTML.indexOf("耗尽避让") >= 0) {
+    throw new Error("disabled account must render statusDisabled badge rather than depleted badge: " + disabledCardHTML);
+}
+`
+	runNodeFixture(t, node, "disabled-badge-contract.js", harness)
 }
 
 func TestStatusHTML_FeatureTranslationsExistInBothLanguages(t *testing.T) {
@@ -791,6 +845,9 @@ async function fetchDiagnostics() {}
                         auth_index: "fail-403",
                         email: "test-403@example.com",
                         warmup_active: true,
+                        routing_status: "active",
+                        pool_eligible: true,
+                        probe_failed: true,
                         reason: "probe failed: retrieve quota summary status 403; fresh remaining positive",
                         host: { priority: 99, disabled: false },
                         target: { priority: 99, disabled: false },

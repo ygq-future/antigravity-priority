@@ -1,10 +1,9 @@
 package runtime
 
 import (
-	"fmt"
+	"errors"
 	"maps"
 	"math"
-	"strings"
 	"time"
 
 	"antigravity-priority/internal/apply"
@@ -13,6 +12,8 @@ import (
 	"antigravity-priority/internal/evidence"
 	"antigravity-priority/internal/priority"
 )
+
+var errProjectionTimeRequired = errors.New("runtime: projection time is required")
 
 // ProjectionInput contains the complete in-process input for one three-pool
 // projection. Evidence is already classified by the caller's evidence
@@ -34,66 +35,28 @@ type ModelGroupProjection struct {
 }
 
 // ProjectModelGroups calculates all three model-group snapshots from one
-// immutable input set.
+// immutable input set via the unified routing and snapshot engine.
 func ProjectModelGroups(input ProjectionInput) (ModelGroupProjection, error) {
 	if input.ProjectionTime.IsZero() {
-		return ModelGroupProjection{}, fmt.Errorf("runtime: projection time is required")
+		return ModelGroupProjection{}, errProjectionTimeRequired
 	}
-
-	projectionTime := input.ProjectionTime.UTC()
-	options := clonePlanningOptions(input.PlanningOptions)
-	options.Now = projectionTime
-
-	snapshotsByGroup := make(map[config.AntigravityModelGroup]apply.PlanSnapshot, len(config.AllAntigravityModelGroups))
-
-	for _, group := range config.AllAntigravityModelGroups {
-		grpEvidence := cloneEvidence(input.EvidenceByGroup[group])
-		grpOptions := clonePlanningOptions(options)
-		grpOptions.CooldownAuthIndexes = filterCooldownsForGroup(options.CooldownAuthIndexes, group)
-		grpOptions.CooldownReasons = filterCooldownReasonsForGroup(options.CooldownReasonsByKey, group)
-		plan := priority.PlanWithEvidence(
-			cloneCredentials(input.Credentials),
-			grpEvidence,
-			grpOptions,
-		)
-		annotatePlanObservations(&plan, grpEvidence.Observations)
-		snapshotsByGroup[group] = apply.Snapshot(plan)
+	evidenceByGroup := input.EvidenceByGroup
+	if evidenceByGroup == nil {
+		evidenceByGroup = map[config.AntigravityModelGroup]evidence.Result{}
 	}
-
-	// Cross-reference 5 quota windows across all groups for every credential.
-	// SnapshotItem.AuthIndex is redacted for display, so two credentials can
-	// share it (for example every "dev-auth-*" becomes "dev-***"). Internal
-	// correlation must use the trusted in-memory identity instead.
-	quotaWindowsByAuth := buildAllQuotaWindows(snapshotsByGroup)
-	for _, group := range config.AllAntigravityModelGroups {
-		snap := snapshotsByGroup[group]
-		for index := range snap.Items {
-			authIndex := snapshotAuthIndex(snap.Items[index])
-			if qw, ok := quotaWindowsByAuth[authIndex]; ok {
-				snap.Items[index].QuotaWindows = qw
-			}
-			_, overridden := input.Warmup.WarmupOverride(authIndex)
-			isFree := snap.Items[index].PlanType == string(core.PlanTypeFree)
-			snap.Items[index].WarmupOverridden = overridden && !isFree
-			snap.Items[index].WarmupActive = !isFree && warmupEffectiveEnabled(input.Warmup, authIndex, group)
-		}
-		snapshotsByGroup[group] = snap
+	options := input.PlanningOptions
+	warmup := input.Warmup
+	out, err := EvaluateRoutingAndSnapshot(RoutingEngineInput{
+		Credentials:     input.Credentials,
+		EvidenceByGroup: evidenceByGroup,
+		PlanningOptions: &options,
+		Warmup:          &warmup,
+		Now:             input.ProjectionTime,
+	})
+	if err != nil {
+		return ModelGroupProjection{}, err
 	}
-
-	groups := make(map[string]apply.PoolSnapshot, len(config.AllAntigravityModelGroups))
-	for _, group := range config.AllAntigravityModelGroups {
-		snap := snapshotsByGroup[group]
-		groups[string(group)] = apply.PoolSnapshot{
-			Items: snap.Items,
-		}
-	}
-
-	return ModelGroupProjection{
-		Snapshot: apply.SnapshotSet{
-			ObservedAt: projectionTime,
-			Groups:     groups,
-		},
-	}, nil
+	return ModelGroupProjection{Snapshot: out.Snapshot}, nil
 }
 
 // warmupEnabledForGroup reports whether the global warm-up toggle covers this
@@ -117,46 +80,6 @@ func warmupEffectiveEnabled(warmup config.WarmupConfig, authIndex string, group 
 		return enabled
 	}
 	return warmupEnabledForGroup(warmup, group)
-}
-
-func filterCooldownsForGroup(cooldowns map[string]time.Time, group config.AntigravityModelGroup) map[string]time.Time {
-	if len(cooldowns) == 0 {
-		return nil
-	}
-	normGroup := strings.ToLower(string(group))
-	filtered := make(map[string]time.Time)
-	for k, v := range cooldowns {
-		authIndex := k
-		if prefix, suffix, found := strings.Cut(k, "::"); found {
-			if strings.ToLower(strings.TrimSpace(suffix)) != normGroup {
-				continue
-			}
-			authIndex = prefix
-		}
-		if existing, ok := filtered[authIndex]; !ok || v.After(existing) {
-			filtered[authIndex] = v
-		}
-	}
-	return filtered
-}
-
-func filterCooldownReasonsForGroup(reasons map[string]string, group config.AntigravityModelGroup) map[string]string {
-	if len(reasons) == 0 {
-		return nil
-	}
-	normGroup := strings.ToLower(string(group))
-	filtered := make(map[string]string)
-	for k, v := range reasons {
-		authIndex := k
-		if prefix, suffix, found := strings.Cut(k, "::"); found {
-			if strings.ToLower(strings.TrimSpace(suffix)) != normGroup {
-				continue
-			}
-			authIndex = prefix
-		}
-		filtered[authIndex] = v
-	}
-	return filtered
 }
 
 func buildAllQuotaWindows(snapshots map[config.AntigravityModelGroup]apply.PlanSnapshot) map[string]apply.AllQuotaWindows {
@@ -254,37 +177,6 @@ func itemArgonWindowBar(item apply.SnapshotItem) apply.QuotaWindowBar {
 	}
 }
 
-func annotatePlanObservations(plan *priority.Plan, observations []evidence.Observation) {
-	for _, observation := range observations {
-		var reason string
-		switch observation.Kind {
-		case evidence.ObservationFailed:
-			reason = "probe failed"
-		case evidence.ObservationInvalid:
-			reason = "probe invalid"
-		case evidence.ObservationUnavailable:
-			reason = priority.ReasonQuotaUnavailable
-		default:
-			continue
-		}
-		if failure := strings.TrimSpace(observation.Failure); failure != "" {
-			reason += ": " + failure
-		}
-		for index := range plan.Items {
-			if plan.Items[index].Credential.AuthIndex != observation.AuthIndex {
-				continue
-			}
-			if observation.Kind == evidence.ObservationUnavailable {
-				plan.Items[index].Priority = priority.DepletedPriority
-			}
-			if plan.Items[index].Reason != priority.ReasonKeepCurrentState && plan.Items[index].Reason != priority.ReasonDisabledOnHost {
-				reason += "; " + plan.Items[index].Reason
-			}
-			plan.Items[index].Reason = reason
-		}
-	}
-}
-
 func clonePlanningOptions(options priority.Options) priority.Options {
 	options.CooldownAuthIndexes = cloneCooldowns(options.CooldownAuthIndexes)
 	options.CooldownReasons = cloneStringMap(options.CooldownReasons)
@@ -377,6 +269,14 @@ func cloneInt64Pointer(value *int64) *int64 {
 	return &cloned
 }
 
+func cloneBoolPointer(value *bool) *bool {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
+}
+
 func cloneSnapshotSet(snapshot apply.SnapshotSet) apply.SnapshotSet {
 	cloned := snapshot
 	if snapshot.Models != nil {
@@ -389,6 +289,8 @@ func cloneSnapshotSet(snapshot apply.SnapshotSet) apply.SnapshotSet {
 		items := make([]apply.SnapshotItem, len(groupSnapshot.Items))
 		for index, item := range groupSnapshot.Items {
 			items[index] = item
+			items[index].CooldownUntil = cloneTimePointer(item.CooldownUntil)
+			items[index].PoolEligible = cloneBoolPointer(item.PoolEligible)
 			items[index].ResetAt = cloneTimePointer(item.ResetAt)
 			items[index].ShortWindowResetAt = cloneTimePointer(item.ShortWindowResetAt)
 			items[index].LongWindowResetAt = cloneTimePointer(item.LongWindowResetAt)

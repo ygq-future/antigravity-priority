@@ -261,9 +261,7 @@ func (r *Runtime) observeUsageSuccess(ctx context.Context, authIndex, modelGroup
 	r.rateLimitMu.Unlock()
 
 	if storeErr != nil {
-		r.routingMu.Lock()
-		r.recomputeRoutingTablesLocked(now)
-		r.routingMu.Unlock()
+		_, _, _ = r.recomputeAndCaptureRouting(now, authIndex)
 		return storeErr
 	}
 
@@ -293,9 +291,8 @@ func (r *Runtime) observeUsageSuccess(ctx context.Context, authIndex, modelGroup
 		if stateDirty {
 			_ = store.SaveStateAtomic(ctx)
 		}
-		r.routingMu.Lock()
-		r.recomputeRoutingTablesLocked(now)
-		r.routingMu.Unlock()
+		candidatesByPool, _, _ := r.recomputeAndCaptureRouting(now, authIndex)
+		r.syncSnapshotCooldown(authIndex, candidatesByPool)
 		r.signalRateLimitWorker()
 		return nil
 	}
@@ -502,9 +499,8 @@ func (r *Runtime) rescheduleFailure(ctx context.Context, store *state.Store, ent
 	entry.ProbeEnabled = true
 	store.SetCooldown(entry)
 	_ = store.SaveStateAtomic(ctx)
-	r.routingMu.Lock()
-	r.recomputeRoutingTablesLocked(now)
-	r.routingMu.Unlock()
+	candidatesByPool, _, _ := r.recomputeAndCaptureRouting(now, entry.AuthIndex)
+	r.syncSnapshotCooldown(entry.AuthIndex, candidatesByPool)
 	r.signalRateLimitWorker()
 }
 
@@ -707,21 +703,36 @@ func (r *Runtime) applyCooldownRecovery(ctx context.Context, store *state.Store,
 }
 
 func (r *Runtime) recomputeAndCaptureRouting(now time.Time, authIndex string, existingCreds ...[]core.Credential) (map[string]PrecomputedCandidate, core.Credential, bool) {
-	r.routingMu.Lock()
-	defer r.routingMu.Unlock()
+	cfg := r.routingConfigSnapshot()
+	store := r.state.StoreOrNil()
 	var credentials []core.Credential
 	if len(existingCreds) > 0 {
 		credentials = existingCreds[0]
 	} else {
-		credentials = r.currentCredentialsLocked()
+		credentials = r.resolveCurrentCredentials()
 	}
-	r.recomputeRoutingTablesLocked(now, credentials)
+
+	r.routingMu.Lock()
+	models, supportedMap := r.modelCatalogSnapshotLocked()
+	out, err := EvaluateRoutingAndSnapshot(RoutingEngineInput{
+		Credentials:           credentials,
+		Store:                 store,
+		Config:                cfg,
+		Now:                   now,
+		Models:                models,
+		SupportedModelsByAuth: supportedMap,
+	})
+	if err == nil {
+		r.plansByPool = out.Tables
+	}
 	captured := make(map[string]PrecomputedCandidate, len(r.plansByPool))
 	for pool, table := range r.plansByPool {
 		if cand, ok := table.ByAuthIndex[authIndex]; ok {
 			captured[string(pool)] = cand
 		}
 	}
+	r.routingMu.Unlock()
+
 	for _, cred := range credentials {
 		if cred.AuthIndex == authIndex || cred.Name == authIndex || cred.Email == authIndex {
 			return captured, cred, true

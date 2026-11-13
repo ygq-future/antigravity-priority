@@ -38,6 +38,19 @@ type AllQuotaWindows struct {
 	ArgonSharedWithGemini bool           `json:"argon_shared_with_gemini,omitempty"`
 }
 
+// RoutingStatus represents a credential's authoritative scheduling state within a pool.
+type RoutingStatus string
+
+const (
+	RoutingStatusActive          RoutingStatus = "active"
+	RoutingStatusColdStart       RoutingStatus = "cold_start"
+	RoutingStatusCooldown        RoutingStatus = "cooldown"
+	RoutingStatusShortDepleted   RoutingStatus = "short_depleted"
+	RoutingStatusWeeklyDepleted  RoutingStatus = "weekly_depleted"
+	RoutingStatusPoolUnavailable RoutingStatus = "pool_unavailable"
+	RoutingStatusDisabledOnHost  RoutingStatus = "disabled"
+)
+
 // SnapshotItem is the audit view of a single planned item.
 type SnapshotItem struct {
 	Identity              SnapshotIdentity `json:"-"`
@@ -51,6 +64,9 @@ type SnapshotItem struct {
 	PlanType              string           `json:"plan_type,omitempty"`
 	Host                  Target           `json:"host"`
 	Target                Target           `json:"target"`
+	RoutingStatus         RoutingStatus    `json:"routing_status,omitempty"`
+	PoolEligible          *bool            `json:"pool_eligible,omitempty"`
+	ProbeFailed           bool             `json:"probe_failed,omitempty"`
 	Reason                string           `json:"reason"`
 	CooldownUntil         *time.Time       `json:"cooldown_until,omitempty"`
 	IsBoosted             bool             `json:"is_boosted"`

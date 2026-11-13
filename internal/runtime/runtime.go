@@ -7,18 +7,19 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"sort"
 	"strings"
 	"sync"
 	"time"
+
 	"antigravity-priority/internal/apply"
 	"antigravity-priority/internal/config"
+	"antigravity-priority/internal/core"
+	"antigravity-priority/internal/evidence"
 	"antigravity-priority/internal/host"
 	"antigravity-priority/internal/management"
 	"antigravity-priority/internal/priority"
 	"antigravity-priority/internal/state"
 )
-
 const maxRunHistory = 10
 
 // Runtime manages plugin lifecycle, configuration, ticker worker, and single-flight execution.
@@ -212,8 +213,7 @@ func (r *Runtime) ResetAllPriorities(ctx context.Context) (map[string]any, error
 	if r.hostCallbacks == nil {
 		return nil, errMissingHostCallbacks
 	}
-	cfg, err := r.Config()
-	if err != nil {
+	if _, err := r.Config(); err != nil {
 		return nil, err
 	}
 	client := host.NewClient(r.hostCallbacks)
@@ -256,38 +256,29 @@ func (r *Runtime) ResetAllPriorities(ctx context.Context) (map[string]any, error
 	if err != nil {
 		return nil, err
 	}
-	credentials = enrichCredentialsPlanTypeFromStore(store, credentials)
-	evidenceByGroup := buildProjectionEvidence(store, credentials)
 	now := r.clock.Now().UTC()
-	projection, err := ProjectModelGroups(ProjectionInput{
-		Credentials:     credentials,
-		EvidenceByGroup: evidenceByGroup,
-		PlanningOptions: priorityOptions(cfg, store, now),
-		ProjectionTime:  now,
-		Warmup:          cfg.Warmup,
-	})
+	snap, err := r.commitRoutingAndSnapshot(now, credentials, buildProjectionEvidence(store, credentials))
 	if err != nil {
 		return nil, err
 	}
 	// Reset execution details still render a single plan snapshot. Use the
 	// Gemini pool as the stable legacy view; the three-pool SnapshotSet remains
 	// the authoritative snapshot for every other consumer.
-	geminiPool := projection.Snapshot.Groups[string(config.AntigravityModelGroupGemini)]
+	geminiPool := snap.Groups[string(config.AntigravityModelGroupGemini)]
 	legacySnapshot := apply.PlanSnapshot{
-		DecidedAt:  projection.Snapshot.ObservedAt,
+		DecidedAt:  snap.ObservedAt,
 		TotalItems: len(geminiPool.Items),
 		Items:      geminiPool.Items,
 	}
-	r.setSnapshotSet(projection.Snapshot)
 
 	summary := resultSummary("reset", result)
 	result.Snapshot = legacySnapshot
-	snap := legacySnapshot
+	historySnap := legacySnapshot
 	_, projectErr := r.state.ProjectRun(ctx, result, summary, withTransitionStats(result, RunHistoryEntry{
 		Kind:     KindReset,
 		Trigger:  string(TriggerManualReset),
 		Message:  summary,
-		Snapshot: &snap,
+		Snapshot: &historySnap,
 	}))
 	if projectErr != nil {
 		return map[string]any{
@@ -302,10 +293,6 @@ func (r *Runtime) ResetAllPriorities(ctx context.Context) (map[string]any, error
 		}, projectErr
 	}
 
-	r.routingMu.Lock()
-	r.recomputeRoutingTablesLocked(now, credentials)
-	r.routingMu.Unlock()
-
 	return map[string]any{
 		"ok":          true,
 		"message":     summary,
@@ -318,15 +305,14 @@ func (r *Runtime) ResetAllPriorities(ctx context.Context) (map[string]any, error
 	}, nil
 }
 
-// SyncHost re-reads credentials from CPA host, re-evaluates cached evidence, and updates the three-pool snapshot.
+// SyncHost re-reads credentials from CPA host, re-evaluates cached evidence, and updates the three-pool snapshot and routing tables.
 func (r *Runtime) SyncHost(ctx context.Context) (apply.SnapshotSet, error) {
 	if !r.runMu.TryLock() {
 		return apply.SnapshotSet{}, ErrRunInProgress
 	}
 	defer r.runMu.Unlock()
 
-	cfg, err := r.Config()
-	if err != nil {
+	if _, err := r.Config(); err != nil {
 		return apply.SnapshotSet{}, err
 	}
 
@@ -350,27 +336,13 @@ func (r *Runtime) SyncHost(ctx context.Context) (apply.SnapshotSet, error) {
 	if err != nil {
 		return apply.SnapshotSet{}, err
 	}
-	credentials = enrichCredentialsPlanTypeFromStore(store, credentials)
-	evidenceByGroup := buildProjectionEvidence(store, credentials)
-
+	authModels, _ := client.ListAuthModels(ctx)
 	now := r.clock.Now().UTC()
-	projection, err := ProjectModelGroups(ProjectionInput{
-		Credentials:     credentials,
-		EvidenceByGroup: evidenceByGroup,
-		PlanningOptions: priorityOptions(cfg, store, now),
-		ProjectionTime:  now,
-		Warmup:          cfg.Warmup,
-	})
+	snap, err := r.commitRoutingAndSnapshotWithInventory(now, files, authModels, credentials, buildProjectionEvidence(store, credentials))
 	if err != nil {
 		return apply.SnapshotSet{}, err
 	}
-	authModels, _ := client.ListAuthModels(ctx)
-	r.routingMu.Lock()
-	r.updateModelInventoryLocked(files, authModels)
-	r.recomputeRoutingTablesLocked(now)
-	r.routingMu.Unlock()
-	r.setSnapshotSet(projection.Snapshot)
-	return r.LatestSnapshot(ctx)
+	return cloneSnapshotSet(snap), nil
 }
 
 // GetSamples returns the historical quota samples for a specific credential and model group.
@@ -538,25 +510,38 @@ func (r *Runtime) LatestSnapshot(ctx context.Context) (apply.SnapshotSet, error)
 	if _, err := r.Config(); err != nil {
 		return apply.SnapshotSet{}, err
 	}
-	models, supportedMap := r.snapshotModelCatalog()
 	r.mu.Lock()
 	snap := r.latestSnapshotSet
 	if snap != nil {
-		enrichSnapshotWithModels(snap, models, supportedMap)
 		cloned := cloneSnapshotSet(*snap)
 		r.mu.Unlock()
 		return cloned, nil
 	}
 	r.mu.Unlock()
+
 	now := r.clock.Now().UTC()
-	projection, err := ProjectModelGroups(ProjectionInput{
-		ProjectionTime: now,
+	cfg := r.routingConfigSnapshot()
+	r.routingMu.RLock()
+	models, supportedMap := r.modelCatalogSnapshotLocked()
+	r.routingMu.RUnlock()
+	out, err := EvaluateRoutingAndSnapshot(RoutingEngineInput{
+		EvidenceByGroup:       map[config.AntigravityModelGroup]evidence.Result{},
+		Config:                cfg,
+		Now:                   now,
+		Models:                models,
+		SupportedModelsByAuth: supportedMap,
 	})
 	if err != nil {
 		return apply.SnapshotSet{}, err
 	}
-	r.setSnapshotSet(projection.Snapshot)
-	return cloneSnapshotSet(projection.Snapshot), nil
+	r.mu.Lock()
+	if r.latestSnapshotSet == nil {
+		stored := cloneSnapshotSet(out.Snapshot)
+		r.latestSnapshotSet = &stored
+	}
+	cloned := cloneSnapshotSet(*r.latestSnapshotSet)
+	r.mu.Unlock()
+	return cloned, nil
 }
 
 // Diagnostics returns a comprehensive diagnostics map.
@@ -735,12 +720,16 @@ func (r *Runtime) replaceConfig(ctx context.Context, cfg config.Config) error {
 	r.mu.Unlock()
 
 	// Routing reads an immutable config snapshot, so replacing the config must
-	// discard tables built from the previous values. The next pick rebuilds
-	// them with the new rules instead of waiting for the 60-second TTL.
+	// discard tables built from the previous values and refresh any cached snapshot.
 	r.routingMu.Lock()
 	r.plansByPool = make(map[config.AntigravityModelGroup]PoolRoutingTable)
 	r.routingMu.Unlock()
-
+	r.mu.Lock()
+	hasSnapshot := r.latestSnapshotSet != nil
+	r.mu.Unlock()
+	if hasSnapshot {
+		_, _ = r.commitRoutingAndSnapshot(r.clock.Now().UTC(), nil, nil)
+	}
 	r.trimRequestHistory(ctx)
 	r.signalRateLimitWorker()
 	r.signalWarmupResetWatcher()
@@ -797,60 +786,53 @@ func (r *Runtime) snapshotRunEntry(result apply.Result, audit string, entry RunH
 	r.state.SnapshotRunEntry(result, audit, entry)
 }
 
-func (r *Runtime) snapshotModelCatalog() ([]apply.ModelOption, map[string][]string) {
-	r.routingMu.RLock()
-	defer r.routingMu.RUnlock()
-	catalog := r.modelCatalog
-	if len(catalog) == 0 {
-		catalog = builtInAntigravityModels
-	}
-	models := make([]apply.ModelOption, len(catalog))
-	for i, item := range catalog {
-		models[i] = apply.ModelOption{
-			ID:          item.ID,
-			DisplayName: item.DisplayName,
-			QuotaPool:   string(item.QuotaPool),
-		}
-	}
-	supportedMap := make(map[string][]string, len(r.supportedModelsByAuth))
-	for authIdx, set := range r.supportedModelsByAuth {
-		if len(set) > 0 {
-			supported := make([]string, 0, len(set))
-			for m := range set {
-				supported = append(supported, m)
-			}
-			sort.Strings(supported)
-			supportedMap[authIdx] = supported
-		}
-	}
-	return models, supportedMap
+func (r *Runtime) commitRoutingAndSnapshot(
+	now time.Time,
+	credentials []core.Credential,
+	evidenceByGroup map[config.AntigravityModelGroup]evidence.Result,
+) (apply.SnapshotSet, error) {
+	return r.commitRoutingAndSnapshotWithInventory(now, nil, nil, credentials, evidenceByGroup)
 }
 
-func enrichSnapshotWithModels(snap *apply.SnapshotSet, models []apply.ModelOption, supportedMap map[string][]string) {
-	if snap == nil {
-		return
+func (r *Runtime) commitRoutingAndSnapshotWithInventory(
+	now time.Time,
+	inventoryFiles []host.AuthFile,
+	inventoryModels []host.AuthModelsEntry,
+	credentials []core.Credential,
+	evidenceByGroup map[config.AntigravityModelGroup]evidence.Result,
+) (apply.SnapshotSet, error) {
+	cfg := r.routingConfigSnapshot()
+	store := r.state.StoreOrNil()
+	if credentials == nil {
+		credentials = r.resolveCurrentCredentials()
 	}
-	snap.Models = models
-	for groupKey, group := range snap.Groups {
-		for i, item := range group.Items {
-			// Supported-model lookup keys come from the Host inventory and are
-			// unredacted; the display AuthIndex may be truncated and collide.
-			authIdx := snapshotAuthIndex(item)
-			if supported, ok := supportedMap[authIdx]; ok && len(supported) > 0 {
-				group.Items[i].SupportedModels = supported
-			}
-		}
-		snap.Groups[groupKey] = group
-	}
-}
 
-func (r *Runtime) setSnapshotSet(snap apply.SnapshotSet) {
-	models, supportedMap := r.snapshotModelCatalog()
-	cloned := cloneSnapshotSet(snap)
-	enrichSnapshotWithModels(&cloned, models, supportedMap)
+	r.routingMu.Lock()
+	if inventoryFiles != nil || inventoryModels != nil {
+		r.updateModelInventoryLocked(inventoryFiles, inventoryModels)
+	}
+	models, supportedMap := r.modelCatalogSnapshotLocked()
+	out, err := EvaluateRoutingAndSnapshot(RoutingEngineInput{
+		Credentials:           credentials,
+		EvidenceByGroup:       evidenceByGroup,
+		Store:                 store,
+		Config:                cfg,
+		Now:                   now,
+		Models:                models,
+		SupportedModelsByAuth: supportedMap,
+	})
+	if err != nil {
+		r.routingMu.Unlock()
+		return apply.SnapshotSet{}, err
+	}
+	r.plansByPool = out.Tables
+	r.routingMu.Unlock()
+
+	stored := cloneSnapshotSet(out.Snapshot)
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.latestSnapshotSet = &cloned
+	r.latestSnapshotSet = &stored
+	r.mu.Unlock()
+	return out.Snapshot, nil
 }
 
 func (r *Runtime) syncSnapshotCooldown(authIndex string, candidatesByPool map[string]PrecomputedCandidate) {
@@ -867,15 +849,38 @@ func (r *Runtime) syncSnapshotCooldown(authIndex string, candidatesByPool map[st
 		for i, item := range group.Items {
 			if snapshotAuthIndex(item) == authIndex || item.Name == authIndex || item.Identity.Email == authIndex {
 				group.Items[i].Target.Priority = cand.Priority
-				group.Items[i].Reason = cand.Reason
+				group.Items[i].Target.Disabled = cand.Disabled
+				group.Items[i].RoutingStatus = cand.RoutingStatus
+				eligible := cand.PoolEligible
+				group.Items[i].PoolEligible = &eligible
+				group.Items[i].Reason = host.RedactBytes([]byte(cand.Reason))
 				if !cand.CooldownUntil.IsZero() {
 					until := cand.CooldownUntil
 					group.Items[i].CooldownUntil = &until
 				} else {
 					group.Items[i].CooldownUntil = nil
 				}
-				group.Items[i].IsBoosted = cand.Reason == priority.ReasonFreshBoosted
+				group.Items[i].IsBoosted = cand.IsBoosted
 			}
+		}
+		r.latestSnapshotSet.Groups[groupKey] = group
+	}
+}
+
+func (r *Runtime) syncSnapshotWarmup(warmup config.WarmupConfig) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.latestSnapshotSet == nil {
+		return
+	}
+	for groupKey, group := range r.latestSnapshotSet.Groups {
+		pool := config.AntigravityModelGroup(groupKey)
+		for i, item := range group.Items {
+			authIdx := snapshotAuthIndex(item)
+			_, overridden := warmup.WarmupOverride(authIdx)
+			isFree := item.PlanType == string(core.PlanTypeFree)
+			group.Items[i].WarmupOverridden = overridden && !isFree
+			group.Items[i].WarmupActive = !isFree && warmupEffectiveEnabled(warmup, authIdx, pool)
 		}
 		r.latestSnapshotSet.Groups[groupKey] = group
 	}
@@ -1010,13 +1015,9 @@ func (r *Runtime) SetCustomTier(ctx context.Context, authIndex string, tier int)
 	} else {
 		r.cfg.CustomTiers[cleanIdx] = tier
 	}
-	r.latestSnapshotSet = nil
 	r.mu.Unlock()
 
-	r.routingMu.Lock()
-	r.recomputeRoutingTablesLocked(r.clock.Now().UTC())
-	r.routingMu.Unlock()
-
+	_, _ = r.commitRoutingAndSnapshot(r.clock.Now().UTC(), nil, nil)
 	return nil
 }
 
@@ -1047,8 +1048,8 @@ func (r *Runtime) SetWarmupCredentialState(ctx context.Context, authIndex, group
 
 	r.mu.Lock()
 	r.cfg.Warmup = warmupCfg
-	r.latestSnapshotSet = nil
 	r.mu.Unlock()
+	r.syncSnapshotWarmup(warmupCfg)
 
 	r.signalWarmupResetWatcher()
 	return nil

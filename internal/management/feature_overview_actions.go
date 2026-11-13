@@ -34,16 +34,10 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
             }
         }
 
-        function formatReason(reason, isBoosted, isDisabled) {
-            if (!reason) {
-                if (isDisabled) return currentLang === "zh-CN" ? "周额度耗尽" : "Weekly Depleted";
-                if (isBoosted) return currentLang === "zh-CN" ? "🚀 优先提权" : "🚀 Boosted";
-                return currentLang === "zh-CN" ? "正常活跃" : "Active";
-            }
-            var lower = reason.toLowerCase();
-            if (lower.indexOf("quota unavailable") >= 0 || lower.indexOf("not entitled") >= 0) return currentLang === "zh-CN" ? "未开通该模型组" : "Model group unavailable";
-            if (lower.indexOf("probe failed") >= 0 || lower.indexOf("probe invalid") >= 0) {
-                var prefix = lower.indexOf("probe invalid") >= 0
+        function formatReason(reason, isBoosted, isDisabled, routingStatus, probeFailed) {
+            if (probeFailed && reason) {
+                var lowerProbe = reason.toLowerCase();
+                var prefix = lowerProbe.indexOf("probe invalid") >= 0
                     ? (currentLang === "zh-CN" ? "探测异常: " : "Probe invalid: ")
                     : (currentLang === "zh-CN" ? "探测失败: " : "Probe failed: ");
                 var detail = reason;
@@ -53,13 +47,29 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
                 }
                 return detail ? prefix + detail : (currentLang === "zh-CN" ? "探测失败" : "Probe failed");
             }
-            if (lower.indexOf("cooldown") >= 0 || (lower.indexOf("429") >= 0 && lower.indexOf("status 429") < 0)) return currentLang === "zh-CN" ? "⏳ 429 冷却中" : "⏳ 429 Cooldown";
-            if (lower.indexOf("boost") >= 0) return currentLang === "zh-CN" ? "🚀 优先提权" : "🚀 Boosted";
-            if (lower.indexOf("remaining positive") >= 0) return currentLang === "zh-CN" ? "余量充足" : "Positive Balance";
-            if (lower.indexOf("weekly depleted") >= 0) return currentLang === "zh-CN" ? "周额度耗尽" : "Weekly Depleted";
-            if (lower.indexOf("short") >= 0 && lower.indexOf("depleted") >= 0) return currentLang === "zh-CN" ? "5h短窗口耗尽" : "5h Depleted";
-            if (lower.indexOf("in sync") >= 0 || lower.indexOf("optimal") >= 0) return currentLang === "zh-CN" ? "状态最优" : "In Sync";
-            if (lower.indexOf("disabled on host") >= 0) return t("statusDisabled");
+            if (routingStatus) {
+                if (routingStatus === "disabled") return t("statusDisabled");
+                if (routingStatus === "pool_unavailable") return currentLang === "zh-CN" ? "未开通该模型组" : "Model group unavailable";
+                if (routingStatus === "weekly_depleted") return currentLang === "zh-CN" ? "周额度耗尽" : "Weekly Depleted";
+                if (routingStatus === "short_depleted") return currentLang === "zh-CN" ? "5h短窗口耗尽" : "5h Depleted";
+                if (routingStatus === "cold_start") return currentLang === "zh-CN" ? "待探测 (冷启动)" : "Cold Start (Pending Probe)";
+                if (routingStatus === "cooldown") {
+                    if (!reason || reason.toLowerCase() === "429 rate limit cooldown") {
+                        return currentLang === "zh-CN" ? "⏳ 429 冷却中" : "⏳ 429 Cooldown";
+                    }
+                    return reason;
+                }
+                if (routingStatus === "active") {
+                    if (isBoosted) return currentLang === "zh-CN" ? "🚀 优先提权" : "🚀 Boosted";
+                    if (reason && reason.toLowerCase().indexOf("custom tier") === 0) return reason;
+                    return currentLang === "zh-CN" ? "余量充足" : "Positive Balance";
+                }
+            }
+            if (!reason) {
+                if (isDisabled) return currentLang === "zh-CN" ? "周额度耗尽" : "Weekly Depleted";
+                if (isBoosted) return currentLang === "zh-CN" ? "🚀 优先提权" : "🚀 Boosted";
+                return currentLang === "zh-CN" ? "正常活跃" : "Active";
+            }
             return reason;
         }
         function formatPlanBadge(planType) {

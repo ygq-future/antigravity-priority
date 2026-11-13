@@ -97,15 +97,22 @@ const templateScriptDiagnostics = `        let latestDiagnostics = null;
         }
 
         function diagIsDepleted(item) {
+            if (item && item.routing_status) {
+                return item.routing_status === "weekly_depleted" || item.routing_status === "short_depleted" || item.routing_status === "pool_unavailable";
+            }
             var target = item && item.target ? item.target : {};
-            return Boolean(target.disabled) || diagTargetPriority(item) === -1;
+            return Boolean(target.disabled) || diagTargetPriority(item) < 0;
         }
 
         function diagIsCooldown(item) {
+            if (item && item.routing_status) {
+                return item.routing_status === "cooldown";
+            }
             return Boolean(item && item.cooldown_until);
         }
 
         function diagDecision(item) {
+            if (item && item.routing_status === "disabled") return { key: "disabled", label: t("statusDisabled"), cls: "badge-subtle" };
             if (diagIsCooldown(item)) return { key: "cooldown", label: t("statusBypassedCooldown"), cls: "badge-warning" };
             if (diagIsDepleted(item)) return { key: "depleted", label: t("statusBypassedDepleted"), cls: "badge-danger" };
             if (item && item.is_boosted) return { key: "boost", label: t("statusBoosted"), cls: "badge-boost" };

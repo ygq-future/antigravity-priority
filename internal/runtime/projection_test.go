@@ -16,6 +16,7 @@ import (
 	"antigravity-priority/internal/priority"
 	"antigravity-priority/internal/provider/antigravity"
 	"antigravity-priority/internal/runtime"
+	"antigravity-priority/internal/state"
 )
 
 func TestProjectModelGroups_AllPoolsAreActiveAndIndependent(t *testing.T) {
@@ -190,7 +191,7 @@ func TestProjectModelGroups_MissingGroupRemainsStableAndUnknown(t *testing.T) {
 	if len(missing.Items) != 1 {
 		t.Fatalf("missing group = %#v, want 1 item", missing)
 	}
-	if missing.Items[0].PlanType != "unknown" || missing.Items[0].Target.Priority != 42 {
+	if missing.Items[0].PlanType != "unknown" || missing.Items[0].Host.Priority != 42 || missing.Items[0].Target.Priority != 0 || missing.Items[0].RoutingStatus != apply.RoutingStatusColdStart {
 		t.Fatalf("missing group borrowed or invented data: %#v", missing.Items[0])
 	}
 }
@@ -662,5 +663,117 @@ func TestProjectModelGroups_LocalWarmupOverrideBeatsGlobalOff(t *testing.T) {
 		if !item.WarmupOverridden || !item.WarmupActive {
 			t.Errorf("%s local override = true must stay active while the global toggle is off (overridden=%v active=%v)", group, item.WarmupOverridden, item.WarmupActive)
 		}
+	}
+}
+
+func TestEvaluateRoutingAndSnapshot_UnifiesScoresAndStatusesAcrossTablesAndSnapshot(t *testing.T) {
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	ctx := context.Background()
+	store, err := state.Load(ctx, filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rem80 := int64(80)
+	reset5h := now.Add(3 * time.Hour)
+	reset7d := now.Add(72 * time.Hour)
+
+	// Healthy active credential in Gemini; unavailable in Argon
+	if err := store.MarkProbeSuccess(ctx, state.ProbeSuccess{
+		AuthIndex: "auth-active", Provider: core.ProviderAntigravity, ModelGroup: "gemini",
+		ObservedAt: now, ShortWindowResetAt: reset5h, ShortWindowRemaining: &rem80,
+		LongWindowResetAt: reset7d, LongWindowRemaining: &rem80, PlanType: core.PlanTypePro,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkProbeUnavailable(ctx, state.ProbeUnavailable{
+		AuthIndex: "auth-active", Provider: core.ProviderAntigravity, ModelGroup: "argon",
+		ObservedAt: now, Reason: "no argon bucket",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Cold-start credential with stale high Host priority=999, currently in 429 cooldown in Gemini only
+	store.SetCooldown(state.CooldownEntry{
+		AuthIndex:     "auth-cold-cool",
+		ModelGroup:    "gemini",
+		FailureKind:   state.FailureRateLimit,
+		StatusCode:    429,
+		TriggeredAt:   now,
+		CooldownUntil: now.Add(5 * time.Minute),
+		Reason:        priority.Reason429Cooldown,
+	})
+
+	credentials := []core.Credential{
+		{AuthIndex: "auth-active", Name: "active", Provider: core.ProviderAntigravity, Priority: 50},
+		{AuthIndex: "auth-cold-cool", Name: "cold-cool", Provider: core.ProviderAntigravity, Priority: 999},
+		{AuthIndex: "auth-disabled", Name: "disabled", Provider: core.ProviderAntigravity, Priority: 900, Disabled: true},
+	}
+
+	out, err := runtime.EvaluateRoutingAndSnapshot(runtime.RoutingEngineInput{
+		Credentials: credentials,
+		Store:       store,
+		Config:      config.Default(),
+		Now:         now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify SnapshotSet items match PoolRoutingTable candidates identically in every pool.
+	for _, group := range config.AllAntigravityModelGroups {
+		table := out.Tables[group]
+		snapItems := out.Snapshot.Groups[string(group)].Items
+		if len(snapItems) != len(credentials) {
+			t.Fatalf("%s snapshot items = %d, want %d", group, len(snapItems), len(credentials))
+		}
+		for _, item := range snapItems {
+			cand, ok := table.ByAuthIndex[item.Identity.AuthIndex]
+			if !ok {
+				t.Fatalf("%s missing routing table candidate for %s", group, item.Identity.AuthIndex)
+			}
+			if item.Target.Priority != cand.Priority {
+				t.Errorf("%s %s snapshot priority=%d != table priority=%d", group, item.Identity.AuthIndex, item.Target.Priority, cand.Priority)
+			}
+			if item.RoutingStatus != cand.RoutingStatus {
+				t.Errorf("%s %s snapshot status=%q != table status=%q", group, item.Identity.AuthIndex, item.RoutingStatus, cand.RoutingStatus)
+			}
+			if item.PoolEligible == nil || *item.PoolEligible != cand.PoolEligible {
+				t.Errorf("%s %s snapshot pool_eligible=%v != table=%v", group, item.Identity.AuthIndex, item.PoolEligible, cand.PoolEligible)
+			}
+		}
+	}
+
+	// Specific assertions for Gemini pool
+	geminiByAuth := make(map[string]apply.SnapshotItem)
+	for _, item := range out.Snapshot.Groups["gemini"].Items {
+		geminiByAuth[item.Identity.AuthIndex] = item
+	}
+	if geminiByAuth["auth-active"].RoutingStatus != apply.RoutingStatusActive || geminiByAuth["auth-active"].Target.Priority != 100 {
+		t.Errorf("auth-active gemini = %+v, want active priority 100", geminiByAuth["auth-active"])
+	}
+	if geminiByAuth["auth-cold-cool"].RoutingStatus != apply.RoutingStatusCooldown || geminiByAuth["auth-cold-cool"].Target.Priority != -1 || geminiByAuth["auth-cold-cool"].Host.Priority != 999 {
+		t.Errorf("auth-cold-cool gemini = %+v, want cooldown -1 with Host.Priority=999 preserved", geminiByAuth["auth-cold-cool"])
+	}
+	if geminiByAuth["auth-disabled"].RoutingStatus != apply.RoutingStatusDisabledOnHost || geminiByAuth["auth-disabled"].Target.Priority != -2 || !geminiByAuth["auth-disabled"].Target.Disabled {
+		t.Errorf("auth-disabled gemini = %+v, want disabled -2", geminiByAuth["auth-disabled"])
+	}
+
+	// In Claude pool, auth-cold-cool is NOT cooling, so it must be cold_start with score 0 (not stale 999)
+	claudeByAuth := make(map[string]apply.SnapshotItem)
+	for _, item := range out.Snapshot.Groups["claude_gpt"].Items {
+		claudeByAuth[item.Identity.AuthIndex] = item
+	}
+	if claudeByAuth["auth-cold-cool"].RoutingStatus != apply.RoutingStatusColdStart || claudeByAuth["auth-cold-cool"].Target.Priority != 0 || claudeByAuth["auth-cold-cool"].Host.Priority != 999 {
+		t.Errorf("auth-cold-cool claude_gpt = %+v, want cold_start 0 with Host.Priority=999 preserved", claudeByAuth["auth-cold-cool"])
+	}
+
+	// In Argon pool, auth-active is unavailable -> pool_unavailable, pool_eligible=false, priority=-1
+	argonByAuth := make(map[string]apply.SnapshotItem)
+	for _, item := range out.Snapshot.Groups["argon"].Items {
+		argonByAuth[item.Identity.AuthIndex] = item
+	}
+	if argonByAuth["auth-active"].RoutingStatus != apply.RoutingStatusPoolUnavailable || argonByAuth["auth-active"].Target.Priority != -1 || argonByAuth["auth-active"].PoolEligible == nil || *argonByAuth["auth-active"].PoolEligible {
+		t.Errorf("auth-active argon = %+v, want pool_unavailable -1 with pool_eligible=false", argonByAuth["auth-active"])
 	}
 }

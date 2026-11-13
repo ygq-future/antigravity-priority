@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"antigravity-priority/internal/apply"
 	"antigravity-priority/internal/config"
 	"antigravity-priority/internal/core"
 	"antigravity-priority/internal/host"
@@ -1164,8 +1165,8 @@ func TestRuntime_ProbeReconcilesHostChangesBeforePlanning(t *testing.T) {
 		t.Fatal(err)
 	}
 	items := snapshot.Groups["gemini"].Items
-	if len(items) != 1 || items[0].AuthIndex != "auth***" || items[0].Target.Priority != 77 {
-		t.Fatalf("post-probe snapshot items = %#v; want newly added credential unchanged", items)
+	if len(items) != 1 || items[0].AuthIndex != "auth***" || items[0].Host.Priority != 77 || items[0].Target.Priority != 0 || items[0].RoutingStatus != apply.RoutingStatusColdStart {
+		t.Fatalf("post-probe snapshot items = %#v; want newly added credential with Host.Priority=77 and cold-start Target.Priority=0", items)
 	}
 }
 
@@ -1222,8 +1223,8 @@ func TestRuntime_ProbeStillPerformsSecondHostSyncWhenInitialInventoryIsEmpty(t *
 		t.Fatal(err)
 	}
 	items := snapshot.Groups["gemini"].Items
-	if len(items) != 1 || items[0].AuthIndex != "auth***" || items[0].Target.Priority != 77 {
-		t.Fatalf("post-probe snapshot items = %#v; want late addition unchanged", items)
+	if len(items) != 1 || items[0].AuthIndex != "auth***" || items[0].Host.Priority != 77 || items[0].Target.Priority != 0 || items[0].RoutingStatus != apply.RoutingStatusColdStart {
+		t.Fatalf("post-probe snapshot items = %#v; want late addition with Host.Priority=77 and cold-start Target.Priority=0", items)
 	}
 	if got := strings.Join(mock.operations, ","); got != "host-sync,host-sync" {
 		t.Fatalf("operation order = %s; want two host syncs even with empty initial inventory", got)
@@ -1379,8 +1380,8 @@ func TestRuntime_ProductionRunner_ProbeFailure(t *testing.T) {
 	if activeGroup.Items[0].Target.Disabled {
 		t.Errorf("failing probe must preserve the Host disabled state")
 	}
-	if activeGroup.Items[0].Target.Priority != 100 || !strings.Contains(activeGroup.Items[0].Reason, "probe failed") {
-		t.Errorf("failing probe changed the Host target or lost its diagnostic: %#v", activeGroup.Items[0])
+	if activeGroup.Items[0].Host.Priority != 100 || activeGroup.Items[0].Target.Priority != 0 || activeGroup.Items[0].RoutingStatus != apply.RoutingStatusColdStart || !activeGroup.Items[0].ProbeFailed || !strings.Contains(activeGroup.Items[0].Reason, "probe failed") {
+		t.Errorf("failing probe changed Host priority or lost cold-start/diagnostic state: %#v", activeGroup.Items[0])
 	}
 
 	outcomes := r.LastProbeOutcomes(context.Background())

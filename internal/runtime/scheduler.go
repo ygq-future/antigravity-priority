@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
+	"antigravity-priority/internal/apply"
 	"antigravity-priority/internal/config"
 	"antigravity-priority/internal/core"
 	"antigravity-priority/internal/host"
 	"antigravity-priority/internal/priority"
-	"antigravity-priority/internal/state"
 )
 
 // ModelCatalogItem represents a discovered or built-in model registered for routing.
@@ -44,13 +44,16 @@ var builtInAntigravityModels = []ModelCatalogItem{
 type PrecomputedCandidate struct {
 	AuthIndex          string
 	Priority           int
+	Disabled           bool
+	RoutingStatus      apply.RoutingStatus
+	PoolEligible       bool
+	IsBoosted          bool
 	Urgency            float64
 	ShortWindowResetAt time.Time
 	LongWindowResetAt  time.Time
 	CooldownUntil      time.Time
 	Reason             string
 }
-
 // PoolRoutingTable holds the precomputed routing state for a single quota pool.
 type PoolRoutingTable struct {
 	DecidedAt        time.Time
@@ -77,18 +80,6 @@ const (
 	// regardless of the static priority left on the Host.
 	disabledRoutingTier = -2
 )
-
-type historicalEvidenceSource struct {
-	historical []priority.QuotaEvidence
-}
-
-func (h historicalEvidenceSource) FreshQuotaEvidence() []priority.QuotaEvidence {
-	return nil
-}
-
-func (h historicalEvidenceSource) HistoricalQuotaEvidence() []priority.QuotaEvidence {
-	return h.historical
-}
 
 // resolveAuthIndex resolves candidate ID or attributes to the internal auth index.
 func (r *Runtime) resolveAuthIndex(candidateID string, attributes map[string]string) string {
@@ -239,169 +230,56 @@ func (r *Runtime) updateModelInventoryLocked(files []host.AuthFile, models []hos
 	r.modelCatalog = mergedCatalog
 }
 
-// routingTier derives the in-memory routing score from the planned state.
-// The Host's static priority is user-owned display state; it must never stand
-// in for a routing decision when quota evidence is missing. A Host-disabled
-// credential is never routable, whatever priority the Host document carries.
-func routingTier(item priority.PlanItem) int {
-	if item.Disabled {
-		return disabledRoutingTier
-	}
-	if !item.HasQuotaEvidence() {
-		return coldStartRoutingTier
-	}
-	return item.Priority
-}
-
-// routingConfigSnapshot returns the configuration fields consumed by routing.
-// The live Config is owned by r.mu, and CustomTiers is mutable state, so the
-// map is cloned before it leaves the lock.
+// routingConfigSnapshot returns an immutable snapshot of the configuration fields consumed by routing.
 func (r *Runtime) routingConfigSnapshot() config.Config {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	cfg := r.cfg
 	cfg.CustomTiers = maps.Clone(r.cfg.CustomTiers)
+	cfg.Warmup = r.cfg.Warmup.Clone()
 	return cfg
 }
 
-// recomputePoolRoutingTableLocked computes a PoolRoutingTable for a single pool in pure memory.
-func (r *Runtime) recomputePoolRoutingTableLocked(pool config.AntigravityModelGroup, cfg config.Config, now time.Time, store *state.Store, credentials []core.Credential) PoolRoutingTable {
-	if store == nil {
-		return PoolRoutingTable{
-			DecidedAt:     now,
-			ByAuthIndex:   make(map[string]PrecomputedCandidate),
-			BlockedModels: make(map[string]map[string]time.Time),
+// modelCatalogSnapshotLocked reads model catalog and per-credential supported models while routingMu is held.
+func (r *Runtime) modelCatalogSnapshotLocked() ([]apply.ModelOption, map[string][]string) {
+	catalog := r.modelCatalog
+	if len(catalog) == 0 {
+		catalog = builtInAntigravityModels
+	}
+	models := make([]apply.ModelOption, len(catalog))
+	for i, item := range catalog {
+		models[i] = apply.ModelOption{
+			ID:          item.ID,
+			DisplayName: item.DisplayName,
+			QuotaPool:   string(item.QuotaPool),
 		}
 	}
-
-	historical := store.BuildHistoricalEvidence(credentials, string(pool))
-	cooldownEntries := store.GetActiveCooldownEntriesForGroup(now, string(pool))
-	cooldowns := make(map[string]time.Time, len(cooldownEntries))
-	cooldownReasons := make(map[string]string, len(cooldownEntries))
-	for authIndex, entry := range cooldownEntries {
-		cooldowns[authIndex] = entry.CooldownUntil
-		if entry.Reason != "" {
-			cooldownReasons[authIndex] = entry.Reason
-		}
-	}
-	blockedModels := store.GetActiveModelCooldownsForGroup(now, string(pool))
-
-	customTiers := store.GetCustomTiers()
-	if customTiers == nil && cfg.CustomTiers != nil {
-		customTiers = cfg.CustomTiers
-	}
-
-	options := priority.Options{
-		Now:                 now,
-		BoostStartPriority:  cfg.PriorityRules.BoostStartPriority,
-		NormalStartPriority: cfg.PriorityRules.NormalStartPriority,
-		FreeStartPriority:   cfg.PriorityRules.FreeStartPriority,
-		UrgencyTolerance:    cfg.UrgencyTolerance,
-		CooldownAuthIndexes: cooldowns,
-		CooldownReasons:     cooldownReasons,
-		CustomTiers:         customTiers,
-	}
-
-	plan := priority.PlanWithEvidence(credentials, historicalEvidenceSource{historical: historical}, options)
-
-	candidates := make(map[string]PrecomputedCandidate, len(plan.Items))
-	var nextTransition time.Time
-
-	for _, item := range plan.Items {
-		authIdx := item.Credential.AuthIndex
-		cdUntil, isCooling := cooldowns[authIdx]
-		unavailable := false
-		if entry, ok := store.GetEntry(authIdx, string(pool)); ok && entry.Unavailable {
-			unavailable = true
-		}
-
-		var shortReset, longReset time.Time
-		if item.ShortWindowResetAt != nil {
-			shortReset = *item.ShortWindowResetAt
-		}
-		if item.LongWindowResetAt != nil {
-			longReset = *item.LongWindowResetAt
-		}
-
-		score := priority.DepletedPriority
-		reason := item.Reason
-
-		if isCooling {
-			reason = priority.Reason429Cooldown
-			if specific := cooldownReasons[authIdx]; specific != "" {
-				reason = specific
+	supportedMap := make(map[string][]string, len(r.supportedModelsByAuth))
+	for authIdx, set := range r.supportedModelsByAuth {
+		if len(set) > 0 {
+			supported := make([]string, 0, len(set))
+			for m := range set {
+				supported = append(supported, m)
 			}
-		} else if unavailable {
-			reason = priority.ReasonQuotaUnavailable
-		} else {
-			score = routingTier(item)
-		}
-
-		candidates[authIdx] = PrecomputedCandidate{
-			AuthIndex:          authIdx,
-			Priority:           score,
-			Urgency:            item.Urgency,
-			ShortWindowResetAt: shortReset,
-			LongWindowResetAt:  longReset,
-			CooldownUntil:      cdUntil,
-			Reason:             reason,
-		}
-
-		// Track earliest transition timestamp
-		if !shortReset.IsZero() && shortReset.After(now) {
-			nextTransition = minFutureTime(nextTransition, shortReset)
-		}
-		if !longReset.IsZero() && longReset.After(now) {
-			nextTransition = minFutureTime(nextTransition, longReset)
-		}
-		if isCooling && cdUntil.After(now) {
-			nextTransition = minFutureTime(nextTransition, cdUntil)
+			sort.Strings(supported)
+			supportedMap[authIdx] = supported
 		}
 	}
-	for _, models := range blockedModels {
-		for _, until := range models {
-			if until.After(now) {
-				nextTransition = minFutureTime(nextTransition, until)
-			}
-		}
-	}
-
-	return PoolRoutingTable{
-		DecidedAt:        now,
-		NextTransitionAt: nextTransition,
-		ByAuthIndex:      candidates,
-		BlockedModels:    blockedModels,
-	}
+	return models, supportedMap
 }
 
-// recomputeRoutingTablesLocked updates all 3 pool routing tables in memory.
-func (r *Runtime) recomputeRoutingTablesLocked(now time.Time, existingCreds ...[]core.Credential) {
-	cfg := r.routingConfigSnapshot()
-	store := r.state.StoreOrNil()
-	var credentials []core.Credential
-	if len(existingCreds) > 0 {
-		credentials = existingCreds[0]
-	} else {
-		credentials = r.currentCredentialsLocked()
-	}
-	for _, pool := range config.AllAntigravityModelGroups {
-		r.plansByPool[pool] = r.recomputePoolRoutingTableLocked(pool, cfg, now, store, credentials)
-	}
-}
-
-// currentCredentialsLocked extracts current known credentials from host or state cache.
-func (r *Runtime) currentCredentialsLocked() []core.Credential {
+// resolveCurrentCredentials extracts current known credentials from host or state cache without holding routingMu.
+func (r *Runtime) resolveCurrentCredentials() []core.Credential {
 	if r.hostCallbacks != nil {
 		client := host.NewClient(r.hostCallbacks)
 		if files, err := client.ListAuthFiles(context.Background()); err == nil && len(files) > 0 {
-			creds := credentialsFromAuthFiles(files)
-			return creds
+			return credentialsFromAuthFiles(files)
 		}
 	}
 
 	if store := r.state.StoreOrNil(); store != nil {
 		authIndexes := store.GetKnownAuthIndexes()
-		var creds []core.Credential
+		creds := make([]core.Credential, 0, len(authIndexes))
 		for _, idx := range authIndexes {
 			creds = append(creds, core.Credential{
 				AuthIndex: idx,
@@ -427,6 +305,9 @@ func (r *Runtime) getOrRefreshPoolTable(pool config.AntigravityModelGroup, now t
 		return table
 	}
 
+	cfg := r.routingConfigSnapshot()
+	credentials := enrichCredentialsPlanTypeFromStore(r.state.StoreOrNil(), r.resolveCurrentCredentials())
+
 	r.routingMu.Lock()
 	defer r.routingMu.Unlock()
 	// Double check under write lock
@@ -435,13 +316,13 @@ func (r *Runtime) getOrRefreshPoolTable(pool config.AntigravityModelGroup, now t
 		return table
 	}
 
-	cfg := r.routingConfigSnapshot()
 	r.pruneExpiredSessionAffinityLocked(now)
 	store := r.state.StoreOrNil()
-	credentials := r.currentCredentialsLocked()
-	refreshed := r.recomputePoolRoutingTableLocked(pool, cfg, now, store, credentials)
-	r.plansByPool[pool] = refreshed
-	return refreshed
+	poolEvidence := buildPoolProjectionEvidence(store, credentials, pool)
+	baseOptions := planningOptionsForEngine(cfg, store, now)
+	eval := evaluateSinglePool(pool, credentials, poolEvidence, store, baseOptions, now)
+	r.plansByPool[pool] = eval.table
+	return eval.table
 }
 
 // pruneExpiredSessionAffinityLocked drops bindings that can no longer be

@@ -121,13 +121,11 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 	// Reconcile against the authoritative Host inventory after the potentially
 	// slow Google requests. Credentials may have been added, removed, disabled,
 	// or reprioritized while probing was in flight.
-	projection, err := projectCurrentHost(ctx, client, request, evidence.ByGroup, store, now)
-	if err != nil {
+	if _, err := r.reconcileAndCommitRouting(ctx, client, request, evidence.ByGroup, store, now); err != nil {
 		return err
 	}
-	// Probe-only: evidence collected and three-pool snapshot updated; no Host write occurs.
+	// Probe-only: evidence collected and three-pool snapshot + routing tables updated; no Host write occurs.
 	if request.Trigger == TriggerProbe {
-		r.setSnapshotSet(projection.Snapshot)
 		audit := fmt.Sprintf("probe completed: %d probe observations", evidence.Probed)
 		_, projectErr := r.state.ProjectRun(ctx, apply.Result{}, audit, RunHistoryEntry{
 			Kind:         KindProbe,
@@ -137,15 +135,11 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 			Succeeded:    readyProbeCredentialCount(evidence.Probes),
 			Message:      audit,
 		})
-		r.routingMu.Lock()
-		r.recomputeRoutingTablesLocked(now, allCredentials)
-		r.routingMu.Unlock()
 		return projectErr
 	}
 
 	// AutoApply: background quota probe and calibration only. Never writes back priorities to host files.
 	if request.Trigger == TriggerAutoApply {
-		r.setSnapshotSet(projection.Snapshot)
 		summary := fmt.Sprintf("auto schedule probed=%d; in-memory routing tables calibrated", evidence.Probed)
 		_, projectErr := r.state.ProjectRun(ctx, apply.Result{}, summary, RunHistoryEntry{
 			Kind:         KindAutoApply,
@@ -155,9 +149,6 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 			Succeeded:    readyProbeCredentialCount(evidence.Probes),
 			Message:      summary,
 		})
-		r.routingMu.Lock()
-		r.recomputeRoutingTablesLocked(now, allCredentials)
-		r.routingMu.Unlock()
 		return projectErr
 	}
 
@@ -165,17 +156,17 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 	return nil
 }
 
-func projectCurrentHost(
+func (r *Runtime) reconcileAndCommitRouting(
 	ctx context.Context,
 	client *host.Client,
 	request TaskRequest,
 	evidenceByGroup map[config.AntigravityModelGroup]evidence.Result,
 	store *state.Store,
 	now time.Time,
-) (ModelGroupProjection, error) {
+) (apply.SnapshotSet, error) {
 	files, err := client.ListAuthFiles(ctx)
 	if err != nil {
-		return ModelGroupProjection{}, err
+		return apply.SnapshotSet{}, err
 	}
 	credentials := credentialsFromAuthFiles(files)
 	effectiveEvidence := evidenceByGroup
@@ -184,16 +175,9 @@ func projectCurrentHost(
 	}
 	credentials, _, err = enrichCredentialsFromAuthDocuments(ctx, client, credentials)
 	if err != nil {
-		return ModelGroupProjection{}, err
+		return apply.SnapshotSet{}, err
 	}
-	credentials = enrichCredentialsPlanTypeFromStore(store, credentials)
-	return ProjectModelGroups(ProjectionInput{
-		Credentials:     credentials,
-		EvidenceByGroup: effectiveEvidence,
-		PlanningOptions: priorityOptions(request.Config, store, now),
-		ProjectionTime:  now,
-		Warmup:          request.Config.Warmup,
-	})
+	return r.commitRoutingAndSnapshot(now, credentials, effectiveEvidence)
 }
 
 func (r *Runtime) collectEvidenceForTrigger(ctx context.Context, input collectInput, trigger Trigger) (collectedEvidence, error) {
@@ -358,28 +342,6 @@ func filterCredentialsByAuthIndex(credentials []core.Credential, authIndexes []s
 	return filtered
 }
 
-func priorityOptions(cfg config.Config, store *state.Store, now time.Time) priority.Options {
-	var cooldowns map[string]time.Time
-	var cooldownReasons map[string]string
-	var customTiers map[string]int
-	if store != nil {
-		cooldowns, cooldownReasons = store.GetActiveCooldownsForPlanning(now)
-		customTiers = store.GetCustomTiers()
-	}
-	if customTiers == nil && cfg.CustomTiers != nil {
-		customTiers = cfg.CustomTiers
-	}
-	return priority.Options{
-		Now:                  now,
-		BoostStartPriority:   cfg.PriorityRules.BoostStartPriority,
-		NormalStartPriority:  cfg.PriorityRules.NormalStartPriority,
-		FreeStartPriority:    cfg.PriorityRules.FreeStartPriority,
-		UrgencyTolerance:     cfg.UrgencyTolerance,
-		CooldownAuthIndexes:  cooldowns,
-		CooldownReasonsByKey: cooldownReasons,
-		CustomTiers:          customTiers,
-	}
-}
 func enrichCredentialsPlanTypeFromStore(store *state.Store, credentials []core.Credential) []core.Credential {
 	if store == nil {
 		return credentials
@@ -397,6 +359,15 @@ func enrichCredentialsPlanTypeFromStore(store *state.Store, credentials []core.C
 		}
 	}
 	return credentials
+}
+
+func buildPoolProjectionEvidence(store *state.Store, credentials []core.Credential, pool config.AntigravityModelGroup) evidence.Result {
+	historical := historicalObservations(store, credentials)
+	return evidence.Classify(evidence.Input{
+		Round:       evidence.Round{ID: "historical", ModelGroup: pool},
+		Credentials: credentials,
+		Historical:  historical,
+	})
 }
 
 func buildProjectionEvidence(store *state.Store, credentials []core.Credential) map[config.AntigravityModelGroup]evidence.Result {

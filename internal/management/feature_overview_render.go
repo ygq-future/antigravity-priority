@@ -2,23 +2,61 @@ package management
 
 const templateScriptOverviewRender = `        function resolveModelPool(modelId) {
             if (!modelId) return "gemini";
-            let m = String(modelId).toLowerCase().trim();
-            const slashIdx = m.lastIndexOf("/");
-            if (slashIdx >= 0) m = m.substring(slashIdx + 1);
-            const parenIdx = m.indexOf("(");
-            if (parenIdx >= 0) m = m.substring(0, parenIdx).trim();
-            if (m.indexOf("argon") >= 0) return "argon";
-            if (m.indexOf("claude") >= 0 || m.indexOf("opus") >= 0 || m.indexOf("sonnet") >= 0 ||
-                m.indexOf("haiku") >= 0 || m.indexOf("fable") >= 0 || m.indexOf("gpt") >= 0 ||
-                m.indexOf("o1") >= 0 || m.indexOf("o3") >= 0 || m.indexOf("o4") >= 0 || m.indexOf("openai") >= 0) {
-                return "claude_gpt";
+            const catalog = (typeof latestSnapshot !== "undefined" && latestSnapshot && Array.isArray(latestSnapshot.models))
+                ? latestSnapshot.models
+                : ((typeof window !== "undefined" && Array.isArray(window.cpaAvailableModels)) ? window.cpaAvailableModels : null);
+            if (catalog) {
+                for (let i = 0; i < catalog.length; i++) {
+                    const m = catalog[i];
+                    if (m && m.id === modelId && m.quota_pool) {
+                        return m.quota_pool;
+                    }
+                }
+            }
+            if (typeof document !== "undefined" && typeof document.getElementById === "function") {
+                const menu = document.getElementById("customModelSelectMenu");
+                if (menu && typeof menu.querySelectorAll === "function") {
+                    const opts = menu.querySelectorAll(".custom-select-option");
+                    for (let i = 0; i < opts.length; i++) {
+                        if (opts[i] && typeof opts[i].getAttribute === "function" && opts[i].getAttribute("data-value") === modelId) {
+                            const poolAttr = opts[i].getAttribute("data-pool");
+                            if (poolAttr) return poolAttr;
+                        }
+                    }
+                }
             }
             return "gemini";
         }
 
-        function isModelEligible(item, selectedModel, pool) {
+        function resolveItemRoutingStatus(item) {
+            if (item && item.routing_status) {
+                return item.routing_status;
+            }
             if (item && item.host && item.host.disabled) {
+                return "disabled";
+            }
+            if (item && item.cooldown_until) {
+                return "cooldown";
+            }
+            const targetP = (item && item.target && item.target.priority !== undefined)
+                ? item.target.priority
+                : ((item && item.priority !== undefined) ? item.priority : 0);
+            if (targetP <= -2 || (item && item.target && item.target.disabled)) {
+                return "weekly_depleted";
+            }
+            if (targetP === -1) {
+                return "short_depleted";
+            }
+            return "active";
+        }
+
+        function isModelEligible(item, selectedModel) {
+            const status = resolveItemRoutingStatus(item);
+            if (status === "disabled") {
                 return { eligible: false, reason: "disabled" };
+            }
+            if (status === "pool_unavailable" || (item && item.pool_eligible === false)) {
+                return { eligible: false, reason: "unsupported_model" };
             }
             if (item && Array.isArray(item.supported_models) && item.supported_models.length > 0) {
                 const needle = String(selectedModel || "").toLowerCase().trim();
@@ -29,34 +67,8 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
                     return { eligible: false, reason: "unsupported_model" };
                 }
             }
-            if (pool === "claude_gpt" && item) {
-                const qw = item.quota_windows || {};
-                const c5h = qw.claude_5h || {};
-                const c7d = qw.claude_7d || {};
-                const g5h = qw.gemini_5h || {};
-                const g7d = qw.gemini_7d || {};
-                const hasGemini = (g5h.remaining !== null && g5h.remaining !== undefined) ||
-                                  (g7d.remaining !== null && g7d.remaining !== undefined);
-                const hasClaude = (c5h.remaining !== null && c5h.remaining !== undefined) ||
-                                  (c7d.remaining !== null && c7d.remaining !== undefined);
-                if (!hasClaude && hasGemini) {
-                    return { eligible: false, reason: "unsupported_model" };
-                }
-            }
-            if (pool === "argon" && item) {
-                const qw = item.quota_windows || {};
-                const a7d = qw.argon_7d || {};
-                const g7d = qw.gemini_7d || {};
-                const hasGemini = (g7d.remaining !== null && g7d.remaining !== undefined);
-                const sharedArgon = qw.argon_shared_with_gemini === true;
-                const hasArgon = (a7d.remaining !== null && a7d.remaining !== undefined) || sharedArgon;
-                if (!hasArgon && hasGemini) {
-                    return { eligible: false, reason: "unsupported_model" };
-                }
-            }
             return { eligible: true, reason: "" };
         }
-
         function collectCredentialCards(container) {
             if (!container) return [];
             if (typeof container.querySelectorAll === "function") {
@@ -171,12 +183,8 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
             const bypassedItems = [];
 
             rawItems.forEach(function(item) {
-                const eligibility = isModelEligible(item, selectedModel, pool);
-                const isCooldown = Boolean(item.cooldown_until);
-                const targetP = (item.target && item.target.priority !== undefined) ? item.target.priority : (item.priority !== undefined ? item.priority : 0);
-                const isManuallyDisabled = item.reason && item.reason.indexOf("disabled on host") >= 0;
-                const isWeeklyDepleted = (item.target && item.target.disabled && !isManuallyDisabled) || targetP <= -2;
-                const isSoftDepleted = targetP === -1;
+                const status = resolveItemRoutingStatus(item);
+                const eligibility = isModelEligible(item, selectedModel);
 
                 if (!eligibility.eligible) {
                     bypassedItems.push({
@@ -184,16 +192,16 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
                         reason: eligibility.reason,
                         sortGroup: eligibility.reason === "unsupported_model" ? 3 : 4
                     });
-                } else if (isCooldown) {
+                } else if (status === "cooldown") {
                     bypassedItems.push({
                         item: item,
                         reason: "cooldown",
                         sortGroup: 1
                     });
-                } else if (isSoftDepleted || isWeeklyDepleted) {
+                } else if (status === "weekly_depleted" || status === "short_depleted") {
                     bypassedItems.push({
                         item: item,
-                        reason: isWeeklyDepleted ? "weekly_depleted" : "soft_depleted",
+                        reason: status,
                         sortGroup: 2
                     });
                 } else {
@@ -239,15 +247,10 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
             let renderItems;
             if (!modelInput) {
                 renderItems = rawItems.map(function(item, idx) {
-                    const isCooldown = Boolean(item.cooldown_until);
-                    const targetP = (item.target && item.target.priority !== undefined) ? item.target.priority : (item.priority !== undefined ? item.priority : 0);
-                    const isWeeklyDepleted = (item.target && item.target.disabled) || targetP <= -2;
-                    const isSoftDepleted = targetP === -1;
-                    let reason = "";
-                    if (isCooldown) reason = "cooldown";
-                    else if (isWeeklyDepleted) reason = "weekly_depleted";
-                    else if (isSoftDepleted) reason = "soft_depleted";
-                    return { item: item, tier: idx + 1, isBypassed: (isCooldown || isWeeklyDepleted || isSoftDepleted), reason: reason };
+                    const status = resolveItemRoutingStatus(item);
+                    const isBypassed = status !== "active" && status !== "cold_start";
+                    const reason = isBypassed ? (status === "pool_unavailable" ? "unsupported_model" : status) : "";
+                    return { item: item, tier: idx + 1, isBypassed: isBypassed, reason: reason };
                 });
             } else {
                 renderItems = tieredActive.concat(tieredBypassed);
@@ -282,8 +285,9 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
                 const bypassedReason = entry.reason;
                 const tier = entry.tier;
 
-                const isManuallyDisabled = Boolean(item.reason && item.reason.indexOf("disabled on host") >= 0);
-                const isWeeklyDepleted = Boolean(item.target && item.target.disabled);
+                const itemStatus = resolveItemRoutingStatus(item);
+                const isManuallyDisabled = itemStatus === "disabled";
+                const isWeeklyDepleted = itemStatus === "weekly_depleted";
                 const isDisabled = isManuallyDisabled || isWeeklyDepleted;
 
                 const card = document.createElement("div");
@@ -294,14 +298,8 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
                 const burnRate = (item.cycle_burn_rate || 0).toFixed(2);
 
                 let priorityDisplay = "-";
-                if (isDisabled) {
-                    priorityDisplay = "-1";
-                } else if (item.target) {
-                    if (item.target.priority_missing || item.target.priority === undefined || item.target.priority === null) {
-                        priorityDisplay = t("unsetPriority");
-                    } else {
-                        priorityDisplay = item.target.priority;
-                    }
+                if (item.target && item.target.priority !== undefined && item.target.priority !== null) {
+                    priorityDisplay = item.target.priority;
                 } else if (item.host && item.host.priority !== undefined && item.host.priority !== null) {
                     priorityDisplay = item.host.priority;
                 }
@@ -328,6 +326,8 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
                         tierText = "🎯 Tier #" + customTier + (currentLang === "zh-CN" ? " · 自定义" : " · Custom");
                     } else if (isBoosted) {
                         tierText = "🚀 Tier #" + tier + " · Boost";
+                    } else if (itemStatus === "cold_start") {
+                        tierText = "Tier #" + tier + (currentLang === "zh-CN" ? " · 待探测" : " · Cold Start");
                     } else {
                         tierText = "Tier #" + tier;
                     }
@@ -338,13 +338,13 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
                 } else if (bypassedReason === "unsupported_model") {
                     callOrderBadge = "<span class=\"badge badge-secondary\">" + (currentLang === "zh-CN" ? "⛔ 不支持该模型" : "⛔ Unsupported") + "</span>";
                 } else if (bypassedReason === "disabled") {
-                    callOrderBadge = "<span class=\"badge badge-secondary\">" + (currentLang === "zh-CN" ? "⛔ 不可用" : "⛔ Unavailable") + "</span>";
+                    callOrderBadge = "<span class=\"badge badge-secondary\">⛔ " + escapeHTML(t("statusDisabled")) + "</span>";
                 } else {
                     callOrderBadge = "<span class=\"badge badge-danger\">" + (currentLang === "zh-CN" ? "🚫 耗尽避让" : "🚫 Depleted") + "</span>";
                 }
 
-                const isCooldown = Boolean(item.cooldown_until);
-                const probeFailed = item.reason && (item.reason.indexOf("probe failed") >= 0 || item.reason.indexOf("probe invalid") >= 0);
+                const isCooldown = itemStatus === "cooldown";
+                const probeFailed = Boolean(item.probe_failed);
                 let reasonColorClass = "cred-reason-normal";
                 if (isCooldown) {
                     reasonColorClass = "cred-reason-warning";
@@ -357,8 +357,7 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
                 } else if (isBoosted) {
                     reasonColorClass = "cred-reason-boost";
                 }
-                const formattedReason = formatReason(item.reason, isBoosted, item.target && item.target.disabled);
-
+                const formattedReason = formatReason(item.reason, isBoosted, isDisabled, itemStatus, probeFailed);
                 let cardHtml = "<div class=\"cred-info\">" +
                     "<div class=\"cred-name\">" +
                         callOrderBadge +
