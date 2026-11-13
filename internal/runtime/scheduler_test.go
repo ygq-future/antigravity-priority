@@ -871,14 +871,6 @@ func TestScheduler_DynamicConfigHotAppliesCustomTiers(t *testing.T) {
 		{Name: "account-b", AuthIndex: "idx-b", Provider: "antigravity", Status: "active"},
 	}
 
-	r := runtime.New(runtime.Options{Host: mock, StateCachePath: cachePath, Clock: clock})
-	if _, err := r.Register(ctx, runtime.RegisterRequest{ConfigYAML: "enabled: true\nstate_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := r.SyncHost(ctx); err != nil {
-		t.Fatal(err)
-	}
-
 	store, err := state.Load(ctx, cachePath)
 	if err != nil {
 		t.Fatal(err)
@@ -904,6 +896,14 @@ func TestScheduler_DynamicConfigHotAppliesCustomTiers(t *testing.T) {
 		}
 	}
 	if err := store.SaveAtomic(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	r := runtime.New(runtime.Options{Host: mock, StateCachePath: cachePath, Clock: clock})
+	if _, err := r.Register(ctx, runtime.RegisterRequest{ConfigYAML: "enabled: true\nstate_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.SyncHost(ctx); err != nil {
 		t.Fatal(err)
 	}
 	for _, idx := range []string{"idx-a", "idx-b"} {
@@ -949,13 +949,7 @@ func TestScheduler_CustomTier_PrioritizesTier1_And_BalancesTier2(t *testing.T) {
 		{Name: "account-c", AuthIndex: "idx-c", Provider: "antigravity", Status: "active"},
 	}
 
-	r := runtime.New(runtime.Options{Host: mock, StateCachePath: cachePath, Clock: clock})
-	if _, err := r.Register(ctx, runtime.RegisterRequest{ConfigYAML: "enabled: true\nstate_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
-		t.Fatal(err)
-	}
-	_, _ = r.SyncHost(ctx)
-
-	// Setup healthy quotas for all three in state store
+	// Setup healthy quotas for all three in state store before Runtime loads it
 	store, err := state.Load(ctx, cachePath)
 	if err != nil {
 		t.Fatal(err)
@@ -980,6 +974,11 @@ func TestScheduler_CustomTier_PrioritizesTier1_And_BalancesTier2(t *testing.T) {
 	}
 	_ = store.SaveAtomic(ctx)
 
+	r := runtime.New(runtime.Options{Host: mock, StateCachePath: cachePath, Clock: clock})
+	if _, err := r.Register(ctx, runtime.RegisterRequest{ConfigYAML: "enabled: true\nstate_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = r.SyncHost(ctx)
 	// Configure Custom Tiers: c: 1, a: 2, b: 2
 	if err := r.SetCustomTier(ctx, "idx-c", 1); err != nil {
 		t.Fatal(err)
@@ -1016,19 +1015,13 @@ func TestScheduler_CustomTier_PrioritizesTier1_And_BalancesTier2(t *testing.T) {
 		}
 	}
 
-	// 2. Put Account C into 429 rate limit cooldown (temporary bypass)
-	store, _ = state.Load(ctx, cachePath)
-	store.SetCooldown(state.CooldownEntry{
-		AuthIndex:     "idx-c",
-		ModelGroup:    "gemini",
-		TriggeredAt:   now,
-		CooldownUntil: now.Add(5 * time.Minute),
-		Reason:        "429 cooldown",
-	})
-	_ = store.SaveAtomic(ctx)
+	// 2. Put Account C into 429 rate limit cooldown via usage events (temporary bypass)
+	cooldownPayload := []byte(`{"Provider":"antigravity","Model":"gemini-3.8-flash-high","AuthIndex":"idx-c","Failed":true,"Failure":{"StatusCode":429}}`)
+	_ = r.Handle(ctx, runtime.MethodUsageHandle, cooldownPayload)
+	_ = r.Handle(ctx, runtime.MethodUsageHandle, cooldownPayload)
 
 	// Advance time by 65s (>60s routing table refresh TTL, but well within 5min cooldown)
-	clock.now = now.Add(65 * time.Second)
+	clock.Set(now.Add(65 * time.Second))
 	// 3. Requests must now rotate between Account A and Account B (both Tier 2, load balancing)
 	picks := make([]string, 4)
 	for i := range 4 {

@@ -5,14 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"net/http"
 	"os"
 	"sort"
 	"strings"
 	"sync"
 	"time"
-
 	"antigravity-priority/internal/apply"
 	"antigravity-priority/internal/config"
 	"antigravity-priority/internal/host"
@@ -25,45 +23,39 @@ const maxRunHistory = 10
 
 // Runtime manages plugin lifecycle, configuration, ticker worker, and single-flight execution.
 type Runtime struct {
-	mu                      sync.Mutex
-	runMu                   sync.Mutex
-	runner                  TaskRunner
-	rootCtx                 context.Context
-	cancel                  context.CancelFunc
-	cfg                     config.Config
-	hostCallbacks           host.HostCallbacks
-	clock                   Clock
-	sleeper                 Sleeper
-	management              *management.Handler
-	latestResult            apply.Result
-	latestAudit             string
-	latestSnapshotSet       *apply.SnapshotSet
-	scheduleConfig          state.ScheduleConfig
-	stateCacheOverride      string
-	runHistory              []RunHistoryEntry
-	requestHistory          []state.RequestHistoryEntry
-	requestHistoryPersistMu sync.Mutex
-	latestProbeOutcomes     []management.ProbeOutcome
-	lastAutoApplyAt         time.Time
-	worker                  *tickerWorker
-	shutdown                bool
-	rateLimitMu             sync.Mutex
-	pending429              map[string]pending429
-	stormUntil              time.Time
-	stormAccounts           map[string]bool
-	activeCooldowns         map[string]state.CooldownEntry
-	rateLimitWake           chan struct{}
-	rateLimitDone           chan struct{}
-	routingMu               sync.RWMutex
-	plansByPool             map[config.AntigravityModelGroup]PoolRoutingTable
-	authIDToIndex           map[string]string
-	supportedModelsByAuth   map[string]map[string]struct{}
-	modelCatalog            []ModelCatalogItem
-	rrCursorByPool          map[config.AntigravityModelGroup]string
-	sessionAffinity         map[string]sessionBinding
-	probeMu           sync.Mutex
-	probeAttempts           map[string]probeAttempt
-	warmupResetWake         chan struct{}
+	mu                    sync.Mutex
+	configMu              sync.Mutex
+	runMu                 sync.Mutex
+	runner                TaskRunner
+	rootCtx               context.Context
+	cancel                context.CancelFunc
+	cfg                   config.Config
+	hostCallbacks         host.HostCallbacks
+	clock                 Clock
+	sleeper               Sleeper
+	management            *management.Handler
+	state                 *stateRepository
+	latestSnapshotSet     *apply.SnapshotSet
+	stateCacheOverride    string
+	latestProbeOutcomes   []management.ProbeOutcome
+	worker                *tickerWorker
+	shutdown              bool
+	rateLimitMu           sync.Mutex
+	pending429            map[string]pending429
+	stormUntil            time.Time
+	stormAccounts         map[string]bool
+	rateLimitWake         chan struct{}
+	rateLimitDone         chan struct{}
+	routingMu             sync.RWMutex
+	plansByPool           map[config.AntigravityModelGroup]PoolRoutingTable
+	authIDToIndex         map[string]string
+	supportedModelsByAuth map[string]map[string]struct{}
+	modelCatalog          []ModelCatalogItem
+	rrCursorByPool        map[config.AntigravityModelGroup]string
+	sessionAffinity       map[string]sessionBinding
+	probeMu               sync.Mutex
+	probeAttempts         map[string]probeAttempt
+	warmupResetWake       chan struct{}
 }
 
 // New creates an initialized Runtime instance.
@@ -86,7 +78,6 @@ func New(options Options) *Runtime {
 		sleeper:               sleeper,
 		pending429:            make(map[string]pending429),
 		stormAccounts:         make(map[string]bool),
-		activeCooldowns:       make(map[string]state.CooldownEntry),
 		rateLimitWake:         make(chan struct{}, 1),
 		rateLimitDone:         make(chan struct{}),
 		plansByPool:           make(map[config.AntigravityModelGroup]PoolRoutingTable),
@@ -109,65 +100,9 @@ func New(options Options) *Runtime {
 	}
 	rt.management = management.NewHandler(managementRunner{runtime: rt})
 
-	// Restore persisted cache, learned rates, and execution snapshot from disk on startup
-	cachePath := rt.cfg.StateCachePath
-	if strings.TrimSpace(cachePath) == "" {
-		cachePath = config.DefaultStateCachePath
-	}
-	if store, err := state.Load(context.Background(), cachePath); err == nil {
-		for key, entry := range store.GetCooldowns() {
-			if entry.FailureKind == state.FailureForbidden && entry.ProbeEnabled {
-				store.DeleteCooldownExact(key)
-				accountEntry := entry
-				accountEntry.ModelGroup = ""
-				accountEntry.Model = ""
-				accountEntry.ProbeModel = ""
-				accountEntry.ProbeEnabled = false
-				accountEntry.NextRecoveryAt = time.Time{}
-				store.SetCooldown(accountEntry)
-			}
-		}
-		maps.Copy(rt.activeCooldowns, store.GetCooldowns())
-		audit, resJSON, histJSON := store.GetRuntimeSnapshot()
-		if len(resJSON) > 0 {
-			var res apply.Result
-			if err := json.Unmarshal(resJSON, &res); err == nil {
-				rt.latestResult = res
-			}
-		}
-		if len(histJSON) > 0 {
-			var hist []RunHistoryEntry
-			if err := json.Unmarshal(histJSON, &hist); err == nil {
-				rt.runHistory = hist
-			}
-		}
-		if reqHist := store.GetRequestHistory(); len(reqHist) > 0 {
-			rt.requestHistory = reqHist
-		}
-		if audit != "" {
-			rt.latestAudit = audit
-		}
-		schedCfg := store.GetScheduleConfig()
-		rt.scheduleConfig = schedCfg
-		rt.lastAutoApplyAt = store.GetLastAutoApplyAt()
-		if dynCfg, ok := store.GetDynamicConfig(); ok {
-			if merged, err := dynCfg.ApplyTo(rt.cfg); err == nil {
-				merged.Schedule = schedCfg
-				rt.cfg = merged
-				rt.scheduleConfig = schedCfg
-			}
-		}
-		historyLimit := rt.cfg.RequestHistoryLimit
-		if historyLimit <= 0 {
-			historyLimit = state.DefaultMaxRequestHistory
-		}
-		if len(rt.requestHistory) > historyLimit {
-			rt.requestHistory = rt.requestHistory[:historyLimit]
-			store.SetRequestHistory(rt.requestHistory)
-		}
-		// Unconditionally ensure cache file exists on disk upon initialization
-		_ = store.SaveAtomic(context.Background())
-	}
+	// Restore persisted cache, learned rates, and execution snapshot from disk on startup.
+	rt.state = newStateRepository(context.Background(), rt.cfg.StateCachePath, clock, rt.cfg.RequestHistoryLimit)
+	rt.cfg = rt.state.MergeDynamicConfig(rt.cfg)
 	if options.DisableBackgroundWorkers {
 		close(rt.rateLimitDone)
 	} else {
@@ -220,8 +155,11 @@ func (r *Runtime) Register(ctx context.Context, req RegisterRequest) (RegisterRe
 	if err != nil {
 		return RegisterResult{}, fmt.Errorf("load register config: %w", err)
 	}
+	r.configMu.Lock()
+	defer r.configMu.Unlock()
 	cfg = r.applyStateCacheOverride(cfg)
-	cfg = r.mergePersistedDynamicConfig(cfg)
+	r.state.EnsurePath(ctx, cfg.StateCachePath, cfg.RequestHistoryLimit)
+	cfg = r.state.MergeDynamicConfig(cfg)
 	if err := r.replaceConfig(ctx, cfg); err != nil {
 		return RegisterResult{}, err
 	}
@@ -234,8 +172,11 @@ func (r *Runtime) Reconfigure(ctx context.Context, req ReconfigureRequest) (Regi
 	if err != nil {
 		return RegisterResult{}, fmt.Errorf("load reconfigure config: %w", err)
 	}
+	r.configMu.Lock()
+	defer r.configMu.Unlock()
 	cfg = r.applyStateCacheOverride(cfg)
-	cfg = r.mergePersistedDynamicConfig(cfg)
+	r.state.EnsurePath(ctx, cfg.StateCachePath, cfg.RequestHistoryLimit)
+	cfg = r.state.MergeDynamicConfig(cfg)
 	if err := r.replaceConfig(ctx, cfg); err != nil {
 		return RegisterResult{}, err
 	}
@@ -271,9 +212,10 @@ func (r *Runtime) ResetAllPriorities(ctx context.Context) (map[string]any, error
 	if r.hostCallbacks == nil {
 		return nil, errMissingHostCallbacks
 	}
-	r.mu.Lock()
-	cfg := r.cfg
-	r.mu.Unlock()
+	cfg, err := r.Config()
+	if err != nil {
+		return nil, err
+	}
 	client := host.NewClient(r.hostCallbacks)
 	files, err := client.ListAuthFiles(ctx)
 	if err != nil {
@@ -310,11 +252,7 @@ func (r *Runtime) ResetAllPriorities(ctx context.Context) (map[string]any, error
 	}
 	credentials, _, _ = enrichCredentialsFromAuthDocuments(ctx, client, credentials)
 
-	cachePath := cfg.StateCachePath
-	if strings.TrimSpace(cachePath) == "" {
-		cachePath = config.DefaultStateCachePath
-	}
-	store, err := state.Load(ctx, cachePath)
+	store, err := r.state.Store(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -345,7 +283,7 @@ func (r *Runtime) ResetAllPriorities(ctx context.Context) (map[string]any, error
 	summary := resultSummary("reset", result)
 	result.Snapshot = legacySnapshot
 	snap := legacySnapshot
-	_, projectErr := r.projectRun(ctx, store, result, summary, withTransitionStats(result, RunHistoryEntry{
+	_, projectErr := r.state.ProjectRun(ctx, result, summary, withTransitionStats(result, RunHistoryEntry{
 		Kind:     KindReset,
 		Trigger:  string(TriggerManualReset),
 		Message:  summary,
@@ -387,9 +325,10 @@ func (r *Runtime) SyncHost(ctx context.Context) (apply.SnapshotSet, error) {
 	}
 	defer r.runMu.Unlock()
 
-	r.mu.Lock()
-	cfg := r.cfg
-	r.mu.Unlock()
+	cfg, err := r.Config()
+	if err != nil {
+		return apply.SnapshotSet{}, err
+	}
 
 	if r.hostCallbacks == nil {
 		return apply.SnapshotSet{}, errMissingHostCallbacks
@@ -407,11 +346,7 @@ func (r *Runtime) SyncHost(ctx context.Context) (apply.SnapshotSet, error) {
 		return apply.SnapshotSet{}, err
 	}
 
-	cachePath := cfg.StateCachePath
-	if strings.TrimSpace(cachePath) == "" {
-		cachePath = config.DefaultStateCachePath
-	}
-	store, err := state.Load(ctx, cachePath)
+	store, err := r.state.Store(ctx)
 	if err != nil {
 		return apply.SnapshotSet{}, err
 	}
@@ -440,15 +375,10 @@ func (r *Runtime) SyncHost(ctx context.Context) (apply.SnapshotSet, error) {
 
 // GetSamples returns the historical quota samples for a specific credential and model group.
 func (r *Runtime) GetSamples(ctx context.Context, authIndex, modelGroup string) ([]state.QuotaSample, error) {
-	r.mu.Lock()
-	cfg := r.cfg
-	r.mu.Unlock()
-
-	cachePath := cfg.StateCachePath
-	if strings.TrimSpace(cachePath) == "" {
-		cachePath = config.DefaultStateCachePath
+	if _, err := r.Config(); err != nil {
+		return nil, err
 	}
-	store, err := state.Load(ctx, cachePath)
+	store, err := r.state.Store(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -457,15 +387,10 @@ func (r *Runtime) GetSamples(ctx context.Context, authIndex, modelGroup string) 
 
 // GetProbeSamples returns only samples appended by one probe round.
 func (r *Runtime) GetProbeSamples(ctx context.Context, probeRoundID, modelGroup string) ([]state.ProbeSampleRecord, error) {
-	r.mu.Lock()
-	cfg := r.cfg
-	r.mu.Unlock()
-
-	cachePath := cfg.StateCachePath
-	if strings.TrimSpace(cachePath) == "" {
-		cachePath = config.DefaultStateCachePath
+	if _, err := r.Config(); err != nil {
+		return nil, err
 	}
-	store, err := state.Load(ctx, cachePath)
+	store, err := r.state.Store(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -518,9 +443,8 @@ func (r *Runtime) runAuto(ctx context.Context) error {
 
 	r.mu.Lock()
 	cfg := r.cfg
-	sched := r.scheduleConfig
 	r.mu.Unlock()
-
+	sched := r.state.ScheduleConfig()
 	// Guard: skip if plugin is disabled or scheduler is paused
 	if !cfg.Enabled || sched.Paused {
 		return nil
@@ -541,14 +465,13 @@ func (r *Runtime) runAuto(ctx context.Context) error {
 		return nil
 	}
 
+	last := r.state.LastAutoApplyAt()
 	r.mu.Lock()
-	last := r.lastAutoApplyAt
-	interval := cfg.Interval
+	interval := r.cfg.Interval
+	r.mu.Unlock()
 	if interval > 0 && !last.IsZero() && now.Sub(last) < interval {
-		r.mu.Unlock()
 		return nil
 	}
-	r.mu.Unlock()
 
 	runErr := runner(taskCtx, TaskRequest{
 		Config:  cfg,
@@ -566,10 +489,7 @@ func (r *Runtime) runAuto(ctx context.Context) error {
 	}
 
 	completedAt := r.clock.Now().UTC()
-	r.mu.Lock()
-	r.lastAutoApplyAt = completedAt
-	r.mu.Unlock()
-	if err := r.persistLastAutoApplyAt(taskCtx, cfg, completedAt); err != nil {
+	if err := r.persistLastAutoApplyAt(taskCtx, completedAt); err != nil {
 		return err
 	}
 	return nil
@@ -578,17 +498,8 @@ func (r *Runtime) runAuto(ctx context.Context) error {
 // persistLastAutoApplyAt stores the automatic round completion time so a
 // restarted Runtime resumes the remaining interval instead of scheduling a
 // fresh round from scratch.
-func (r *Runtime) persistLastAutoApplyAt(ctx context.Context, cfg config.Config, at time.Time) error {
-	cachePath := cfg.StateCachePath
-	if strings.TrimSpace(cachePath) == "" {
-		cachePath = config.DefaultStateCachePath
-	}
-	store, err := state.Load(ctx, cachePath)
-	if err != nil {
-		return fmt.Errorf("load state for auto apply schedule: %w", err)
-	}
-	store.SetLastAutoApplyAt(at)
-	if err := store.SaveRuntimeAtomic(ctx); err != nil {
+func (r *Runtime) persistLastAutoApplyAt(ctx context.Context, at time.Time) error {
+	if err := r.state.RecordAutoApplyAt(ctx, at); err != nil {
 		return fmt.Errorf("persist auto apply schedule: %w", err)
 	}
 	return nil
@@ -598,9 +509,7 @@ func (r *Runtime) nextAutoApplyWait(interval time.Duration) time.Duration {
 	if interval <= 0 {
 		interval = 15 * time.Minute
 	}
-	r.mu.Lock()
-	last := r.lastAutoApplyAt
-	r.mu.Unlock()
+	last := r.state.LastAutoApplyAt()
 	if last.IsZero() {
 		return time.Second
 	}
@@ -658,21 +567,18 @@ func (r *Runtime) Diagnostics(ctx context.Context) (map[string]any, error) {
 	}
 	result, audit := r.currentRunSnapshot()
 	r.mu.Lock()
-	lastAuto := r.lastAutoApplyAt
 	workerActive := r.worker != nil
-	sched := r.scheduleConfig
 	r.mu.Unlock()
+	lastAuto := r.state.LastAutoApplyAt()
+	sched := r.state.ScheduleConfig()
 	nextWait := r.nextAutoApplyWait(cfg.Interval)
 	nextRunAt := r.clock.Now().UTC().Add(nextWait)
 
 	emailsByAuthIndex := r.currentSnapshotEmails()
 	activeCooldowns := make([]map[string]any, 0)
 	var loadErrors []string
-	cachePath := cfg.StateCachePath
-	if strings.TrimSpace(cachePath) == "" {
-		cachePath = config.DefaultStateCachePath
-	}
-	if store, err := state.Load(ctx, cachePath); err == nil {
+	cachePath := r.state.Path()
+	if store := r.state.StoreOrNil(); store != nil {
 		loadErrors = store.LoadErrors()
 		now := r.clock.Now().UTC()
 		for _, c := range store.GetCooldowns() {
@@ -888,19 +794,7 @@ func (r *Runtime) taskContext(ctx context.Context) (context.Context, func(), con
 }
 
 func (r *Runtime) snapshotRunEntry(result apply.Result, audit string, entry RunHistoryEntry) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.latestResult = result
-	r.latestAudit = audit
-	if entry.At.IsZero() {
-		entry.At = r.clock.Now().UTC()
-	}
-	history := make([]RunHistoryEntry, 0, maxRunHistory)
-	history = append(history, entry)
-	for i := 0; i < len(r.runHistory) && len(history) < maxRunHistory; i++ {
-		history = append(history, r.runHistory[i])
-	}
-	r.runHistory = history
+	r.state.SnapshotRunEntry(result, audit, entry)
 }
 
 func (r *Runtime) enrichSnapshotWithModelsLocked(snap *apply.SnapshotSet) {
@@ -1024,9 +918,7 @@ func (r *Runtime) GetScheduleConfig(ctx context.Context) (config.ScheduleConfig,
 	if _, err := r.Config(); err != nil {
 		return config.ScheduleConfig{}, err
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.scheduleConfig, nil
+	return r.state.ScheduleConfig(), nil
 }
 
 // SetScheduleConfig updates the dynamic schedule configuration and persists it to the state store.
@@ -1034,24 +926,15 @@ func (r *Runtime) SetScheduleConfig(ctx context.Context, cfg config.ScheduleConf
 	if err := config.ValidateScheduleWindow(cfg.WindowStart, cfg.WindowEnd); err != nil {
 		return err
 	}
-	runtimeCfg, err := r.Config()
-	if err != nil {
+	r.configMu.Lock()
+	defer r.configMu.Unlock()
+	if _, err := r.Config(); err != nil {
 		return err
 	}
-	cachePath := runtimeCfg.StateCachePath
-	if strings.TrimSpace(cachePath) == "" {
-		cachePath = config.DefaultStateCachePath
-	}
-	store, err := state.Load(ctx, cachePath)
-	if err != nil {
-		return fmt.Errorf("load state for schedule config: %w", err)
-	}
-	store.SetScheduleConfig(cfg)
-	if err := store.SaveRuntimeAtomic(ctx); err != nil {
+	if err := r.state.SetScheduleConfig(ctx, cfg); err != nil {
 		return fmt.Errorf("persist schedule config: %w", err)
 	}
 	r.mu.Lock()
-	r.scheduleConfig = cfg
 	r.cfg.Schedule = cfg
 	r.mu.Unlock()
 	return nil
@@ -1059,90 +942,29 @@ func (r *Runtime) SetScheduleConfig(ctx context.Context, cfg config.ScheduleConf
 
 // GetDynamicConfig returns the active dynamic configuration.
 func (r *Runtime) GetDynamicConfig(ctx context.Context) (config.DynamicConfig, error) {
-	r.mu.Lock()
-	cfg := r.cfg
-	sched := r.scheduleConfig
-	r.mu.Unlock()
-
-	cachePath := cfg.StateCachePath
-	if strings.TrimSpace(cachePath) == "" {
-		cachePath = config.DefaultStateCachePath
+	cfg, err := r.Config()
+	if err != nil {
+		return config.DynamicConfig{}, err
 	}
-	store, err := state.Load(ctx, cachePath)
-	if err == nil {
-		if dyn, ok := store.GetDynamicConfig(); ok {
-			dyn.Schedule = sched
-			return dyn, nil
-		}
-	}
-
-	dyn := cfg.Dynamic()
-	dyn.Schedule = sched
-	return dyn, nil
+	return r.state.DynamicConfig(cfg), nil
 }
 
 // SetDynamicConfig validates, persists, and hot-applies new dynamic configuration without restarting.
 func (r *Runtime) SetDynamicConfig(ctx context.Context, dyn config.DynamicConfig) error {
-	r.mu.Lock()
-	baseCfg := r.cfg
-	cachePath := r.cfg.StateCachePath
-	r.mu.Unlock()
-
+	r.configMu.Lock()
+	defer r.configMu.Unlock()
+	baseCfg, err := r.Config()
+	if err != nil {
+		return err
+	}
 	newCfg, err := dyn.ApplyTo(baseCfg)
 	if err != nil {
 		return err
 	}
-
-	if strings.TrimSpace(cachePath) == "" {
-		cachePath = config.DefaultStateCachePath
-	}
-
-	store, err := state.Load(ctx, cachePath)
-	if err != nil {
-		return fmt.Errorf("load state for save: %w", err)
-	}
-	store.SetDynamicConfig(dyn)
-	store.SetScheduleConfig(dyn.Schedule)
-	if err := store.SaveRuntimeAtomic(ctx); err != nil {
+	if err := r.state.SetDynamicConfig(ctx, dyn); err != nil {
 		return fmt.Errorf("save dynamic config: %w", err)
 	}
-
-	r.mu.Lock()
-	r.scheduleConfig = dyn.Schedule
-	r.mu.Unlock()
-
 	return r.replaceConfig(ctx, newCfg)
-}
-
-func (r *Runtime) mergePersistedDynamicConfig(baseCfg config.Config) config.Config {
-	cachePath := baseCfg.StateCachePath
-	if strings.TrimSpace(cachePath) == "" {
-		cachePath = config.DefaultStateCachePath
-	}
-	store, err := state.Load(context.Background(), cachePath)
-	if err != nil {
-		return baseCfg
-	}
-	dynCfg, ok := store.GetDynamicConfig()
-	if !ok {
-		return baseCfg
-	}
-	merged, err := dynCfg.ApplyTo(baseCfg)
-	if err != nil {
-		return baseCfg
-	}
-	r.mu.Lock()
-	sched := r.scheduleConfig
-	r.mu.Unlock()
-	storeSched := store.GetScheduleConfig()
-	if storeSched != (config.ScheduleConfig{}) {
-		sched = storeSched
-	}
-	merged.Schedule = sched
-	r.mu.Lock()
-	r.scheduleConfig = sched
-	r.mu.Unlock()
-	return merged
 }
 
 // GetCustomTiers returns the configured custom tiers map.
@@ -1151,24 +973,7 @@ func (r *Runtime) GetCustomTiers(ctx context.Context) (map[string]int, error) {
 	if err != nil {
 		return nil, err
 	}
-	cachePath := runtimeCfg.StateCachePath
-	if strings.TrimSpace(cachePath) == "" {
-		cachePath = config.DefaultStateCachePath
-	}
-	store, err := state.Load(ctx, cachePath)
-	if err == nil {
-		if tiers := store.GetCustomTiers(); len(tiers) > 0 {
-			return tiers, nil
-		}
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if len(r.cfg.CustomTiers) > 0 {
-		cloned := make(map[string]int, len(r.cfg.CustomTiers))
-		maps.Copy(cloned, r.cfg.CustomTiers)
-		return cloned, nil
-	}
-	return map[string]int{}, nil
+	return r.state.CustomTiers(runtimeCfg), nil
 }
 
 // SetCustomTier updates the custom tier for a credential and recomputes the in-memory routing tables immediately.
@@ -1180,20 +985,12 @@ func (r *Runtime) SetCustomTier(ctx context.Context, authIndex string, tier int)
 	if tier < 0 || tier > 99 {
 		return fmt.Errorf("custom tier must be between 1 and 99 (or 0 to reset), got %d", tier)
 	}
-	runtimeCfg, err := r.Config()
-	if err != nil {
+	r.configMu.Lock()
+	defer r.configMu.Unlock()
+	if _, err := r.Config(); err != nil {
 		return err
 	}
-	cachePath := runtimeCfg.StateCachePath
-	if strings.TrimSpace(cachePath) == "" {
-		cachePath = config.DefaultStateCachePath
-	}
-	store, err := state.Load(ctx, cachePath)
-	if err != nil {
-		return fmt.Errorf("load state for custom tier: %w", err)
-	}
-	store.SetCustomTier(cleanIdx, tier)
-	if err := store.SaveRuntimeAtomic(ctx); err != nil {
+	if err := r.state.SetCustomTier(ctx, cleanIdx, tier); err != nil {
 		return fmt.Errorf("persist custom tier: %w", err)
 	}
 
@@ -1230,46 +1027,19 @@ func (r *Runtime) SetWarmupCredentialState(ctx context.Context, authIndex, group
 	if err != nil {
 		return err
 	}
+	r.configMu.Lock()
+	defer r.configMu.Unlock()
 	runtimeCfg, err := r.Config()
 	if err != nil {
 		return err
 	}
-	dyn, err := r.GetDynamicConfig(ctx)
+	warmupCfg, err := r.state.SetWarmupCredentialState(ctx, runtimeCfg, cleanIdx, modelGroup, enabled)
 	if err != nil {
-		return err
-	}
-	dyn.Warmup.Normalize()
-	globalEnabled := warmupEnabledForGroup(dyn.Warmup, modelGroup)
-	dyn.Warmup.ClearWarmupOverride(cleanIdx)
-	if enabled != globalEnabled {
-		dyn.Warmup.SetWarmupOverride(cleanIdx, enabled)
-	}
-	if err := dyn.Validate(); err != nil {
-		return err
-	}
-
-	cachePath := runtimeCfg.StateCachePath
-	if strings.TrimSpace(cachePath) == "" {
-		cachePath = config.DefaultStateCachePath
-	}
-	store, err := state.Load(ctx, cachePath)
-	if err != nil {
-		return fmt.Errorf("load state for warm-up switch: %w", err)
-	}
-	store.SetDynamicConfig(dyn)
-	if err := store.SaveRuntimeAtomic(ctx); err != nil {
 		return fmt.Errorf("persist warm-up switch: %w", err)
-	}
-	if enabled {
-		if store.ClearWarmupCompleted(cleanIdx) > 0 {
-			if err := store.SaveStateAtomic(ctx); err != nil {
-				return fmt.Errorf("clear warm-up debounce: %w", err)
-			}
-		}
 	}
 
 	r.mu.Lock()
-	r.cfg.Warmup = dyn.Warmup.Clone()
+	r.cfg.Warmup = warmupCfg
 	r.latestSnapshotSet = nil
 	r.mu.Unlock()
 
@@ -1278,29 +1048,15 @@ func (r *Runtime) SetWarmupCredentialState(ctx context.Context, authIndex, group
 }
 
 func (r *Runtime) currentRunSnapshot() (apply.Result, string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.latestResult, r.latestAudit
+	return r.state.RunSnapshot()
 }
 
 func (r *Runtime) currentRunHistory() []RunHistoryEntry {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	out := make([]RunHistoryEntry, len(r.runHistory))
-	copy(out, r.runHistory)
-	return out
+	return r.state.RunHistory()
 }
 
 func (r *Runtime) latestAutoApplyEntry() *RunHistoryEntry {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	for _, entry := range r.runHistory {
-		if entry.Kind == KindAutoApply {
-			copy := entry
-			return &copy
-		}
-	}
-	return nil
+	return r.state.LatestAutoApplyEntry()
 }
 
 func registrationResult() RegisterResult {
@@ -1597,7 +1353,7 @@ func (r *Runtime) triggerCooldown(ctx context.Context, authIndex, modelGroup, mo
 	})
 }
 
-func (r *Runtime) recordCooldownFailure(ctx context.Context, store *state.Store, authIndex, reason, trigger string, err error) {
+func (r *Runtime) recordCooldownFailure(ctx context.Context, persist bool, authIndex, reason, trigger string, err error) {
 	if strings.TrimSpace(trigger) == "" {
 		trigger = "health_cooldown"
 	}
@@ -1621,11 +1377,11 @@ func (r *Runtime) recordCooldownFailure(ctx context.Context, store *state.Store,
 		Uncertain: result.Uncertain,
 		Message:   message,
 	}
-	if store == nil {
+	if !persist {
 		r.snapshotRunEntry(result, message, entry)
 		return
 	}
-	_, _ = r.projectRun(ctx, store, result, message, entry)
+	_, _ = r.state.ProjectRun(ctx, result, message, entry)
 }
 
 func redactRuntimeIdentifier(value string) string {

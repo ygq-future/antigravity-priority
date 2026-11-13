@@ -531,7 +531,11 @@ func seedGroupWindowForAuth(t *testing.T, cachePath, authIndex string, now time.
 
 func newWarmupSweepRuntime(t *testing.T, now time.Time) (*Runtime, *warmupStubHost, *warmupTestClock, string) {
 	t.Helper()
-	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	return newWarmupSweepRuntimeAt(t, now, filepath.Join(t.TempDir(), "cache.json"))
+}
+
+func newWarmupSweepRuntimeAt(t *testing.T, now time.Time, cachePath string) (*Runtime, *warmupStubHost, *warmupTestClock, string) {
+	t.Helper()
 	stub := &warmupStubHost{
 		files: []host.AuthFile{{Name: "account-a", AuthIndex: "idx-a", Provider: "antigravity", Status: "active"}},
 		body:  warmupQuotaBody(now.Add(5*time.Hour), now.Add(7*24*time.Hour)),
@@ -557,10 +561,10 @@ func enableGeminiWarmup(t *testing.T, rt *Runtime) {
 func TestRuntime_WarmupSweepWarmsReadyWindowWithoutSchedulingRun(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
-	rt, stub, _, cachePath := newWarmupSweepRuntime(t, now)
-	enableGeminiWarmup(t, rt)
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
 	seedReadyWindow(t, cachePath, now)
-
+	rt, stub, _, _ := newWarmupSweepRuntimeAt(t, now, cachePath)
+	enableGeminiWarmup(t, rt)
 	rt.sweepWarmupResets(ctx)
 
 	if got := stub.countCalls("generateContent"); got != 1 {
@@ -583,10 +587,10 @@ func TestRuntime_WarmupSweepWarmsReadyWindowWithoutSchedulingRun(t *testing.T) {
 func TestRuntime_ResetSweepProbesOnlyTheResetCredentialWithoutWarmup(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
-	rt, stub, _, cachePath := newWarmupSweepRuntime(t, now)
-	stub.addFile(host.AuthFile{Name: "account-b", AuthIndex: "idx-b", Provider: "antigravity", Status: "active"})
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
 	seedReadyWindow(t, cachePath, now)
-
+	rt, stub, _, _ := newWarmupSweepRuntimeAt(t, now, cachePath)
+	stub.addFile(host.AuthFile{Name: "account-b", AuthIndex: "idx-b", Provider: "antigravity", Status: "active"})
 	rt.sweepWarmupResets(ctx)
 
 	if got := stub.countCalls("generateContent"); got != 0 {
@@ -621,10 +625,11 @@ func TestRuntime_ResetSweepProbesOnlyTheResetCredentialWithoutWarmup(t *testing.
 func TestRuntime_ResetSweepProbesCredentialOnceWhenBothPoolsExpire(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
-	rt, stub, _, cachePath := newWarmupSweepRuntime(t, now)
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
 	shortReset := now.Add(-30 * time.Minute)
 	seedGroupWindow(t, cachePath, now, config.AntigravityModelGroupGemini, now.Add(-2*time.Hour), shortReset, 100)
 	seedGroupWindow(t, cachePath, now, config.AntigravityModelGroupClaudeGPT, now.Add(-2*time.Hour), shortReset, 100)
+	rt, stub, _, _ := newWarmupSweepRuntimeAt(t, now, cachePath)
 	stub.setBody(fmt.Appendf(nil,
 		`{"models":{"gemini-2.5-pro":{"quotaInfo":{"windows":[{"name":"5h","remainingFraction":1.0,"resetTime":%q},{"name":"7d","remainingFraction":1.0,"resetTime":%q}]}},`+
 			`"claude-3-5-sonnet":{"quotaInfo":{"windows":[{"name":"5h","remainingFraction":1.0,"resetTime":%q},{"name":"7d","remainingFraction":1.0,"resetTime":%q}]}}}}`,
@@ -647,9 +652,9 @@ func TestRuntime_ResetSweepProbesCredentialOnceWhenBothPoolsExpire(t *testing.T)
 func TestRuntime_ResetSweepWakesAtResetGraceDeadline(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
-	rt, stub, _, cachePath := newWarmupSweepRuntime(t, now)
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
 	seedWindow(t, cachePath, now, now, now.Add(20*time.Second), 100)
-
+	rt, stub, _, _ := newWarmupSweepRuntimeAt(t, now, cachePath)
 	wait := rt.sweepWarmupResets(ctx)
 
 	if want := 20*time.Second + WarmupResetGraceBaseDelay; wait != want {
@@ -663,10 +668,10 @@ func TestRuntime_ResetSweepWakesAtResetGraceDeadline(t *testing.T) {
 func TestRuntime_WarmupSweepBoundsResetProbesWhenWindowDoesNotConverge(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
-	rt, stub, clock, cachePath := newWarmupSweepRuntime(t, now)
-	enableGeminiWarmup(t, rt)
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
 	seedReadyWindow(t, cachePath, now)
-
+	rt, stub, clock, _ := newWarmupSweepRuntimeAt(t, now, cachePath)
+	enableGeminiWarmup(t, rt)
 	// Upstream keeps reporting an exhausted 5h window whose reset already passed,
 	// so the warm-up cannot land until the window actually converges.
 	stub.setBody(fmt.Appendf(nil,
@@ -741,14 +746,14 @@ func warmupUnstartedBothPoolsBody(now time.Time) []byte {
 func TestRuntime_WarmupSweepStaggersCredentialsThroughGlobalLane(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
-	rt, stub, clock, cachePath := newWarmupSweepRuntime(t, now)
-	stub.addFile(host.AuthFile{Name: "account-b", AuthIndex: "idx-b", Provider: "antigravity", Status: "active"})
-	enableGeminiWarmup(t, rt)
-	stub.setBody(warmupUnstartedBody(now))
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
 	for _, authIndex := range []string{"idx-a", "idx-b"} {
 		seedGroupWindowForAuth(t, cachePath, authIndex, now, config.AntigravityModelGroupGemini, now.Add(-2*time.Hour), now.Add(-30*time.Minute), 100)
 	}
-
+	rt, stub, clock, _ := newWarmupSweepRuntimeAt(t, now, cachePath)
+	stub.addFile(host.AuthFile{Name: "account-b", AuthIndex: "idx-b", Provider: "antigravity", Status: "active"})
+	enableGeminiWarmup(t, rt)
+	stub.setBody(warmupUnstartedBody(now))
 	rt.sweepWarmupResets(ctx)
 	if got := stub.countCalls("generateContent"); got != 1 {
 		t.Fatalf("expected one warm-up per global lane slot, got %d", got)
@@ -789,11 +794,12 @@ func TestRuntime_WarmupSweepStaggersCredentialsThroughGlobalLane(t *testing.T) {
 func TestRuntime_WarmupSweepStaggersPoolsOfOneCredential(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
-	rt, stub, clock, cachePath := newWarmupSweepRuntime(t, now)
-	enableAllWarmup(t, rt)
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
 	for _, group := range []config.AntigravityModelGroup{config.AntigravityModelGroupGemini, config.AntigravityModelGroupClaudeGPT} {
 		seedGroupWindowForAuth(t, cachePath, "idx-a", now, group, now.Add(-2*time.Hour), now.Add(-30*time.Minute), 100)
 	}
+	rt, stub, clock, _ := newWarmupSweepRuntimeAt(t, now, cachePath)
+	enableAllWarmup(t, rt)
 	stub.setBody(warmupUnstartedBothPoolsBody(now))
 
 	rt.sweepWarmupResets(ctx)
@@ -874,10 +880,10 @@ func TestRuntime_SetWarmupCredentialStateFollowsGlobalWhenCoinciding(t *testing.
 func TestRuntime_SetWarmupCredentialStateClearsDebounceAndWarmsLocally(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
-	rt, stub, clock, cachePath := newWarmupSweepRuntime(t, now)
-	stub.setBody(warmupUnstartedBody(now))
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
 	seedReadyWindow(t, cachePath, now)
-
+	rt, stub, clock, _ := newWarmupSweepRuntimeAt(t, now, cachePath)
+	stub.setBody(warmupUnstartedBody(now))
 	// Global warm-up stays off; the local override alone activates the pool.
 	if err := rt.SetWarmupCredentialState(ctx, "idx-a", string(config.AntigravityModelGroupGemini), true); err != nil {
 		t.Fatalf("set local warm-up on failed: %v", err)

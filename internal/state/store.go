@@ -685,6 +685,38 @@ func (s *Store) SetRequestHistory(entries []RequestHistoryEntry) {
 	s.requestHistory = append([]RequestHistoryEntry(nil), entries...)
 }
 
+// AppendRequestHistory prepends an entry and trims the slice to limit atomically.
+func (s *Store) AppendRequestHistory(entry RequestHistoryEntry, limit int) {
+	if limit <= 0 {
+		limit = DefaultMaxRequestHistory
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := make([]RequestHistoryEntry, 0, min(len(s.requestHistory)+1, limit))
+	next = append(next, entry)
+	for _, existing := range s.requestHistory {
+		if len(next) >= limit {
+			break
+		}
+		next = append(next, existing)
+	}
+	s.requestHistory = next
+}
+
+// TrimRequestHistory caps persisted request history to limit and reports whether it shrank.
+func (s *Store) TrimRequestHistory(limit int) bool {
+	if limit <= 0 {
+		limit = DefaultMaxRequestHistory
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.requestHistory) <= limit {
+		return false
+	}
+	s.requestHistory = append([]RequestHistoryEntry(nil), s.requestHistory[:limit]...)
+	return true
+}
+
 // GetLastWarmupAt returns the last successful 5h warm-up time for a credential
 // pool. The zero time means the credential has never been warmed up.
 func (s *Store) GetLastWarmupAt(authIndex, modelGroup string) time.Time {
@@ -1477,6 +1509,14 @@ func (s *Store) GetCooldowns() map[string]CooldownEntry {
 	copied := make(map[string]CooldownEntry, len(s.cooldowns))
 	maps.Copy(copied, s.cooldowns)
 	return copied
+}
+
+// GetCooldown retrieves a single health intervention entry by composite key without copying the full map.
+func (s *Store) GetCooldown(key string) (CooldownEntry, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	entry, ok := s.cooldowns[key]
+	return entry, ok
 }
 
 // SetCooldown records or updates a health intervention for a credential.

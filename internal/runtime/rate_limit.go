@@ -52,15 +52,14 @@ type failureInput struct {
 func (r *Runtime) observe429(ctx context.Context, authIndex, modelGroup, model string, acquireRunLock bool) error {
 	now := r.clock.Now().UTC()
 	key := state.CooldownKey(authIndex, modelGroup)
+	cooldowns := r.state.Cooldowns()
+	if _, active := cooldowns[key]; active {
+		return nil
+	}
+	if _, active := cooldowns[authIndex]; active {
+		return nil
+	}
 	r.rateLimitMu.Lock()
-	if _, active := r.activeCooldowns[key]; active {
-		r.rateLimitMu.Unlock()
-		return nil
-	}
-	if _, active := r.activeCooldowns[authIndex]; active {
-		r.rateLimitMu.Unlock()
-		return nil
-	}
 	if now.Before(r.stormUntil) {
 		r.stormAccounts[key] = false
 		r.rateLimitMu.Unlock()
@@ -109,18 +108,15 @@ func (r *Runtime) observeFailure(ctx context.Context, input failureInput, acquir
 		input.Cooldown = failureBaseCooldown(input.Kind, cfg)
 	}
 	key := state.FailureKey(input.AuthIndex, input.ModelGroup, input.Model)
-	r.rateLimitMu.Lock()
-	if _, active := r.activeCooldowns[key]; active {
-		r.rateLimitMu.Unlock()
+	cooldowns := r.state.Cooldowns()
+	if _, active := cooldowns[key]; active {
 		return nil
 	}
 	if input.Kind != state.FailureUnauthorized && input.Kind != state.FailureForbidden {
-		if _, active := r.activeCooldowns[input.AuthIndex]; active {
-			r.rateLimitMu.Unlock()
+		if _, active := cooldowns[input.AuthIndex]; active {
 			return nil
 		}
 	}
-	r.rateLimitMu.Unlock()
 	if acquireRunLock {
 		r.runMu.Lock()
 		defer r.runMu.Unlock()
@@ -130,17 +126,9 @@ func (r *Runtime) observeFailure(ctx context.Context, input failureInput, acquir
 
 func (r *Runtime) triggerFailure(ctx context.Context, input failureInput) error {
 	now := r.clock.Now().UTC()
-	cfg, err := r.Config()
+	store, err := r.state.Store(ctx)
 	if err != nil {
-		return err
-	}
-	cachePath := cfg.StateCachePath
-	if strings.TrimSpace(cachePath) == "" {
-		cachePath = config.DefaultStateCachePath
-	}
-	store, err := state.Load(ctx, cachePath)
-	if err != nil {
-		r.recordCooldownFailure(ctx, nil, input.AuthIndex, input.Reason, failureTrigger(input.Kind), err)
+		r.recordCooldownFailure(ctx, false, input.AuthIndex, input.Reason, failureTrigger(input.Kind), err)
 		return fmt.Errorf("record health state: %w", err)
 	}
 	entries := store.GetCooldowns()
@@ -156,7 +144,7 @@ func (r *Runtime) triggerFailure(ctx context.Context, input failureInput) error 
 
 	credential, findErr := r.findCredential(ctx, input.AuthIndex)
 	if findErr != nil {
-		r.recordCooldownFailure(ctx, store, input.AuthIndex, input.Reason, failureTrigger(input.Kind), findErr)
+		r.recordCooldownFailure(ctx, true, input.AuthIndex, input.Reason, failureTrigger(input.Kind), findErr)
 		return findErr
 	}
 	if credential.Disabled {
@@ -201,15 +189,14 @@ func (r *Runtime) triggerFailure(ctx context.Context, input failureInput) error 
 		entry.NextRecoveryAt = time.Time{}
 	}
 	store.SetCooldown(entry)
-	r.setActiveCooldown(entry)
 	if err := store.SaveStateAtomic(ctx); err != nil {
-		r.recordCooldownFailure(ctx, store, input.AuthIndex, input.Reason, failureTrigger(input.Kind), err)
+		r.recordCooldownFailure(ctx, true, input.AuthIndex, input.Reason, failureTrigger(input.Kind), err)
 		return fmt.Errorf("persist health cooldown: %w", err)
 	}
 
 	if r.hostCallbacks == nil {
 		err := errMissingHostCallbacks
-		r.recordCooldownFailure(ctx, store, input.AuthIndex, input.Reason, failureTrigger(input.Kind), err)
+		r.recordCooldownFailure(ctx, true, input.AuthIndex, input.Reason, failureTrigger(input.Kind), err)
 		return err
 	}
 	client := host.NewClient(r.hostCallbacks)
@@ -226,12 +213,12 @@ func (r *Runtime) triggerFailure(ctx context.Context, input failureInput) error 
 		}},
 	})
 	if applyErr != nil {
-		r.recordCooldownFailure(ctx, store, input.AuthIndex, input.Reason, failureTrigger(input.Kind), applyErr)
+		r.recordCooldownFailure(ctx, true, input.AuthIndex, input.Reason, failureTrigger(input.Kind), applyErr)
 		return applyErr
 	}
 	r.patchSnapshotCooldown(input.AuthIndex, true, input.Reason, priority.DepletedPriority)
 	summary := resultSummary("health cooldown", result)
-	_, projectErr := r.projectRun(ctx, store, result, summary, withTransitionStats(result, RunHistoryEntry{
+	_, projectErr := r.state.ProjectRun(ctx, result, summary, withTransitionStats(result, RunHistoryEntry{
 		Kind:     KindCooldown,
 		Trigger:  failureTrigger(input.Kind),
 		Message:  summary,
@@ -252,24 +239,19 @@ func (r *Runtime) triggerFailure(ctx context.Context, input failureInput) error 
 
 func (r *Runtime) observeUsageSuccess(ctx context.Context, authIndex, modelGroup, model string, detail usageDetail) error {
 	now := r.clock.Now().UTC()
-	cfg, cfgErr := r.Config()
-	if cfgErr == nil {
-		cachePath := cfg.StateCachePath
-		if strings.TrimSpace(cachePath) == "" {
-			cachePath = config.DefaultStateCachePath
-		}
-		if store, loadErr := state.Load(ctx, cachePath); loadErr == nil {
-			weightedTokens := state.CalculateWeightedTurnTokens(
-				detail.InputTokens,
-				detail.OutputTokens,
-				detail.ReasoningTokens,
-				detail.CacheReadTokens,
-				detail.TotalTokens,
-			)
-			if weightedTokens > 0 {
-				store.RecordUsageConsumption(authIndex, modelGroup, weightedTokens, now)
-				_ = store.SaveStateAtomic(ctx)
-			}
+	store, storeErr := r.state.Store(ctx)
+	stateDirty := false
+	if storeErr == nil {
+		weightedTokens := state.CalculateWeightedTurnTokens(
+			detail.InputTokens,
+			detail.OutputTokens,
+			detail.ReasoningTokens,
+			detail.CacheReadTokens,
+			detail.TotalTokens,
+		)
+		if weightedTokens > 0 {
+			store.RecordUsageConsumption(authIndex, modelGroup, weightedTokens, now)
+			stateDirty = true
 		}
 	}
 
@@ -298,27 +280,13 @@ func (r *Runtime) observeUsageSuccess(ctx context.Context, authIndex, modelGroup
 	r.rateLimitMu.Unlock()
 	r.signalRateLimitWorker()
 
-	r.routingMu.Lock()
-	r.recomputeRoutingTablesLocked(now)
-	r.routingMu.Unlock()
-
-	if cfgErr != nil {
-		c, cErr := r.Config()
-		if cErr != nil {
-			return cErr
-		}
-		cfg = c
-	}
-	cachePath := cfg.StateCachePath
-	if strings.TrimSpace(cachePath) == "" {
-		cachePath = config.DefaultStateCachePath
-	}
-	store, err := state.Load(ctx, cachePath)
-	if err != nil {
-		return err
+	if storeErr != nil {
+		r.routingMu.Lock()
+		r.recomputeRoutingTablesLocked(now)
+		r.routingMu.Unlock()
+		return storeErr
 	}
 
-	entries := store.GetCooldowns()
 	cleared := make([]state.CooldownEntry, 0, 3)
 	seen := make(map[string]struct{}, 3)
 	for _, candidate := range []string{
@@ -333,15 +301,21 @@ func (r *Runtime) observeUsageSuccess(ctx context.Context, authIndex, modelGroup
 			continue
 		}
 		seen[candidate] = struct{}{}
-		entry, active := entries[candidate]
+		entry, active := store.GetCooldown(candidate)
 		if !active || !now.Before(entry.CooldownUntil) {
 			continue
 		}
 		store.DeleteCooldownExact(candidate)
-		r.clearActiveCooldownExact(candidate)
 		cleared = append(cleared, entry)
+		stateDirty = true
 	}
 	if len(cleared) == 0 {
+		if stateDirty {
+			_ = store.SaveStateAtomic(ctx)
+		}
+		r.routingMu.Lock()
+		r.recomputeRoutingTablesLocked(now)
+		r.routingMu.Unlock()
 		return nil
 	}
 	if hasActiveFailureForAuth(store, authIndex, now) {
@@ -354,7 +328,7 @@ func (r *Runtime) observeUsageSuccess(ctx context.Context, authIndex, modelGroup
 		return nil
 	}
 	r.runMu.Lock()
-	err = r.applyCooldownRecovery(ctx, store, cleared[0], "recovered by successful request", "success_recovery")
+	err := r.applyCooldownRecovery(ctx, store, cleared[0], "recovered by successful request", "success_recovery")
 	r.runMu.Unlock()
 	return err
 }
@@ -412,13 +386,14 @@ func (r *Runtime) runRateLimitWorker() {
 }
 
 func (r *Runtime) nextRateLimitDeadline() time.Time {
+	cooldowns := r.state.Cooldowns()
 	r.rateLimitMu.Lock()
 	defer r.rateLimitMu.Unlock()
 	var next time.Time
 	if !r.stormUntil.IsZero() {
 		next = earlierTime(next, r.stormUntil)
 	}
-	for _, entry := range r.activeCooldowns {
+	for _, entry := range cooldowns {
 		deadline := entry.CooldownUntil
 		if !entry.NextRecoveryAt.IsZero() && entry.NextRecoveryAt.After(deadline) {
 			deadline = entry.NextRecoveryAt
@@ -437,6 +412,7 @@ func earlierTime(a, b time.Time) time.Time {
 
 func (r *Runtime) processRateLimitDeadlines(ctx context.Context) {
 	now := r.clock.Now().UTC()
+	cooldowns := r.state.Cooldowns()
 	r.rateLimitMu.Lock()
 	if !r.stormUntil.IsZero() && !now.Before(r.stormUntil) {
 		r.stormUntil = time.Time{}
@@ -447,13 +423,14 @@ func (r *Runtime) processRateLimitDeadlines(ctx context.Context) {
 			delete(r.pending429, key)
 		}
 	}
+	r.rateLimitMu.Unlock()
+
 	dueCooldowns := make([]state.CooldownEntry, 0)
-	for _, entry := range r.activeCooldowns {
+	for _, entry := range cooldowns {
 		if !now.Before(entry.CooldownUntil) && (entry.NextRecoveryAt.IsZero() || !now.Before(entry.NextRecoveryAt)) {
 			dueCooldowns = append(dueCooldowns, entry)
 		}
 	}
-	r.rateLimitMu.Unlock()
 	if len(dueCooldowns) == 0 {
 		return
 	}
@@ -462,21 +439,15 @@ func (r *Runtime) processRateLimitDeadlines(ctx context.Context) {
 		r.deferCooldownRecovery(dueCooldowns, now)
 		return
 	}
-	cachePath := cfg.StateCachePath
-	if strings.TrimSpace(cachePath) == "" {
-		cachePath = config.DefaultStateCachePath
-	}
-	store, err := state.Load(ctx, cachePath)
+	store, err := r.state.Store(ctx)
 	if err != nil {
 		r.deferCooldownRecovery(dueCooldowns, now)
 		return
 	}
-	persisted := store.GetCooldowns()
 	for _, scheduled := range dueCooldowns {
 		key := state.FailureKey(scheduled.AuthIndex, scheduled.ModelGroup, scheduled.Model)
-		entry, active := persisted[key]
+		entry, active := store.GetCooldown(key)
 		if !active {
-			r.clearActiveCooldownExact(key)
 			continue
 		}
 		if !entry.ProbeEnabled {
@@ -491,36 +462,33 @@ func (r *Runtime) processRateLimitDeadlines(ctx context.Context) {
 
 		status, probeErr := r.probeHealth(ctx, entry, cfg)
 		r.runMu.Lock()
-		latestStore, loadErr := state.Load(ctx, cachePath)
-		if loadErr != nil {
-			r.runMu.Unlock()
-			r.rescheduleAfterRestoreFailure(ctx, store, entry, now)
-			continue
-		}
-		latest, active := latestStore.GetCooldowns()[key]
+		latest, active := store.GetCooldown(key)
 		if !active {
-			r.clearActiveCooldownExact(key)
 			r.runMu.Unlock()
 			continue
 		}
 		if probeErr == nil && status == http.StatusOK {
-			restoreErr := r.restoreCooldown(ctx, latestStore, latest, "health probe succeeded", failureTrigger(latest.FailureKind))
+			restoreErr := r.restoreCooldown(ctx, store, latest, "health probe succeeded", failureTrigger(latest.FailureKind))
 			r.runMu.Unlock()
 			if restoreErr != nil {
-				r.rescheduleAfterRestoreFailure(ctx, latestStore, latest, now)
+				r.rescheduleAfterRestoreFailure(ctx, store, latest, now)
 			}
 			continue
 		}
-		r.rescheduleFailure(ctx, latestStore, latest, status, probeErr, cfg, now)
+		r.rescheduleFailure(ctx, store, latest, status, probeErr, cfg, now)
 		r.runMu.Unlock()
 	}
 }
 
 func (r *Runtime) deferCooldownRecovery(entries []state.CooldownEntry, now time.Time) {
+	store := r.state.StoreOrNil()
+	if store == nil {
+		return
+	}
 	for _, entry := range entries {
 		entry.NextRecoveryAt = now.Add(30 * time.Second)
 		entry.CooldownUntil = entry.NextRecoveryAt
-		r.setActiveCooldown(entry)
+		store.SetCooldown(entry)
 	}
 }
 
@@ -528,7 +496,6 @@ func (r *Runtime) rescheduleAfterRestoreFailure(ctx context.Context, store *stat
 	entry.NextRecoveryAt = now.Add(30 * time.Second)
 	entry.CooldownUntil = entry.NextRecoveryAt
 	store.SetCooldown(entry)
-	r.setActiveCooldown(entry)
 	_ = store.SaveStateAtomic(ctx)
 	r.signalRateLimitWorker()
 }
@@ -561,7 +528,6 @@ func (r *Runtime) rescheduleFailure(ctx context.Context, store *state.Store, ent
 	entry.NextRecoveryAt = entry.CooldownUntil
 	entry.ProbeEnabled = true
 	store.SetCooldown(entry)
-	r.setActiveCooldown(entry)
 	_ = store.SaveStateAtomic(ctx)
 	r.routingMu.Lock()
 	r.recomputeRoutingTablesLocked(now)
@@ -572,10 +538,8 @@ func (r *Runtime) rescheduleFailure(ctx context.Context, store *state.Store, ent
 func (r *Runtime) escalateAuthProblem(ctx context.Context, store *state.Store, entry state.CooldownEntry, status int, now time.Time) {
 	key := state.FailureKey(entry.AuthIndex, entry.ModelGroup, entry.Model)
 	store.DeleteCooldownExact(key)
-	r.clearActiveCooldownExact(key)
-
 	accountKey := state.CooldownKey(entry.AuthIndex, "")
-	if existing, active := store.GetCooldowns()[accountKey]; active && now.Before(existing.CooldownUntil) {
+	if existing, active := store.GetCooldown(accountKey); active && now.Before(existing.CooldownUntil) {
 		_ = store.SaveStateAtomic(ctx)
 		r.routingMu.Lock()
 		r.recomputeRoutingTablesLocked(now)
@@ -600,7 +564,6 @@ func (r *Runtime) escalateAuthProblem(ctx context.Context, store *state.Store, e
 		ProbeEnabled:            false,
 	}
 	store.SetCooldown(accountEntry)
-	r.setActiveCooldown(accountEntry)
 	_ = store.SaveStateAtomic(ctx)
 	r.routingMu.Lock()
 	r.recomputeRoutingTablesLocked(now)
@@ -728,7 +691,6 @@ func (r *Runtime) restoreCooldown(ctx context.Context, store *state.Store, entry
 	now := r.clock.Now().UTC()
 	manualChange := credential.Priority != priority.DepletedPriority
 	store.DeleteCooldownExact(key)
-	r.clearActiveCooldownExact(key)
 	if manualChange {
 		_ = store.SaveStateAtomic(ctx)
 		r.routingMu.Lock()
@@ -775,10 +737,10 @@ func (r *Runtime) applyCooldownRecovery(ctx context.Context, store *state.Store,
 	r.routingMu.Unlock()
 	summary := resultSummary("cooldown recovery", result)
 	if err := store.SaveStateAtomic(ctx); err != nil {
-		r.recordCooldownFailure(ctx, store, entry.AuthIndex, cause, trigger, err)
+		r.recordCooldownFailure(ctx, true, entry.AuthIndex, cause, trigger, err)
 		return fmt.Errorf("persist cooldown recovery: %w", err)
 	}
-	_, err = r.projectRun(ctx, store, result, summary, withTransitionStats(result, RunHistoryEntry{Kind: KindCooldownRecovery, Trigger: trigger, Message: summary, Snapshot: &result.Snapshot}))
+	_, err = r.state.ProjectRun(ctx, result, summary, withTransitionStats(result, RunHistoryEntry{Kind: KindCooldownRecovery, Trigger: trigger, Message: summary, Snapshot: &result.Snapshot}))
 	return err
 }
 
@@ -789,19 +751,6 @@ func hasActiveFailureForAuth(store *state.Store, authIndex string, now time.Time
 		}
 	}
 	return false
-}
-
-func (r *Runtime) clearActiveCooldownExact(key string) {
-	r.rateLimitMu.Lock()
-	delete(r.activeCooldowns, key)
-	r.rateLimitMu.Unlock()
-}
-
-func (r *Runtime) setActiveCooldown(entry state.CooldownEntry) {
-	r.rateLimitMu.Lock()
-	key := state.FailureKey(entry.AuthIndex, entry.ModelGroup, entry.Model)
-	r.activeCooldowns[key] = entry
-	r.rateLimitMu.Unlock()
 }
 
 func (r *Runtime) findCredential(ctx context.Context, authIndex string) (core.Credential, error) {

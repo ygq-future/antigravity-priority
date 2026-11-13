@@ -9,12 +9,14 @@ import (
 
 func TestManagementRunHistoryOverlaysFullEmailAtAdapterBoundary(t *testing.T) {
 	r := &Runtime{
-		runHistory: []RunHistoryEntry{{
-			Kind: "apply",
-			Snapshot: &apply.PlanSnapshot{Items: []apply.SnapshotItem{{
-				Email: "user***",
-			}}},
-		}},
+		state: &stateRepository{
+			runHistory: []RunHistoryEntry{{
+				Kind: "apply",
+				Snapshot: &apply.PlanSnapshot{Items: []apply.SnapshotItem{{
+					Email: "user***",
+				}}},
+			}},
+		},
 		latestSnapshotSet: &apply.SnapshotSet{Groups: map[string]apply.PoolSnapshot{
 			"gemini": {Items: []apply.SnapshotItem{{
 				Identity: apply.SnapshotIdentity{
@@ -72,12 +74,12 @@ func TestRateLimitDiagnosticsUsesAccountEmail(t *testing.T) {
 }
 
 func TestManagementRunHistoryDoesNotExposeMaskedIdentityFallback(t *testing.T) {
-	r := &Runtime{runHistory: []RunHistoryEntry{{
+	r := &Runtime{state: &stateRepository{runHistory: []RunHistoryEntry{{
 		Kind: "apply",
 		Snapshot: &apply.PlanSnapshot{Items: []apply.SnapshotItem{{
 			Email: "user***",
 		}}},
-	}}}
+	}}}}
 
 	history := r.managementRunHistory()
 	snapshot, _ := history[0]["snapshot"].(map[string]any)

@@ -428,7 +428,7 @@ func (r *Runtime) sweepWarmupResets(ctx context.Context) time.Duration {
 	if !cfg.Enabled {
 		return WarmupSweepInterval
 	}
-	store, err := state.Load(ctx, warmupStatePath(cfg))
+	store, err := r.state.Store(ctx)
 	if err != nil {
 		return WarmupSweepInterval
 	}
@@ -455,7 +455,7 @@ func (r *Runtime) sweepWarmupResets(ctx context.Context) time.Duration {
 
 	// At most one reset warm-up may leave per lane slot, and the slot is
 	// reserved before the probe so no other pool can warm in the same window.
-	target, hasTarget := r.allocateWarmupSlot(ctx, cfg, store, warm, now)
+	target, hasTarget := r.allocateWarmupSlot(ctx, store, warm, now)
 	candidates := refresh
 	if hasTarget {
 		candidates = mergeCandidates(refresh, []warmupCandidate{target})
@@ -507,7 +507,7 @@ func (r *Runtime) sweepWarmupResets(ctx context.Context) time.Duration {
 // cannot re-roll a shorter wait. The slot is reserved before the probe is
 // issued, so a restart or a slow upstream can never let two pools warm inside
 // the same window.
-func (r *Runtime) allocateWarmupSlot(ctx context.Context, cfg config.Config, store *state.Store, candidates []warmupCandidate, now time.Time) (warmupCandidate, bool) {
+func (r *Runtime) allocateWarmupSlot(ctx context.Context, store *state.Store, candidates []warmupCandidate, now time.Time) (warmupCandidate, bool) {
 	if len(candidates) == 0 {
 		return warmupCandidate{}, false
 	}
@@ -525,7 +525,7 @@ func (r *Runtime) allocateWarmupSlot(ctx context.Context, cfg config.Config, sto
 		if lane.NextAuth != target.authIndex || lane.NextAt.IsZero() {
 			lane.NextAt = gate
 			lane.NextAuth = target.authIndex
-			if err := r.saveWarmupLane(ctx, cfg, lane); err != nil {
+			if err := r.state.SetWarmupLane(ctx, lane); err != nil {
 				log.Printf("[antigravity-priority] 5h warmup lane reservation failed: %v", err)
 				return warmupCandidate{}, false
 			}
@@ -533,23 +533,12 @@ func (r *Runtime) allocateWarmupSlot(ctx context.Context, cfg config.Config, sto
 		return warmupCandidate{}, false
 	}
 
-	if err := r.saveWarmupLane(ctx, cfg, state.WarmupLane{LastAt: now, LastAuth: target.authIndex}); err != nil {
+	if err := r.state.SetWarmupLane(ctx, state.WarmupLane{LastAt: now, LastAuth: target.authIndex}); err != nil {
 		log.Printf("[antigravity-priority] 5h warmup lane reservation failed: %v", err)
 		return warmupCandidate{}, false
 	}
 	return target, true
 }
-
-// saveWarmupLane persists the global reset warm-up gate.
-func (r *Runtime) saveWarmupLane(ctx context.Context, cfg config.Config, lane state.WarmupLane) error {
-	store, err := state.Load(ctx, warmupStatePath(cfg))
-	if err != nil {
-		return err
-	}
-	store.SetWarmupLane(lane)
-	return store.SaveRuntimeAtomic(ctx)
-}
-
 // dueResetRefreshCandidates lists every 5h pool whose reset grace deadline has
 // passed. Argon shares Gemini's physical 5h window, so scanning it would count
 // one credential boundary twice. The refresh probe itself still covers every
@@ -824,12 +813,6 @@ func (r *Runtime) disabledAuthIndexes(ctx context.Context) map[string]struct{} {
 	return disabled
 }
 
-func warmupStatePath(cfg config.Config) string {
-	if strings.TrimSpace(cfg.StateCachePath) == "" {
-		return config.DefaultStateCachePath
-	}
-	return cfg.StateCachePath
-}
 
 // triggerWarmupForEligibleCredentials checks eligible full-quota credentials in configured model pools
 // and kicks off the 5h rolling window by issuing a minimal token generation request.

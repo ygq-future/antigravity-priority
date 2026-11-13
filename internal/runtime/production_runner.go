@@ -57,16 +57,10 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 		probeCredentials = filterCredentialsByAuthIndex(allCredentials, request.AuthIndexes)
 		probeAuthMaterials = filterAuthMaterialsByAuthIndex(allAuthMaterials, request.AuthIndexes)
 	}
-	cachePath := request.Config.StateCachePath
-	if strings.TrimSpace(cachePath) == "" {
-		cachePath = config.DefaultStateCachePath
-	}
-
-	store, err := state.Load(ctx, cachePath)
+	store, err := r.state.Store(ctx)
 	if err != nil {
 		return err
 	}
-
 	targetedSingleAuth := len(request.AuthIndexes) > 0
 	tierChanged, err := refreshPlanTiers(ctx, client, probeCredentials, probeAuthMaterials, store, now, targetedSingleAuth, request.Config.MaxConcurrency)
 	if err != nil {
@@ -103,10 +97,6 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 				return err
 			}
 		}
-		store, err = state.Load(ctx, cachePath)
-		if err != nil {
-			return err
-		}
 	} else {
 		if err := store.SaveStateAtomic(ctx); err != nil {
 			return err
@@ -139,7 +129,7 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 	if request.Trigger == TriggerProbe {
 		r.setSnapshotSet(projection.Snapshot)
 		audit := fmt.Sprintf("probe completed: %d probe observations", evidence.Probed)
-		_, projectErr := r.projectRun(ctx, store, apply.Result{}, audit, RunHistoryEntry{
+		_, projectErr := r.state.ProjectRun(ctx, apply.Result{}, audit, RunHistoryEntry{
 			Kind:         KindProbe,
 			Trigger:      string(request.Trigger),
 			ProbeRoundID: evidence.RoundID,
@@ -157,7 +147,7 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 	if request.Trigger == TriggerAutoApply {
 		r.setSnapshotSet(projection.Snapshot)
 		summary := fmt.Sprintf("auto schedule probed=%d; in-memory routing tables calibrated", evidence.Probed)
-		_, projectErr := r.projectRun(ctx, store, apply.Result{}, summary, RunHistoryEntry{
+		_, projectErr := r.state.ProjectRun(ctx, apply.Result{}, summary, RunHistoryEntry{
 			Kind:         KindAutoApply,
 			Trigger:      string(request.Trigger),
 			ProbeRoundID: evidence.RoundID,

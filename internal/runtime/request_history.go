@@ -28,33 +28,16 @@ func requestHistoryErrorMessage(failed bool, statusCode int, body string) string
 func (r *Runtime) appendRequestHistory(entry state.RequestHistoryEntry) {
 	r.mu.Lock()
 	maxLen := r.requestHistoryLimitLocked()
-
-	newHist := make([]state.RequestHistoryEntry, 0, len(r.requestHistory)+1)
-	newHist = append(newHist, entry)
-	for _, item := range r.requestHistory {
-		if len(newHist) >= maxLen {
-			break
-		}
-		newHist = append(newHist, item)
-	}
-	r.requestHistory = newHist
 	r.mu.Unlock()
-
-	r.persistRequestHistory(context.Background())
+	r.state.AppendRequestHistory(context.Background(), entry, maxLen)
 }
 
 // trimRequestHistory enforces the configured retention limit after a config change.
 func (r *Runtime) trimRequestHistory(ctx context.Context) {
 	r.mu.Lock()
 	limit := r.requestHistoryLimitLocked()
-	if len(r.requestHistory) <= limit {
-		r.mu.Unlock()
-		return
-	}
-	r.requestHistory = append([]state.RequestHistoryEntry(nil), r.requestHistory[:limit]...)
 	r.mu.Unlock()
-
-	r.persistRequestHistory(ctx)
+	r.state.TrimRequestHistory(ctx, limit)
 }
 
 // requestHistoryLimitLocked returns the effective retention limit. The caller must hold r.mu.
@@ -65,29 +48,9 @@ func (r *Runtime) requestHistoryLimitLocked() int {
 	return r.cfg.RequestHistoryLimit
 }
 
-// persistRequestHistory writes only the request-history sidecar. It never
-// reads or rewrites quota evidence, so high request volume cannot disturb
-// unrelated cache documents.
-// The persist mutex keeps concurrent writers from replacing a newer snapshot with an older one.
-func (r *Runtime) persistRequestHistory(ctx context.Context) {
-	r.requestHistoryPersistMu.Lock()
-	defer r.requestHistoryPersistMu.Unlock()
-
-	r.mu.Lock()
-	entries := append([]state.RequestHistoryEntry(nil), r.requestHistory...)
-	cachePath := r.cfg.StateCachePath
-	r.mu.Unlock()
-
-	_ = state.WriteRequestHistoryAtomic(ctx, cachePath, entries)
-}
-
 // currentRequestHistory returns a copy of current request history entries.
 func (r *Runtime) currentRequestHistory() []state.RequestHistoryEntry {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	out := make([]state.RequestHistoryEntry, len(r.requestHistory))
-	copy(out, r.requestHistory)
-	return out
+	return r.state.RequestHistory()
 }
 
 // GetRequestHistory returns current request history entries.
@@ -97,11 +60,7 @@ func (r *Runtime) GetRequestHistory(ctx context.Context) ([]state.RequestHistory
 
 // ClearRequestHistory clears all recorded request history entries.
 func (r *Runtime) ClearRequestHistory(ctx context.Context) error {
-	r.mu.Lock()
-	r.requestHistory = nil
-	r.mu.Unlock()
-
-	r.persistRequestHistory(ctx)
+	r.state.ClearRequestHistory(ctx)
 	return nil
 }
 

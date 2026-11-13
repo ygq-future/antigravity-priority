@@ -377,16 +377,12 @@ func (r *Runtime) recomputePoolRoutingTableLocked(pool config.AntigravityModelGr
 // recomputeRoutingTablesLocked updates all 3 pool routing tables in memory.
 func (r *Runtime) recomputeRoutingTablesLocked(now time.Time, existingCreds ...[]core.Credential) {
 	cfg := r.routingConfigSnapshot()
-	cachePath := cfg.StateCachePath
-	if strings.TrimSpace(cachePath) == "" {
-		cachePath = config.DefaultStateCachePath
-	}
-	store, _ := state.Load(context.Background(), cachePath)
+	store := r.state.StoreOrNil()
 	var credentials []core.Credential
 	if len(existingCreds) > 0 {
 		credentials = existingCreds[0]
 	} else {
-		credentials = r.currentCredentialsLocked(cfg)
+		credentials = r.currentCredentialsLocked()
 	}
 	for _, pool := range config.AllAntigravityModelGroups {
 		r.plansByPool[pool] = r.recomputePoolRoutingTableLocked(pool, cfg, now, store, credentials)
@@ -394,7 +390,7 @@ func (r *Runtime) recomputeRoutingTablesLocked(now time.Time, existingCreds ...[
 }
 
 // currentCredentialsLocked extracts current known credentials from host or state cache.
-func (r *Runtime) currentCredentialsLocked(cfg config.Config) []core.Credential {
+func (r *Runtime) currentCredentialsLocked() []core.Credential {
 	if r.hostCallbacks != nil {
 		client := host.NewClient(r.hostCallbacks)
 		if files, err := client.ListAuthFiles(context.Background()); err == nil && len(files) > 0 {
@@ -403,11 +399,7 @@ func (r *Runtime) currentCredentialsLocked(cfg config.Config) []core.Credential 
 		}
 	}
 
-	cachePath := cfg.StateCachePath
-	if strings.TrimSpace(cachePath) == "" {
-		cachePath = config.DefaultStateCachePath
-	}
-	if store, err := state.Load(context.Background(), cachePath); err == nil {
+	if store := r.state.StoreOrNil(); store != nil {
 		authIndexes := store.GetKnownAuthIndexes()
 		var creds []core.Credential
 		for _, idx := range authIndexes {
@@ -445,12 +437,8 @@ func (r *Runtime) getOrRefreshPoolTable(pool config.AntigravityModelGroup, now t
 
 	cfg := r.routingConfigSnapshot()
 	r.pruneExpiredSessionAffinityLocked(now)
-	cachePath := cfg.StateCachePath
-	if strings.TrimSpace(cachePath) == "" {
-		cachePath = config.DefaultStateCachePath
-	}
-	store, _ := state.Load(context.Background(), cachePath)
-	credentials := r.currentCredentialsLocked(cfg)
+	store := r.state.StoreOrNil()
+	credentials := r.currentCredentialsLocked()
 	refreshed := r.recomputePoolRoutingTableLocked(pool, cfg, now, store, credentials)
 	r.plansByPool[pool] = refreshed
 	return refreshed

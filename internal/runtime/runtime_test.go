@@ -3115,6 +3115,82 @@ func TestRuntime_SchedulePause_PersistsAcrossRestartAndReload(t *testing.T) {
 	}
 }
 
+func TestRuntime_ConcurrentUsageDuringProbeIsNotClobbered(t *testing.T) {
+	ctx := context.Background()
+	cachePath := filepath.Join(t.TempDir(), "concurrent_probe_usage.json")
+	now := time.Date(2026, 8, 20, 14, 0, 0, 0, time.UTC)
+	clock := &testClock{now: now}
+
+	seedStore, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rem80 := int64(80)
+	if err := seedStore.MarkProbeSuccess(ctx, state.ProbeSuccess{
+		AuthIndex:            "auth-b",
+		Provider:             core.ProviderAntigravity,
+		ModelGroup:           "gemini",
+		ObservedAt:           now,
+		ResetAt:              now.Add(120 * time.Hour),
+		Remaining:            80,
+		ShortWindowRemaining: &rem80,
+		ShortWindowResetAt:   now.Add(4 * time.Hour),
+		LongWindowRemaining:  &rem80,
+		LongWindowResetAt:    now.Add(120 * time.Hour),
+		PlanType:             core.PlanTypePro,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := seedStore.SaveAtomic(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := newMockHost()
+	mock.files = []host.AuthFile{
+		{Name: "account-a", AuthIndex: "auth-a", Provider: "antigravity", Status: "active"},
+		{Name: "account-b", AuthIndex: "auth-b", Provider: "antigravity", Status: "active"},
+	}
+	r := newTestRuntime(t, runtime.Options{
+		Host:                     mock,
+		StateCachePath:           cachePath,
+		Clock:                    clock,
+		DisableBackgroundWorkers: true,
+	})
+	t.Cleanup(func() { _ = r.Shutdown(context.Background()) })
+	if _, err := r.Register(ctx, runtime.RegisterRequest{ConfigYAML: "enabled: true\n"}); err != nil {
+		t.Fatal(err)
+	}
+
+	usageDispatched := make(chan []byte, 1)
+	mock.afterHTTP = func(_ *mockHost) {
+		payload := []byte(`{"Provider":"antigravity","Model":"gemini-3.8-flash-high","AuthIndex":"auth-b","Failed":false,"Detail":{"InputTokens":10000,"OutputTokens":2000,"TotalTokens":12000}}`)
+		usageDispatched <- r.Handle(ctx, runtime.MethodUsageHandle, payload)
+	}
+
+	if err := r.Probe(ctx, []string{"auth-a"}); err != nil {
+		t.Fatalf("probe failed: %v", err)
+	}
+	resp := <-usageDispatched
+	var env struct {
+		OK bool `json:"ok"`
+	}
+	if err := json.Unmarshal(resp, &env); err != nil || !env.OK {
+		t.Fatalf("usage event failed: %s", resp)
+	}
+
+	reloaded, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, ok := reloaded.GetEntry("auth-b", "gemini")
+	if !ok {
+		t.Fatal("expected auth-b gemini entry to remain persisted")
+	}
+	if entry.PendingWeightedTokens <= 0 || entry.EstimatedShortBurnPct <= 0 {
+		t.Fatalf("concurrent usage consumption was overwritten by probe save: %+v", entry)
+	}
+}
+
 func activeCooldownUntil(store *state.Store, authIndex string, now time.Time) (time.Time, bool) {
 	for _, entry := range store.GetCooldowns() {
 		if entry.AuthIndex == authIndex && now.Before(entry.CooldownUntil) {
