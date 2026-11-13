@@ -548,13 +548,25 @@ func TestRuntime_AutoApply_Cooldown(t *testing.T) {
 		t.Errorf("expected cooldown to prevent second call, got %d calls", calls)
 	}
 
-	// Advance clock past 15m interval
+	// Advance clock past 15m interval with zero requests: should stay idle and skip
 	clock.Advance(16 * time.Minute)
+	if err := r.AutoApply(context.Background()); err != nil {
+		t.Fatalf("idle auto apply failed: %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("expected idle skip when zero requests occurred, got %d calls", calls)
+	}
+
+	// Send frequent requests and verify AutoApply runs after cooldown
+	for range 5 {
+		clock.Advance(30 * time.Second)
+		r.Handle(context.Background(), runtime.MethodUsageHandle, []byte(`{"Provider":"antigravity","Model":"gemini-3-flash","AuthIndex":"auth-1","Failed":false}`))
+	}
 	if err := r.AutoApply(context.Background()); err != nil {
 		t.Fatalf("third auto apply failed: %v", err)
 	}
 	if calls != 2 {
-		t.Errorf("expected 2 calls after interval advance, got %d", calls)
+		t.Errorf("expected 2 calls after frequent traffic, got %d", calls)
 	}
 }
 
@@ -600,6 +612,10 @@ func TestRuntime_AutoApply_HonorsPersistedIntervalAfterRestart(t *testing.T) {
 		}
 	}()
 
+	for range 5 {
+		clock.Advance(20 * time.Second)
+		restarted.Handle(context.Background(), runtime.MethodUsageHandle, []byte(`{"Provider":"antigravity","Model":"gemini-3-flash","AuthIndex":"auth-1","Failed":false}`))
+	}
 	if err := restarted.AutoApply(ctx); err != nil {
 		t.Fatalf("auto apply after restart failed: %v", err)
 	}
@@ -1098,6 +1114,10 @@ func TestRuntime_ProductionRunner_CachedEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	for range 5 {
+		r.Handle(context.Background(), runtime.MethodUsageHandle, []byte(`{"Provider":"antigravity","Model":"gemini-3-flash","AuthIndex":"auth_cached","Failed":false}`))
+	}
+	mock.operations = nil
 	// AutoApply must probe even though the cached observation is still within TTL.
 	err = r.AutoApply(context.Background())
 	if err != nil {
@@ -1669,85 +1689,6 @@ func TestRuntime_AutoApply_Paused(t *testing.T) {
 	}
 }
 
-func TestRuntime_AutoApply_OutsideScheduleWindow(t *testing.T) {
-	// Clock is at 03:00 UTC, window is 09:00-23:00 — should skip
-	clock := &testClock{now: time.Date(2026, 8, 19, 3, 0, 0, 0, time.UTC)}
-	calls := 0
-	cachePath := filepath.Join(t.TempDir(), "cache.json")
-
-	r := newTestRuntime(t, runtime.Options{
-		Clock: clock,
-		Runner: func(ctx context.Context, request runtime.TaskRequest) error {
-			calls++
-			return nil
-		},
-	})
-
-	_, err := r.Register(context.Background(), runtime.RegisterRequest{
-		ConfigYAML: "state_cache_path: " + filepath.ToSlash(cachePath) + "\n",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Set schedule window 09:00-23:00
-	if err := r.SetScheduleConfig(context.Background(), state.ScheduleConfig{
-		WindowEnabled: true,
-		WindowStart:   "09:00",
-		WindowEnd:     "23:00",
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	// AutoApply at 03:00 should be skipped (outside window)
-	if err := r.AutoApply(context.Background()); err != nil {
-		t.Fatalf("auto apply failed: %v", err)
-	}
-	if calls != 0 {
-		t.Errorf("expected 0 calls outside window, got %d", calls)
-	}
-
-	// Move clock into the window (12:00)
-	clock.Set(time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC))
-	if err := r.AutoApply(context.Background()); err != nil {
-		t.Fatalf("auto apply inside window failed: %v", err)
-	}
-	if calls != 1 {
-		t.Errorf("expected 1 call inside window, got %d", calls)
-	}
-}
-
-func TestRuntime_AutoApply_UsesClockLocationForScheduleWindow(t *testing.T) {
-	local := time.FixedZone("CST", 8*60*60)
-	clock := &testClock{now: time.Date(2026, 8, 19, 10, 0, 0, 0, local)}
-	calls := 0
-	r := newTestRuntime(t, runtime.Options{
-		Clock: clock,
-		Runner: func(ctx context.Context, request runtime.TaskRequest) error {
-			calls++
-			return nil
-		},
-	})
-
-	if _, err := r.Register(context.Background(), runtime.RegisterRequest{ConfigYAML: "state_cache_path: " + filepath.ToSlash(filepath.Join(t.TempDir(), "cache.json")) + "\n"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := r.SetScheduleConfig(context.Background(), state.ScheduleConfig{
-		WindowEnabled: true,
-		WindowStart:   "09:00",
-		WindowEnd:     "00:00",
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := r.AutoApply(context.Background()); err != nil {
-		t.Fatalf("auto apply failed: %v", err)
-	}
-	if calls != 1 {
-		t.Fatalf("expected local 10:00 to be inside 09:00-00:00, got %d calls", calls)
-	}
-}
-
 func TestRuntime_GetSetScheduleConfig(t *testing.T) {
 	cachePath := filepath.Join(t.TempDir(), "cache.json")
 	r := newTestRuntime(t, runtime.Options{})
@@ -1764,16 +1705,13 @@ func TestRuntime_GetSetScheduleConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Paused || cfg.WindowEnabled {
+	if cfg.Paused {
 		t.Errorf("expected zero schedule config, got %+v", cfg)
 	}
 
 	// Set and read back
 	if err := r.SetScheduleConfig(context.Background(), state.ScheduleConfig{
-		Paused:        true,
-		WindowEnabled: true,
-		WindowStart:   "08:30",
-		WindowEnd:     "23:30",
+		Paused: true,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -1785,12 +1723,6 @@ func TestRuntime_GetSetScheduleConfig(t *testing.T) {
 	if !cfg.Paused {
 		t.Error("expected Paused=true")
 	}
-	if !cfg.WindowEnabled {
-		t.Error("expected WindowEnabled=true")
-	}
-	if cfg.WindowStart != "08:30" || cfg.WindowEnd != "23:30" {
-		t.Errorf("unexpected window: %q-%q", cfg.WindowStart, cfg.WindowEnd)
-	}
 
 	// Verify persisted to disk and survives reload
 	store, err := state.Load(context.Background(), cachePath)
@@ -1798,7 +1730,7 @@ func TestRuntime_GetSetScheduleConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	diskCfg := store.GetScheduleConfig()
-	if !diskCfg.Paused || diskCfg.WindowStart != "08:30" {
+	if !diskCfg.Paused {
 		t.Errorf("expected disk config to match, got %+v", diskCfg)
 	}
 
@@ -1813,9 +1745,6 @@ func TestRuntime_GetSetScheduleConfig(t *testing.T) {
 	}
 	if sched["paused"] != true {
 		t.Errorf("expected paused=true in diagnostics, got %v", sched["paused"])
-	}
-	if sched["window_start"] != "08:30" {
-		t.Errorf("expected window_start=08:30 in diagnostics, got %v", sched["window_start"])
 	}
 }
 
@@ -1857,10 +1786,7 @@ func TestRuntime_GetSetDynamicConfig(t *testing.T) {
 			FreeStartPriority:   15,
 		},
 		Schedule: state.ScheduleConfig{
-			Paused:        false,
-			WindowEnabled: true,
-			WindowStart:   "08:00",
-			WindowEnd:     "22:00",
+			Paused: false,
 		},
 		Warmup: config.WarmupConfig{
 			GeminiEnabled: true,
@@ -2014,10 +1940,7 @@ func TestRuntime_DynamicConfig_SurvivesReconfigure(t *testing.T) {
 	}
 
 	if err := r.SetScheduleConfig(context.Background(), state.ScheduleConfig{
-		Paused:        false,
-		WindowEnabled: true,
-		WindowStart:   "09:00",
-		WindowEnd:     "23:00",
+		Paused: true,
 	}); err != nil {
 		t.Fatalf("set schedule config failed: %v", err)
 	}
@@ -3124,10 +3047,7 @@ func TestRuntime_SchedulePause_PersistsAcrossRestartAndReload(t *testing.T) {
 	}
 	dyn.AutoApply = true
 	dyn.Schedule = state.ScheduleConfig{
-		Paused:        false,
-		WindowEnabled: true,
-		WindowStart:   "08:00",
-		WindowEnd:     "22:00",
+		Paused: false,
 	}
 	if err := r.SetDynamicConfig(context.Background(), dyn); err != nil {
 		t.Fatal(err)
@@ -3135,10 +3055,7 @@ func TestRuntime_SchedulePause_PersistsAcrossRestartAndReload(t *testing.T) {
 
 	// Pause scheduler via SetScheduleConfig (the home page pause button endpoint)
 	if err := r.SetScheduleConfig(context.Background(), state.ScheduleConfig{
-		Paused:        true,
-		WindowEnabled: true,
-		WindowStart:   "08:00",
-		WindowEnd:     "22:00",
+		Paused: true,
 	}); err != nil {
 		t.Fatal(err)
 	}

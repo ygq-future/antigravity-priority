@@ -23,9 +23,6 @@ const templateScriptConfig = `        let originalConfigState = null;
             if (intervalSelect) {
                 interval = intervalSelect.value === "custom" ? ((intervalCustom && intervalCustom.value.trim()) || "") : intervalSelect.value;
             }
-            var windowEnabled = Boolean(document.getElementById("cfgWindowEnabled") && document.getElementById("cfgWindowEnabled").checked);
-            var windowStart = (document.getElementById("cfgWindowStart") && document.getElementById("cfgWindowStart").value.trim()) || "";
-            var windowEnd = (document.getElementById("cfgWindowEnd") && document.getElementById("cfgWindowEnd").value.trim()) || "";
             var maxConcurrency = (document.getElementById("cfgMaxConcurrency") && document.getElementById("cfgMaxConcurrency").value) || "";
             var urgencyTol = (document.getElementById("cfgUrgencyTolerance") && document.getElementById("cfgUrgencyTolerance").value) || "";
             var sampleCapacity = (document.getElementById("cfgSampleCapacity") && document.getElementById("cfgSampleCapacity").value) || "";
@@ -39,7 +36,7 @@ const templateScriptConfig = `        let originalConfigState = null;
             var warmupClaudeModel = (document.getElementById("cfgWarmupClaudeModelSelect") && document.getElementById("cfgWarmupClaudeModelSelect").value) || "claude-sonnet-5-5-high";
 
             return JSON.stringify({
-                autoApply, interval, windowEnabled, windowStart, windowEnd,
+                autoApply, interval,
                 maxConcurrency, urgencyTol, sampleCapacity, cooldownMin, boostStart, normalStart, freeStart,
                 warmupGeminiEnabled, warmupGeminiModel, warmupClaudeEnabled, warmupClaudeModel
             });
@@ -83,18 +80,6 @@ const templateScriptConfig = `        let originalConfigState = null;
                 updateCustomIntervalDisplay();
             }
 
-
-            var windowEnabled = document.getElementById("cfgWindowEnabled");
-            var windowInputs = document.getElementById("cfgWindowInputs");
-            var windowStart = document.getElementById("cfgWindowStart");
-            var windowEnd = document.getElementById("cfgWindowEnd");
-            var sched = cfg.schedule || {};
-            if (windowEnabled) {
-                windowEnabled.checked = Boolean(sched.window_enabled);
-                if (windowInputs) windowInputs.style.opacity = sched.window_enabled ? "1" : "0.5";
-            }
-            if (windowStart) windowStart.value = sched.window_start || "09:00";
-            if (windowEnd) windowEnd.value = sched.window_end || "23:00";
 
             var maxConcurrency = document.getElementById("cfgMaxConcurrency");
             if (maxConcurrency) maxConcurrency.value = cfg.max_concurrency || 6;
@@ -150,15 +135,6 @@ const templateScriptConfig = `        let originalConfigState = null;
             custom.hidden = select.value !== "custom";
             if (select.value === "custom" && !custom.value) {
                 custom.value = "20m";
-            }
-            updateSaveButtonState();
-        }
-
-        function onWindowEnabledChange() {
-            var chk = document.getElementById("cfgWindowEnabled");
-            var inputs = document.getElementById("cfgWindowInputs");
-            if (chk && inputs) {
-                inputs.style.opacity = chk.checked ? "1" : "0.5";
             }
             updateSaveButtonState();
         }
@@ -223,19 +199,6 @@ const templateScriptConfig = `        let originalConfigState = null;
                         }
                     } else {
                         interval = intervalSelect.value;
-                    }
-                }
-
-                var windowEnabled = Boolean(document.getElementById("cfgWindowEnabled") && document.getElementById("cfgWindowEnabled").checked);
-                var windowStart = (document.getElementById("cfgWindowStart") && document.getElementById("cfgWindowStart").value.trim()) || "09:00";
-                var windowEnd = (document.getElementById("cfgWindowEnd") && document.getElementById("cfgWindowEnd").value.trim()) || "23:00";
-
-                if (windowEnabled) {
-                    var timeRegex = /^([01]\d|2[0-3]):[0-5]\d$/;
-                    if (!timeRegex.test(windowStart) || !timeRegex.test(windowEnd)) {
-                        showToast(t("valErrWindow"), "error");
-                        updateSaveButtonState();
-                        return;
                     }
                 }
 
@@ -306,10 +269,7 @@ const templateScriptConfig = `        let originalConfigState = null;
                             (typeof scheduleConfig !== "undefined" && scheduleConfig && scheduleConfig.paused) ||
                             (typeof latestDiagnostics !== "undefined" && latestDiagnostics && latestDiagnostics.scheduler && latestDiagnostics.scheduler.paused) ||
                             (dynamicConfig && dynamicConfig.schedule && dynamicConfig.schedule.paused)
-                        ),
-                        window_enabled: windowEnabled,
-                        window_start: windowStart,
-                        window_end: windowEnd
+                        )
                     },
                     custom_tiers: (dynamicConfig && dynamicConfig.custom_tiers) ? dynamicConfig.custom_tiers : undefined,
                     excluded_models: (dynamicConfig && Array.isArray(dynamicConfig.excluded_models)) ? dynamicConfig.excluded_models : undefined,
@@ -359,10 +319,7 @@ const templateScriptConfig = `        let originalConfigState = null;
                     normal_start_priority: 100
                 },
                 schedule: {
-                    paused: false,
-                    window_enabled: false,
-                    window_start: "00:00",
-                    window_end: "23:59"
+                    paused: false
                 },
                 warmup: {
                     gemini_enabled: false,

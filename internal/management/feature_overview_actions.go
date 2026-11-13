@@ -156,24 +156,10 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
                 if (data && data.scheduler && typeof scheduleConfig !== "undefined") {
                     if (!scheduleConfig) {
                         scheduleConfig = {
-                            paused: Boolean(data.scheduler.paused),
-                            window_enabled: Boolean(data.scheduler.window_enabled),
-                            window_start: data.scheduler.window_start || "00:00",
-                            window_end: data.scheduler.window_end || "23:59"
+                            paused: Boolean(data.scheduler.paused)
                         };
-                    } else {
-                        if (data.scheduler.paused !== undefined) {
-                            scheduleConfig.paused = Boolean(data.scheduler.paused);
-                        }
-                        if (data.scheduler.window_enabled !== undefined) {
-                            scheduleConfig.window_enabled = Boolean(data.scheduler.window_enabled);
-                        }
-                        if (data.scheduler.window_start) {
-                            scheduleConfig.window_start = data.scheduler.window_start;
-                        }
-                        if (data.scheduler.window_end) {
-                            scheduleConfig.window_end = data.scheduler.window_end;
-                        }
+                    } else if (data.scheduler.paused !== undefined) {
+                        scheduleConfig.paused = Boolean(data.scheduler.paused);
                     }
                 }
                 renderDashboard();

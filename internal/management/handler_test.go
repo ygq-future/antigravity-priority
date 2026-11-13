@@ -457,10 +457,7 @@ func TestHandler_Reset_Success(t *testing.T) {
 func TestHandler_GetScheduleConfig(t *testing.T) {
 	runner := &mockRunner{
 		scheduleConfig: state.ScheduleConfig{
-			Paused:        true,
-			WindowEnabled: true,
-			WindowStart:   "09:00",
-			WindowEnd:     "23:00",
+			Paused: true,
 		},
 	}
 	handler := management.NewHandler(runner)
@@ -480,16 +477,13 @@ func TestHandler_GetScheduleConfig(t *testing.T) {
 	if !cfg.Paused {
 		t.Error("expected Paused=true")
 	}
-	if cfg.WindowStart != "09:00" {
-		t.Errorf("expected WindowStart=09:00, got %q", cfg.WindowStart)
-	}
 }
 
 func TestHandler_SetScheduleConfig(t *testing.T) {
 	runner := &mockRunner{}
 	handler := management.NewHandler(runner)
 
-	body := `{"paused":false,"window_enabled":true,"window_start":"08:30","window_end":"23:30"}`
+	body := `{"paused":true}`
 	req := httptest.NewRequest(http.MethodPost, "/schedule/config", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 
@@ -503,29 +497,13 @@ func TestHandler_SetScheduleConfig(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &cfg); err != nil {
 		t.Fatalf("decode response failed: %v", err)
 	}
-	if !cfg.WindowEnabled {
-		t.Error("expected WindowEnabled=true")
-	}
-	if cfg.WindowStart != "08:30" || cfg.WindowEnd != "23:30" {
-		t.Errorf("unexpected window: %q-%q", cfg.WindowStart, cfg.WindowEnd)
+	if !cfg.Paused {
+		t.Error("expected Paused=true")
 	}
 
 	// Verify it was stored on the mock
-	if runner.scheduleConfig.WindowStart != "08:30" {
-		t.Errorf("expected mock to store WindowStart=08:30, got %q", runner.scheduleConfig.WindowStart)
-	}
-}
-
-func TestHandler_SetScheduleConfig_InvalidWindow(t *testing.T) {
-	handler := management.NewHandler(&mockRunner{})
-	body := `{"window_enabled":true,"window_start":"25:00","window_end":"23:00"}`
-	req := httptest.NewRequest(http.MethodPost, "/schedule/config", strings.NewReader(body))
-	rec := httptest.NewRecorder()
-
-	handler.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected status 400, got %d, body=%s", rec.Code, rec.Body.String())
+	if !runner.scheduleConfig.Paused {
+		t.Error("expected mock to store Paused=true")
 	}
 }
 
@@ -554,10 +532,7 @@ func TestHandler_GetDynamicConfig(t *testing.T) {
 				NormalStartPriority: 150,
 			},
 			Schedule: state.ScheduleConfig{
-				Paused:        false,
-				WindowEnabled: true,
-				WindowStart:   "08:00",
-				WindowEnd:     "22:00",
+				Paused: false,
 			},
 		},
 	}
@@ -602,7 +577,7 @@ func TestHandler_SetDynamicConfig_Success(t *testing.T) {
 	runner := &mockRunner{}
 	handler := management.NewHandler(runner)
 
-	body := `{"auto_apply":true,"interval":"20m","max_concurrency":4,"urgency_tolerance":0.08,"rate_limit_cooldown_minutes":10,"quota_sample_capacity":6,"priority_rules":{"boost_start_priority":995,"normal_start_priority":120},"schedule":{"paused":false,"window_enabled":true,"window_start":"09:00","window_end":"18:00"}}`
+	body := `{"auto_apply":true,"interval":"20m","max_concurrency":4,"urgency_tolerance":0.08,"rate_limit_cooldown_minutes":10,"quota_sample_capacity":6,"priority_rules":{"boost_start_priority":995,"normal_start_priority":120},"schedule":{"paused":false}}`
 	req := httptest.NewRequest(http.MethodPost, "/runtime-config", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 
@@ -631,7 +606,7 @@ func TestHandler_DynamicConfig_WarmupRoundTrip(t *testing.T) {
 	runner := &mockRunner{}
 	handler := management.NewHandler(runner)
 
-	body := `{"auto_apply":true,"interval":"15m","max_concurrency":6,"urgency_tolerance":0.05,"rate_limit_cooldown_minutes":5,"quota_sample_capacity":6,"priority_rules":{"boost_start_priority":999,"normal_start_priority":100},"schedule":{"paused":false,"window_enabled":false,"window_start":"00:00","window_end":"23:59"},"warmup":{"gemini_enabled":true,"gemini_model":"gemini-2.0-flash","claude_enabled":true,"claude_model":"claude-3-7-sonnet"}}`
+	body := `{"auto_apply":true,"interval":"15m","max_concurrency":6,"urgency_tolerance":0.05,"rate_limit_cooldown_minutes":5,"quota_sample_capacity":6,"priority_rules":{"boost_start_priority":999,"normal_start_priority":100},"schedule":{"paused":false},"warmup":{"gemini_enabled":true,"gemini_model":"gemini-2.0-flash","claude_enabled":true,"claude_model":"claude-3-7-sonnet"}}`
 	req := httptest.NewRequest(http.MethodPost, "/runtime-config", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 

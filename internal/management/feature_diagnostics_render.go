@@ -190,10 +190,6 @@ const templateScriptDiagnostics = `        let latestDiagnostics = null;
                 ? Boolean(dynamicConfig.auto_apply)
                 : Boolean(latestDiagnostics.management_api && latestDiagnostics.management_api.auto_apply);
             var paused = scheduleConfig ? Boolean(scheduleConfig.paused) : Boolean(sched.paused);
-            var windowEnabled = scheduleConfig ? Boolean(scheduleConfig.window_enabled) : Boolean(sched.window_enabled);
-            var windowStart = scheduleConfig ? scheduleConfig.window_start : sched.window_start;
-            var windowEnd = scheduleConfig ? scheduleConfig.window_end : sched.window_end;
-            var sleeping = windowEnabled && windowStart && windowEnd && !isCurrentTimeInScheduleWindow(windowStart, windowEnd);
 
             var badge = document.getElementById("diagSchedBadge");
             var value = document.getElementById("diagSchedInterval");
@@ -209,16 +205,22 @@ const templateScriptDiagnostics = `        let latestDiagnostics = null;
                 badge.className = "badge badge-warning";
                 badge.textContent = t("diagStatusPaused");
                 desc.textContent = t("schedulePaused");
-            } else if (sleeping) {
-                badge.className = "badge badge-predicted";
-                badge.textContent = t("diagStatusSleeping");
-                desc.textContent = t("scheduleSleeping");
+            } else if (sched.mode === "idle") {
+                badge.className = "badge badge-subtle";
+                badge.textContent = t("diagModeIdle");
+                var prevC = Number(sched.prev_window_requests || 0);
+                var currC = Number(sched.curr_window_requests || 0);
+                desc.textContent = t("diagSchedIdleDesc") + " (" + currC + "/" + prevC + ")";
             } else {
-                badge.className = "badge badge-success";
-                badge.textContent = t("diagStatusRunning");
+                var isLow = sched.mode === "low_frequency";
+                badge.className = isLow ? "badge badge-predicted" : "badge badge-success";
+                badge.textContent = isLow ? t("diagModeLowFreq") : (sched.mode === "frequent" ? t("diagModeFrequent") : t("diagStatusRunning"));
                 var next = sched.next_run_at || "";
+                var prevWin = Number(sched.prev_window_requests || 0);
+                var currWin = Number(sched.curr_window_requests || 0);
+                var winSuffix = sched.mode ? (" · " + (currentLang === "zh-CN" ? "窗口 " : "Win ") + currWin + "/" + prevWin) : "";
                 desc.innerHTML = (currentLang === "zh-CN" ? "下次运行: " : "Next run: ") +
-                    "<span class=\"meter-countdown\" data-scheduler-countdown=\"" + escapeHTML(next) + "\">" + (next ? formatCountdown(next) : "-") + "</span>";
+                    "<span class=\"meter-countdown\" data-scheduler-countdown=\"" + escapeHTML(next) + "\">" + (next ? formatCountdown(next) : "-") + "</span>" + winSuffix;
             }
         }
 

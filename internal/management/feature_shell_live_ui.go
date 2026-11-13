@@ -22,20 +22,12 @@ const templateScriptLiveUI = `        function updateAllCountdowns() {
                 isAutoApplyEnabled = Boolean(latestDiagnostics.management_api.auto_apply);
             }
             var isPaused = scheduleConfig ? Boolean(scheduleConfig.paused) : (latestDiagnostics && latestDiagnostics.scheduler && Boolean(latestDiagnostics.scheduler.paused));
-            var isSleeping = false;
-            if (scheduleConfig && scheduleConfig.window_enabled && scheduleConfig.window_start && scheduleConfig.window_end) {
-                isSleeping = !isCurrentTimeInScheduleWindow(scheduleConfig.window_start, scheduleConfig.window_end);
-            }
 
-            if (isAutoApplyEnabled && !isPaused && !isSleeping) {
+            if (isAutoApplyEnabled && !isPaused) {
                 document.querySelectorAll("[data-scheduler-countdown]").forEach(function(el) {
                     var t = el.getAttribute("data-scheduler-countdown");
                     if (t) el.textContent = formatCountdown(t);
                 });
-            }
-            // Periodically refresh scheduler status indicator to catch window transitions
-            if (scheduleConfig) {
-                renderScheduleStatus();
             }
         }
 

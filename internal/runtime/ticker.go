@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -27,34 +28,62 @@ func (w *tickerWorker) start(rootCtx context.Context, rt *Runtime) {
 		select {
 		case <-timer.C:
 		case <-ctx.Done():
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
-			}
+			stopTimer(timer)
 			return
 		}
 		for {
 			if ctx.Err() != nil {
 				return
 			}
-			_ = rt.AutoApply(ctx)
-			wait := rt.nextAutoApplyWait(interval)
-			timer = time.NewTimer(wait)
-			select {
-			case <-timer.C:
-			case <-ctx.Done():
-				if !timer.Stop() {
-					select {
-					case <-timer.C:
-					default:
-					}
+			now := rt.clock.Now()
+			plan, wait, active := rt.evaluateWorkerStep(now, interval)
+			if active && plan.ShouldRunNow {
+				runErr := rt.AutoApply(ctx)
+				if ctx.Err() != nil {
+					return
 				}
+				now = rt.clock.Now()
+				if runErr != nil {
+					retryWait := min(interval, 2*time.Minute)
+					if errors.Is(runErr, ErrRunInProgress) {
+						retryWait = 15 * time.Second
+					}
+					rt.latchRetryDeadline(now.UTC().Add(retryWait))
+					wait = retryWait
+				} else {
+					_, wait, _ = rt.evaluateWorkerStep(now, interval)
+				}
+			}
+
+			var waitTimer *time.Timer
+			var waitC <-chan time.Time
+			if wait > 0 {
+				waitTimer = time.NewTimer(wait)
+				waitC = waitTimer.C
+			}
+
+			select {
+			case <-ctx.Done():
+				stopTimer(waitTimer)
 				return
+			case <-rt.autoApplyWake:
+				stopTimer(waitTimer)
+			case <-waitC:
 			}
 		}
 	}()
+}
+
+func stopTimer(timer *time.Timer) {
+	if timer == nil {
+		return
+	}
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
 }
 
 func stopWorker(ctx context.Context, worker *tickerWorker) error {
@@ -80,4 +109,3 @@ func stopNewWorker(worker *tickerWorker, err error) error {
 	}
 	return err
 }
-

@@ -237,10 +237,7 @@ func TestDynamicConfig_ValidateAndApplyTo(t *testing.T) {
 				FreeStartPriority:   25,
 			},
 			Schedule: config.ScheduleConfig{
-				Paused:        false,
-				WindowEnabled: true,
-				WindowStart:   "09:00",
-				WindowEnd:     "23:00",
+				Paused: true,
 			},
 		}
 
@@ -279,10 +276,9 @@ func TestDynamicConfig_ValidateAndApplyTo(t *testing.T) {
 		if merged.PriorityRules.FreeStartPriority != 25 {
 			t.Errorf("expected FreeStartPriority=25, got %d", merged.PriorityRules.FreeStartPriority)
 		}
-		if !merged.Schedule.WindowEnabled || merged.Schedule.WindowStart != "09:00" || merged.Schedule.WindowEnd != "23:00" {
-			t.Errorf("expected Schedule window enabled with 09:00-23:00, got %+v", merged.Schedule)
+		if !merged.Schedule.Paused {
+			t.Errorf("expected Schedule.Paused=true, got %+v", merged.Schedule)
 		}
-
 		// Exporting dynamic view matches applied values
 		exportedDyn := merged.Dynamic()
 		if exportedDyn.Interval != "30m0s" && exportedDyn.Interval != "30m" {
@@ -401,11 +397,6 @@ func TestDynamicConfig_ValidateAndApplyTo(t *testing.T) {
 				name:    "request history limit out of range (1001)",
 				mutate:  func(dyn *config.DynamicConfig) { dyn.RequestHistoryLimit = 1001 },
 				wantErr: "request_history_limit must be between",
-			},
-			{
-				name:    "invalid schedule window format",
-				mutate:  func(dyn *config.DynamicConfig) { dyn.Schedule.WindowStart = "25:00" },
-				wantErr: "window_start",
 			},
 		}
 

@@ -55,12 +55,6 @@ const (
 	KeySchedule = "schedule"
 	// KeyPaused is the JSON key for paused.
 	KeyPaused = "paused"
-	// KeyWindowEnabled is the JSON key for window_enabled.
-	KeyWindowEnabled = "window_enabled"
-	// KeyWindowStart is the JSON key for window_start.
-	KeyWindowStart = "window_start"
-	// KeyWindowEnd is the JSON key for window_end.
-	KeyWindowEnd = "window_end"
 	// KeyCustomTiers is the JSON key for custom_tiers.
 	KeyCustomTiers = "custom_tiers"
 	// DefaultGeminiWarmupModel is the default lightweight model used for Gemini 5h warm-up.
@@ -338,10 +332,7 @@ func Default() Config {
 		StateCachePath:           DefaultStateCachePath,
 		PriorityRules:            defaultPriorityRules(),
 		Schedule: ScheduleConfig{
-			Paused:        false,
-			WindowEnabled: false,
-			WindowStart:   "00:00",
-			WindowEnd:     "23:59",
+			Paused: false,
 		},
 		Warmup: DefaultWarmupConfig(),
 	}
@@ -362,9 +353,9 @@ func (cfg Config) Dynamic() DynamicConfig {
 			NormalStartPriority: cfg.PriorityRules.NormalStartPriority,
 			FreeStartPriority:   cfg.PriorityRules.FreeStartPriority,
 		},
-		Schedule:    cfg.Schedule,
-		CustomTiers: cloneCustomTiers(cfg.CustomTiers),
-		Warmup:      cfg.Warmup.Clone(),
+		Schedule:       cfg.Schedule,
+		CustomTiers:    cloneCustomTiers(cfg.CustomTiers),
+		Warmup:         cfg.Warmup.Clone(),
 		ExcludedModels: NormalizeExcludedModels(cfg.ExcludedModels),
 	}
 }
@@ -463,9 +454,6 @@ func (dyn DynamicConfig) Validate() error {
 	}
 	if dyn.RequestHistoryLimit < MinRequestHistoryLimit || dyn.RequestHistoryLimit > MaxRequestHistoryLimit {
 		return fmt.Errorf("request_history_limit must be between %d and %d, got %d", MinRequestHistoryLimit, MaxRequestHistoryLimit, dyn.RequestHistoryLimit)
-	}
-	if err := ValidateScheduleWindow(dyn.Schedule.WindowStart, dyn.Schedule.WindowEnd); err != nil {
-		return err
 	}
 	for authIdx, tier := range dyn.CustomTiers {
 		if strings.TrimSpace(authIdx) == "" {

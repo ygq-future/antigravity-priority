@@ -148,12 +148,6 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
                 }
 
                 var isPaused = scheduleConfig ? Boolean(scheduleConfig.paused) : Boolean(sched.paused);
-                var isSleeping = false;
-                if (scheduleConfig && scheduleConfig.window_enabled && scheduleConfig.window_start && scheduleConfig.window_end) {
-                    isSleeping = !isCurrentTimeInScheduleWindow(scheduleConfig.window_start, scheduleConfig.window_end);
-                } else if (sched.window_enabled && sched.window_start && sched.window_end) {
-                    isSleeping = !isCurrentTimeInScheduleWindow(sched.window_start, sched.window_end);
-                }
 
                 var el = document.getElementById("valNextProbe");
                 if (el) {
@@ -161,12 +155,18 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
                         el.innerHTML = (currentLang === "zh-CN" ? "调度状态: " : "Schedule: ") + "<span style=\"color:var(--text-muted); font-weight:600;\">" + t("scheduleDisabled") + "</span>";
                     } else if (isPaused) {
                         el.innerHTML = (currentLang === "zh-CN" ? "调度状态: " : "Schedule: ") + "<span style=\"color:var(--accent-yellow-text); font-weight:600;\">" + t("schedulePaused") + "</span>";
-                    } else if (isSleeping) {
-                        el.innerHTML = (currentLang === "zh-CN" ? "调度状态: " : "Schedule: ") + "<span style=\"color:var(--accent-purple-text); font-weight:600;\">" + t("scheduleSleeping") + "</span>";
+                    } else if (sched.mode === "idle") {
+                        var prevReq = Number(sched.prev_window_requests || 0);
+                        var currReq = Number(sched.curr_window_requests || 0);
+                        var idleTitle = currentLang === "zh-CN"
+                            ? ("前窗口请求 " + prevReq + " 次，当前窗口 " + currReq + " 次；无活跃请求时自动跳过")
+                            : ("Prev window: " + prevReq + " reqs, current: " + currReq + " reqs; skipped while idle");
+                        el.innerHTML = (currentLang === "zh-CN" ? "调度模式: " : "Schedule: ") + "<span title=\"" + escapeHTML(idleTitle) + "\" style=\"color:var(--text-muted); font-weight:600;\">" + t("scheduleModeIdle") + "</span>";
                     } else {
                         var nextRunAt = sched.next_run_at;
                         var nextStr = nextRunAt ? formatCountdown(nextRunAt) : (sched.next_wait || "-");
-                        el.innerHTML = (currentLang === "zh-CN" ? "下次调度: " : "Next run: ") + "<span class=\"meter-countdown\" data-scheduler-countdown=\"" + (nextRunAt || "") + "\">" + nextStr + "</span>";
+                        var modeSuffix = sched.mode === "low_frequency" ? (" <span style=\"color:var(--text-muted); font-size:11px;\">(" + t("scheduleModeLowFreq") + ")</span>") : "";
+                        el.innerHTML = (currentLang === "zh-CN" ? "下次调度: " : "Next run: ") + "<span class=\"meter-countdown\" data-scheduler-countdown=\"" + (nextRunAt || "") + "\">" + nextStr + "</span>" + modeSuffix;
                     }
                 }
             }

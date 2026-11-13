@@ -14,8 +14,8 @@ const configMarkup = `
                     <div class="config-form-grid">
                         <div class="form-row">
                             <div class="form-label-box">
-                                <span class="form-title" data-i18n="cfgAutoApply">后台定时配额校准</span>
-                                <span class="form-hint" data-i18n="cfgAutoApplyHint">周期性向 Google 发起配额探测，自适应校准实时消耗估算器与内存调度路由</span>
+                                <span class="form-title" data-i18n="cfgAutoApply">自适应配额校准</span>
+                                <span class="form-hint" data-i18n="cfgAutoApplyHint">根据历史请求量与频率自适应向 Google 发起配额探测，高频必校准、低频延后、空闲跳过</span>
                             </div>
                             <div class="form-input-group">
                                 <label class="toggle-label">
@@ -30,8 +30,8 @@ const configMarkup = `
 
                         <div class="form-row">
                             <div class="form-label-box">
-                                <span class="form-title" data-i18n="cfgInterval">调度执行周期</span>
-                                <span class="form-hint" data-i18n="cfgIntervalHint">自动调度与探测的执行间隔（如 15m, 30m, 1h）</span>
+                                <span class="form-title" data-i18n="cfgInterval">高频校准周期上限</span>
+                                <span class="form-hint" data-i18n="cfgIntervalHint">频繁使用时的最大校准间隔（含随机抖动，如 15m, 30m, 1h）；低频自动拉长，空闲不触发</span>
                             </div>
                             <div class="form-input-group">
                                 <select id="cfgIntervalSelect" hidden>
@@ -72,24 +72,6 @@ const configMarkup = `
                                     </div>
                                 </div>
                                 <input type="text" id="cfgIntervalCustom" class="config-time-input" placeholder="15m" hidden>
-                            </div>
-                        </div>
-
-                        <div class="form-row">
-                            <div class="form-label-box">
-                                <span class="form-title" data-i18n="cfgScheduleWindow">生效时间区间</span>
-                                <span class="form-hint" data-i18n="cfgScheduleWindowHint">仅在每日指定时段运行 (支持跨午夜)</span>
-                            </div>
-                            <div class="form-input-group" style="flex-direction:column; align-items:flex-end; gap:4px;">
-                                <label class="toggle-label" style="font-size:12px;">
-                                    <input type="checkbox" id="cfgWindowEnabled" onchange="onWindowEnabledChange()">
-                                    <span data-i18n="cfgWindowEnabledLabel">仅在指定时段运行</span>
-                                </label>
-                                <div id="cfgWindowInputs" style="display:flex; align-items:center; gap:6px;">
-                                    <input type="text" id="cfgWindowStart" class="config-time-input" placeholder="09:00">
-                                    <span style="color:var(--text-muted); font-weight:700;">-</span>
-                                    <input type="text" id="cfgWindowEnd" class="config-time-input" placeholder="23:00">
-                                </div>
                             </div>
                         </div>
                     </div>

@@ -1156,10 +1156,7 @@ var dynamicConfig = { auto_apply: true };
 var scheduleConfig = null;
 var latestDiagnostics = {
     scheduler: {
-        paused: true,
-        window_enabled: false,
-        window_start: "00:00",
-        window_end: "23:59"
+        paused: true
     }
 };
 var isAuthBlocked = false;
@@ -1176,10 +1173,7 @@ apiFetch = async function(path) {
     if (path === DIAGNOSTICS_PATH) {
         return {
             scheduler: {
-                paused: true,
-                window_enabled: true,
-                window_start: "09:00",
-                window_end: "21:00"
+                paused: false
             }
         };
     }
@@ -1201,11 +1195,8 @@ apiFetch = async function(path) {
     if (!scheduleConfig) {
         throw new Error("expected scheduleConfig to be initialized by fetchDiagnostics");
     }
-    if (scheduleConfig.paused !== true) {
-        throw new Error("expected scheduleConfig.paused to be true, got: " + scheduleConfig.paused);
-    }
-    if (scheduleConfig.window_start !== "09:00" || scheduleConfig.window_end !== "21:00") {
-        throw new Error("expected scheduleConfig window to be synced to 09:00-21:00, got: " + scheduleConfig.window_start + "-" + scheduleConfig.window_end);
+    if (scheduleConfig.paused !== false) {
+        throw new Error("expected scheduleConfig.paused to be synced to false, got: " + scheduleConfig.paused);
     }
 })().catch(function(err) {
     console.error(err.stack || err.message);
@@ -1262,4 +1253,101 @@ async function apiFetch(path, options) {
 });
 `
 	runNodeFixture(t, node, "warmup_icon_toggle.js", harness)
+}
+
+func TestRenderSchedulerAdaptiveModes_NodeHarness(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not available; skipping UI JS test")
+	}
+
+	harness := templateScriptAccountDisplay + templateScriptOverviewActionsCore + templateScriptOverviewRender + templateScriptDiagnostics + `
+function element(initial) {
+    return Object.assign({
+        hidden: false,
+        textContent: "",
+        innerHTML: "",
+        className: "",
+        title: "",
+        style: {}
+    }, initial || {});
+}
+
+const elements = {
+    valNextProbe: element(),
+    diagSchedBadge: element(),
+    diagSchedInterval: element(),
+    diagSchedCountdown: element()
+};
+const document = {
+    getElementById: function(id) { return elements[id] || null; }
+};
+var currentLang = "zh-CN";
+var dynamicConfig = { auto_apply: true };
+var scheduleConfig = { paused: false };
+latestSnapshot = null;
+latestDiagnostics = {
+    management_api: { auto_apply: true },
+    scheduler: {
+        interval: "15m",
+        mode: "idle",
+        prev_window_requests: 0,
+        curr_window_requests: 0,
+        next_run_at: ""
+    }
+};
+function t(key) { return key; }
+function escapeHTML(s) { return String(s || ""); }
+function formatCountdown(iso) { return "cnt:" + iso; }
+
+// 1. Idle mode
+renderSchedulerKpi();
+if (elements.diagSchedBadge.textContent !== "diagModeIdle") {
+    throw new Error("expected diagModeIdle, got: " + elements.diagSchedBadge.textContent);
+}
+if (!elements.diagSchedCountdown.textContent.includes("diagSchedIdleDesc")) {
+    throw new Error("expected diagSchedIdleDesc, got: " + elements.diagSchedCountdown.textContent);
+}
+renderDashboard();
+if (!elements.valNextProbe.innerHTML.includes("scheduleModeIdle")) {
+    throw new Error("expected scheduleModeIdle in valNextProbe, got: " + elements.valNextProbe.innerHTML);
+}
+
+// 2. Low-frequency mode
+latestDiagnostics.scheduler = {
+    interval: "15m",
+    mode: "low_frequency",
+    prev_window_requests: 1,
+    curr_window_requests: 2,
+    next_run_at: "2026-11-13T12:30:00Z"
+};
+renderSchedulerKpi();
+if (elements.diagSchedBadge.textContent !== "diagModeLowFreq") {
+    throw new Error("expected diagModeLowFreq, got: " + elements.diagSchedBadge.textContent);
+}
+if (!elements.diagSchedCountdown.innerHTML.includes("cnt:2026-11-13T12:30:00Z")) {
+    throw new Error("expected countdown in low_frequency mode, got: " + elements.diagSchedCountdown.innerHTML);
+}
+renderDashboard();
+if (!elements.valNextProbe.innerHTML.includes("scheduleModeLowFreq")) {
+    throw new Error("expected scheduleModeLowFreq in valNextProbe, got: " + elements.valNextProbe.innerHTML);
+}
+
+// 3. Frequent mode
+latestDiagnostics.scheduler = {
+    interval: "15m",
+    mode: "frequent",
+    prev_window_requests: 10,
+    curr_window_requests: 8,
+    next_run_at: "2026-11-13T12:12:00Z"
+};
+renderSchedulerKpi();
+if (elements.diagSchedBadge.textContent !== "diagModeFrequent") {
+    throw new Error("expected diagModeFrequent, got: " + elements.diagSchedBadge.textContent);
+}
+if (!elements.diagSchedCountdown.innerHTML.includes("10") || !elements.diagSchedCountdown.innerHTML.includes("8")) {
+    throw new Error("expected window counts 8/10 in desc, got: " + elements.diagSchedCountdown.innerHTML);
+}
+`
+	runNodeFixture(t, node, "render-scheduler-adaptive-modes.js", harness)
 }

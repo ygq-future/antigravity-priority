@@ -125,25 +125,16 @@ const templateScriptProbeSchedule = `        function setListProbeLoading(loadin
                 return;
             }
 
-            var windowActive = true;
-            if (sched.window_enabled && sched.window_start && sched.window_end) {
-                windowActive = isCurrentTimeInScheduleWindow(sched.window_start, sched.window_end);
-            }
-
-            if (sched.window_enabled && !windowActive) {
-                badge.className = "schedule-status sleeping";
-                badge.title = currentLang === "zh-CN" ? "当前时间不在生效时段内" : "Outside active schedule window";
-                badge.innerHTML = "🌙 <span id=\"scheduleStatusText\">" + t("scheduleSleeping") + "</span>";
-                return;
-            }
-
-            var windowStr = "";
-            if (sched.window_enabled && sched.window_start && sched.window_end) {
-                windowStr = " (" + sched.window_start + "-" + sched.window_end + ")";
+            var modeTip = "";
+            if (typeof latestDiagnostics !== "undefined" && latestDiagnostics && latestDiagnostics.scheduler && latestDiagnostics.scheduler.mode) {
+                var ds = latestDiagnostics.scheduler;
+                modeTip = currentLang === "zh-CN"
+                    ? (" [" + ds.mode + " · 近窗口 " + (ds.curr_window_requests || 0) + "/" + (ds.prev_window_requests || 0) + "]")
+                    : (" [" + ds.mode + " · window " + (ds.curr_window_requests || 0) + "/" + (ds.prev_window_requests || 0) + "]");
             }
             badge.className = "schedule-status active";
-            badge.title = currentLang === "zh-CN" ? "点击暂停自动调度" : "Click to pause";
-            badge.innerHTML = "🟢 <span id=\"scheduleStatusText\">" + t("scheduleActive") + windowStr + "</span>";
+            badge.title = (currentLang === "zh-CN" ? "点击暂停自动调度" : "Click to pause") + modeTip;
+            badge.innerHTML = "🟢 <span id=\"scheduleStatusText\">" + t("scheduleActive") + "</span>";
         }
 
         async function toggleSchedulePause() {
@@ -166,10 +157,7 @@ const templateScriptProbeSchedule = `        function setListProbeLoading(loadin
             }
 
             var newConfig = {
-                paused: !scheduleConfig.paused,
-                window_enabled: scheduleConfig.window_enabled || false,
-                window_start: scheduleConfig.window_start || "00:00",
-                window_end: scheduleConfig.window_end || "23:59"
+                paused: !scheduleConfig.paused
             };
 
             try {

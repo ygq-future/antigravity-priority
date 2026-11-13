@@ -340,7 +340,6 @@ const templateStyleControls = `        /* KPI Cards Grid */
         .schedule-status:hover { background: var(--bg-hover); }
         .schedule-status.active { color: var(--accent-green-text); }
         .schedule-status.paused { color: var(--accent-yellow-text); }
-        .schedule-status.sleeping { color: var(--accent-purple-text) !important; }
 
         .btn-cooldown { opacity: 0.6; cursor: not-allowed !important; }
 

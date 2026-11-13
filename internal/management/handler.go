@@ -263,17 +263,8 @@ func (h *Handler) handleSetScheduleConfig(w http.ResponseWriter, r *http.Request
 		h.writeJSONError(w, http.StatusBadRequest, "invalid schedule config JSON: "+err.Error())
 		return
 	}
-
-	if err := config.ValidateScheduleWindow(req.WindowStart, req.WindowEnd); err != nil {
-		h.writeJSONError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
 	cfg := config.ScheduleConfig{
-		Paused:        req.Paused,
-		WindowEnabled: req.WindowEnabled,
-		WindowStart:   req.WindowStart,
-		WindowEnd:     req.WindowEnd,
+		Paused: req.Paused,
 	}
 
 	if err := h.runner.SetScheduleConfig(r.Context(), cfg); err != nil {
@@ -287,10 +278,7 @@ func (h *Handler) handleSetScheduleConfig(w http.ResponseWriter, r *http.Request
 }
 
 type scheduleConfigRequest struct {
-	Paused        bool   `json:"paused"`
-	WindowEnabled bool   `json:"window_enabled"`
-	WindowStart   string `json:"window_start"`
-	WindowEnd     string `json:"window_end"`
+	Paused bool `json:"paused"`
 }
 
 func (h *Handler) handleGetConfig(w http.ResponseWriter, r *http.Request) {

@@ -184,26 +184,6 @@ const templateScriptShellCore = `        const LANG_STORAGE_KEY = "antigravity_p
             return (I18N[currentLang] && I18N[currentLang][key]) || I18N["zh-CN"][key] || key;
         }
 
-        function isCurrentTimeInScheduleWindow(startStr, endStr) {
-            if (!startStr || !endStr) return true;
-            var startParts = startStr.trim().split(":");
-            var endParts = endStr.trim().split(":");
-            if (startParts.length !== 2 || endParts.length !== 2) return true;
-            var startMin = parseInt(startParts[0], 10) * 60 + parseInt(startParts[1], 10);
-            var endMin = parseInt(endParts[0], 10) * 60 + parseInt(endParts[1], 10);
-            if (isNaN(startMin) || isNaN(endMin) || startMin === endMin) return true;
-            if (startMin === 0 && endMin === 24 * 60) return true;
-
-            var now = new Date();
-            var nowMin = now.getHours() * 60 + now.getMinutes();
-
-            if (startMin < endMin) {
-                return nowMin >= startMin && nowMin < endMin;
-            }
-            // Cross midnight (e.g. 22:00 to 06:00)
-            return nowMin >= startMin || nowMin < endMin;
-        }
-
         function toggleLanguage() {
             currentLang = currentLang === "zh-CN" ? "en-US" : "zh-CN";
             try {

@@ -138,7 +138,6 @@ In the **`⚙️ Config Center`** tab of the management dashboard, the following
 | :--- | :--- | :--- | :--- |
 | **Background Quota Calibration (`auto_apply`)** | `false` | On / Off | When true, scheduled background runs periodically probe Google API to calibrate real-time usage estimators. |
 | **Calibration Interval (`interval`)** | `15m` | `5m`, `15m`, `30m`, `1h`, custom | Background quota probe and calibration interval. Changes take effect immediately without restarting. |
-| **Active Schedule Window (`schedule_window`)** | `All day` | `HH:MM` to `HH:MM` | Daily active time window (e.g. `09:00-23:00`, supports cross-midnight like `22:00-06:00`). Sleeps outside window. |
 | **Max Probe Concurrency (`max_concurrency`)** | `6` | `1 ~ 32` | Maximum concurrent goroutines for quota probe requests to Google API. |
 | **Urgency Bucket Tolerance (`urgency_tolerance`)** | `0.05` | `0.00 ~ 0.50` | Accounts within this tolerance share the same priority for round-robin balancing. |
 | **Adaptive Sample Capacity (`quota_sample_capacity`)** | `6` | `2 ~ 30` | FIFO history retained for both consumption-trend inspection and burn-rate learning. |
@@ -180,9 +179,9 @@ The plugin registers **resources** (static management dashboard) and **routes** 
 - `POST /v0/management/plugins/antigravity-priority/runtime-config`
   - Submits updated runtime configuration and hot-applies immediately.
 - `GET /v0/management/plugins/antigravity-priority/schedule/config`
-  - Retrieves active schedule time window and pause state.
+  - Retrieves automatic schedule pause state.
 - `POST /v0/management/plugins/antigravity-priority/schedule/config`
-  - Updates active schedule time window or toggles pause/resume.
+  - Toggles automatic schedule pause/resume state.
 - `GET /v0/management/plugins/antigravity-priority/diagnostics`
   - Exports scheduler state, plan snapshot, cooldowns and 429 storm, run history, active policy, and the status of the four cache files; account identity uses full email while tokens, keys, and persisted audit fields remain redacted.
 - `POST /v0/management/plugins/antigravity-priority/sync`

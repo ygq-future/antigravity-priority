@@ -85,9 +85,11 @@ func (r *Runtime) handleUsageEvent(ctx context.Context, raw []byte) []byte {
 			statusCode = http.StatusInternalServerError
 		}
 	}
+	now := r.clock.Now().UTC()
+	r.recordRequestActivity(now)
 	r.appendRequestHistory(state.RequestHistoryEntry{
-		ID:                  fmt.Sprintf("req-%d", r.clock.Now().UTC().UnixNano()),
-		At:                  r.clock.Now().UTC(),
+		ID:                  fmt.Sprintf("req-%d", now.UnixNano()),
+		At:                  now,
 		Model:               payload.Model,
 		ModelPool:           string(pool),
 		AuthIndex:           resolvedIndex,

@@ -19,34 +19,38 @@ import (
 	"antigravity-priority/internal/priority"
 	"antigravity-priority/internal/state"
 )
+
 const maxRunHistory = 10
 
 // Runtime manages plugin lifecycle, configuration, ticker worker, and single-flight execution.
 type Runtime struct {
-	mu                    sync.Mutex
-	configMu              sync.Mutex
-	runMu                 sync.Mutex
-	runner                TaskRunner
-	rootCtx               context.Context
-	cancel                context.CancelFunc
-	cfg                   config.Config
-	hostCallbacks         host.HostCallbacks
-	clock                 Clock
-	sleeper               Sleeper
-	management            *management.Handler
-	state                 *stateRepository
-	latestSnapshotSet     *apply.SnapshotSet
-	stateCacheOverride    string
-	latestProbeOutcomes   []management.ProbeOutcome
-	worker                *tickerWorker
-	shutdown              bool
-	rateLimiter           rateLimitTracker
-	rateLimitWake         chan struct{}
-	rateLimitDone         chan struct{}
-	router                poolRouter
-	probeMu               sync.Mutex
-	probeAttempts         map[string]probeAttempt
-	warmupResetWake       chan struct{}
+	mu                  sync.Mutex
+	configMu            sync.Mutex
+	runMu               sync.Mutex
+	runner              TaskRunner
+	rootCtx             context.Context
+	cancel              context.CancelFunc
+	cfg                 config.Config
+	hostCallbacks       host.HostCallbacks
+	clock               Clock
+	sleeper             Sleeper
+	management          *management.Handler
+	state               *stateRepository
+	latestSnapshotSet   *apply.SnapshotSet
+	stateCacheOverride  string
+	latestProbeOutcomes []management.ProbeOutcome
+	worker              *tickerWorker
+	shutdown            bool
+	rateLimiter         rateLimitTracker
+	rateLimitWake       chan struct{}
+	rateLimitDone       chan struct{}
+	router              poolRouter
+	probeMu             sync.Mutex
+	probeAttempts       map[string]probeAttempt
+	warmupResetWake     chan struct{}
+	autoApplyWake       chan struct{}
+	scheduleMu          sync.Mutex
+	scheduleState       adaptiveScheduleState
 }
 
 // New creates an initialized Runtime instance.
@@ -61,18 +65,19 @@ func New(options Options) *Runtime {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	rt := &Runtime{
-		rootCtx:               ctx,
-		cancel:                cancel,
-		cfg:                   config.Default(),
-		hostCallbacks:         options.Host,
-		clock:                 clock,
-		sleeper:               sleeper,
-		rateLimiter:           newRateLimitTracker(),
-		rateLimitWake:         make(chan struct{}, 1),
-		rateLimitDone:         make(chan struct{}),
-		router:                newPoolRouter(),
-		probeAttempts:         make(map[string]probeAttempt),
-		warmupResetWake:       make(chan struct{}, 1),
+		rootCtx:         ctx,
+		cancel:          cancel,
+		cfg:             config.Default(),
+		hostCallbacks:   options.Host,
+		clock:           clock,
+		sleeper:         sleeper,
+		rateLimiter:     newRateLimitTracker(),
+		rateLimitWake:   make(chan struct{}, 1),
+		rateLimitDone:   make(chan struct{}),
+		router:          newPoolRouter(),
+		probeAttempts:   make(map[string]probeAttempt),
+		warmupResetWake: make(chan struct{}, 1),
+		autoApplyWake:   make(chan struct{}, 1),
 	}
 	if strings.TrimSpace(options.StateCachePath) != "" {
 		rt.cfg.StateCachePath = options.StateCachePath
@@ -412,20 +417,12 @@ func (r *Runtime) runAuto(ctx context.Context) error {
 	}
 	defer cleanup()
 
-	// Schedule window values are user-facing local wall-clock times. Keep the
-	// clock's location here so the backend evaluates the same local time shown
-	// by the management UI; persisted timestamps remain UTC elsewhere.
 	now := r.clock.Now()
-
-	if !state.IsInScheduleWindow(now, sched) {
-		return nil
-	}
-
-	last := r.state.LastAutoApplyAt()
 	r.mu.Lock()
 	interval := r.cfg.Interval
 	r.mu.Unlock()
-	if interval > 0 && !last.IsZero() && now.Sub(last) < interval {
+	plan := r.evaluateAutoSchedule(now.UTC(), interval, true)
+	if !plan.ShouldRunNow {
 		return nil
 	}
 
@@ -448,6 +445,8 @@ func (r *Runtime) runAuto(ctx context.Context) error {
 	if err := r.persistLastAutoApplyAt(taskCtx, completedAt); err != nil {
 		return err
 	}
+	r.resetAdaptiveScheduleState()
+	r.signalAutoScheduleWorker()
 	return nil
 }
 
@@ -461,22 +460,82 @@ func (r *Runtime) persistLastAutoApplyAt(ctx context.Context, at time.Time) erro
 	return nil
 }
 
-func (r *Runtime) nextAutoApplyWait(interval time.Duration) time.Duration {
+func (r *Runtime) signalAutoScheduleWorker() {
+	if r.autoApplyWake == nil {
+		return
+	}
+	select {
+	case r.autoApplyWake <- struct{}{}:
+	default:
+	}
+}
+
+func (r *Runtime) recordRequestActivity(now time.Time) {
+	if store := r.state.StoreOrNil(); store != nil {
+		store.RecordRequestActivity(now)
+	}
+	r.signalAutoScheduleWorker()
+}
+
+func (r *Runtime) resetAdaptiveScheduleState() {
+	r.scheduleMu.Lock()
+	r.scheduleState = adaptiveScheduleState{}
+	r.scheduleMu.Unlock()
+}
+
+func (r *Runtime) latchRetryDeadline(nextAt time.Time) {
+	r.scheduleMu.Lock()
+	r.scheduleState.nextRunAt = nextAt.UTC()
+	r.scheduleMu.Unlock()
+}
+
+func (r *Runtime) evaluateAutoSchedule(now time.Time, interval time.Duration, forDirectAutoCall bool) AdaptiveScheduleSnapshot {
 	if interval <= 0 {
 		interval = 15 * time.Minute
 	}
 	last := r.state.LastAutoApplyAt()
-	if last.IsZero() {
-		return time.Second
+	store := r.state.StoreOrNil()
+	var summary state.RequestActivitySummary
+	hasQuotaEvidence := false
+	if store != nil {
+		burstWindow := min(5*time.Minute, max(time.Minute, interval/3))
+		summary = store.SummarizeRequestActivity(now, interval, burstWindow, last)
+		hasQuotaEvidence = store.HasQuotaEvidence()
 	}
-	remaining := interval - r.clock.Now().UTC().Sub(last)
-	// A persisted timestamp ahead of the local clock (manual clock correction)
-	// must not postpone scheduling for longer than one interval.
-	remaining = min(remaining, interval)
-	if remaining < time.Second {
-		return time.Second
+
+	r.scheduleMu.Lock()
+	defer r.scheduleMu.Unlock()
+	snap, nextState := evaluateAdaptivePlan(adaptiveEvalInput{
+		now:               now,
+		interval:          interval,
+		lastAutoApplyAt:   last,
+		hasQuotaEvidence:  hasQuotaEvidence,
+		summary:           summary,
+		latched:           r.scheduleState,
+		forDirectAutoCall: forDirectAutoCall,
+	})
+	if !forDirectAutoCall {
+		r.scheduleState = nextState
 	}
-	return remaining
+	return snap
+}
+
+func (r *Runtime) evaluateWorkerStep(now time.Time, interval time.Duration) (AdaptiveScheduleSnapshot, time.Duration, bool) {
+	r.mu.Lock()
+	enabled := r.cfg.Enabled && r.cfg.AutoApply
+	r.mu.Unlock()
+	sched := r.state.ScheduleConfig()
+	if !enabled || sched.Paused {
+		return AdaptiveScheduleSnapshot{Mode: ScheduleModeIdle}, 0, false
+	}
+	plan := r.evaluateAutoSchedule(now.UTC(), interval, false)
+	if plan.ShouldRunNow {
+		return plan, 0, true
+	}
+	if plan.NextRunAt.IsZero() {
+		return plan, 0, false
+	}
+	return plan, max(plan.NextWait, time.Second), true
 }
 
 // Config returns the current configuration snapshot.
@@ -538,8 +597,22 @@ func (r *Runtime) Diagnostics(ctx context.Context) (map[string]any, error) {
 	r.mu.Unlock()
 	lastAuto := r.state.LastAutoApplyAt()
 	sched := r.state.ScheduleConfig()
-	nextWait := r.nextAutoApplyWait(cfg.Interval)
-	nextRunAt := r.clock.Now().UTC().Add(nextWait)
+	nowUTC := r.clock.Now().UTC()
+	plan := r.evaluateAutoSchedule(nowUTC, cfg.Interval, false)
+	nextWaitStr := ""
+	nextRunAtStr := ""
+	if cfg.Enabled && cfg.AutoApply && !sched.Paused && !plan.NextRunAt.IsZero() {
+		nextWaitStr = plan.NextWait.String()
+		nextRunAtStr = plan.NextRunAt.Format(time.RFC3339)
+	}
+	targetIntervalStr := ""
+	if plan.TargetInterval > 0 {
+		targetIntervalStr = plan.TargetInterval.String()
+	}
+	var lastRequestAtStr any
+	if !plan.LastRequestAt.IsZero() {
+		lastRequestAtStr = plan.LastRequestAt.Format(time.RFC3339)
+	}
 
 	emailsByAuthIndex := r.currentSnapshotEmails()
 	activeCooldowns := make([]map[string]any, 0)
@@ -547,7 +620,7 @@ func (r *Runtime) Diagnostics(ctx context.Context) (map[string]any, error) {
 	cachePath := r.state.Path()
 	if store := r.state.StoreOrNil(); store != nil {
 		loadErrors = store.LoadErrors()
-		now := r.clock.Now().UTC()
+		now := nowUTC
 		for _, c := range store.GetCooldowns() {
 			if now.Before(c.CooldownUntil) {
 				entry := map[string]any{
@@ -579,15 +652,22 @@ func (r *Runtime) Diagnostics(ctx context.Context) (map[string]any, error) {
 			"enabled":    cfg.Enabled,
 		},
 		"scheduler": map[string]any{
-			"interval":           cfg.Interval.String(),
-			"last_auto_apply_at": lastAuto,
-			"next_wait":          nextWait.String(),
-			"next_run_at":        nextRunAt.Format(time.RFC3339),
-			"worker_active":      workerActive,
-			"paused":             sched.Paused,
-			"window_enabled":     sched.WindowEnabled,
-			"window_start":       sched.WindowStart,
-			"window_end":         sched.WindowEnd,
+			"interval":             cfg.Interval.String(),
+			"mode":                 string(plan.Mode),
+			"target_interval":      targetIntervalStr,
+			"last_auto_apply_at":   lastAuto,
+			"next_wait":            nextWaitStr,
+			"next_run_at":          nextRunAtStr,
+			"worker_active":        workerActive,
+			"paused":               sched.Paused,
+			"prev_window_requests": plan.PrevWindowCount,
+			"prev_window_rate_rpm": plan.PrevWindowRateRPM,
+			"curr_window_requests": plan.CurrWindowCount,
+			"curr_window_rate_rpm": plan.CurrWindowRateRPM,
+			"requests_since_last":  plan.SinceLastCount,
+			"baseline_requests":    plan.BaselineRequests,
+			"activity_ratio":       plan.ActivityRatio,
+			"last_request_at":      lastRequestAtStr,
 		},
 		"active_cooldowns":      activeCooldowns,
 		"pending_429":           pending429,
@@ -660,6 +740,9 @@ func (r *Runtime) Shutdown(ctx context.Context) error {
 	if err := stopWorker(ctx, worker); err != nil {
 		return err
 	}
+	if store := r.state.StoreOrNil(); store != nil {
+		_ = store.SaveRuntimeAtomic(ctx)
+	}
 	select {
 	case <-r.rateLimitDone:
 		return nil
@@ -713,6 +796,8 @@ func (r *Runtime) replaceConfig(ctx context.Context, cfg config.Config) error {
 	r.trimRequestHistory(ctx)
 	r.signalRateLimitWorker()
 	r.signalWarmupResetWatcher()
+	r.resetAdaptiveScheduleState()
+	r.signalAutoScheduleWorker()
 
 	if !needRestartWorker {
 		return nil
@@ -905,9 +990,6 @@ func (r *Runtime) GetScheduleConfig(ctx context.Context) (config.ScheduleConfig,
 
 // SetScheduleConfig updates the dynamic schedule configuration and persists it to the state store.
 func (r *Runtime) SetScheduleConfig(ctx context.Context, cfg config.ScheduleConfig) error {
-	if err := config.ValidateScheduleWindow(cfg.WindowStart, cfg.WindowEnd); err != nil {
-		return err
-	}
 	r.configMu.Lock()
 	defer r.configMu.Unlock()
 	if _, err := r.Config(); err != nil {
@@ -919,6 +1001,7 @@ func (r *Runtime) SetScheduleConfig(ctx context.Context, cfg config.ScheduleConf
 	r.mu.Lock()
 	r.cfg.Schedule = cfg
 	r.mu.Unlock()
+	r.signalAutoScheduleWorker()
 	return nil
 }
 
@@ -1075,7 +1158,6 @@ func registrationResult() RegisterResult {
 		},
 	}
 }
-
 
 func (r *Runtime) triggerCooldown(ctx context.Context, authIndex, modelGroup, model string) error {
 	cfg, err := r.Config()

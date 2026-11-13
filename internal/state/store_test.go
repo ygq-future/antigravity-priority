@@ -912,10 +912,7 @@ func TestStore_ScheduleConfig_DynamicConfig_Sync(t *testing.T) {
 		AutoApply: true,
 		Interval:  "15m",
 		Schedule: state.ScheduleConfig{
-			Paused:        false,
-			WindowEnabled: true,
-			WindowStart:   "08:00",
-			WindowEnd:     "22:00",
+			Paused: false,
 		},
 	}
 	store.SetDynamicConfig(dyn)
@@ -925,16 +922,13 @@ func TestStore_ScheduleConfig_DynamicConfig_Sync(t *testing.T) {
 
 	// Verify scheduleConfig is in sync
 	sched := store.GetScheduleConfig()
-	if sched.Paused || !sched.WindowEnabled {
+	if sched.Paused {
 		t.Fatalf("expected scheduleConfig to match dynamic config, got %+v", sched)
 	}
 
 	// 2. Pause schedule via SetScheduleConfig
 	store.SetScheduleConfig(state.ScheduleConfig{
-		Paused:        true,
-		WindowEnabled: true,
-		WindowStart:   "08:00",
-		WindowEnd:     "22:00",
+		Paused: true,
 	})
 	if err := store.SaveAtomic(ctx); err != nil {
 		t.Fatalf("SaveAtomic failed: %v", err)

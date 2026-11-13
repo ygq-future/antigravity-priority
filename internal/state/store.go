@@ -9,6 +9,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -133,18 +134,18 @@ const (
 // An empty ModelGroup means account scope; a non-empty ModelGroup with an
 // empty Model means pool scope; both set means model scope.
 type CooldownEntry struct {
-	AuthIndex               string      `json:"auth_index"`
-	ModelGroup              string      `json:"model_group,omitempty"`
-	Model                   string      `json:"model,omitempty"`
-	ProbeModel              string      `json:"probe_model,omitempty"`
-	FailureKind             FailureKind `json:"failure_kind,omitempty"`
-	StatusCode              int         `json:"status_code,omitempty"`
-	TriggeredAt             time.Time   `json:"triggered_at"`
-	CooldownUntil           time.Time   `json:"cooldown_until"`
-	NextRecoveryAt          time.Time   `json:"next_recovery_at,omitzero"`
-	BackoffStep             int         `json:"backoff_step,omitempty"`
-	ProbeEnabled            bool        `json:"probe_enabled,omitempty"`
-	Reason        string      `json:"reason"`
+	AuthIndex      string      `json:"auth_index"`
+	ModelGroup     string      `json:"model_group,omitempty"`
+	Model          string      `json:"model,omitempty"`
+	ProbeModel     string      `json:"probe_model,omitempty"`
+	FailureKind    FailureKind `json:"failure_kind,omitempty"`
+	StatusCode     int         `json:"status_code,omitempty"`
+	TriggeredAt    time.Time   `json:"triggered_at"`
+	CooldownUntil  time.Time   `json:"cooldown_until"`
+	NextRecoveryAt time.Time   `json:"next_recovery_at,omitzero"`
+	BackoffStep    int         `json:"backoff_step,omitempty"`
+	ProbeEnabled   bool        `json:"probe_enabled,omitempty"`
+	Reason         string      `json:"reason"`
 }
 
 // PriorityRulesConfig holds priority rule settings for DynamicConfig.
@@ -152,22 +153,24 @@ type PriorityRulesConfig = config.PriorityRulesConfig
 
 // Store manages the in-memory and on-disk state cache document.
 type Store struct {
-	mu              sync.RWMutex
-	saveMu          sync.Mutex
-	paths           Paths
-	entries         map[string]Entry
-	planTiers       map[string]PlanTierRecord
-	latestAudit     string
-	latestResult    []byte
-	runHistory      []byte
-	scheduleConfig  *ScheduleConfig
-	dynamicConfig   *DynamicConfig
-	lastAutoApplyAt time.Time
-	warmupLane      WarmupLane
-	cooldowns       map[string]CooldownEntry
-	requestHistory  []RequestHistoryEntry
-	warmupCompleted map[string]time.Time
-	loadErrors      []string
+	mu                 sync.RWMutex
+	saveMu             sync.Mutex
+	paths              Paths
+	entries            map[string]Entry
+	planTiers          map[string]PlanTierRecord
+	latestAudit        string
+	latestResult       []byte
+	runHistory         []byte
+	scheduleConfig     *ScheduleConfig
+	dynamicConfig      *DynamicConfig
+	lastAutoApplyAt    time.Time
+	warmupLane         WarmupLane
+	cooldowns          map[string]CooldownEntry
+	requestHistory     []RequestHistoryEntry
+	warmupCompleted    map[string]time.Time
+	requestActivity    []MinuteBucket
+	recentRequestTimes []time.Time
+	loadErrors         []string
 }
 
 // stateDocument is the main quota/health document. Run and request history
@@ -210,11 +213,13 @@ func (l WarmupLane) IsZero() bool {
 
 // runtimeDocument holds low-frequency scheduling configuration.
 type runtimeDocument struct {
-	SchemaVersion   int             `json:"schema_version"`
-	ScheduleConfig  *ScheduleConfig `json:"schedule_config,omitempty"`
-	DynamicConfig   *DynamicConfig  `json:"app_config,omitempty"`
-	LastAutoApplyAt time.Time       `json:"last_auto_apply_at,omitzero"`
-	WarmupLane      *WarmupLane     `json:"warmup_lane,omitempty"`
+	SchemaVersion      int             `json:"schema_version"`
+	ScheduleConfig     *ScheduleConfig `json:"schedule_config,omitempty"`
+	DynamicConfig      *DynamicConfig  `json:"app_config,omitempty"`
+	LastAutoApplyAt    time.Time       `json:"last_auto_apply_at,omitzero"`
+	WarmupLane         *WarmupLane     `json:"warmup_lane,omitempty"`
+	RequestActivity    []MinuteBucket  `json:"request_activity,omitempty"`
+	RecentRequestTimes []time.Time     `json:"recent_request_times,omitempty"`
 }
 
 // runsDocument holds the latest execution result and bounded run history.
@@ -358,6 +363,7 @@ func Load(ctx context.Context, path string) (*Store, error) {
 		}
 		store.removeLegacy(ctx, legacy, paths)
 	}
+	store.seedActivityFromRequestHistory()
 
 	return store, nil
 }
@@ -471,6 +477,8 @@ func (s *Store) applyRuntimeDocument(doc runtimeDocument) {
 			NextAuth: doc.WarmupLane.NextAuth,
 		}
 	}
+	s.requestActivity = normalizeMinuteBuckets(doc.RequestActivity)
+	s.recentRequestTimes = normalizeRequestTimes(doc.RecentRequestTimes)
 }
 
 func (s *Store) applyRunsDocument(doc runsDocument) {
@@ -556,11 +564,13 @@ func (s *Store) SaveRuntimeAtomic(ctx context.Context) error {
 			lane = &cloned
 		}
 		return runtimeDocument{
-			SchemaVersion:   SchemaVersion,
-			ScheduleConfig:  s.scheduleConfig,
-			DynamicConfig:   s.dynamicConfig,
-			LastAutoApplyAt: s.lastAutoApplyAt,
-			WarmupLane:      lane,
+			SchemaVersion:      SchemaVersion,
+			ScheduleConfig:     s.scheduleConfig,
+			DynamicConfig:      s.dynamicConfig,
+			LastAutoApplyAt:    s.lastAutoApplyAt,
+			WarmupLane:         lane,
+			RequestActivity:    slices.Clone(s.requestActivity),
+			RecentRequestTimes: slices.Clone(s.recentRequestTimes),
 		}
 	})
 }

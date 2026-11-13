@@ -138,7 +138,6 @@ plugins:
 | :--- | :--- | :--- | :--- |
 | **后台定时配额校准 (`auto_apply`)** | `false` | 开 / 关 | 是否由后台定时器周期性向 Google 发起权威配额探测，自动校准实时消耗估算器。 |
 | **配额校准执行周期 (`interval`)** | `15m` | `5m`, `15m`, `30m`, `1h`, 自定义 | 自动探测与校准的运行周期。修改后立即重设定时器生效。 |
-| **生效时间区间 (`schedule_window`)** | `全天` | `HH:MM` 至 `HH:MM` | 每日生效时段（如 `09:00-23:00`，支持跨午夜如 `22:00-06:00`），非时段内自动休眠。 |
 | **最大探测并发数 (`max_concurrency`)** | `6` | `1 ~ 32` | 向 Google 配额接口发起并发探测的最大协程数。 |
 | **紧迫度分档容差 (`urgency_tolerance`)** | `0.05` | `0.00 ~ 0.50` | 紧迫度差距在此容差内的账号分配相同优先级整数进行平级轮询。 |
 | **自适应时序样本容量 (`quota_sample_capacity`)** | `6` | `2 ~ 30` | FIFO 保留的历史探测样本数，同时用于消耗趋势查看与燃尽率学习。 |
@@ -180,9 +179,9 @@ plugins:
 - `POST /v0/management/plugins/antigravity-priority/runtime-config`
   - 提交更新运行时配置并热生效。
 - `GET /v0/management/plugins/antigravity-priority/schedule/config`
-  - 获取自动调度时间区间与暂停状态。
+  - 获取自动调度暂停状态。
 - `POST /v0/management/plugins/antigravity-priority/schedule/config`
-  - 动态切换自动调度暂停/恢复或更新生效时间区间。
+  - 动态切换自动调度暂停/恢复状态。
 - `GET /v0/management/plugins/antigravity-priority/diagnostics`
   - 导出调度器状态、计划快照、冷却与 429 风暴、运行历史、当前策略与四类缓存文件状态；账号身份使用完整 email，令牌、密钥及持久化审计字段保持脱敏。
 - `POST /v0/management/plugins/antigravity-priority/sync`
