@@ -2,6 +2,7 @@ package management
 
 const templateScriptBoot = `        // Initialize application with deterministic dependency ordering and auth circuit-breaker
         async function initializeApp() {
+            restoreSavedModelSelection();
             applyLanguage();
             if (isAuthBlocked) {
                 openKeyModal();

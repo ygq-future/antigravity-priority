@@ -62,6 +62,55 @@ const templateScriptControls = `        // Custom Select: shared open/close + vi
         }
 
         // Custom Select: Model Selector Dropdown
+        const MODEL_SELECT_STORAGE_KEY = "agp_selected_model";
+        const DEFAULT_SELECTED_MODEL = "gemini-3.8-flash-high";
+
+        function getSavedSelectedModel() {
+            try {
+                if (typeof localStorage !== "undefined") {
+                    const saved = localStorage.getItem(MODEL_SELECT_STORAGE_KEY);
+                    if (saved && String(saved).trim()) {
+                        return String(saved).trim();
+                    }
+                }
+            } catch (_) {}
+            return "";
+        }
+
+        function saveSelectedModel(modelId) {
+            const clean = String(modelId || "").trim();
+            if (!clean) return;
+            try {
+                if (typeof localStorage !== "undefined") {
+                    localStorage.setItem(MODEL_SELECT_STORAGE_KEY, clean);
+                }
+            } catch (_) {}
+        }
+
+        function applySelectedModelToDom(modelId) {
+            const clean = String(modelId || "").trim() || DEFAULT_SELECTED_MODEL;
+            const modelInput = document.getElementById("modelSelect");
+            if (modelInput) modelInput.value = clean;
+
+            const menu = document.getElementById("customModelSelectMenu");
+            if (menu && typeof menu.querySelectorAll === "function") {
+                menu.querySelectorAll(".custom-select-option").forEach(opt => {
+                    const isSelected = opt.getAttribute("data-value") === clean;
+                    opt.classList.toggle("selected", isSelected);
+                    opt.setAttribute("aria-selected", isSelected ? "true" : "false");
+                });
+            }
+
+            updateCustomModelSelectDisplay();
+            return clean;
+        }
+
+        function restoreSavedModelSelection() {
+            const savedModel = getSavedSelectedModel();
+            if (!savedModel) return;
+            applySelectedModelToDom(savedModel);
+        }
+
         function toggleCustomModelSelect(event) {
             if (event) event.stopPropagation();
             closeAllCustomSelects("customModelSelect");
@@ -72,19 +121,8 @@ const templateScriptControls = `        // Custom Select: shared open/close + vi
             if (event) {
                 event.stopPropagation();
             }
-            const modelInput = document.getElementById("modelSelect");
-            if (modelInput) modelInput.value = modelId;
-
-            const menu = document.getElementById("customModelSelectMenu");
-            if (menu && typeof menu.querySelectorAll === "function") {
-                menu.querySelectorAll(".custom-select-option").forEach(opt => {
-                    const isSelected = opt.getAttribute("data-value") === modelId;
-                    opt.classList.toggle("selected", isSelected);
-                    opt.setAttribute("aria-selected", isSelected ? "true" : "false");
-                });
-            }
-
-            updateCustomModelSelectDisplay();
+            const applied = applySelectedModelToDom(modelId);
+            saveSelectedModel(applied);
             closeAllCustomSelects();
             renderDashboard();
         }
@@ -135,7 +173,7 @@ const templateScriptControls = `        // Custom Select: shared open/close + vi
                 });
             }
             const modelInput = document.getElementById("modelSelect");
-            const activeModel = (modelInput && modelInput.value) || "gemini-3.8-flash-high";
+            const activeModel = (modelInput && modelInput.value) || DEFAULT_SELECTED_MODEL;
             const pill = document.getElementById("customModelExcludedPill");
             if (pill) {
                 const excluded = isModelExcluded(activeModel);
@@ -177,7 +215,7 @@ const templateScriptControls = `        // Custom Select: shared open/close + vi
 
         function updateCustomModelSelectDisplay() {
             const modelInput = document.getElementById("modelSelect");
-            const modelId = (modelInput && modelInput.value) || "gemini-3.8-flash-high";
+            const modelId = (modelInput && modelInput.value) || DEFAULT_SELECTED_MODEL;
             const pool = resolveModelPool(modelId);
             const badge = document.getElementById("customModelSelectBadge");
             const label = document.getElementById("customModelSelectLabel");
@@ -211,7 +249,18 @@ const templateScriptControls = `        // Custom Select: shared open/close + vi
                 else geminiModels.push(m);
             });
 
-            const currentModel = (document.getElementById("modelSelect") && document.getElementById("modelSelect").value) || "gemini-3.8-flash-high";
+            const modelInput = document.getElementById("modelSelect");
+            const savedModel = getSavedSelectedModel();
+            let currentModel = savedModel || (modelInput && modelInput.value) || DEFAULT_SELECTED_MODEL;
+            if (!models.some(m => m && m.id === currentModel)) {
+                currentModel = models.some(m => m && m.id === DEFAULT_SELECTED_MODEL)
+                    ? DEFAULT_SELECTED_MODEL
+                    : models[0].id;
+                if (savedModel) {
+                    saveSelectedModel(currentModel);
+                }
+            }
+            if (modelInput) modelInput.value = currentModel;
             let html = "";
 
             function renderGroup(titleKey, fallbackTitle, groupModels, poolClass, poolBadgeText) {
@@ -234,7 +283,7 @@ const templateScriptControls = `        // Custom Select: shared open/close + vi
             renderGroup("poolClaudeGPT", "Claude & GPT 额度池", claudeModels, "badge-claude", t("badgeClaudeGPT") || "Claude/GPT");
 
             menu.innerHTML = html;
-            syncModelExclusionDropdownUI();
+            updateCustomModelSelectDisplay();
         }
         function populateWarmupModelDropdowns(models) {
             if (!Array.isArray(models) || models.length === 0) return;

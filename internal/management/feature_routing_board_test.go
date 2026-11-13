@@ -910,3 +910,197 @@ apiFetch = async function(path, opts) {
 `
 	runNodeFixture(t, node, "model-exclude-toggle.js", harness)
 }
+
+func TestModelSelector_PersistsAndRestoresSelection_NodeHarness(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not available; model selector persistence is checked in the Node-enabled verification environment")
+	}
+
+	harness := `
+const storage = {
+    items: {},
+    getItem: function(key) {
+        return Object.prototype.hasOwnProperty.call(this.items, key) ? this.items[key] : null;
+    },
+    setItem: function(key, value) { this.items[key] = String(value); },
+    removeItem: function(key) { delete this.items[key]; }
+};
+const localStorage = storage;
+let currentLang = "zh-CN";
+let isAuthBlocked = false;
+let dynamicConfig = { excluded_models: [] };
+let latestDiagnostics = null;
+let scheduleConfig = null;
+
+function makeClassList() {
+    return {
+        classes: [],
+        add: function(c) { if (this.classes.indexOf(c) < 0) this.classes.push(c); },
+        remove: function(c) { this.classes = this.classes.filter(function(x) { return x !== c; }); },
+        contains: function(c) { return this.classes.indexOf(c) >= 0; },
+        toggle: function(c, force) {
+            if (force === undefined) force = !this.contains(c);
+            if (force) this.add(c); else this.remove(c);
+        }
+    };
+}
+
+function element(initial) {
+    var el = Object.assign({
+        hidden: false,
+        disabled: false,
+        textContent: "",
+        _innerHTML: "",
+        children: [],
+        attributes: {},
+        style: {},
+        classList: makeClassList(),
+        appendChild: function(child) {
+            this.children.push(child);
+            if (child && child.innerHTML) this._innerHTML += child.innerHTML;
+        },
+        setAttribute: function(k, v) { this.attributes[k] = String(v); },
+        getAttribute: function(k) {
+            return Object.prototype.hasOwnProperty.call(this.attributes, k) ? this.attributes[k] : null;
+        },
+        querySelector: function() { return null; },
+        querySelectorAll: function() { return []; }
+    }, initial || {});
+    Object.defineProperty(el, "innerHTML", {
+        get: function() { return this._innerHTML; },
+        set: function(val) {
+            this._innerHTML = val;
+            if (val === "") { this.children = []; }
+        }
+    });
+    return el;
+}
+
+function makeStaticOptions() {
+    return [
+        element({ attributes: { "data-value": "gemini-3.8-flash-high", "data-pool": "gemini", "aria-selected": "true" }, classList: Object.assign(makeClassList(), { classes: ["selected"] }) }),
+        element({ attributes: { "data-value": "gemini-4-argon-high", "data-pool": "argon", "aria-selected": "false" } }),
+        element({ attributes: { "data-value": "claude-sonnet-5-5-high", "data-pool": "claude_gpt", "aria-selected": "false" } })
+    ];
+}
+
+let staticOptions = makeStaticOptions();
+const elements = {
+    toastRoot: element(),
+    modelSelect: element({ value: "gemini-3.8-flash-high" }),
+    customModelSelect: element(),
+    customModelSelectMenu: element({ hidden: true }),
+    customModelSelectBadge: element(),
+    customModelSelectLabel: element({ textContent: "gemini-3.8-flash-high" }),
+    customModelExcludedPill: element({ hidden: true }),
+    valLastAudit: element(),
+    valNextProbe: element(),
+    valTotalCreds: element(),
+    valTotalDesc: element(),
+    valBoosted: element(),
+    valDepleted: element(),
+    credentialsContainer: element()
+};
+elements.customModelSelectMenu.querySelectorAll = function(sel) {
+    if (sel === ".custom-select-option") return staticOptions;
+    return [];
+};
+elements.credentialsContainer.querySelectorAll = function(sel) {
+    return sel === ".cred-card" ? this.children : [];
+};
+
+const document = {
+    getElementById: function(id) { return elements[id] || null; },
+    createElement: function(tag) { return element({ tagName: tag }); },
+    querySelectorAll: function() { return []; },
+    addEventListener: function() {}
+};
+const window = {
+    addEventListener: function() {},
+    innerHeight: 800
+};
+function showToast() {}
+function escapeHTML(str) { return String(str || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
+` + featureOverviewTranslations + `
+function t(key) {
+    return (OVERVIEW_ZH["zh-CN"] && OVERVIEW_ZH["zh-CN"][key]) || key;
+}
+` + templateScriptAccountDisplay + templateScriptOverviewActionsCore + templateScriptOverviewRender + templateScriptOverviewReset + templateScriptControls + templateScriptProbeSchedule + `
+function assertEqual(actual, expected, msg) {
+    if (actual !== expected) {
+        throw new Error(msg + ": got " + JSON.stringify(actual) + ", want " + JSON.stringify(expected));
+    }
+}
+
+const snapshotModels = [
+    { id: "gemini-3.8-flash-high", display_name: "Gemini 3.8 Flash High", quota_pool: "gemini" },
+    { id: "gemini-4-argon-high", display_name: "Gemini 4 Argon High", quota_pool: "argon" },
+    { id: "claude-sonnet-5-5-high", display_name: "Claude Sonnet 5.5 High", quota_pool: "claude_gpt" },
+    { id: "claude-opus-5-5-custom", display_name: "Claude Opus 5.5 Custom", quota_pool: "claude_gpt" }
+];
+latestSnapshot = {
+    models: snapshotModels,
+    groups: {
+        gemini: { items: [{ auth_index: "auth-g", email: "g@example.com", routing_status: "active", target: { priority: 100 } }] },
+        argon: { items: [{ auth_index: "auth-a", email: "a@example.com", routing_status: "active", target: { priority: 100 } }] },
+        claude_gpt: { items: [{ auth_index: "auth-c", email: "c@example.com", routing_status: "active", target: { priority: 100 } }] }
+    }
+};
+
+// 1. Selecting a model persists to localStorage and updates trigger + options
+selectModel("claude-sonnet-5-5-high", { stopPropagation: function() {} });
+assertEqual(storage.getItem(MODEL_SELECT_STORAGE_KEY), "claude-sonnet-5-5-high", "persisted model");
+assertEqual(elements.modelSelect.value, "claude-sonnet-5-5-high", "hidden input after select");
+assertEqual(elements.customModelSelectLabel.textContent, "claude-sonnet-5-5-high", "label after select");
+assertEqual(elements.customModelSelectBadge.textContent, "Claude/GPT", "badge after select");
+assertEqual(staticOptions[2].classList.contains("selected"), true, "selected option class");
+assertEqual(staticOptions[0].classList.contains("selected"), false, "previous option unselected");
+
+// 2. Simulate page reload: reset DOM to static HTML defaults and restore from localStorage
+elements.modelSelect.value = "gemini-3.8-flash-high";
+elements.customModelSelectLabel.textContent = "gemini-3.8-flash-high";
+elements.customModelSelectBadge.textContent = "Gemini";
+staticOptions = makeStaticOptions();
+window.cpaAvailableModels = undefined;
+
+restoreSavedModelSelection();
+assertEqual(elements.modelSelect.value, "claude-sonnet-5-5-high", "restored model input on boot");
+assertEqual(elements.customModelSelectLabel.textContent, "claude-sonnet-5-5-high", "restored label on boot");
+assertEqual(elements.customModelSelectBadge.textContent, "Claude/GPT", "restored badge on boot");
+assertEqual(staticOptions[2].classList.contains("selected"), true, "restored selected class on boot");
+assertEqual(staticOptions[2].getAttribute("aria-selected"), "true", "restored aria-selected on boot");
+
+// Snapshot menu rebuild preserves restored selection
+updateModelDropdownFromSnapshot(snapshotModels);
+assertEqual(elements.modelSelect.value, "claude-sonnet-5-5-high", "kept model after snapshot update");
+if (elements.customModelSelectMenu.innerHTML.indexOf('data-value="claude-sonnet-5-5-high"') < 0 ||
+    elements.customModelSelectMenu.innerHTML.indexOf('custom-select-option selected" data-value="claude-sonnet-5-5-high"') < 0) {
+    throw new Error("snapshot menu must mark saved model selected, got: " + elements.customModelSelectMenu.innerHTML);
+}
+renderDashboard();
+if (elements.credentialsContainer.innerHTML.indexOf("c***@example.com") < 0) {
+    throw new Error("dashboard must render claude_gpt pool for restored model, got: " + elements.credentialsContainer.innerHTML);
+}
+
+// 3. Dynamic snapshot-only model persists across reload and resolves pool once snapshot arrives
+selectModel("claude-opus-5-5-custom", { stopPropagation: function() {} });
+elements.modelSelect.value = "gemini-3.8-flash-high";
+window.cpaAvailableModels = undefined;
+restoreSavedModelSelection();
+assertEqual(elements.modelSelect.value, "claude-opus-5-5-custom", "restored snapshot-only model");
+updateModelDropdownFromSnapshot(snapshotModels);
+assertEqual(elements.modelSelect.value, "claude-opus-5-5-custom", "kept snapshot-only model after snapshot");
+assertEqual(elements.customModelSelectBadge.textContent, "Claude/GPT", "resolved dynamic pool badge after snapshot");
+
+// 4. Obsolete model in localStorage falls back cleanly to default model present in snapshot
+storage.setItem(MODEL_SELECT_STORAGE_KEY, "removed-legacy-model");
+elements.modelSelect.value = "gemini-3.8-flash-high";
+restoreSavedModelSelection();
+updateModelDropdownFromSnapshot(snapshotModels);
+assertEqual(elements.modelSelect.value, "gemini-3.8-flash-high", "fallback to default model");
+assertEqual(storage.getItem(MODEL_SELECT_STORAGE_KEY), "gemini-3.8-flash-high", "stale storage overwritten by fallback");
+assertEqual(elements.customModelSelectBadge.textContent, "Gemini", "fallback badge");
+`
+	runNodeFixture(t, node, "model-selector-persistence.js", harness)
+}
