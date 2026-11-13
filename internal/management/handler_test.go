@@ -109,6 +109,21 @@ func (m *mockRunner) SetWarmupCredentialState(ctx context.Context, authIndex, gr
 	return nil
 }
 
+func (m *mockRunner) SetModelExcluded(ctx context.Context, model string, excluded bool) ([]string, error) {
+	norm := strings.ToLower(strings.TrimSpace(model))
+	var next []string
+	for _, existing := range m.dynamicConfig.ExcludedModels {
+		if strings.ToLower(strings.TrimSpace(existing)) != norm {
+			next = append(next, existing)
+		}
+	}
+	if excluded && norm != "" {
+		next = append(next, norm)
+	}
+	m.dynamicConfig.ExcludedModels = next
+	return append([]string(nil), next...), nil
+}
+
 func (m *mockRunner) GetSamples(ctx context.Context, authIndex, modelGroup string) ([]state.QuotaSample, error) {
 	return []state.QuotaSample{
 		{
@@ -903,5 +918,73 @@ func TestHandler_WarmupCredential_EnableDisable(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for an unknown group, got %d", rec.Code)
+	}
+}
+
+func TestHandler_ExcludedModels_GetAndSet(t *testing.T) {
+	runner := &mockRunner{}
+	handler := management.NewHandler(runner)
+
+	// 1. Initial GET /excluded-models returns empty array
+	getReq := httptest.NewRequest(http.MethodGet, "/excluded-models", nil)
+	getRec := httptest.NewRecorder()
+	handler.ServeHTTP(getRec, getReq)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 on GET, got %d, body=%s", getRec.Code, getRec.Body.String())
+	}
+	var getRes struct {
+		OK             bool     `json:"ok"`
+		ExcludedModels []string `json:"excluded_models"`
+	}
+	if err := json.Unmarshal(getRec.Body.Bytes(), &getRes); err != nil {
+		t.Fatalf("decode GET response: %v", err)
+	}
+	if !getRes.OK || len(getRes.ExcludedModels) != 0 {
+		t.Fatalf("expected ok=true and empty excluded_models, got %+v", getRes)
+	}
+
+	// 2. POST /v0/management/plugins/antigravity-priority/excluded-models excludes a model
+	postReq := httptest.NewRequest(
+		http.MethodPost,
+		"/v0/management/plugins/antigravity-priority/excluded-models",
+		strings.NewReader(`{"model":"Gemini-3-Flash","excluded":true}`),
+	)
+	postRec := httptest.NewRecorder()
+	handler.ServeHTTP(postRec, postReq)
+	if postRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 on POST exclude, got %d, body=%s", postRec.Code, postRec.Body.String())
+	}
+	var postRes struct {
+		OK             bool     `json:"ok"`
+		Model          string   `json:"model"`
+		Excluded       bool     `json:"excluded"`
+		ExcludedModels []string `json:"excluded_models"`
+	}
+	if err := json.Unmarshal(postRec.Body.Bytes(), &postRes); err != nil {
+		t.Fatalf("decode POST response: %v", err)
+	}
+	if !postRes.OK || postRes.Model != "gemini-3-flash" || !postRes.Excluded || len(postRes.ExcludedModels) != 1 || postRes.ExcludedModels[0] != "gemini-3-flash" {
+		t.Fatalf("unexpected POST exclude response: %+v", postRes)
+	}
+
+	// 3. POST restore removes the model
+	restoreReq := httptest.NewRequest(http.MethodPost, "/excluded-models", strings.NewReader(`{"model":"gemini-3-flash","excluded":false}`))
+	restoreRec := httptest.NewRecorder()
+	handler.ServeHTTP(restoreRec, restoreReq)
+	if restoreRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 on POST restore, got %d, body=%s", restoreRec.Code, restoreRec.Body.String())
+	}
+	if len(runner.dynamicConfig.ExcludedModels) != 0 {
+		t.Fatalf("expected empty excluded_models after restore, got %v", runner.dynamicConfig.ExcludedModels)
+	}
+
+	// 4. Invalid payloads return 400
+	for _, badBody := range []string{`{"model":"","excluded":true}`, `{"model":"gemini-3-flash"}`, `{bad`} {
+		badReq := httptest.NewRequest(http.MethodPost, "/excluded-models", strings.NewReader(badBody))
+		badRec := httptest.NewRecorder()
+		handler.ServeHTTP(badRec, badReq)
+		if badRec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 for body %s, got %d", badBody, badRec.Code)
+		}
 	}
 }

@@ -76,6 +76,12 @@ func TestModelSelector_MarkupAndBuiltInCatalog(t *testing.T) {
 	if !strings.Contains(StatusHTML, `id="scheduleStatusBadge"`) {
 		t.Fatal("StatusHTML must contain scheduleStatusBadge")
 	}
+	if !strings.Contains(StatusHTML, `class="model-exclude-btn"`) {
+		t.Fatal("StatusHTML must render model-exclude-btn inside model dropdown")
+	}
+	if !strings.Contains(StatusHTML, `id="customModelExcludedPill"`) {
+		t.Fatal("StatusHTML must include customModelExcludedPill trigger badge")
+	}
 }
 
 func TestIsModelEligible_RespectsBackendPoolEligibilityAndSupportedModels(t *testing.T) {
@@ -696,4 +702,211 @@ function snapshotWithPriorities(priorityA, priorityB) {
 `
 
 	runNodeFixture(t, node, "card-animation.js", harness)
+}
+
+func TestModelSelector_ExcludeToggleAndDashboardSync_NodeHarness(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not available; model exclusion dropdown behavior is checked in the Node-enabled verification environment")
+	}
+
+	harness := `
+const toastCalls = [];
+const apiCalls = [];
+let currentLang = "zh-CN";
+let isAuthBlocked = false;
+let dynamicConfig = { excluded_models: [] };
+let latestDiagnostics = null;
+let scheduleConfig = null;
+const EXCLUDED_MODELS_PATH = "/v0/management/plugins/antigravity-priority/excluded-models";
+
+function makeClassList() {
+    return {
+        classes: [],
+        add: function(c) { if (this.classes.indexOf(c) < 0) this.classes.push(c); },
+        remove: function(c) { this.classes = this.classes.filter(function(x) { return x !== c; }); },
+        contains: function(c) { return this.classes.indexOf(c) >= 0; },
+        toggle: function(c, force) {
+            if (force === undefined) force = !this.contains(c);
+            if (force) this.add(c); else this.remove(c);
+        }
+    };
+}
+
+function element(initial) {
+    var el = Object.assign({
+        hidden: false,
+        disabled: false,
+        textContent: "",
+        _innerHTML: "",
+        children: [],
+        attributes: {},
+        style: {},
+        classList: makeClassList(),
+        appendChild: function(child) {
+            this.children.push(child);
+            if (child && child.innerHTML) this._innerHTML += child.innerHTML;
+        },
+        setAttribute: function(k, v) { this.attributes[k] = String(v); },
+        getAttribute: function(k) {
+            return Object.prototype.hasOwnProperty.call(this.attributes, k) ? this.attributes[k] : null;
+        },
+        querySelector: function() { return null; },
+        querySelectorAll: function() { return []; }
+    }, initial || {});
+    Object.defineProperty(el, "innerHTML", {
+        get: function() { return this._innerHTML; },
+        set: function(val) {
+            this._innerHTML = val;
+            if (val === "") { this.children = []; }
+        }
+    });
+    return el;
+}
+
+// Minimal option/button DOM nodes tracked after updateModelDropdownFromSnapshot
+let optionNodes = [];
+const elements = {
+    toastRoot: element(),
+    modelSelect: element({ value: "gemini-3-flash" }),
+    customModelSelect: element(),
+    customModelSelectMenu: element({ hidden: false }),
+    customModelSelectBadge: element(),
+    customModelSelectLabel: element(),
+    customModelExcludedPill: element({ hidden: true }),
+    valLastAudit: element(),
+    valNextProbe: element(),
+    valTotalCreds: element(),
+    valTotalDesc: element(),
+    valBoosted: element(),
+    valDepleted: element(),
+    credentialsContainer: element()
+};
+elements.customModelSelectMenu.querySelectorAll = function(sel) {
+    if (sel === ".custom-select-option") return optionNodes;
+    return [];
+};
+elements.credentialsContainer.querySelectorAll = function(sel) {
+    return sel === ".cred-card" ? this.children : [];
+};
+
+const document = {
+    getElementById: function(id) { return elements[id] || null; },
+    createElement: function(tag) { return element({ tagName: tag }); },
+    querySelectorAll: function() { return []; },
+    addEventListener: function() {}
+};
+const window = {
+    addEventListener: function() {},
+    innerHeight: 800
+};
+function showToast(msg, type) { toastCalls.push({ msg: msg, type: type }); }
+function escapeHTML(str) { return String(str || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
+` + featureOverviewTranslations + `
+function t(key) {
+    return (OVERVIEW_ZH["zh-CN"] && OVERVIEW_ZH["zh-CN"][key]) || key;
+}
+` + templateScriptAccountDisplay + templateScriptOverviewActionsCore + templateScriptOverviewRender + templateScriptOverviewReset + templateScriptControls + templateScriptProbeSchedule + `
+latestSnapshot = {
+    models: [
+        { id: "gemini-3-flash", display_name: "gemini-3-flash", quota_pool: "gemini" },
+        { id: "gemini-3.8-flash-high", display_name: "gemini-3.8-flash-high", quota_pool: "gemini" }
+    ],
+    groups: {
+        gemini: {
+            items: [
+                {
+                    auth_index: "auth-a",
+                    email: "alpha@example.com",
+                    routing_status: "active",
+                    pool_eligible: true,
+                    supported_models: ["gemini-3-flash", "gemini-3.8-flash-high"],
+                    target: { priority: 100, disabled: false },
+                    host: { priority: 100, disabled: false }
+                }
+            ]
+        }
+    }
+};
+
+function rebuildOptionNodesFromMenuHTML() {
+    const html = elements.customModelSelectMenu.innerHTML;
+    optionNodes = [];
+    const re = /data-value="([^"]+)"/g;
+    let m;
+    while ((m = re.exec(html)) !== null) {
+        const modelId = m[1];
+        const btnSpan = element({ textContent: isModelExcluded(modelId) ? t("btnExcludedModel") : t("btnExcludeModel") });
+        const btn = element({
+            attributes: { "data-model": modelId, "aria-pressed": isModelExcluded(modelId) ? "true" : "false" },
+            classList: makeClassList(),
+            querySelector: function(s) { return s === "span" ? btnSpan : null; }
+        });
+        if (isModelExcluded(modelId)) btn.classList.add("is-excluded");
+        const opt = element({
+            attributes: { "data-value": modelId },
+            classList: makeClassList(),
+            querySelector: function(s) { return s === ".model-exclude-btn" ? btn : null; }
+        });
+        if (isModelExcluded(modelId)) opt.classList.add("is-excluded");
+        optionNodes.push(opt);
+    }
+}
+
+apiFetch = async function(path, opts) {
+    apiCalls.push({ path: path, body: JSON.parse(opts.body) });
+    const body = JSON.parse(opts.body);
+    if (body.excluded) {
+        return { ok: true, model: body.model, excluded: true, excluded_models: [body.model] };
+    }
+    return { ok: true, model: body.model, excluded: false, excluded_models: [] };
+};
+
+(async function() {
+    updateModelDropdownFromSnapshot(latestSnapshot.models);
+    rebuildOptionNodesFromMenuHTML();
+    if (elements.customModelSelectMenu.innerHTML.indexOf("model-exclude-btn") < 0) {
+        throw new Error("dropdown menu must render model-exclude-btn");
+    }
+    renderDashboard();
+    if (elements.valTotalDesc.textContent.indexOf("1") < 0) {
+        throw new Error("expected 1 active credential before exclusion, got " + elements.valTotalDesc.textContent);
+    }
+
+    let stopped = false;
+    const btn = optionNodes[0].querySelector(".model-exclude-btn");
+    await toggleModelExcluded("gemini-3-flash", btn, { stopPropagation: function() { stopped = true; } });
+    if (!stopped) {
+        throw new Error("toggleModelExcluded must stop click propagation");
+    }
+    if (apiCalls.length !== 1 || apiCalls[0].path !== EXCLUDED_MODELS_PATH || apiCalls[0].body.excluded !== true) {
+        throw new Error("unexpected API call on exclude: " + JSON.stringify(apiCalls));
+    }
+    if (elements.customModelSelectMenu.hidden !== false) {
+        throw new Error("toggling exclude must keep dropdown open");
+    }
+    if (elements.customModelExcludedPill.hidden !== false) {
+        throw new Error("active excluded model must show customModelExcludedPill");
+    }
+    if (!optionNodes[0].classList.contains("is-excluded") || !btn.classList.contains("is-excluded")) {
+        throw new Error("excluded model option and button must receive is-excluded class");
+    }
+    if (elements.valTotalDesc.textContent.indexOf("0") < 0 || elements.credentialsContainer.innerHTML.indexOf("已从 AG 排除") < 0 || elements.credentialsContainer.innerHTML.indexOf("title=\"") < 0) {
+        throw new Error("excluded active model must bypass cards with excluded badge and tooltip, got: " + elements.credentialsContainer.innerHTML);
+    }
+
+    // Restore
+    await toggleModelExcluded("gemini-3-flash", btn, { stopPropagation: function() {} });
+    if (elements.customModelExcludedPill.hidden !== true) {
+        throw new Error("restoring active model must hide customModelExcludedPill");
+    }
+    if (elements.valTotalDesc.textContent.indexOf("1") < 0) {
+        throw new Error("restored model must return credential to active, got " + elements.valTotalDesc.textContent);
+    }
+})().catch(function(err) {
+    console.error(err.stack || err.message);
+    process.exit(1);
+});
+`
+	runNodeFixture(t, node, "model-exclude-toggle.js", harness)
 }

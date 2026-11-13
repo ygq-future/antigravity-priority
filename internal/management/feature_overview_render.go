@@ -55,6 +55,9 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
             if (status === "disabled") {
                 return { eligible: false, reason: "disabled" };
             }
+            if (typeof isModelExcluded === "function" && isModelExcluded(selectedModel)) {
+                return { eligible: false, reason: "excluded_model" };
+            }
             if (status === "pool_unavailable" || (item && item.pool_eligible === false)) {
                 return { eligible: false, reason: "unsupported_model" };
             }
@@ -190,7 +193,7 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
                     bypassedItems.push({
                         item: item,
                         reason: eligibility.reason,
-                        sortGroup: eligibility.reason === "unsupported_model" ? 3 : 4
+                        sortGroup: (eligibility.reason === "unsupported_model" || eligibility.reason === "excluded_model") ? 3 : 4
                     });
                 } else if (status === "cooldown") {
                     bypassedItems.push({
@@ -335,6 +338,8 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
                     callOrderBadge = "<span class=\"badge " + badgeClass + "\" style=\"cursor:pointer;\" onclick=\"openCustomTierModal('" + escapeHTML(authIdx) + "', '" + escapeHTML(credDisplayName) + "', " + customTier + ")\" title=\"" + (currentLang === "zh-CN" ? "点击修改自定义 Tier" : "Click to edit Custom Tier") + "\">" + escapeHTML(tierText) + "</span>";
                 } else if (bypassedReason === "cooldown") {
                     callOrderBadge = "<span class=\"badge badge-warning\">" + (currentLang === "zh-CN" ? "⏳ 健康冷却避让" : "⏳ Health Cooldown") + "</span>";
+                } else if (bypassedReason === "excluded_model") {
+                    callOrderBadge = "<span class=\"badge badge-danger\" style=\"cursor:help;\" title=\"" + escapeHTML(t("excludedModelBadgeTitle")) + "\">" + escapeHTML(t("statusExcludedModel")) + "</span>";
                 } else if (bypassedReason === "unsupported_model") {
                     callOrderBadge = "<span class=\"badge badge-secondary\">" + (currentLang === "zh-CN" ? "⛔ 不支持该模型" : "⛔ Unsupported") + "</span>";
                 } else if (bypassedReason === "disabled") {

@@ -1122,3 +1122,106 @@ func TestScheduler_UpdateModelInventory_FiltersNonAntigravityModels(t *testing.T
 		}
 	}
 }
+
+func TestScheduler_ExcludedModels_BypassAntigravityAndRouteOther(t *testing.T) {
+	ctx := context.Background()
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	clock := &testClock{now: now}
+
+	mock := newMockHost()
+	mock.files = []host.AuthFile{
+		{Name: "ag-healthy", AuthIndex: "idx-ag", Provider: "antigravity", Status: "active", Priority: 999},
+	}
+
+	store, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rem90 := int64(90)
+	shortReset := now.Add(4 * time.Hour)
+	longReset := now.Add(120 * time.Hour)
+	if err := store.MarkProbeSuccess(ctx, state.ProbeSuccess{
+		AuthIndex: "idx-ag", Provider: core.ProviderAntigravity, ModelGroup: "gemini",
+		ObservedAt: now, ShortWindowResetAt: shortReset, ShortWindowRemaining: &rem90,
+		LongWindowResetAt: longReset, LongWindowRemaining: &rem90,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveAtomic(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	r := runtime.New(runtime.Options{Host: mock, Clock: clock, StateCachePath: cachePath})
+	if _, err := r.Register(ctx, runtime.RegisterRequest{ConfigYAML: "enabled: true\nstate_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.SyncHost(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	mixedCandidates := []runtime.SchedulerAuthCandidate{
+		{ID: "ag-healthy", Provider: "antigravity", Priority: 999},
+		{ID: "gemini-api-1", Provider: "gemini", Priority: 50},
+		{ID: "vertex-1", Provider: "vertex", Priority: 80},
+	}
+	agOnlyCandidates := []runtime.SchedulerAuthCandidate{
+		{ID: "ag-healthy", Provider: "antigravity", Priority: 999},
+	}
+
+	// 1. Before exclusion, Antigravity is picked for gemini-3-flash.
+	before := pickSchedulerAuthForModel(t, ctx, r, "gemini-3-flash", mixedCandidates)
+	if !before.Handled || before.AuthID != "ag-healthy" {
+		t.Fatalf("expected ag-healthy before exclusion, got %+v", before)
+	}
+
+	// 2. Exclude gemini-3-flash globally from Antigravity.
+	updated, err := r.SetModelExcluded(ctx, "Gemini-3-Flash", true)
+	if err != nil {
+		t.Fatalf("SetModelExcluded(true) failed: %v", err)
+	}
+	if len(updated) != 1 || updated[0] != "gemini-3-flash" {
+		t.Fatalf("unexpected excluded list: %v", updated)
+	}
+
+	// Mixed route must bypass healthy Antigravity and pick highest-priority other provider.
+	excludedMixed := pickSchedulerAuthForModel(t, ctx, r, "gemini-3-flash", mixedCandidates)
+	if !excludedMixed.Handled || excludedMixed.AuthID != "vertex-1" {
+		t.Fatalf("expected vertex-1 when gemini-3-flash is excluded, got %+v", excludedMixed)
+	}
+
+	// Antigravity-only route must not select Antigravity.
+	excludedAGOnly := pickSchedulerAuthForModel(t, ctx, r, "gemini-3-flash", agOnlyCandidates)
+	if excludedAGOnly.Handled {
+		t.Fatalf("expected Handled=false for Antigravity-only excluded model, got %+v", excludedAGOnly)
+	}
+
+	// Sibling model in the same Gemini pool remains routed to Antigravity.
+	sibling := pickSchedulerAuthForModel(t, ctx, r, "gemini-3.8-flash-high", mixedCandidates)
+	if !sibling.Handled || sibling.AuthID != "ag-healthy" {
+		t.Fatalf("expected sibling model to still pick ag-healthy, got %+v", sibling)
+	}
+
+	// 3. Reload into a fresh Runtime to confirm persistence across restarts.
+	r2 := runtime.New(runtime.Options{Host: mock, Clock: clock, StateCachePath: cachePath})
+	if _, err := r2.Register(ctx, runtime.RegisterRequest{ConfigYAML: "enabled: true\nstate_cache_path: " + filepath.ToSlash(cachePath) + "\n"}); err != nil {
+		t.Fatal(err)
+	}
+	reloadedPick := pickSchedulerAuthForModel(t, ctx, r2, "gemini-3-flash", mixedCandidates)
+	if !reloadedPick.Handled || reloadedPick.AuthID != "vertex-1" {
+		t.Fatalf("expected exclusion to persist across reload, got %+v", reloadedPick)
+	}
+
+	// 4. Restore the model and verify Antigravity routing resumes.
+	restored, err := r2.SetModelExcluded(ctx, "gemini-3-flash", false)
+	if err != nil {
+		t.Fatalf("SetModelExcluded(false) failed: %v", err)
+	}
+	if len(restored) != 0 {
+		t.Fatalf("expected empty excluded list after restore, got %v", restored)
+	}
+	afterRestore := pickSchedulerAuthForModel(t, ctx, r2, "gemini-3-flash", mixedCandidates)
+	if !afterRestore.Handled || afterRestore.AuthID != "ag-healthy" {
+		t.Fatalf("expected ag-healthy after restore, got %+v", afterRestore)
+	}
+}

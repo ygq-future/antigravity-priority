@@ -611,3 +611,46 @@ func TestWarmupConfig(t *testing.T) {
 		t.Fatalf("expected the override to survive the JSON round trip, got %#v", decoded.Warmup.Overrides)
 	}
 }
+
+func TestExcludedModelsConfig(t *testing.T) {
+	normalized := config.NormalizeExcludedModels([]string{" Gemini-3-Flash ", "claude-sonnet-5-5-high", "gemini-3-flash", "", "  "})
+	want := []string{"claude-sonnet-5-5-high", "gemini-3-flash"}
+	if !reflect.DeepEqual(normalized, want) {
+		t.Fatalf("NormalizeExcludedModels got %v, want %v", normalized, want)
+	}
+
+	if !config.IsModelExcluded(want, " GEMINI-3-FLASH ") {
+		t.Fatal("expected IsModelExcluded to match case-insensitively with whitespace")
+	}
+	if config.IsModelExcluded(want, "gemini-3.8-flash-high") {
+		t.Fatal("expected non-excluded model to return false")
+	}
+
+	dyn := config.Default().Dynamic()
+	dyn.ExcludedModels = []string{"  "}
+	if err := dyn.Validate(); err == nil {
+		t.Fatal("expected Validate to reject empty entry in excluded_models")
+	}
+
+	dyn.ExcludedModels = []string{"Gemini-3-Flash", "gemini-3-flash", "claude-opus-5-5-high"}
+	applied, err := dyn.ApplyTo(config.Default())
+	if err != nil {
+		t.Fatalf("ApplyTo failed: %v", err)
+	}
+	wantApplied := []string{"claude-opus-5-5-high", "gemini-3-flash"}
+	if !reflect.DeepEqual(applied.ExcludedModels, wantApplied) {
+		t.Fatalf("applied ExcludedModels got %v, want %v", applied.ExcludedModels, wantApplied)
+	}
+
+	raw, err := json.Marshal(applied.Dynamic())
+	if err != nil {
+		t.Fatalf("marshal dynamic config: %v", err)
+	}
+	var decoded config.DynamicConfig
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("unmarshal dynamic config: %v", err)
+	}
+	if !reflect.DeepEqual(decoded.ExcludedModels, wantApplied) {
+		t.Fatalf("round-trip ExcludedModels got %v, want %v", decoded.ExcludedModels, wantApplied)
+	}
+}

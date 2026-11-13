@@ -285,6 +285,7 @@ func (r *Runtime) routingConfigSnapshot() config.Config {
 	cfg := r.cfg
 	cfg.CustomTiers = maps.Clone(r.cfg.CustomTiers)
 	cfg.Warmup = r.cfg.Warmup.Clone()
+	cfg.ExcludedModels = append([]string(nil), r.cfg.ExcludedModels...)
 	return cfg
 }
 
@@ -504,6 +505,7 @@ func (r *Runtime) handleSchedulerPick(_ context.Context, request []byte) []byte 
 
 	r.mu.Lock()
 	enabled := r.cfg.Enabled
+	excluded := config.IsModelExcluded(r.cfg.ExcludedModels, req.Model)
 	r.mu.Unlock()
 
 	if !enabled {
@@ -528,10 +530,14 @@ func (r *Runtime) handleSchedulerPick(_ context.Context, request []byte) []byte 
 		return envelopeSchedulerPick(SchedulerPickResponse{Handled: false})
 	}
 
-	now := r.clock.Now().UTC()
 	pool := config.ClassifyModelQuotaPool(req.Model)
-	poolTable := r.getOrRefreshPoolTable(pool, now)
 
+	if excluded {
+		return envelopeSchedulerPick(r.pickFallbackOtherCandidate(pool, otherCandidates))
+	}
+
+	now := r.clock.Now().UTC()
+	poolTable := r.getOrRefreshPoolTable(pool, now)
 	// Score Antigravity candidates
 	type candidateScore struct {
 		candidate SchedulerAuthCandidate
@@ -589,37 +595,38 @@ func (r *Runtime) handleSchedulerPick(_ context.Context, request []byte) []byte 
 	}
 
 	// Branch B: All Antigravity candidates are depleted or in cooldown (bestScore < 0)
-	// Subcase B1: Mixed route with other healthy provider candidates available
-	if len(otherCandidates) > 0 {
-		maxOtherPriority := -1 << 31
-		for _, oc := range otherCandidates {
-			if oc.Priority > maxOtherPriority {
-				maxOtherPriority = oc.Priority
-			}
+	return envelopeSchedulerPick(r.pickFallbackOtherCandidate(pool, otherCandidates))
+}
+
+// pickFallbackOtherCandidate routes mixed-provider requests to the highest-priority
+// non-Antigravity candidate when Antigravity is depleted, cooling, or excluded.
+func (r *Runtime) pickFallbackOtherCandidate(pool config.AntigravityModelGroup, otherCandidates []SchedulerAuthCandidate) SchedulerPickResponse {
+	if len(otherCandidates) == 0 {
+		return SchedulerPickResponse{Handled: false}
+	}
+	maxOtherPriority := -1 << 31
+	for _, oc := range otherCandidates {
+		if oc.Priority > maxOtherPriority {
+			maxOtherPriority = oc.Priority
 		}
-
-		var bestOthers []SchedulerAuthCandidate
-		for _, oc := range otherCandidates {
-			if oc.Priority == maxOtherPriority {
-				bestOthers = append(bestOthers, oc)
-			}
-		}
-
-		sort.Slice(bestOthers, func(i, j int) bool {
-			return bestOthers[i].ID < bestOthers[j].ID
-		})
-
-		pickedID := r.router.NextCandidate(pool, bestOthers)
-		return envelopeSchedulerPick(SchedulerPickResponse{
-			AuthID:  pickedID,
-			Handled: true,
-		})
 	}
 
-	// Subcase B2: Antigravity-only route and all credentials are depleted/cooling
-	return envelopeSchedulerPick(SchedulerPickResponse{
-		Handled: false,
+	var bestOthers []SchedulerAuthCandidate
+	for _, oc := range otherCandidates {
+		if oc.Priority == maxOtherPriority {
+			bestOthers = append(bestOthers, oc)
+		}
+	}
+
+	sort.Slice(bestOthers, func(i, j int) bool {
+		return bestOthers[i].ID < bestOthers[j].ID
 	})
+
+	pickedID := r.router.NextCandidate(pool, bestOthers)
+	return SchedulerPickResponse{
+		AuthID:  pickedID,
+		Handled: true,
+	}
 }
 
 // pickSuccessor picks the next item in a sorted slice following cursor in a round-robin cycle.

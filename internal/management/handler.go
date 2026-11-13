@@ -32,6 +32,7 @@ type Runner interface {
 	ClearRequestHistory(ctx context.Context) error
 	GetCustomTiers(ctx context.Context) (map[string]int, error)
 	SetCustomTier(ctx context.Context, authIndex string, tier int) error
+	SetModelExcluded(ctx context.Context, model string, excluded bool) ([]string, error)
 	SetWarmupCredentialState(ctx context.Context, authIndex, group string, enabled bool) error
 }
 
@@ -87,6 +88,7 @@ const (
 	PathRequestHistoryClear = "/request-history/clear"
 	PathCustomTier          = "/custom-tier"
 	PathWarmupCredential    = "/warmup-credential"
+	PathExcludedModels      = "/excluded-models"
 
 	// URL Prefixes
 	PrefixResourcePlugin   = "/v0/resource/plugins/" + config.PluginID
@@ -141,6 +143,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleSetCustomTier(w, r)
 	case (path == PathWarmupCredential || path == PrefixManagementPlugin+PathWarmupCredential || path == PrefixLegacyPlugin+PathWarmupCredential) && method == http.MethodPost:
 		h.handleSetWarmupCredential(w, r)
+	case (path == PathExcludedModels || path == PrefixManagementPlugin+PathExcludedModels || path == PrefixLegacyPlugin+PathExcludedModels) && method == http.MethodGet:
+		h.handleGetExcludedModels(w, r)
+	case (path == PathExcludedModels || path == PrefixManagementPlugin+PathExcludedModels || path == PrefixLegacyPlugin+PathExcludedModels) && method == http.MethodPost:
+		h.handleSetExcludedModel(w, r)
 	default:
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(http.StatusNotFound)
@@ -614,5 +620,59 @@ func (h *Handler) handleSetCustomTier(w http.ResponseWriter, r *http.Request) {
 		"ok":         true,
 		"auth_index": cleanIdx,
 		"tier":       req.Tier,
+	})
+}
+
+type excludedModelRequest struct {
+	Model    string `json:"model"`
+	Excluded *bool  `json:"excluded"`
+}
+
+func (h *Handler) handleGetExcludedModels(w http.ResponseWriter, r *http.Request) {
+	cfg, err := h.runner.GetDynamicConfig(r.Context())
+	if err != nil {
+		h.writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	excluded := cfg.ExcludedModels
+	if excluded == nil {
+		excluded = []string{}
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ok":              true,
+		"excluded_models": excluded,
+	})
+}
+
+func (h *Handler) handleSetExcludedModel(w http.ResponseWriter, r *http.Request) {
+	var req excludedModelRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.writeJSONError(w, http.StatusBadRequest, "invalid request JSON: "+err.Error())
+		return
+	}
+	cleanModel := strings.ToLower(strings.TrimSpace(req.Model))
+	if cleanModel == "" {
+		h.writeJSONError(w, http.StatusBadRequest, "model must not be empty")
+		return
+	}
+	if req.Excluded == nil {
+		h.writeJSONError(w, http.StatusBadRequest, "excluded is required")
+		return
+	}
+	updated, err := h.runner.SetModelExcluded(r.Context(), cleanModel, *req.Excluded)
+	if err != nil {
+		h.writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if updated == nil {
+		updated = []string{}
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ok":              true,
+		"model":           cleanModel,
+		"excluded":        *req.Excluded,
+		"excluded_models": updated,
 	})
 }

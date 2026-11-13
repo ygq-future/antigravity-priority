@@ -89,6 +89,92 @@ const templateScriptControls = `        // Custom Select: shared open/close + vi
             renderDashboard();
         }
 
+        function normalizeModelKey(modelId) {
+            return String(modelId || "").trim().toLowerCase();
+        }
+
+        function isModelExcluded(modelId) {
+            const target = normalizeModelKey(modelId);
+            if (!target || typeof dynamicConfig === "undefined" || !dynamicConfig || !Array.isArray(dynamicConfig.excluded_models)) {
+                return false;
+            }
+            return dynamicConfig.excluded_models.some(m => normalizeModelKey(m) === target);
+        }
+
+        function buildModelExcludeButtonHTML(modelId, excluded) {
+            const label = t(excluded ? "btnExcludedModel" : "btnExcludeModel");
+            const title = t(excluded ? "restoreModelTitle" : "excludeModelTitle");
+            const safeModel = escapeHTML(modelId);
+            return "<button type=\"button\" class=\"model-exclude-btn" + (excluded ? " is-excluded" : "") + "\" " +
+                "data-model=\"" + safeModel + "\" aria-pressed=\"" + (excluded ? "true" : "false") + "\" " +
+                "aria-label=\"" + escapeHTML(title) + "\" title=\"" + escapeHTML(title) + "\" " +
+                "onclick=\"toggleModelExcluded('', this, event)\">" +
+                "<svg width=\"11\" height=\"11\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.2\">" +
+                "<circle cx=\"12\" cy=\"12\" r=\"9\"></circle><line x1=\"5.6\" y1=\"5.6\" x2=\"18.4\" y2=\"18.4\"></line></svg>" +
+                "<span>" + escapeHTML(label) + "</span>" +
+                "</button>";
+        }
+
+        function syncModelExclusionDropdownUI() {
+            const menu = document.getElementById("customModelSelectMenu");
+            if (menu && typeof menu.querySelectorAll === "function") {
+                menu.querySelectorAll(".custom-select-option").forEach(opt => {
+                    const modelId = opt.getAttribute("data-value") || "";
+                    const excluded = isModelExcluded(modelId);
+                    opt.classList.toggle("is-excluded", excluded);
+                    const btn = opt.querySelector(".model-exclude-btn");
+                    if (btn) {
+                        btn.classList.toggle("is-excluded", excluded);
+                        btn.setAttribute("aria-pressed", excluded ? "true" : "false");
+                        const title = t(excluded ? "restoreModelTitle" : "excludeModelTitle");
+                        btn.setAttribute("title", title);
+                        btn.setAttribute("aria-label", title);
+                        const span = btn.querySelector("span");
+                        if (span) span.textContent = t(excluded ? "btnExcludedModel" : "btnExcludeModel");
+                    }
+                });
+            }
+            const modelInput = document.getElementById("modelSelect");
+            const activeModel = (modelInput && modelInput.value) || "gemini-3.8-flash-high";
+            const pill = document.getElementById("customModelExcludedPill");
+            if (pill) {
+                const excluded = isModelExcluded(activeModel);
+                pill.hidden = !excluded;
+                pill.textContent = t("btnExcludedModel");
+                if (typeof pill.setAttribute === "function") {
+                    pill.setAttribute("title", t("excludedModelBadgeTitle"));
+                }
+            }
+        }
+
+        async function toggleModelExcluded(modelId, button, event) {
+            if (event) event.stopPropagation();
+            const rawModel = modelId || (button && typeof button.getAttribute === "function" ? button.getAttribute("data-model") : "");
+            const cleanModel = normalizeModelKey(rawModel);
+            if (!cleanModel || (typeof isAuthBlocked !== "undefined" && isAuthBlocked)) return;
+            const nextExcluded = !isModelExcluded(cleanModel);
+            if (button) button.disabled = true;
+            try {
+                const res = await apiFetch(EXCLUDED_MODELS_PATH, {
+                    method: "POST",
+                    body: JSON.stringify({ model: cleanModel, excluded: nextExcluded })
+                });
+                if (!dynamicConfig || typeof dynamicConfig !== "object") {
+                    dynamicConfig = {};
+                }
+                dynamicConfig.excluded_models = Array.isArray(res && res.excluded_models) ? res.excluded_models : [];
+                syncModelExclusionDropdownUI();
+                if (typeof renderDashboard === "function") renderDashboard();
+                if (typeof showToast === "function") {
+                    showToast(t(nextExcluded ? "modelExcludedToast" : "modelRestoredToast") + ": " + cleanModel, "success");
+                }
+            } catch (err) {
+                if (typeof showToast === "function") showToast(err.message, "error");
+            } finally {
+                if (button) button.disabled = false;
+            }
+        }
+
         function updateCustomModelSelectDisplay() {
             const modelInput = document.getElementById("modelSelect");
             const modelId = (modelInput && modelInput.value) || "gemini-3.8-flash-high";
@@ -102,6 +188,9 @@ const templateScriptControls = `        // Custom Select: shared open/close + vi
             }
             if (label) {
                 label.textContent = modelId;
+            }
+            if (typeof syncModelExclusionDropdownUI === "function") {
+                syncModelExclusionDropdownUI();
             }
         }
 
@@ -130,10 +219,12 @@ const templateScriptControls = `        // Custom Select: shared open/close + vi
                 html += "<div class=\"model-select-group-header\" data-i18n=\"" + titleKey + "\">" + escapeHTML(t(titleKey) || fallbackTitle) + "</div>";
                 groupModels.forEach(m => {
                     const isSelected = m.id === currentModel;
-                    html += "<div class=\"custom-select-option" + (isSelected ? " selected" : "") + "\" data-value=\"" + escapeHTML(m.id) + "\" data-pool=\"" + escapeHTML(m.quota_pool || "") + "\" onclick=\"selectModel('" + escapeHTML(m.id) + "', event)\" role=\"option\" aria-selected=\"" + isSelected + "\">" +
+                    const isExcluded = isModelExcluded(m.id);
+                    html += "<div class=\"custom-select-option" + (isSelected ? " selected" : "") + (isExcluded ? " is-excluded" : "") + "\" data-value=\"" + escapeHTML(m.id) + "\" data-pool=\"" + escapeHTML(m.quota_pool || "") + "\" onclick=\"selectModel('" + escapeHTML(m.id) + "', event)\" role=\"option\" aria-selected=\"" + isSelected + "\">" +
                         "<span class=\"model-pool-badge " + poolClass + "\">" + escapeHTML(poolBadgeText) + "</span>" +
                         "<span class=\"model-option-name\">" + escapeHTML(m.display_name || m.id) + "</span>" +
                         "<span class=\"custom-select-check\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\"><polyline points=\"20 6 9 17 4 12\"></polyline></svg></span>" +
+                        buildModelExcludeButtonHTML(m.id, isExcluded) +
                     "</div>";
                 });
             }
@@ -143,6 +234,7 @@ const templateScriptControls = `        // Custom Select: shared open/close + vi
             renderGroup("poolClaudeGPT", "Claude & GPT 额度池", claudeModels, "badge-claude", t("badgeClaudeGPT") || "Claude/GPT");
 
             menu.innerHTML = html;
+            syncModelExclusionDropdownUI();
         }
         function populateWarmupModelDropdowns(models) {
             if (!Array.isArray(models) || models.length === 0) return;
@@ -331,6 +423,7 @@ const templateScriptControls = `        // Custom Select: shared open/close + vi
 
         function updateAllCustomSelectDisplays() {
             updateCustomSelectDisplay();
+            if (typeof syncModelExclusionDropdownUI === "function") syncModelExclusionDropdownUI();
             updateCustomIntervalDisplay();
             updateCustomWarmupGeminiDisplay();
             updateCustomWarmupClaudeDisplay();

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 	"time"
 )
@@ -117,6 +118,7 @@ type Config struct {
 	Schedule                 ScheduleConfig
 	CustomTiers              map[string]int
 	Warmup                   WarmupConfig
+	ExcludedModels           []string
 }
 
 // WarmupConfig encapsulates 5-hour short-window reset countdown warm-up settings.
@@ -301,6 +303,7 @@ type DynamicConfig struct {
 	Schedule                 ScheduleConfig      `json:"schedule"`
 	CustomTiers              map[string]int      `json:"custom_tiers,omitempty"`
 	Warmup                   WarmupConfig        `json:"warmup"`
+	ExcludedModels           []string            `json:"excluded_models,omitempty"`
 }
 
 // UnmarshalJSON seeds omitted fields from the canonical defaults before
@@ -362,6 +365,7 @@ func (cfg Config) Dynamic() DynamicConfig {
 		Schedule:    cfg.Schedule,
 		CustomTiers: cloneCustomTiers(cfg.CustomTiers),
 		Warmup:      cfg.Warmup.Clone(),
+		ExcludedModels: NormalizeExcludedModels(cfg.ExcludedModels),
 	}
 }
 
@@ -376,6 +380,49 @@ func cloneCustomTiers(src map[string]int) map[string]int {
 		}
 	}
 	return dst
+}
+
+// NormalizeExcludedModels canonicalizes a list of excluded model IDs by
+// trimming whitespace, lowercasing, removing empties/duplicates, and sorting.
+func NormalizeExcludedModels(models []string) []string {
+	if len(models) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(models))
+	out := make([]string, 0, len(models))
+	for _, m := range models {
+		norm := strings.ToLower(strings.TrimSpace(m))
+		if norm == "" {
+			continue
+		}
+		if _, ok := seen[norm]; ok {
+			continue
+		}
+		seen[norm] = struct{}{}
+		out = append(out, norm)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	slices.Sort(out)
+	return out
+}
+
+// IsModelExcluded reports whether model matches an entry in excludedModels.
+func IsModelExcluded(excludedModels []string, model string) bool {
+	if len(excludedModels) == 0 {
+		return false
+	}
+	target := strings.ToLower(strings.TrimSpace(model))
+	if target == "" {
+		return false
+	}
+	for _, m := range excludedModels {
+		if strings.ToLower(strings.TrimSpace(m)) == target {
+			return true
+		}
+	}
+	return false
 }
 
 // Validate validates all field boundaries in DynamicConfig.
@@ -428,6 +475,11 @@ func (dyn DynamicConfig) Validate() error {
 			return fmt.Errorf("custom_tiers[%q] must be between 1 and 99 (0 to remove), got %d", authIdx, tier)
 		}
 	}
+	for _, m := range dyn.ExcludedModels {
+		if strings.TrimSpace(m) == "" {
+			return fmt.Errorf("excluded_models contains empty model id")
+		}
+	}
 	if dyn.Warmup.GeminiEnabled && strings.TrimSpace(dyn.Warmup.GeminiModel) == "" {
 		return fmt.Errorf("warmup.gemini_model cannot be empty when gemini warm-up is enabled")
 	}
@@ -460,6 +512,7 @@ func (dyn DynamicConfig) ApplyTo(base Config) (Config, error) {
 	res.CustomTiers = cloneCustomTiers(dyn.CustomTiers)
 	res.Warmup = dyn.Warmup.Clone()
 	res.Warmup.Normalize()
+	res.ExcludedModels = NormalizeExcludedModels(dyn.ExcludedModels)
 	return res, nil
 }
 

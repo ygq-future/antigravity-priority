@@ -8,6 +8,8 @@ const templateScriptConfig = `        let originalConfigState = null;
                 dynamicConfig = await apiFetch(CONFIG_PATH);
                 renderDynamicConfigForm(dynamicConfig);
                 renderScheduleStatus();
+                if (typeof syncModelExclusionDropdownUI === "function") syncModelExclusionDropdownUI();
+                if (typeof renderDashboard === "function") renderDashboard();
             } catch (err) {
                 if (!isAuthBlocked) showToast(err.message, "error");
             }
@@ -310,6 +312,7 @@ const templateScriptConfig = `        let originalConfigState = null;
                         window_end: windowEnd
                     },
                     custom_tiers: (dynamicConfig && dynamicConfig.custom_tiers) ? dynamicConfig.custom_tiers : undefined,
+                    excluded_models: (dynamicConfig && Array.isArray(dynamicConfig.excluded_models)) ? dynamicConfig.excluded_models : undefined,
                     warmup: {
                         gemini_enabled: Boolean(document.getElementById("cfgWarmupGeminiEnabled") && document.getElementById("cfgWarmupGeminiEnabled").checked),
                         gemini_model: (document.getElementById("cfgWarmupGeminiModelSelect") && document.getElementById("cfgWarmupGeminiModelSelect").value) || "gemini-3-flash",

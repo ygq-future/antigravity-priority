@@ -88,6 +88,14 @@ const featureOverviewTranslations = `        const OVERVIEW_ZH = {
                 warmupIconOverrideTitle: "局部覆盖全局预热（点击切换）",
                 warmupCardEnabled: "该凭证 5h 预热已开启",
                 warmupCardDisabled: "该凭证 5h 预热已关闭",
+                btnExcludeModel: "排除",
+                btnExcludedModel: "已排除",
+                excludeModelTitle: "仅从 Antigravity 凭证中排除该模型，请求将改由 CPA 其他渠道处理",
+                restoreModelTitle: "点击恢复该模型的 Antigravity 凭证调度",
+                statusExcludedModel: "⛔ 已从 AG 排除",
+                excludedModelBadgeTitle: "仅从 Antigravity 凭证排除该模型，请求将避开 AG 并改由 CPA 其他渠道处理",
+                modelExcludedToast: "已从 Antigravity 凭证排除该模型（不会调度到 AG）",
+                modelRestoredToast: "已恢复该模型的 Antigravity 凭证调度",
             }
         };
         const OVERVIEW_EN = {
@@ -178,6 +186,14 @@ const featureOverviewTranslations = `        const OVERVIEW_ZH = {
                 warmupIconOverrideTitle: "Local override of the global warm-up state (click to toggle)",
                 warmupCardEnabled: "5h warm-up enabled for this credential",
                 warmupCardDisabled: "5h warm-up disabled for this credential",
+                btnExcludeModel: "Exclude",
+                btnExcludedModel: "Excluded",
+                excludeModelTitle: "Exclude this model from Antigravity credentials only (CPA routes to other providers)",
+                restoreModelTitle: "Click to restore Antigravity credential routing for this model",
+                statusExcludedModel: "⛔ AG Excluded",
+                excludedModelBadgeTitle: "Excluded from Antigravity credentials only; requests bypass AG and route via other CPA providers",
+                modelExcludedToast: "Excluded model from Antigravity credentials",
+                modelRestoredToast: "Restored model to Antigravity credentials",
             }
         };
 `

@@ -19,6 +19,8 @@ var overviewTranslationKeys = []string{
 	"statusUnsupported", "statusBypassedCooldown", "statusBypassedDepleted", "dynamicPriority", "estimatedBurn", "tierPrefix",
 	"accountMaskOn", "accountMaskOff", "accountMaskToggleTitle",
 	"warmupIconFollowTitle", "warmupIconOverrideTitle", "warmupCardEnabled", "warmupCardDisabled",
+	"btnExcludeModel", "btnExcludedModel", "excludeModelTitle", "restoreModelTitle",
+	"statusExcludedModel", "excludedModelBadgeTitle", "modelExcludedToast", "modelRestoredToast",
 }
 
 var historyTranslationKeys = []string{

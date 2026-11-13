@@ -1025,6 +1025,31 @@ func (r *Runtime) SetWarmupCredentialState(ctx context.Context, authIndex, group
 	return nil
 }
 
+// SetModelExcluded adds or removes a model from the global Antigravity scheduler
+// exclusion list and persists the change to dynamic configuration.
+func (r *Runtime) SetModelExcluded(ctx context.Context, model string, excluded bool) ([]string, error) {
+	cleanModel := strings.ToLower(strings.TrimSpace(model))
+	if cleanModel == "" {
+		return nil, errors.New("model must not be empty")
+	}
+	r.configMu.Lock()
+	defer r.configMu.Unlock()
+	runtimeCfg, err := r.Config()
+	if err != nil {
+		return nil, err
+	}
+	updated, err := r.state.SetModelExcluded(ctx, runtimeCfg, cleanModel, excluded)
+	if err != nil {
+		return nil, fmt.Errorf("persist excluded model: %w", err)
+	}
+
+	r.mu.Lock()
+	r.cfg.ExcludedModels = append([]string(nil), updated...)
+	r.mu.Unlock()
+
+	return append([]string(nil), updated...), nil
+}
+
 func (r *Runtime) currentRunSnapshot() (apply.Result, string) {
 	return r.state.RunSnapshot()
 }

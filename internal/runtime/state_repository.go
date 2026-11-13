@@ -294,6 +294,43 @@ func (r *stateRepository) SetWarmupCredentialState(
 	return dyn.Warmup.Clone(), nil
 }
 
+func (r *stateRepository) SetModelExcluded(
+	ctx context.Context,
+	base config.Config,
+	model string,
+	excluded bool,
+) ([]string, error) {
+	normModel := strings.ToLower(strings.TrimSpace(model))
+	if normModel == "" {
+		return nil, errors.New("model must not be empty")
+	}
+	store, err := r.Store(ctx)
+	if err != nil {
+		return nil, err
+	}
+	dyn := r.DynamicConfig(base)
+	filtered := make([]string, 0, len(dyn.ExcludedModels)+1)
+	for _, existing := range dyn.ExcludedModels {
+		normExisting := strings.ToLower(strings.TrimSpace(existing))
+		if normExisting == "" || normExisting == normModel {
+			continue
+		}
+		filtered = append(filtered, normExisting)
+	}
+	if excluded {
+		filtered = append(filtered, normModel)
+	}
+	dyn.ExcludedModels = config.NormalizeExcludedModels(filtered)
+	if err := dyn.Validate(); err != nil {
+		return nil, err
+	}
+	store.SetDynamicConfig(dyn)
+	if err := store.SaveRuntimeAtomic(ctx); err != nil {
+		return nil, err
+	}
+	return slices.Clone(dyn.ExcludedModels), nil
+}
+
 func (r *stateRepository) LastAutoApplyAt() time.Time {
 	store := r.StoreOrNil()
 	if store == nil {

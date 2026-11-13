@@ -443,9 +443,9 @@ const templateStyleOverviewCards = `        /* Credentials Display (Grid 3 Colum
         .model-select-menu {
             max-height: 380px;
             overflow-y: auto;
-            min-width: 320px;
+            min-width: 340px;
             width: max-content;
-            max-width: 440px;
+            max-width: 480px;
             right: auto;
             scrollbar-width: thin;
             scrollbar-color: var(--border-color) transparent;
@@ -535,6 +535,77 @@ const templateStyleOverviewCards = `        /* Credentials Display (Grid 3 Colum
             flex: 1 1 auto;
             min-width: 0;
             margin-right: 8px;
+        }
+
+        .model-select-menu .custom-select-check {
+            margin-right: 6px;
+            flex-shrink: 0;
+        }
+
+        .custom-select-option.is-excluded .model-option-name {
+            text-decoration: line-through;
+            color: var(--text-muted);
+        }
+
+        .control-bar .model-exclude-btn,
+        .model-exclude-btn {
+            height: 22px !important;
+            min-height: 22px !important;
+            padding: 0 7px !important;
+            margin-left: 4px !important;
+            font-size: 11px !important;
+            font-weight: 650 !important;
+            border-radius: 5px !important;
+            border: 1px solid var(--border-color);
+            background: var(--bg-subtle);
+            color: var(--text-secondary);
+            display: inline-flex !important;
+            align-items: center !important;
+            gap: 4px !important;
+            flex-shrink: 0;
+            cursor: pointer;
+            transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+        }
+
+        .control-bar .model-exclude-btn:hover,
+        .model-exclude-btn:hover {
+            background: var(--accent-red-subtle);
+            border-color: rgba(239, 68, 68, 0.35);
+            color: var(--accent-red-text);
+        }
+
+        .control-bar .model-exclude-btn.is-excluded,
+        .model-exclude-btn.is-excluded {
+            background: var(--accent-red-subtle);
+            border-color: rgba(239, 68, 68, 0.4);
+            color: var(--accent-red-text);
+        }
+
+        .control-bar .model-exclude-btn.is-excluded:hover,
+        .model-exclude-btn.is-excluded:hover {
+            background: var(--bg-subtle);
+            border-color: var(--border-color);
+            color: var(--text-primary);
+        }
+
+        .control-bar .model-exclude-btn:focus-visible,
+        .model-exclude-btn:focus-visible {
+            outline: 2px solid var(--border-focus);
+            outline-offset: 1px;
+        }
+
+        .model-trigger-excluded-pill {
+            display: inline-flex;
+            align-items: center;
+            padding: 1px 6px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: 700;
+            line-height: 14px;
+            background: var(--accent-red-subtle);
+            border: 1px solid rgba(239, 68, 68, 0.35);
+            color: var(--accent-red-text);
+            flex-shrink: 0;
         }
 
         .metric-pill-priority {

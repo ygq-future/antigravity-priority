@@ -32,6 +32,7 @@ const overviewMarkup = `
                     <button type="button" class="custom-select-trigger" onclick="toggleCustomModelSelect(event)" aria-haspopup="listbox" aria-expanded="false" id="customModelSelectTrigger">
                         <span id="customModelSelectBadge" class="model-pool-badge badge-gemini">Gemini</span>
                         <span id="customModelSelectLabel" class="model-select-name">gemini-3.8-flash-high</span>
+                        <span id="customModelExcludedPill" class="model-trigger-excluded-pill" hidden data-i18n="btnExcludedModel">已排除</span>
                         <span class="custom-select-arrow">
                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"></path></svg>
                         </span>
@@ -42,48 +43,57 @@ const overviewMarkup = `
                             <span class="model-pool-badge badge-gemini">Gemini</span>
                             <span class="model-option-name">gemini-3.8-flash-high</span>
                             <span class="custom-select-check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg></span>
+                            <button type="button" class="model-exclude-btn" data-model="gemini-3.8-flash-high" aria-pressed="false" onclick="toggleModelExcluded('', this, event)"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9"></circle><line x1="5.6" y1="5.6" x2="18.4" y2="18.4"></line></svg><span data-i18n="btnExcludeModel">排除</span></button>
                         </div>
                         <div class="custom-select-option" data-value="gemini-3-flash" data-pool="gemini" onclick="selectModel('gemini-3-flash', event)" role="option" aria-selected="false">
                             <span class="model-pool-badge badge-gemini">Gemini</span>
                             <span class="model-option-name">gemini-3-flash</span>
                             <span class="custom-select-check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg></span>
+                            <button type="button" class="model-exclude-btn" data-model="gemini-3-flash" aria-pressed="false" onclick="toggleModelExcluded('', this, event)"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9"></circle><line x1="5.6" y1="5.6" x2="18.4" y2="18.4"></line></svg><span data-i18n="btnExcludeModel">排除</span></button>
                         </div>
                         <div class="custom-select-option" data-value="gemini-3.5-flash-lite" data-pool="gemini" onclick="selectModel('gemini-3.5-flash-lite', event)" role="option" aria-selected="false">
                             <span class="model-pool-badge badge-gemini">Gemini</span>
                             <span class="model-option-name">gemini-3.5-flash-lite</span>
                             <span class="custom-select-check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg></span>
+                            <button type="button" class="model-exclude-btn" data-model="gemini-3.5-flash-lite" aria-pressed="false" onclick="toggleModelExcluded('', this, event)"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9"></circle><line x1="5.6" y1="5.6" x2="18.4" y2="18.4"></line></svg><span data-i18n="btnExcludeModel">排除</span></button>
                         </div>
                         <div class="custom-select-option" data-value="gemini-3.1-flash-lite" data-pool="gemini" onclick="selectModel('gemini-3.1-flash-lite', event)" role="option" aria-selected="false">
                             <span class="model-pool-badge badge-gemini">Gemini</span>
                             <span class="model-option-name">gemini-3.1-flash-lite</span>
                             <span class="custom-select-check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg></span>
+                            <button type="button" class="model-exclude-btn" data-model="gemini-3.1-flash-lite" aria-pressed="false" onclick="toggleModelExcluded('', this, event)"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9"></circle><line x1="5.6" y1="5.6" x2="18.4" y2="18.4"></line></svg><span data-i18n="btnExcludeModel">排除</span></button>
                         </div>
                         <div class="custom-select-option" data-value="gemini-3.1-flash-image" data-pool="gemini" onclick="selectModel('gemini-3.1-flash-image', event)" role="option" aria-selected="false">
                             <span class="model-pool-badge badge-gemini">Gemini</span>
                             <span class="model-option-name">gemini-3.1-flash-image</span>
                             <span class="custom-select-check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg></span>
+                            <button type="button" class="model-exclude-btn" data-model="gemini-3.1-flash-image" aria-pressed="false" onclick="toggleModelExcluded('', this, event)"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9"></circle><line x1="5.6" y1="5.6" x2="18.4" y2="18.4"></line></svg><span data-i18n="btnExcludeModel">排除</span></button>
                         </div>
                         <div class="model-select-group-header" data-i18n="poolArgon">Argon 额度池</div>
                         <div class="custom-select-option" data-value="gemini-4-argon-high" data-pool="argon" onclick="selectModel('gemini-4-argon-high', event)" role="option" aria-selected="false">
                             <span class="model-pool-badge badge-argon">Argon</span>
                             <span class="model-option-name">gemini-4-argon-high</span>
                             <span class="custom-select-check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg></span>
+                            <button type="button" class="model-exclude-btn" data-model="gemini-4-argon-high" aria-pressed="false" onclick="toggleModelExcluded('', this, event)"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9"></circle><line x1="5.6" y1="5.6" x2="18.4" y2="18.4"></line></svg><span data-i18n="btnExcludeModel">排除</span></button>
                         </div>
                         <div class="model-select-group-header" data-i18n="poolClaudeGPT">Claude & GPT 额度池</div>
                         <div class="custom-select-option" data-value="claude-sonnet-5-5-high" data-pool="claude_gpt" onclick="selectModel('claude-sonnet-5-5-high', event)" role="option" aria-selected="false">
                             <span class="model-pool-badge badge-claude">Claude/GPT</span>
                             <span class="model-option-name">claude-sonnet-5-5-high</span>
                             <span class="custom-select-check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg></span>
+                            <button type="button" class="model-exclude-btn" data-model="claude-sonnet-5-5-high" aria-pressed="false" onclick="toggleModelExcluded('', this, event)"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9"></circle><line x1="5.6" y1="5.6" x2="18.4" y2="18.4"></line></svg><span data-i18n="btnExcludeModel">排除</span></button>
                         </div>
                         <div class="custom-select-option" data-value="claude-opus-5-5-high" data-pool="claude_gpt" onclick="selectModel('claude-opus-5-5-high', event)" role="option" aria-selected="false">
                             <span class="model-pool-badge badge-claude">Claude/GPT</span>
                             <span class="model-option-name">claude-opus-5-5-high</span>
                             <span class="custom-select-check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg></span>
+                            <button type="button" class="model-exclude-btn" data-model="claude-opus-5-5-high" aria-pressed="false" onclick="toggleModelExcluded('', this, event)"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9"></circle><line x1="5.6" y1="5.6" x2="18.4" y2="18.4"></line></svg><span data-i18n="btnExcludeModel">排除</span></button>
                         </div>
                         <div class="custom-select-option" data-value="gpt-oss-120b-medium" data-pool="claude_gpt" onclick="selectModel('gpt-oss-120b-medium', event)" role="option" aria-selected="false">
                             <span class="model-pool-badge badge-claude">Claude/GPT</span>
                             <span class="model-option-name">gpt-oss-120b-medium</span>
                             <span class="custom-select-check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg></span>
+                            <button type="button" class="model-exclude-btn" data-model="gpt-oss-120b-medium" aria-pressed="false" onclick="toggleModelExcluded('', this, event)"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9"></circle><line x1="5.6" y1="5.6" x2="18.4" y2="18.4"></line></svg><span data-i18n="btnExcludeModel">排除</span></button>
                         </div>
                     </div>
                 </div>
