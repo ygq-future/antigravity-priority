@@ -127,7 +127,7 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 	// Probe-only: evidence collected and three-pool snapshot + routing tables updated; no Host write occurs.
 	if request.Trigger == TriggerProbe {
 		audit := fmt.Sprintf("probe completed: %d probe observations", evidence.Probed)
-		_, projectErr := r.state.ProjectRun(ctx, apply.Result{}, audit, RunHistoryEntry{
+		return r.state.RecordRunEvent(ctx, true, audit, RunHistoryEntry{
 			Kind:         KindProbe,
 			Trigger:      string(request.Trigger),
 			ProbeRoundID: evidence.RoundID,
@@ -135,13 +135,12 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 			Succeeded:    readyProbeCredentialCount(evidence.Probes),
 			Message:      audit,
 		})
-		return projectErr
 	}
 
 	// AutoApply: background quota probe and calibration only. Never writes back priorities to host files.
 	if request.Trigger == TriggerAutoApply {
 		summary := fmt.Sprintf("auto schedule probed=%d; in-memory routing tables calibrated", evidence.Probed)
-		_, projectErr := r.state.ProjectRun(ctx, apply.Result{}, summary, RunHistoryEntry{
+		return r.state.RecordRunEvent(ctx, true, summary, RunHistoryEntry{
 			Kind:         KindAutoApply,
 			Trigger:      string(request.Trigger),
 			ProbeRoundID: evidence.RoundID,
@@ -149,7 +148,6 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 			Succeeded:    readyProbeCredentialCount(evidence.Probes),
 			Message:      summary,
 		})
-		return projectErr
 	}
 
 	// Unknown triggers perform no Host mutation.

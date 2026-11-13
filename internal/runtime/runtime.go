@@ -451,10 +451,10 @@ func (r *Runtime) runAuto(ctx context.Context) error {
 	})
 	if runErr != nil {
 		if !errors.Is(runErr, context.Canceled) && !errors.Is(runErr, context.DeadlineExceeded) {
-			r.snapshotRunEntry(apply.Result{}, runErr.Error(), RunHistoryEntry{
+			_ = r.state.RecordRunEvent(taskCtx, false, host.RedactBytes([]byte(runErr.Error())), RunHistoryEntry{
 				Kind:    KindAutoApply,
 				Trigger: string(TriggerAutoApply),
-				Message: "auto_apply error: " + runErr.Error(),
+				Message: "auto_apply error: " + host.RedactBytes([]byte(runErr.Error())),
 			})
 		}
 		return fmt.Errorf("run %s: %w", TriggerAutoApply, runErr)
@@ -780,10 +780,6 @@ func (r *Runtime) taskContext(ctx context.Context) (context.Context, func(), con
 		cancel()
 	}
 	return taskCtx, cleanup, cfg, runner, nil
-}
-
-func (r *Runtime) snapshotRunEntry(result apply.Result, audit string, entry RunHistoryEntry) {
-	r.state.SnapshotRunEntry(result, audit, entry)
 }
 
 func (r *Runtime) commitRoutingAndSnapshot(
@@ -1370,23 +1366,13 @@ func (r *Runtime) recordCooldownFailure(ctx context.Context, persist bool, authI
 	if redactedAuth := redactRuntimeIdentifier(authIndex); redactedAuth != "" {
 		message = fmt.Sprintf("%s auth=%s: %s", reason, redactedAuth, redactedErr)
 	}
-	result := apply.Result{
-		Attempted: 1,
-		Failed:    1,
-		Record:    apply.RecordResult{Status: apply.RecordNotAttempted},
-	}
-	entry := RunHistoryEntry{
+	_ = r.state.RecordRunEvent(ctx, persist, message, RunHistoryEntry{
 		Kind:      KindCooldown,
 		Trigger:   trigger,
 		Attempted: 1,
 		Failed:    1,
 		Message:   message,
-	}
-	if !persist {
-		r.snapshotRunEntry(result, message, entry)
-		return
-	}
-	_, _ = r.state.ProjectRun(ctx, result, message, entry)
+	})
 }
 
 func redactRuntimeIdentifier(value string) string {

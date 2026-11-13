@@ -199,20 +199,15 @@ func (r *Runtime) triggerFailure(ctx context.Context, input failureInput) error 
 		}},
 	})
 	summary := healthIsolationSummary("health cooldown", input.AuthIndex, input.ModelGroup, input.Reason)
-	result := apply.Result{
-		Snapshot:  snapshot,
-		Record:    apply.RecordResult{Status: apply.RecordNotAttempted},
+	if recordErr := r.state.RecordRunEvent(ctx, true, summary, RunHistoryEntry{
+		Kind:      KindCooldown,
+		Trigger:   failureTrigger(input.Kind),
 		Attempted: 1,
 		Succeeded: 1,
-	}
-	_, projectErr := r.state.ProjectRun(ctx, result, summary, withTransitionStats(result, RunHistoryEntry{
-		Kind:     KindCooldown,
-		Trigger:  failureTrigger(input.Kind),
-		Message:  summary,
-		Snapshot: &result.Snapshot,
-	}))
-	if projectErr != nil {
-		return projectErr
+		Message:   summary,
+		Snapshot:  &snapshot,
+	}); recordErr != nil {
+		return recordErr
 	}
 	r.signalRateLimitWorker()
 	return nil
@@ -687,19 +682,14 @@ func (r *Runtime) applyCooldownRecovery(ctx context.Context, store *state.Store,
 		}},
 	})
 	summary := healthIsolationSummary("cooldown recovery", entry.AuthIndex, entry.ModelGroup, cause)
-	result := apply.Result{
-		Snapshot:  snapshot,
-		Record:    apply.RecordResult{Status: apply.RecordNotAttempted},
+	return r.state.RecordRunEvent(ctx, true, summary, RunHistoryEntry{
+		Kind:      KindCooldownRecovery,
+		Trigger:   trigger,
 		Attempted: 1,
 		Succeeded: 1,
-	}
-	_, err := r.state.ProjectRun(ctx, result, summary, withTransitionStats(result, RunHistoryEntry{
-		Kind:     KindCooldownRecovery,
-		Trigger:  trigger,
-		Message:  summary,
-		Snapshot: &result.Snapshot,
-	}))
-	return err
+		Message:   summary,
+		Snapshot:  &snapshot,
+	})
 }
 
 func (r *Runtime) recomputeAndCaptureRouting(now time.Time, authIndex string, existingCreds ...[]core.Credential) (map[string]PrecomputedCandidate, core.Credential, bool) {

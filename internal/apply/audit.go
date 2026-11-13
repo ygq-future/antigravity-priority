@@ -229,3 +229,76 @@ type SnapshotSet struct {
 	Groups     map[string]PoolSnapshot `json:"groups"`
 	Models     []ModelOption           `json:"models,omitempty"`
 }
+
+// ManagementView returns a copy of the snapshot set projecting trusted full
+// host identities onto Email and AuthIndex for authenticated management
+// responses while redacting any sensitive substrings in string fields.
+func (s SnapshotSet) ManagementView() SnapshotSet {
+	view := s
+	if s.Models != nil {
+		view.Models = make([]ModelOption, len(s.Models))
+		for i, model := range s.Models {
+			view.Models[i] = ModelOption{
+				ID:          redactString(model.ID),
+				DisplayName: redactString(model.DisplayName),
+				QuotaPool:   redactString(model.QuotaPool),
+			}
+		}
+	}
+	if s.Groups != nil {
+		view.Groups = make(map[string]PoolSnapshot, len(s.Groups))
+		for groupName, groupSnapshot := range s.Groups {
+			items := make([]SnapshotItem, len(groupSnapshot.Items))
+			for i, item := range groupSnapshot.Items {
+				projected := redactSnapshotItemFields(item)
+				projected.Email = redactString(item.Identity.Email)
+				if item.Identity.AuthIndex != "" {
+					projected.AuthIndex = redactString(item.Identity.AuthIndex)
+				}
+				items[i] = projected
+			}
+			view.Groups[groupName] = PoolSnapshot{Items: items}
+		}
+	}
+	return view
+}
+
+// ManagementView returns a copy of the plan snapshot with Email resolved via
+// resolveEmail (or Identity.Email when nil) for authenticated management views.
+func (s PlanSnapshot) ManagementView(resolveEmail func(SnapshotItem) string) PlanSnapshot {
+	view := s
+	if s.Items != nil {
+		items := make([]SnapshotItem, len(s.Items))
+		for i, item := range s.Items {
+			projected := redactSnapshotItemFields(item)
+			if resolveEmail != nil {
+				projected.Email = redactString(resolveEmail(item))
+			} else {
+				projected.Email = redactString(item.Identity.Email)
+			}
+			items[i] = projected
+		}
+		view.Items = items
+	}
+	return view
+}
+
+func redactSnapshotItemFields(item SnapshotItem) SnapshotItem {
+	projected := item
+	projected.Name = redactString(item.Name)
+	projected.AuthIndex = redactString(item.AuthIndex)
+	projected.Account = redactString(item.Account)
+	projected.Email = redactString(item.Email)
+	projected.Provider = redactString(item.Provider)
+	projected.Type = redactString(item.Type)
+	projected.Status = redactString(item.Status)
+	projected.PlanType = redactString(item.PlanType)
+	projected.Reason = redactString(item.Reason)
+	if item.SupportedModels != nil {
+		projected.SupportedModels = make([]string, len(item.SupportedModels))
+		for i, model := range item.SupportedModels {
+			projected.SupportedModels[i] = redactString(model)
+		}
+	}
+	return projected
+}

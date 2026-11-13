@@ -251,3 +251,66 @@ func TestSnapshot_PriorityMissing_Preservation(t *testing.T) {
 		t.Errorf("expected Items[2].Host.Priority=-1, got %d", snapshot.Items[2].Host.Priority)
 	}
 }
+
+func TestSnapshotSet_And_PlanSnapshot_ManagementView(t *testing.T) {
+	now := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
+	orig := apply.SnapshotSet{
+		ObservedAt: now,
+		Models: []apply.ModelOption{{
+			ID:          "gemini-3-flash",
+			DisplayName: "Bearer secret_token_display",
+			QuotaPool:   "gemini",
+		}},
+		Groups: map[string]apply.PoolSnapshot{
+			"gemini": {Items: []apply.SnapshotItem{{
+				Identity:        apply.SnapshotIdentity{Email: "owner@example.com", AuthIndex: "auth_123"},
+				Name:            "account",
+				AuthIndex:       "au***23",
+				Email:           "ow***com",
+				Reason:          "token=dummy_val_123",
+				SupportedModels: []string{"gemini-3-flash"},
+			}}},
+		},
+	}
+
+	view := orig.ManagementView()
+	gotItem := view.Groups["gemini"].Items[0]
+	if gotItem.Email != "owner@example.com" || gotItem.AuthIndex != "auth_123" {
+		t.Fatalf("ManagementView identity = (%q, %q), want full identity", gotItem.Email, gotItem.AuthIndex)
+	}
+	if strings.Contains(gotItem.Reason, "dummy_val_123") || strings.Contains(view.Models[0].DisplayName, "secret_token_display") {
+		t.Fatalf("ManagementView did not redact sensitive substrings: reason=%q display=%q", gotItem.Reason, view.Models[0].DisplayName)
+	}
+	// Original audit snapshot must remain untouched and redacted.
+	if orig.Groups["gemini"].Items[0].Email != "ow***com" || orig.Groups["gemini"].Items[0].AuthIndex != "au***23" {
+		t.Fatalf("ManagementView mutated original snapshot: %+v", orig.Groups["gemini"].Items[0])
+	}
+
+	rawJSON, err := json.Marshal(view)
+	if err != nil {
+		t.Fatalf("marshal management view: %v", err)
+	}
+	if strings.Contains(string(rawJSON), `"Identity"`) || strings.Contains(string(rawJSON), "dummy_val_123") {
+		t.Fatalf("unexpected leakage in management view JSON: %s", rawJSON)
+	}
+
+	plan := apply.PlanSnapshot{
+		DecidedAt:  now,
+		TotalItems: 1,
+		Items: []apply.SnapshotItem{{
+			Identity:  apply.SnapshotIdentity{Email: "owner@example.com", AuthIndex: "auth_123"},
+			AuthIndex: "au***23",
+			Email:     "ow***com",
+			Reason:    "Authorization: Bearer abc123",
+		}},
+	}
+	planView := plan.ManagementView(func(item apply.SnapshotItem) string {
+		return item.Identity.Email
+	})
+	if planView.Items[0].Email != "owner@example.com" || planView.Items[0].AuthIndex != "au***23" {
+		t.Fatalf("PlanSnapshot.ManagementView = %+v, want full email and preserved auth_index", planView.Items[0])
+	}
+	if strings.Contains(planView.Items[0].Reason, "abc123") {
+		t.Fatalf("PlanSnapshot.ManagementView did not redact reason: %q", planView.Items[0].Reason)
+	}
+}

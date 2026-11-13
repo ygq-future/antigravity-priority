@@ -397,17 +397,7 @@ func (r *stateRepository) LatestAutoApplyEntry() *RunHistoryEntry {
 	return nil
 }
 
-func (r *stateRepository) SnapshotRunEntry(result apply.Result, audit string, entry RunHistoryEntry) {
-	if r == nil {
-		return
-	}
-	r.runsMu.Lock()
-	defer r.runsMu.Unlock()
-	r.snapshotRunEntryLocked(result, audit, entry)
-}
-
-func (r *stateRepository) snapshotRunEntryLocked(result apply.Result, audit string, entry RunHistoryEntry) {
-	r.latestResult = result
+func (r *stateRepository) appendRunEntryLocked(audit string, entry RunHistoryEntry) {
 	r.latestAudit = audit
 	if entry.At.IsZero() {
 		if r.clock != nil {
@@ -424,6 +414,11 @@ func (r *stateRepository) snapshotRunEntryLocked(result apply.Result, audit stri
 	r.runHistory = history
 }
 
+func (r *stateRepository) snapshotRunEntryLocked(result apply.Result, audit string, entry RunHistoryEntry) {
+	r.latestResult = result
+	r.appendRunEntryLocked(audit, entry)
+}
+
 func (r *stateRepository) replaceTopRunEntryLocked(result apply.Result, entry RunHistoryEntry) {
 	r.latestResult = result
 	if len(r.runHistory) > 0 {
@@ -432,6 +427,57 @@ func (r *stateRepository) replaceTopRunEntryLocked(result apply.Result, entry Ru
 		}
 		r.runHistory[0] = entry
 	}
+}
+
+// RecordRunEvent appends a non-Host-transition event (probe, auto_apply, or
+// health cooldown lifecycle) to run history and optionally persists it without
+// fabricating an apply.Result.
+func (r *stateRepository) RecordRunEvent(ctx context.Context, persist bool, audit string, entry RunHistoryEntry) error {
+	if r == nil {
+		if persist {
+			return errMissingStateStore
+		}
+		return nil
+	}
+	r.runsMu.Lock()
+	defer r.runsMu.Unlock()
+
+	if !persist {
+		if entry.Record.Status == "" {
+			entry.Record = apply.RecordResult{Status: apply.RecordNotAttempted}
+		}
+		r.appendRunEntryLocked(audit, entry)
+		return nil
+	}
+
+	store := r.StoreOrNil()
+	if store == nil {
+		entry.Record = apply.RecordResult{Status: apply.RecordFailed, Error: "state store is required"}
+		r.appendRunEntryLocked(audit, entry)
+		return errMissingStateStore
+	}
+	entry.Record = apply.RecordResult{Status: apply.RecordPersisted}
+	r.appendRunEntryLocked(audit, entry)
+
+	resultJSON, marshalErr := json.Marshal(r.latestResult)
+	if marshalErr != nil {
+		entry.Record = apply.RecordResult{Status: apply.RecordFailed, Error: host.RedactBytes([]byte(marshalErr.Error()))}
+		r.replaceTopRunEntryLocked(r.latestResult, entry)
+		return fmt.Errorf("encode execution result: %w", marshalErr)
+	}
+	historyJSON, marshalErr := json.Marshal(r.runHistory)
+	if marshalErr != nil {
+		entry.Record = apply.RecordResult{Status: apply.RecordFailed, Error: host.RedactBytes([]byte(marshalErr.Error()))}
+		r.replaceTopRunEntryLocked(r.latestResult, entry)
+		return fmt.Errorf("encode execution history: %w", marshalErr)
+	}
+	store.SetRuntimeSnapshot(audit, resultJSON, historyJSON)
+	if err := store.SaveRunsAtomic(ctx); err != nil {
+		entry.Record = apply.RecordResult{Status: apply.RecordFailed, Error: host.RedactBytes([]byte(err.Error()))}
+		r.replaceTopRunEntryLocked(r.latestResult, entry)
+		return fmt.Errorf("persist execution history: %w", err)
+	}
+	return nil
 }
 
 func (r *stateRepository) ProjectRun(ctx context.Context, result apply.Result, audit string, entry RunHistoryEntry) (apply.Result, error) {

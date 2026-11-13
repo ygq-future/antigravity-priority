@@ -243,8 +243,7 @@ func (r managementRunner) Run(ctx context.Context, request management.RunRequest
 	if err := r.runtime.Probe(ctx, request.AuthIndexes); err != nil {
 		return apply.Result{}, err
 	}
-	result, _ := r.runtime.currentRunSnapshot()
-	return result, nil
+	return apply.Result{Record: apply.RecordResult{Status: apply.RecordPersisted}}, nil
 }
 
 func (r managementRunner) Reset(ctx context.Context) (map[string]any, error) {
@@ -274,7 +273,7 @@ func (r managementRunner) Diagnostics(ctx context.Context) (map[string]any, erro
 
 // managementRunHistory projects full display emails only at the authenticated
 // management adapter boundary. Persisted run history remains redacted.
-func (r *Runtime) managementRunHistory() []map[string]any {
+func (r *Runtime) managementRunHistory() []RunHistoryEntry {
 	history := r.currentRunHistory()
 	emailByMask := uniqueEmailByMask(r.currentSnapshotEmails(), func(_ string, email string) string {
 		return redactRuntimeIdentifier(email)
@@ -282,61 +281,30 @@ func (r *Runtime) managementRunHistory() []map[string]any {
 	emailByAuthMask := uniqueEmailByMask(r.currentSnapshotEmails(), func(authIndex, _ string) string {
 		return redactRuntimeIdentifier(authIndex)
 	})
-	result := make([]map[string]any, 0, len(history))
+	result := make([]RunHistoryEntry, 0, len(history))
 	for _, entry := range history {
-		encoded, err := json.Marshal(entry)
-		if err != nil {
-			continue
-		}
-		var item map[string]any
-		if err := json.Unmarshal(encoded, &item); err != nil {
-			continue
-		}
 		if entry.Snapshot != nil {
-			if snapshot, ok := item["snapshot"].(map[string]any); ok {
-				overlayManagementItemEmails(snapshot["items"], entry.Snapshot.Items, emailByMask, emailByAuthMask)
-			}
+			projected := entry.Snapshot.ManagementView(func(item apply.SnapshotItem) string {
+				return resolveManagementEmail(item, emailByMask, emailByAuthMask)
+			})
+			entry.Snapshot = &projected
 		}
-		result = append(result, item)
+		result = append(result, entry)
 	}
 	return result
 }
 
-func overlayManagementItemEmails(raw any, identities []apply.SnapshotItem, emailByMask, emailByAuthMask map[string]string) {
-	items, ok := raw.([]any)
-	if !ok {
-		return
+func resolveManagementEmail(item apply.SnapshotItem, emailByMask, emailByAuthMask map[string]string) string {
+	if item.Identity.Email != "" {
+		return item.Identity.Email
 	}
-	for index, identity := range identities {
-		if index >= len(items) {
-			continue
-		}
-		item, ok := items[index].(map[string]any)
-		if !ok {
-			continue
-		}
-		overlayManagementEmail(item, identity.Identity.Email, emailByMask, emailByAuthMask)
+	if email := emailByMask[item.Email]; email != "" {
+		return email
 	}
-}
-
-func overlayManagementEmail(item map[string]any, identityEmail string, emailByMask, emailByAuthMask map[string]string) {
-	if identityEmail != "" {
-		item["email"] = identityEmail
-		return
+	if email := emailByAuthMask[item.AuthIndex]; email != "" {
+		return email
 	}
-	if masked, ok := item["email"].(string); ok {
-		if email := emailByMask[masked]; email != "" {
-			item["email"] = email
-			return
-		}
-	}
-	if maskedAuthIndex, ok := item["auth_index"].(string); ok {
-		if email := emailByAuthMask[maskedAuthIndex]; email != "" {
-			item["email"] = email
-			return
-		}
-	}
-	item["email"] = ""
+	return ""
 }
 
 // overlayManagementRequestHistoryEmails replaces persisted masked emails with

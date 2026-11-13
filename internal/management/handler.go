@@ -3,7 +3,6 @@ package management
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -236,17 +235,9 @@ func (h *Handler) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	snapMap, err := managementSnapshotMap(snap)
-	if err != nil {
-		h.writeJSONError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	redactedSnap := redactMap(snapMap)
-
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(redactedSnap)
+	_ = json.NewEncoder(w).Encode(snap.ManagementView())
 }
 
 func (h *Handler) handleGetScheduleConfig(w http.ResponseWriter, r *http.Request) {
@@ -352,53 +343,9 @@ func (h *Handler) handleSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	snapMap, err := managementSnapshotMap(snap)
-	if err != nil {
-		h.writeJSONError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	redactedSnap := redactMap(snapMap)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(redactedSnap)
-}
-
-func managementSnapshotMap(snapshot apply.SnapshotSet) (map[string]any, error) {
-	encoded, err := json.Marshal(snapshot)
-	if err != nil {
-		return nil, fmt.Errorf("marshal snapshot failed: %w", err)
-	}
-	var result map[string]any
-	if err := json.Unmarshal(encoded, &result); err != nil {
-		return nil, fmt.Errorf("unmarshal snapshot failed: %w", err)
-	}
-	groups, _ := result["groups"].(map[string]any)
-	for groupName, groupSnapshot := range snapshot.Groups {
-		group, _ := groups[groupName].(map[string]any)
-		overlaySnapshotIdentities(group["items"], itemIdentities(groupSnapshot.Items))
-	}
-	return result, nil
-}
-
-func itemIdentities(items []apply.SnapshotItem) []apply.SnapshotIdentity {
-	identities := make([]apply.SnapshotIdentity, len(items))
-	for index, item := range items {
-		identities[index] = item.Identity
-	}
-	return identities
-}
-
-func overlaySnapshotIdentities(rawItems any, identities []apply.SnapshotIdentity) {
-	items, _ := rawItems.([]any)
-	for index, identity := range identities {
-		if index >= len(items) {
-			return
-		}
-		item, _ := items[index].(map[string]any)
-		item["email"] = identity.Email
-		item["auth_index"] = identity.AuthIndex
-	}
+	_ = json.NewEncoder(w).Encode(snap.ManagementView())
 }
 
 type warmupCredentialRequest struct {
