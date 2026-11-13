@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"antigravity-priority/internal/apply"
@@ -81,25 +82,67 @@ const (
 	disabledRoutingTier = -2
 )
 
-// resolveAuthIndex resolves candidate ID or attributes to the internal auth index.
-func (r *Runtime) resolveAuthIndex(candidateID string, attributes map[string]string) string {
-	r.routingMu.RLock()
-	defer r.routingMu.RUnlock()
+// poolRouter owns the in-memory three-pool routing tables, host model/auth
+// inventory lookup maps, round-robin cursors, and session affinity state under
+// a single RWMutex.
+type poolRouter struct {
+	mu                    sync.RWMutex
+	plansByPool           map[config.AntigravityModelGroup]PoolRoutingTable
+	authIDToIndex         map[string]string
+	supportedModelsByAuth map[string]map[string]struct{}
+	modelCatalog          []ModelCatalogItem
+	rrCursorByPool        map[config.AntigravityModelGroup]string
+	sessionAffinity       map[string]sessionBinding
+}
+
+func newPoolRouter() poolRouter {
+	return poolRouter{
+		plansByPool:           make(map[config.AntigravityModelGroup]PoolRoutingTable),
+		authIDToIndex:         make(map[string]string),
+		supportedModelsByAuth: make(map[string]map[string]struct{}),
+		modelCatalog:          append([]ModelCatalogItem(nil), builtInAntigravityModels...),
+		rrCursorByPool:        make(map[config.AntigravityModelGroup]string),
+		sessionAffinity:       make(map[string]sessionBinding),
+	}
+}
+
+func (pr *poolRouter) ensureMapsLocked() {
+	if pr.plansByPool == nil {
+		pr.plansByPool = make(map[config.AntigravityModelGroup]PoolRoutingTable)
+	}
+	if pr.authIDToIndex == nil {
+		pr.authIDToIndex = make(map[string]string)
+	}
+	if pr.supportedModelsByAuth == nil {
+		pr.supportedModelsByAuth = make(map[string]map[string]struct{})
+	}
+	if pr.rrCursorByPool == nil {
+		pr.rrCursorByPool = make(map[config.AntigravityModelGroup]string)
+	}
+	if pr.sessionAffinity == nil {
+		pr.sessionAffinity = make(map[string]sessionBinding)
+	}
+}
+
+// ResolveAuthIndex resolves candidate ID or attributes to the internal auth index.
+func (pr *poolRouter) ResolveAuthIndex(candidateID string, attributes map[string]string) string {
+	pr.mu.RLock()
+	defer pr.mu.RUnlock()
 
 	cleanID := strings.TrimSpace(candidateID)
-	if idx, ok := r.authIDToIndex[cleanID]; ok && idx != "" {
+	if idx, ok := pr.authIDToIndex[cleanID]; ok && idx != "" {
 		return idx
 	}
 	if len(attributes) > 0 {
 		for _, key := range []string{"auth_index", "path", "name", "email", "account"} {
 			if val, ok := attributes[key]; ok && strings.TrimSpace(val) != "" {
 				trimmed := strings.TrimSpace(val)
-				if idx, found := r.authIDToIndex[trimmed]; found && idx != "" {
+				if idx, found := pr.authIDToIndex[trimmed]; found && idx != "" {
 					return idx
 				}
 				if key == "path" {
 					base := filepath.Base(trimmed)
-					if idx, found := r.authIDToIndex[base]; found && idx != "" {
+					if idx, found := pr.authIDToIndex[base]; found && idx != "" {
 						return idx
 					}
 				}
@@ -112,16 +155,21 @@ func (r *Runtime) resolveAuthIndex(candidateID string, attributes map[string]str
 	return cleanID
 }
 
-// updateModelInventoryLocked updates the candidate ID lookup table and catalog from CPA host auth inventory.
 func isAntigravityProviderName(provider string) bool {
 	p := strings.ToLower(strings.TrimSpace(provider))
 	return p == "antigravity" || p == "google" || p == "gemini" || p == "google-antigravity"
 }
 
-func (r *Runtime) updateModelInventoryLocked(files []host.AuthFile, models []host.AuthModelsEntry) {
-	r.authIDToIndex = make(map[string]string)
-	r.supportedModelsByAuth = make(map[string]map[string]struct{})
+// UpdateInventory refreshes auth/model lookup tables from host inventory under a write lock.
+func (pr *poolRouter) UpdateInventory(files []host.AuthFile, models []host.AuthModelsEntry) {
+	pr.mu.Lock()
+	defer pr.mu.Unlock()
+	pr.updateInventoryLocked(files, models)
+}
 
+func (pr *poolRouter) updateInventoryLocked(files []host.AuthFile, models []host.AuthModelsEntry) {
+	pr.authIDToIndex = make(map[string]string)
+	pr.supportedModelsByAuth = make(map[string]map[string]struct{})
 	antigravityAuthIDs := make(map[string]struct{})
 	for _, file := range files {
 		if !isAntigravityAuthFile(file) {
@@ -132,30 +180,30 @@ func (r *Runtime) updateModelInventoryLocked(files []host.AuthFile, models []hos
 			continue
 		}
 		antigravityAuthIDs[idx] = struct{}{}
-		r.authIDToIndex[idx] = idx
+		pr.authIDToIndex[idx] = idx
 		if file.ID != "" {
 			antigravityAuthIDs[file.ID] = struct{}{}
-			r.authIDToIndex[file.ID] = idx
+			pr.authIDToIndex[file.ID] = idx
 		}
 		if file.Name != "" {
 			antigravityAuthIDs[file.Name] = struct{}{}
-			r.authIDToIndex[file.Name] = idx
+			pr.authIDToIndex[file.Name] = idx
 		}
 		if file.Email != "" {
 			antigravityAuthIDs[file.Email] = struct{}{}
-			r.authIDToIndex[file.Email] = idx
+			pr.authIDToIndex[file.Email] = idx
 		}
 		if file.Account != "" {
 			antigravityAuthIDs[file.Account] = struct{}{}
-			r.authIDToIndex[file.Account] = idx
+			pr.authIDToIndex[file.Account] = idx
 		}
 		if file.Path != "" {
 			antigravityAuthIDs[file.Path] = struct{}{}
 			antigravityAuthIDs[filepath.Base(file.Path)] = struct{}{}
 			antigravityAuthIDs[filepath.ToSlash(file.Path)] = struct{}{}
-			r.authIDToIndex[file.Path] = idx
-			r.authIDToIndex[filepath.Base(file.Path)] = idx
-			r.authIDToIndex[filepath.ToSlash(file.Path)] = idx
+			pr.authIDToIndex[file.Path] = idx
+			pr.authIDToIndex[filepath.Base(file.Path)] = idx
+			pr.authIDToIndex[filepath.ToSlash(file.Path)] = idx
 		}
 	}
 
@@ -184,16 +232,16 @@ func (r *Runtime) updateModelInventoryLocked(files []host.AuthFile, models []hos
 
 		if authIdx != "" {
 			if entry.ID != "" {
-				r.authIDToIndex[entry.ID] = authIdx
+				pr.authIDToIndex[entry.ID] = authIdx
 			}
-			r.authIDToIndex[authIdx] = authIdx
+			pr.authIDToIndex[authIdx] = authIdx
 		}
 
 		if len(entry.Models) > 0 && authIdx != "" {
-			set := r.supportedModelsByAuth[authIdx]
+			set := pr.supportedModelsByAuth[authIdx]
 			if set == nil {
 				set = make(map[string]struct{})
-				r.supportedModelsByAuth[authIdx] = set
+				pr.supportedModelsByAuth[authIdx] = set
 			}
 			for _, m := range entry.Models {
 				trimmed := strings.TrimSpace(m)
@@ -227,7 +275,7 @@ func (r *Runtime) updateModelInventoryLocked(files []host.AuthFile, models []hos
 	sort.Slice(mergedCatalog, func(i, j int) bool {
 		return mergedCatalog[i].ID < mergedCatalog[j].ID
 	})
-	r.modelCatalog = mergedCatalog
+	pr.modelCatalog = mergedCatalog
 }
 
 // routingConfigSnapshot returns an immutable snapshot of the configuration fields consumed by routing.
@@ -240,9 +288,16 @@ func (r *Runtime) routingConfigSnapshot() config.Config {
 	return cfg
 }
 
-// modelCatalogSnapshotLocked reads model catalog and per-credential supported models while routingMu is held.
-func (r *Runtime) modelCatalogSnapshotLocked() ([]apply.ModelOption, map[string][]string) {
-	catalog := r.modelCatalog
+// CatalogSnapshot returns an immutable copy of the registered model catalog and per-credential capabilities.
+func (pr *poolRouter) CatalogSnapshot() ([]apply.ModelOption, map[string][]string) {
+	pr.mu.RLock()
+	defer pr.mu.RUnlock()
+	return pr.catalogSnapshotLocked()
+}
+
+// catalogSnapshotLocked reads model catalog and per-credential supported models while pr.mu is held.
+func (pr *poolRouter) catalogSnapshotLocked() ([]apply.ModelOption, map[string][]string) {
+	catalog := pr.modelCatalog
 	if len(catalog) == 0 {
 		catalog = builtInAntigravityModels
 	}
@@ -254,8 +309,8 @@ func (r *Runtime) modelCatalogSnapshotLocked() ([]apply.ModelOption, map[string]
 			QuotaPool:   string(item.QuotaPool),
 		}
 	}
-	supportedMap := make(map[string][]string, len(r.supportedModelsByAuth))
-	for authIdx, set := range r.supportedModelsByAuth {
+	supportedMap := make(map[string][]string, len(pr.supportedModelsByAuth))
+	for authIdx, set := range pr.supportedModelsByAuth {
 		if len(set) > 0 {
 			supported := make([]string, 0, len(set))
 			for m := range set {
@@ -268,7 +323,54 @@ func (r *Runtime) modelCatalogSnapshotLocked() ([]apply.ModelOption, map[string]
 	return models, supportedMap
 }
 
-// resolveCurrentCredentials extracts current known credentials from host or state cache without holding routingMu.
+func (pr *poolRouter) ResetTables() {
+	pr.mu.Lock()
+	defer pr.mu.Unlock()
+	pr.plansByPool = make(map[config.AntigravityModelGroup]PoolRoutingTable)
+}
+
+func (pr *poolRouter) EvaluateAndCommit(
+	inventoryFiles []host.AuthFile,
+	inventoryModels []host.AuthModelsEntry,
+	evalFn func(models []apply.ModelOption, supportedMap map[string][]string) (RoutingEngineOutput, error),
+) (RoutingEngineOutput, error) {
+	pr.mu.Lock()
+	defer pr.mu.Unlock()
+	pr.ensureMapsLocked()
+	if inventoryFiles != nil || inventoryModels != nil {
+		pr.updateInventoryLocked(inventoryFiles, inventoryModels)
+	}
+	models, supportedMap := pr.catalogSnapshotLocked()
+	out, err := evalFn(models, supportedMap)
+	if err != nil {
+		return RoutingEngineOutput{}, err
+	}
+	pr.plansByPool = out.Tables
+	return out, nil
+}
+
+func (pr *poolRouter) EvaluateAndCapture(
+	authIndex string,
+	evalFn func(models []apply.ModelOption, supportedMap map[string][]string) (RoutingEngineOutput, error),
+) map[string]PrecomputedCandidate {
+	pr.mu.Lock()
+	defer pr.mu.Unlock()
+	pr.ensureMapsLocked()
+	models, supportedMap := pr.catalogSnapshotLocked()
+	out, err := evalFn(models, supportedMap)
+	if err == nil {
+		pr.plansByPool = out.Tables
+	}
+	captured := make(map[string]PrecomputedCandidate, len(pr.plansByPool))
+	for pool, table := range pr.plansByPool {
+		if cand, ok := table.ByAuthIndex[authIndex]; ok {
+			captured[string(pool)] = cand
+		}
+	}
+	return captured
+}
+
+// resolveCurrentCredentials extracts current known credentials from host or state cache without holding r.router.mu.
 func (r *Runtime) resolveCurrentCredentials() []core.Credential {
 	if r.hostCallbacks != nil {
 		client := host.NewClient(r.hostCallbacks)
@@ -294,12 +396,16 @@ func (r *Runtime) resolveCurrentCredentials() []core.Credential {
 	return nil
 }
 
+func isPoolTableFresh(table PoolRoutingTable, ok bool, now time.Time) bool {
+	return ok && (table.NextTransitionAt.IsZero() || now.Before(table.NextTransitionAt)) && now.Sub(table.DecidedAt) <= 60*time.Second
+}
+
 // getOrRefreshPoolTable returns the cached PoolRoutingTable or lazily re-plans if expired.
 func (r *Runtime) getOrRefreshPoolTable(pool config.AntigravityModelGroup, now time.Time) PoolRoutingTable {
-	r.routingMu.RLock()
-	table, ok := r.plansByPool[pool]
-	needsRefresh := !ok || (!table.NextTransitionAt.IsZero() && !now.Before(table.NextTransitionAt)) || now.Sub(table.DecidedAt) > 60*time.Second
-	r.routingMu.RUnlock()
+	r.router.mu.RLock()
+	table, ok := r.router.plansByPool[pool]
+	needsRefresh := !isPoolTableFresh(table, ok, now)
+	r.router.mu.RUnlock()
 
 	if !needsRefresh {
 		return table
@@ -308,32 +414,75 @@ func (r *Runtime) getOrRefreshPoolTable(pool config.AntigravityModelGroup, now t
 	cfg := r.routingConfigSnapshot()
 	credentials := enrichCredentialsPlanTypeFromStore(r.state.StoreOrNil(), r.resolveCurrentCredentials())
 
-	r.routingMu.Lock()
-	defer r.routingMu.Unlock()
+	r.router.mu.Lock()
+	defer r.router.mu.Unlock()
+	r.router.ensureMapsLocked()
 	// Double check under write lock
-	table, ok = r.plansByPool[pool]
-	if ok && (table.NextTransitionAt.IsZero() || now.Before(table.NextTransitionAt)) && now.Sub(table.DecidedAt) <= 60*time.Second {
+	table, ok = r.router.plansByPool[pool]
+	if isPoolTableFresh(table, ok, now) {
 		return table
 	}
 
-	r.pruneExpiredSessionAffinityLocked(now)
+	r.router.pruneExpiredSessionAffinityLocked(now)
 	store := r.state.StoreOrNil()
 	poolEvidence := buildPoolProjectionEvidence(store, credentials, pool)
 	baseOptions := planningOptionsForEngine(cfg, store, now)
 	eval := evaluateSinglePool(pool, credentials, poolEvidence, store, baseOptions, now)
-	r.plansByPool[pool] = eval.table
+	r.router.plansByPool[pool] = eval.table
 	return eval.table
 }
 
 // pruneExpiredSessionAffinityLocked drops bindings that can no longer be
-// honored. It runs only while routingMu is held for writing, so the map cannot
+// honored. It runs only while pr.mu is held for writing, so the map cannot
 // change underneath the sweep.
-func (r *Runtime) pruneExpiredSessionAffinityLocked(now time.Time) {
-	for key, binding := range r.sessionAffinity {
+func (pr *poolRouter) pruneExpiredSessionAffinityLocked(now time.Time) {
+	for key, binding := range pr.sessionAffinity {
 		if !now.Before(binding.ExpiresAt) {
-			delete(r.sessionAffinity, key)
+			delete(pr.sessionAffinity, key)
 		}
 	}
+}
+
+func (pr *poolRouter) SelectCandidate(pool config.AntigravityModelGroup, winners []SchedulerAuthCandidate, sessionID string, now time.Time) string {
+	pr.mu.Lock()
+	defer pr.mu.Unlock()
+	pr.ensureMapsLocked()
+
+	if sessionID != "" {
+		affKey := string(pool) + "::" + sessionID
+		if binding, bound := pr.sessionAffinity[affKey]; bound && now.Before(binding.ExpiresAt) {
+			for _, w := range winners {
+				if w.ID == binding.CandidateID {
+					binding.ExpiresAt = now.Add(sessionAffinityTTL)
+					pr.sessionAffinity[affKey] = binding
+					return binding.CandidateID
+				}
+			}
+		}
+	}
+
+	cursor := pr.rrCursorByPool[pool]
+	picked := pickSuccessor(winners, cursor)
+	pr.rrCursorByPool[pool] = picked.ID
+
+	if sessionID != "" {
+		affKey := string(pool) + "::" + sessionID
+		pr.sessionAffinity[affKey] = sessionBinding{
+			CandidateID: picked.ID,
+			ExpiresAt:   now.Add(sessionAffinityTTL),
+		}
+	}
+	return picked.ID
+}
+
+func (pr *poolRouter) NextCandidate(pool config.AntigravityModelGroup, candidates []SchedulerAuthCandidate) string {
+	pr.mu.Lock()
+	defer pr.mu.Unlock()
+	pr.ensureMapsLocked()
+	cursor := pr.rrCursorByPool[pool]
+	picked := pickSuccessor(candidates, cursor)
+	pr.rrCursorByPool[pool] = picked.ID
+	return picked.ID
 }
 
 func minFutureTime(current, candidate time.Time) time.Time {
@@ -394,7 +543,7 @@ func (r *Runtime) handleSchedulerPick(_ context.Context, request []byte) []byte 
 	bestScore := -1 << 31
 
 	for _, c := range agCandidates {
-		authIdx := r.resolveAuthIndex(c.ID, c.Attributes)
+		authIdx := r.router.ResolveAuthIndex(c.ID, c.Attributes)
 		candScore := coldStartRoutingTier
 
 		pre, found := poolTable.ByAuthIndex[authIdx]
@@ -432,41 +581,9 @@ func (r *Runtime) handleSchedulerPick(_ context.Context, request []byte) []byte 
 		})
 
 		sessionID := extractSessionID(req.Options)
-		r.routingMu.Lock()
-		defer r.routingMu.Unlock()
-
-		// 1. Session Affinity Check
-		if sessionID != "" {
-			affKey := string(pool) + "::" + sessionID
-			if binding, bound := r.sessionAffinity[affKey]; bound && now.Before(binding.ExpiresAt) {
-				for _, w := range winners {
-					if w.ID == binding.CandidateID {
-						binding.ExpiresAt = now.Add(sessionAffinityTTL)
-						r.sessionAffinity[affKey] = binding
-						return envelopeSchedulerPick(SchedulerPickResponse{
-							AuthID:  binding.CandidateID,
-							Handled: true,
-						})
-					}
-				}
-			}
-		}
-
-		// 2. Round-Robin Rotation
-		cursor := r.rrCursorByPool[pool]
-		picked := pickSuccessor(winners, cursor)
-		r.rrCursorByPool[pool] = picked.ID
-
-		if sessionID != "" {
-			affKey := string(pool) + "::" + sessionID
-			r.sessionAffinity[affKey] = sessionBinding{
-				CandidateID: picked.ID,
-				ExpiresAt:   now.Add(sessionAffinityTTL),
-			}
-		}
-
+		pickedID := r.router.SelectCandidate(pool, winners, sessionID, now)
 		return envelopeSchedulerPick(SchedulerPickResponse{
-			AuthID:  picked.ID,
+			AuthID:  pickedID,
 			Handled: true,
 		})
 	}
@@ -492,14 +609,9 @@ func (r *Runtime) handleSchedulerPick(_ context.Context, request []byte) []byte 
 			return bestOthers[i].ID < bestOthers[j].ID
 		})
 
-		r.routingMu.Lock()
-		cursor := r.rrCursorByPool[pool]
-		picked := pickSuccessor(bestOthers, cursor)
-		r.rrCursorByPool[pool] = picked.ID
-		r.routingMu.Unlock()
-
+		pickedID := r.router.NextCandidate(pool, bestOthers)
 		return envelopeSchedulerPick(SchedulerPickResponse{
-			AuthID:  picked.ID,
+			AuthID:  pickedID,
 			Handled: true,
 		})
 	}

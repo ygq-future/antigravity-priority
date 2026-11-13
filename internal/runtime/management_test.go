@@ -67,9 +67,9 @@ func TestOverlayManagementRequestHistoryEmailsUsesFullEmail(t *testing.T) {
 }
 
 func TestRateLimitDiagnosticsUsesAccountEmail(t *testing.T) {
-	r := &Runtime{pending429: map[string]pending429{
+	r := &Runtime{rateLimiter: rateLimitTracker{pending429: map[string]pending429{
 		"key": {AuthIndex: "auth-account-001", ModelGroup: "gemini", Model: "gemini-3-flash", Count: 2},
-	}}
+	}}}
 
 	pending, _ := r.rateLimitDiagnostics(map[string]string{
 		"auth-account-001": "user@example.com",

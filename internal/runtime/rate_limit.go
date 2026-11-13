@@ -8,6 +8,7 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"antigravity-priority/internal/apply"
@@ -37,6 +38,148 @@ type pending429 struct {
 	Count      int
 }
 
+// rateLimitTracker owns the in-memory 429 burst buffer and cross-account storm
+// detector under a single mutex.
+type rateLimitTracker struct {
+	mu            sync.Mutex
+	pending429    map[string]pending429
+	stormUntil    time.Time
+	stormAccounts map[string]bool
+}
+
+func newRateLimitTracker() rateLimitTracker {
+	return rateLimitTracker{
+		pending429:    make(map[string]pending429),
+		stormAccounts: make(map[string]bool),
+	}
+}
+
+func (t *rateLimitTracker) ensureMapsLocked() {
+	if t.pending429 == nil {
+		t.pending429 = make(map[string]pending429)
+	}
+	if t.stormAccounts == nil {
+		t.stormAccounts = make(map[string]bool)
+	}
+}
+
+func (t *rateLimitTracker) Observe429(key, authIndex, modelGroup, model string, now time.Time) (escalate pending429, shouldEscalate bool, pendingCount int, inStorm bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.ensureMapsLocked()
+
+	if now.Before(t.stormUntil) {
+		t.stormAccounts[key] = false
+		return pending429{}, false, 0, true
+	}
+	if pending, ok := t.pending429[key]; ok && pending.Count >= 1 {
+		delete(t.pending429, key)
+		return pending, true, len(t.pending429), false
+	}
+	t.pending429[key] = pending429{
+		AuthIndex:  authIndex,
+		ModelGroup: modelGroup,
+		Model:      model,
+		FirstSeen:  now,
+		UpdatedAt:  now,
+		Count:      1,
+	}
+	return pending429{}, false, len(t.pending429), false
+}
+
+func (t *rateLimitTracker) TryEnterStorm(now time.Time, active int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.ensureMapsLocked()
+	if len(t.pending429) >= 3 && active > 0 && len(t.pending429)*2 >= active {
+		t.stormAccounts = make(map[string]bool, len(t.pending429))
+		for k := range t.pending429 {
+			t.stormAccounts[k] = false
+		}
+		t.pending429 = make(map[string]pending429)
+		t.stormUntil = now.Add(rateLimitStormWindow)
+	}
+}
+
+func (t *rateLimitTracker) RecordSuccess(key, authIndex string, now time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.pending429, key)
+	delete(t.pending429, authIndex)
+	if !t.stormUntil.IsZero() && now.Before(t.stormUntil) {
+		if _, participant := t.stormAccounts[key]; participant {
+			t.stormAccounts[key] = true
+		}
+		if _, participant := t.stormAccounts[authIndex]; participant {
+			t.stormAccounts[authIndex] = true
+		}
+		recovered := 0
+		for _, ok := range t.stormAccounts {
+			if ok {
+				recovered++
+			}
+		}
+		if len(t.stormAccounts) > 0 && recovered*2 >= len(t.stormAccounts) {
+			t.stormUntil = time.Time{}
+			t.stormAccounts = make(map[string]bool)
+		}
+	}
+}
+
+func (t *rateLimitTracker) NextStormDeadline() time.Time {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.stormUntil
+}
+
+func (t *rateLimitTracker) Prune(now time.Time, pendingTTL time.Duration) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.stormUntil.IsZero() && !now.Before(t.stormUntil) {
+		t.stormUntil = time.Time{}
+		t.stormAccounts = make(map[string]bool)
+	}
+	for key, pending := range t.pending429 {
+		if now.Sub(pending.UpdatedAt) > pendingTTL {
+			delete(t.pending429, key)
+		}
+	}
+}
+
+func (t *rateLimitTracker) Diagnostics(now time.Time, emailsByAuthIndex map[string]string) (pending []map[string]any, storm map[string]any) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, item := range t.pending429 {
+		entry := map[string]any{
+			"auth_index":    redactRuntimeIdentifier(item.AuthIndex),
+			"model_group":   item.ModelGroup,
+			"model":         item.Model,
+			"first_seen_at": item.FirstSeen,
+			"updated_at":    item.UpdatedAt,
+			"count":         item.Count,
+		}
+		if email := emailsByAuthIndex[item.AuthIndex]; email != "" {
+			entry["email"] = email
+		}
+		pending = append(pending, entry)
+	}
+	if !t.stormUntil.IsZero() {
+		recovered := 0
+		for _, ok := range t.stormAccounts {
+			if ok {
+				recovered++
+			}
+		}
+		storm = map[string]any{
+			"active":      now.Before(t.stormUntil),
+			"until":       t.stormUntil,
+			"credentials": len(t.stormAccounts),
+			"recovered":   recovered,
+		}
+	}
+	return pending, storm
+}
+
 type failureInput struct {
 	AuthIndex    string
 	ModelGroup   string
@@ -59,15 +202,11 @@ func (r *Runtime) observe429(ctx context.Context, authIndex, modelGroup, model s
 	if _, active := cooldowns[authIndex]; active {
 		return nil
 	}
-	r.rateLimitMu.Lock()
-	if now.Before(r.stormUntil) {
-		r.stormAccounts[key] = false
-		r.rateLimitMu.Unlock()
+	pending, shouldEscalate, pendingCount, inStorm := r.rateLimiter.Observe429(key, authIndex, modelGroup, model, now)
+	if inStorm {
 		return nil
 	}
-	if pending, ok := r.pending429[key]; ok && pending.Count >= 1 {
-		delete(r.pending429, key)
-		r.rateLimitMu.Unlock()
+	if shouldEscalate {
 		r.signalRateLimitWorker()
 		if acquireRunLock {
 			r.runMu.Lock()
@@ -78,22 +217,9 @@ func (r *Runtime) observe429(ctx context.Context, authIndex, modelGroup, model s
 		}
 		return err
 	}
-	r.pending429[key] = pending429{AuthIndex: authIndex, ModelGroup: modelGroup, Model: model, FirstSeen: now, UpdatedAt: now, Count: 1}
-	pendingCount := len(r.pending429)
-	r.rateLimitMu.Unlock()
-
-	active := r.activeAntigravityCredentialCount(ctx)
-	if pendingCount >= 3 && active > 0 && pendingCount*2 >= active {
-		r.rateLimitMu.Lock()
-		if len(r.pending429) >= 3 && len(r.pending429)*2 >= active {
-			r.stormAccounts = make(map[string]bool, len(r.pending429))
-			for authIndex := range r.pending429 {
-				r.stormAccounts[authIndex] = false
-			}
-			r.pending429 = make(map[string]pending429)
-			r.stormUntil = now.Add(rateLimitStormWindow)
-		}
-		r.rateLimitMu.Unlock()
+	if pendingCount >= 3 {
+		active := r.activeAntigravityCredentialCount(ctx)
+		r.rateLimiter.TryEnterStorm(now, active)
 	}
 	r.signalRateLimitWorker()
 	return nil
@@ -232,29 +358,7 @@ func (r *Runtime) observeUsageSuccess(ctx context.Context, authIndex, modelGroup
 	}
 
 	key := state.CooldownKey(authIndex, modelGroup)
-	r.rateLimitMu.Lock()
-	delete(r.pending429, key)
-	delete(r.pending429, authIndex)
-	if !r.stormUntil.IsZero() && now.Before(r.stormUntil) {
-		if _, participant := r.stormAccounts[key]; participant {
-			r.stormAccounts[key] = true
-		}
-		if _, participant := r.stormAccounts[authIndex]; participant {
-			r.stormAccounts[authIndex] = true
-		}
-		recovered := 0
-		for _, ok := range r.stormAccounts {
-			if ok {
-				recovered++
-			}
-		}
-		if len(r.stormAccounts) > 0 && recovered*2 >= len(r.stormAccounts) {
-			r.stormUntil = time.Time{}
-			r.stormAccounts = make(map[string]bool)
-		}
-	}
-	r.rateLimitMu.Unlock()
-
+	r.rateLimiter.RecordSuccess(key, authIndex, now)
 	if storeErr != nil {
 		_, _, _ = r.recomputeAndCaptureRouting(now, authIndex)
 		return storeErr
@@ -352,12 +456,7 @@ func (r *Runtime) runRateLimitWorker() {
 
 func (r *Runtime) nextRateLimitDeadline() time.Time {
 	cooldowns := r.state.Cooldowns()
-	r.rateLimitMu.Lock()
-	defer r.rateLimitMu.Unlock()
-	var next time.Time
-	if !r.stormUntil.IsZero() {
-		next = earlierTime(next, r.stormUntil)
-	}
+	next := r.rateLimiter.NextStormDeadline()
 	for _, entry := range cooldowns {
 		deadline := entry.CooldownUntil
 		if !entry.NextRecoveryAt.IsZero() && entry.NextRecoveryAt.After(deadline) {
@@ -378,18 +477,7 @@ func earlierTime(a, b time.Time) time.Time {
 func (r *Runtime) processRateLimitDeadlines(ctx context.Context) {
 	now := r.clock.Now().UTC()
 	cooldowns := r.state.Cooldowns()
-	r.rateLimitMu.Lock()
-	if !r.stormUntil.IsZero() && !now.Before(r.stormUntil) {
-		r.stormUntil = time.Time{}
-		r.stormAccounts = make(map[string]bool)
-	}
-	for key, pending := range r.pending429 {
-		if now.Sub(pending.UpdatedAt) > rateLimitPendingTTL {
-			delete(r.pending429, key)
-		}
-	}
-	r.rateLimitMu.Unlock()
-
+	r.rateLimiter.Prune(now, rateLimitPendingTTL)
 	dueCooldowns := make([]state.CooldownEntry, 0)
 	for _, entry := range cooldowns {
 		if !now.Before(entry.CooldownUntil) && (entry.NextRecoveryAt.IsZero() || !now.Before(entry.NextRecoveryAt)) {
@@ -701,28 +789,16 @@ func (r *Runtime) recomputeAndCaptureRouting(now time.Time, authIndex string, ex
 	} else {
 		credentials = r.resolveCurrentCredentials()
 	}
-
-	r.routingMu.Lock()
-	models, supportedMap := r.modelCatalogSnapshotLocked()
-	out, err := EvaluateRoutingAndSnapshot(RoutingEngineInput{
-		Credentials:           credentials,
-		Store:                 store,
-		Config:                cfg,
-		Now:                   now,
-		Models:                models,
-		SupportedModelsByAuth: supportedMap,
+	captured := r.router.EvaluateAndCapture(authIndex, func(models []apply.ModelOption, supportedMap map[string][]string) (RoutingEngineOutput, error) {
+		return EvaluateRoutingAndSnapshot(RoutingEngineInput{
+			Credentials:           credentials,
+			Store:                 store,
+			Config:                cfg,
+			Now:                   now,
+			Models:                models,
+			SupportedModelsByAuth: supportedMap,
+		})
 	})
-	if err == nil {
-		r.plansByPool = out.Tables
-	}
-	captured := make(map[string]PrecomputedCandidate, len(r.plansByPool))
-	for pool, table := range r.plansByPool {
-		if cand, ok := table.ByAuthIndex[authIndex]; ok {
-			captured[string(pool)] = cand
-		}
-	}
-	r.routingMu.Unlock()
-
 	for _, cred := range credentials {
 		if cred.AuthIndex == authIndex || cred.Name == authIndex || cred.Email == authIndex {
 			return captured, cred, true
@@ -782,30 +858,9 @@ func (r *Runtime) findCredential(ctx context.Context, authIndex string) (core.Cr
 }
 
 func (r *Runtime) rateLimitDiagnostics(emailsByAuthIndex map[string]string) (pending []map[string]any, storm map[string]any) {
-	r.rateLimitMu.Lock()
-	defer r.rateLimitMu.Unlock()
-	for _, item := range r.pending429 {
-		entry := map[string]any{
-			"auth_index":    redactRuntimeIdentifier(item.AuthIndex),
-			"model_group":   item.ModelGroup,
-			"model":         item.Model,
-			"first_seen_at": item.FirstSeen,
-			"updated_at":    item.UpdatedAt,
-			"count":         item.Count,
-		}
-		if email := emailsByAuthIndex[item.AuthIndex]; email != "" {
-			entry["email"] = email
-		}
-		pending = append(pending, entry)
+	now := time.Now().UTC()
+	if r.clock != nil {
+		now = r.clock.Now().UTC()
 	}
-	if !r.stormUntil.IsZero() {
-		recovered := 0
-		for _, ok := range r.stormAccounts {
-			if ok {
-				recovered++
-			}
-		}
-		storm = map[string]any{"active": r.clock.Now().UTC().Before(r.stormUntil), "until": r.stormUntil, "credentials": len(r.stormAccounts), "recovered": recovered}
-	}
-	return pending, storm
+	return r.rateLimiter.Diagnostics(now, emailsByAuthIndex)
 }

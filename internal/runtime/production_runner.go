@@ -41,9 +41,7 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 		return err
 	}
 	authModels, _ := client.ListAuthModels(ctx)
-	r.routingMu.Lock()
-	r.updateModelInventoryLocked(files, authModels)
-	r.routingMu.Unlock()
+	r.router.UpdateInventory(files, authModels)
 
 	allCredentials := credentialsFromAuthFiles(files)
 	allCredentials, allAuthMaterials, err := enrichCredentialsFromAuthDocuments(ctx, client, allCredentials)
