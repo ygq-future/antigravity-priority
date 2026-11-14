@@ -15,6 +15,7 @@ var overviewTranslationKeys = []string{
 	"scheduleActive", "schedulePaused", "scheduleDisabled",
 	"scheduleModeIdle", "scheduleModeLowFreq",
 	"probeSuccess", "probeCooldown", "probing", "probingQuotaTitle", "probingQuotaDesc", "syncingQuotaTitle", "syncingQuotaDesc", "resettingTitle", "resettingDesc", "viewDetails", "statusCooldown", "statusDisabled", "btnProbeSingle", "probeSingleSuccess",
+	"autoSchedulingTitle", "autoSchedulingDesc", "scheduleExecuting",
 	"probeSingleFailed", "probeUnavailable", "probeSingleNoResult", "probeBatchFailed",
 	"poolGemini", "poolArgon", "poolClaudeGPT", "badgeGemini", "badgeArgon", "badgeClaudeGPT",
 	"statusUnsupported", "statusBypassedCooldown", "statusBypassedDepleted", "dynamicPriority", "estimatedBurn", "tierPrefix",

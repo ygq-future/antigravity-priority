@@ -29,10 +29,14 @@ const templateScriptLiveUI = `        function updateAllCountdowns() {
                     if (t) el.textContent = formatCountdown(t);
                 });
             }
+            if (typeof checkAutoScheduleReady === "function") {
+                checkAutoScheduleReady();
+            }
         }
 
         async function refreshOverviewSilently() {
             if (isAuthBlocked || activeTab !== "overview" || document.hidden || silentDashboardRefreshInFlight) return;
+            if (typeof autoScheduleLoadingActive !== "undefined" && autoScheduleLoadingActive) return;
             silentDashboardRefreshInFlight = true;
             try {
                 await refreshDashboard({ silent: true });

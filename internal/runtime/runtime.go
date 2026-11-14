@@ -50,6 +50,7 @@ type Runtime struct {
 	warmupResetWake     chan struct{}
 	autoApplyWake       chan struct{}
 	scheduleMu          sync.Mutex
+	autoApplyRunning    bool
 	scheduleState       adaptiveScheduleState
 }
 
@@ -426,6 +427,9 @@ func (r *Runtime) runAuto(ctx context.Context) error {
 		return nil
 	}
 
+	r.setAutoApplyRunning(true)
+	defer r.setAutoApplyRunning(false)
+
 	runErr := runner(taskCtx, TaskRequest{
 		Config:  cfg,
 		Trigger: TriggerAutoApply,
@@ -448,6 +452,12 @@ func (r *Runtime) runAuto(ctx context.Context) error {
 	r.resetAdaptiveScheduleState()
 	r.signalAutoScheduleWorker()
 	return nil
+}
+
+func (r *Runtime) setAutoApplyRunning(running bool) {
+	r.mu.Lock()
+	r.autoApplyRunning = running
+	r.mu.Unlock()
 }
 
 // persistLastAutoApplyAt stores the automatic round completion time so a
@@ -594,6 +604,7 @@ func (r *Runtime) Diagnostics(ctx context.Context) (map[string]any, error) {
 	result, audit := r.currentRunSnapshot()
 	r.mu.Lock()
 	workerActive := r.worker != nil
+	autoApplyRunning := r.autoApplyRunning
 	r.mu.Unlock()
 	lastAuto := r.state.LastAutoApplyAt()
 	sched := r.state.ScheduleConfig()
@@ -654,6 +665,8 @@ func (r *Runtime) Diagnostics(ctx context.Context) (map[string]any, error) {
 		"scheduler": map[string]any{
 			"interval":             cfg.Interval.String(),
 			"mode":                 string(plan.Mode),
+			"running":              autoApplyRunning,
+			"server_now":           nowUTC.Format(time.RFC3339),
 			"target_interval":      targetIntervalStr,
 			"last_auto_apply_at":   lastAuto,
 			"next_wait":            nextWaitStr,

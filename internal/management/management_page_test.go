@@ -1351,3 +1351,204 @@ if (!elements.diagSchedCountdown.innerHTML.includes("10") || !elements.diagSched
 `
 	runNodeFixture(t, node, "render-scheduler-adaptive-modes.js", harness)
 }
+
+func TestAutoScheduleReadyAndRunning_ListLoadingState(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not available; auto-schedule loading behavior is checked in the Node-enabled verification environment")
+	}
+
+	harness := templateScriptAccountDisplay + templateScriptOverviewActionsCore + templateScriptOverviewRender + templateScriptOverviewReset + templateScriptProbeSchedule + `
+function element(initial) {
+    var children = Object.assign({
+        ".quota-loading-title": null,
+        ".quota-loading-desc": null,
+        ".radar-beacon": null
+    }, (initial && initial._children) || {});
+    return Object.assign({
+        hidden: true,
+        textContent: "",
+        innerHTML: "",
+        className: "",
+        title: "",
+        children: [],
+        classList: {
+            classes: [],
+            add: function(c) { if (!this.classes.includes(c)) this.classes.push(c); },
+            remove: function(c) { this.classes = this.classes.filter(x => x !== c); },
+            contains: function(c) { return this.classes.includes(c); }
+        },
+        querySelector: function(sel) { return children[sel] || element(); },
+        querySelectorAll: function() { return []; }
+    }, initial || {});
+}
+
+const titleNode = element({ textContent: "" });
+const descNode = element({ textContent: "" });
+const iconNode = element({ textContent: "" });
+const elements = {
+    credentialsContainer: element({ hidden: false }),
+    credentialsLoadingOverlay: element({
+        hidden: true,
+        _children: {
+            ".quota-loading-title": titleNode,
+            ".quota-loading-desc": descNode,
+            ".radar-beacon": iconNode
+        }
+    }),
+    valNextProbe: element({ hidden: false }),
+    scheduleStatusBadge: element({ hidden: false }),
+    scheduleStatusText: element({ hidden: false }),
+    btnRefresh: element({ hidden: false })
+};
+
+const document = {
+    hidden: false,
+    getElementById: function(id) { return elements[id] || null; }
+};
+
+var activeTab = "overview";
+var isAuthBlocked = false;
+var currentLang = "zh-CN";
+var dynamicConfig = { auto_apply: true };
+var scheduleConfig = { paused: false };
+var latestDiagnostics = null;
+const DIAGNOSTICS_PATH = "/diagnostics";
+const SNAPSHOT_PATH = "/snapshot/latest";
+const SYNC_PATH = "/sync";
+
+function t(key) { return key; }
+function showToast() {}
+function renderHistory() {}
+function renderDiagnostics() {}
+function updateModelDropdownFromSnapshot() {}
+
+var snapshotFetchCount = 0;
+var diagQueue = [];
+apiFetch = async function(path) {
+    if (path === DIAGNOSTICS_PATH) {
+        if (diagQueue.length === 0) throw new Error("unexpected diagnostics fetch");
+        return diagQueue.shift();
+    }
+    if (path === SNAPSHOT_PATH) {
+        snapshotFetchCount++;
+        return { models: [], groups: { gemini: { items: [] } } };
+    }
+    return {};
+};
+
+(async function() {
+    // 1. Countdown hits ready (due within past 1s) -> immediately activates auto-schedule loading overlay
+    var dueAt = new Date(Date.now() - 500).toISOString();
+    latestSnapshot = { models: [], groups: { gemini: { items: [] } } };
+    latestDiagnostics = {
+        management_api: { auto_apply: true },
+        scheduler: {
+            mode: "frequent",
+            paused: false,
+            worker_active: true,
+            running: false,
+            server_now: new Date().toISOString(),
+            last_auto_apply_at: "2026-11-14T11:45:00Z",
+            next_run_at: dueAt
+        }
+    };
+
+    const triggered = checkAutoScheduleReady();
+    if (triggered !== true) {
+        throw new Error("expected checkAutoScheduleReady to trigger when next_run_at is due");
+    }
+    if (elements.credentialsLoadingOverlay.hidden !== false) {
+        throw new Error("expected loading overlay to appear immediately when scheduler becomes ready");
+    }
+    if (!elements.credentialsContainer.classList.contains("credentials-probing")) {
+        throw new Error("expected credentials-probing class on container when scheduler is ready");
+    }
+    if (titleNode.textContent !== "autoSchedulingTitle" || descNode.textContent !== "autoSchedulingDesc") {
+        throw new Error("expected auto-schedule title/desc, got: " + titleNode.textContent + " / " + descNode.textContent);
+    }
+    if (!elements.valNextProbe.innerHTML.includes("scheduleExecuting")) {
+        throw new Error("expected valNextProbe to show scheduleExecuting, got: " + elements.valNextProbe.innerHTML);
+    }
+
+    // 2. First poll confirms backend scheduler.running === true -> overlay stays active
+    diagQueue.push({
+        management_api: { auto_apply: true },
+        scheduler: {
+            mode: "frequent",
+            paused: false,
+            worker_active: true,
+            running: true,
+            server_now: new Date().toISOString(),
+            last_auto_apply_at: "2026-11-14T11:45:00Z",
+            next_run_at: dueAt
+        }
+    });
+    await pollAutoScheduleProgress();
+    if (elements.credentialsLoadingOverlay.hidden !== false) {
+        throw new Error("expected loading overlay to remain visible while scheduler.running is true");
+    }
+    if (!autoSchedulePollTimer) {
+        throw new Error("expected next poll timer to be scheduled while scheduler.running is true");
+    }
+
+    // 3. Second poll sees running === false and updated last_auto_apply_at -> refreshes snapshot & clears overlay
+    var nextFuture = new Date(Date.now() + 900000).toISOString();
+    diagQueue.push({
+        management_api: { auto_apply: true },
+        scheduler: {
+            mode: "frequent",
+            paused: false,
+            worker_active: true,
+            running: false,
+            server_now: new Date().toISOString(),
+            last_auto_apply_at: new Date().toISOString(),
+            next_run_at: nextFuture
+        }
+    });
+    await pollAutoScheduleProgress();
+    clearAutoSchedulePollTimer();
+
+    if (snapshotFetchCount !== 1) {
+        throw new Error("expected 1 snapshot refresh after auto-schedule completion, got: " + snapshotFetchCount);
+    }
+    if (elements.credentialsLoadingOverlay.hidden !== true) {
+        throw new Error("expected loading overlay to hide after auto-schedule completion");
+    }
+    if (elements.credentialsContainer.classList.contains("credentials-probing")) {
+        throw new Error("expected credentials-probing class to be removed after completion");
+    }
+
+    // 4. Manual loading overlap: manual sync finishes while backend auto-schedule is running -> hands back to auto-schedule overlay
+    diagQueue.push({
+        management_api: { auto_apply: true },
+        scheduler: {
+            mode: "frequent",
+            paused: false,
+            worker_active: true,
+            running: true,
+            server_now: new Date().toISOString(),
+            last_auto_apply_at: new Date().toISOString(),
+            next_run_at: nextFuture
+        }
+    });
+    await refreshDashboard({ withSync: true, notifySync: true });
+    clearAutoSchedulePollTimer();
+    if (elements.credentialsLoadingOverlay.hidden !== false) {
+        throw new Error("expected auto-schedule loading overlay to stay active after manual refresh finishes during running auto-schedule");
+    }
+    if (titleNode.textContent !== "autoSchedulingTitle") {
+        throw new Error("expected overlay to switch to autoSchedulingTitle after manual refresh ends, got: " + titleNode.textContent);
+    }
+    resetAutoScheduleLoading();
+    if (elements.credentialsLoadingOverlay.hidden !== true) {
+        throw new Error("expected resetAutoScheduleLoading to hide overlay");
+    }
+})().catch(function(err) {
+    console.error(err.stack || err.message);
+    process.exit(1);
+});
+`
+
+	runNodeFixture(t, node, "auto-schedule-loading-state.js", harness)
+}

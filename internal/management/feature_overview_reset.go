@@ -47,7 +47,8 @@ const templateScriptOverviewReset = `        async function triggerReset() {
         function formatCountdown(targetDateStr, expiryMode) {
             if (!targetDateStr) return "-";
             var target = new Date(targetDateStr).getTime();
-            var now = Date.now();
+            var offset = (typeof serverClockOffsetMs === "number" && Number.isFinite(serverClockOffsetMs)) ? serverClockOffsetMs : 0;
+            var now = Date.now() + offset;
             var diff = target - now;
             if (diff <= 0) {
                 if (expiryMode === "stale") return currentLang === "zh-CN" ? "待刷新" : "Stale";

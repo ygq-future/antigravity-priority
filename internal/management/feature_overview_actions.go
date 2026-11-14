@@ -2,6 +2,14 @@ package management
 
 const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
         const probingAuthIndexes = new Set();
+        let activeManualLoadingCount = 0;
+        let autoScheduleLoadingActive = false;
+        let autoSchedulePollTimer = null;
+        let autoScheduleProbeInFlight = false;
+        let autoScheduleDueHandledForRunAt = "";
+        let autoSchedulePendingSince = 0;
+        let autoScheduleLastObservedRunAt = null;
+        let serverClockOffsetMs = 0;
 
         function credentialProbeButtonContent(probing) {
             return probing
@@ -95,7 +103,15 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
             var label = planType ? planType.toUpperCase() : "ANTIGRAVITY";
             return "<span class=\"badge badge-plan badge-plan-default\">" + escapeHTML(label) + "</span>";
         }
-        function setListLoading(options) {
+        function autoScheduleLoadingOptions() {
+            return {
+                title: t("autoSchedulingTitle"),
+                desc: t("autoSchedulingDesc"),
+                icon: "⚡"
+            };
+        }
+
+        function renderListLoadingOverlay(options) {
             var overlay = document.getElementById("credentialsLoadingOverlay");
             var container = document.getElementById("credentialsContainer");
             var isLoading = typeof options === "object" ? (options && options.loading !== false) : Boolean(options);
@@ -120,6 +136,244 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
                 if (container && container.classList && container.classList.remove) {
                     container.classList.remove("credentials-probing");
                 }
+            }
+        }
+
+        function setListLoading(options) {
+            var isLoading = typeof options === "object" ? (options && options.loading !== false) : Boolean(options);
+            if (isLoading) {
+                activeManualLoadingCount++;
+                renderListLoadingOverlay(options);
+                return;
+            }
+            if (activeManualLoadingCount > 0) {
+                activeManualLoadingCount--;
+            }
+            if (activeManualLoadingCount > 0) {
+                return;
+            }
+            if (autoScheduleLoadingActive && (typeof activeTab === "undefined" || activeTab === "overview")) {
+                renderListLoadingOverlay(autoScheduleLoadingOptions());
+            } else {
+                renderListLoadingOverlay(false);
+            }
+        }
+
+        function isOverviewActiveAndVisible() {
+            var onOverview = (typeof activeTab === "undefined") || activeTab === "overview";
+            var visible = (typeof document === "undefined") || !document.hidden;
+            return onOverview && visible;
+        }
+
+        function isAutoScheduleEnabledInUI() {
+            var isAutoApplyEnabled = false;
+            if (typeof dynamicConfig !== "undefined" && dynamicConfig && dynamicConfig.auto_apply !== undefined) {
+                isAutoApplyEnabled = Boolean(dynamicConfig.auto_apply);
+            } else if (typeof latestDiagnostics !== "undefined" && latestDiagnostics && latestDiagnostics.management_api && latestDiagnostics.management_api.auto_apply !== undefined) {
+                isAutoApplyEnabled = Boolean(latestDiagnostics.management_api.auto_apply);
+            }
+            var sched = (typeof latestDiagnostics !== "undefined" && latestDiagnostics && latestDiagnostics.scheduler) ? latestDiagnostics.scheduler : null;
+            var isPaused = (typeof scheduleConfig !== "undefined" && scheduleConfig)
+                ? Boolean(scheduleConfig.paused)
+                : Boolean(sched && sched.paused);
+            return isAutoApplyEnabled && !isPaused;
+        }
+
+        function clearAutoSchedulePollTimer() {
+            if (autoSchedulePollTimer) {
+                clearTimeout(autoSchedulePollTimer);
+                autoSchedulePollTimer = null;
+            }
+        }
+
+        function updateServerClockOffset(sched) {
+            if (!sched || !sched.server_now) return;
+            var parsed = Date.parse(sched.server_now);
+            if (Number.isFinite(parsed)) {
+                serverClockOffsetMs = parsed - Date.now();
+            }
+        }
+
+        function setAutoScheduleListLoading(active, options) {
+            var next = Boolean(active);
+            var changed = autoScheduleLoadingActive !== next;
+            autoScheduleLoadingActive = next;
+            if (activeManualLoadingCount <= 0) {
+                if (next) {
+                    renderListLoadingOverlay(autoScheduleLoadingOptions());
+                } else {
+                    renderListLoadingOverlay(false);
+                }
+            }
+            if (changed && !(options && options.skipRender) && typeof renderDashboard === "function") {
+                renderDashboard();
+            }
+        }
+
+        function resetAutoScheduleLoading(options) {
+            clearAutoSchedulePollTimer();
+            autoSchedulePendingSince = 0;
+            autoScheduleLastObservedRunAt = null;
+            setAutoScheduleListLoading(false, options);
+        }
+
+        function scheduleAutoSchedulePoll(delayMs) {
+            clearAutoSchedulePollTimer();
+            autoSchedulePollTimer = setTimeout(pollAutoScheduleProgress, delayMs);
+        }
+
+        function syncScheduleConfigFromDiagnostics(data) {
+            if (data && data.scheduler && typeof scheduleConfig !== "undefined") {
+                if (!scheduleConfig) {
+                    scheduleConfig = {
+                        paused: Boolean(data.scheduler.paused)
+                    };
+                } else if (data.scheduler.paused !== undefined) {
+                    scheduleConfig.paused = Boolean(data.scheduler.paused);
+                }
+            }
+        }
+
+        function hasAutoScheduleSettled(sched, prevLastRun, prevNextRun) {
+            if (!sched) return false;
+            var currLastRun = String(sched.last_auto_apply_at || "");
+            var currNextRun = String(sched.next_run_at || "");
+            var completedNewRun = prevLastRun !== null && currLastRun !== prevLastRun;
+            var movedNextRun = Boolean(currNextRun) && currNextRun !== prevNextRun;
+            return completedNewRun || movedNextRun || sched.mode === "idle";
+        }
+
+        function syncAutoScheduleFromDiagnostics(data, options) {
+            var opts = options || {};
+            var sched = (data && data.scheduler) ? data.scheduler : null;
+            if (!sched) return false;
+            updateServerClockOffset(sched);
+
+            if (!isOverviewActiveAndVisible() || !isAutoScheduleEnabledInUI()) {
+                resetAutoScheduleLoading(opts);
+                return false;
+            }
+
+            if (sched.running) {
+                autoSchedulePendingSince = 0;
+                if (sched.next_run_at) {
+                    autoScheduleDueHandledForRunAt = String(sched.next_run_at);
+                }
+                if (autoScheduleLastObservedRunAt === null) {
+                    autoScheduleLastObservedRunAt = String(sched.last_auto_apply_at || "");
+                }
+                setAutoScheduleListLoading(true, opts);
+                if (!autoSchedulePollTimer && !autoScheduleProbeInFlight) {
+                    scheduleAutoSchedulePoll(1500);
+                }
+                return true;
+            }
+
+            if (autoScheduleLoadingActive) {
+                if (hasAutoScheduleSettled(sched, autoScheduleLastObservedRunAt, autoScheduleDueHandledForRunAt)) {
+                    resetAutoScheduleLoading(opts);
+                    return false;
+                }
+                if (autoSchedulePendingSince > 0 && (Date.now() - autoSchedulePendingSince) < 5000) {
+                    if (!autoSchedulePollTimer && !autoScheduleProbeInFlight) {
+                        scheduleAutoSchedulePoll(1200);
+                    }
+                    return true;
+                }
+                resetAutoScheduleLoading(opts);
+            }
+            return false;
+        }
+
+        function checkAutoScheduleReady() {
+            if (!isOverviewActiveAndVisible() || !isAutoScheduleEnabledInUI()) {
+                if (autoScheduleLoadingActive) {
+                    resetAutoScheduleLoading();
+                }
+                return false;
+            }
+            if (typeof apiFetch !== "function") return false;
+            if (activeManualLoadingCount > 0 || autoScheduleLoadingActive) return false;
+
+            var sched = (typeof latestDiagnostics !== "undefined" && latestDiagnostics && latestDiagnostics.scheduler)
+                ? latestDiagnostics.scheduler
+                : null;
+            if (!sched || sched.running || sched.worker_active === false) return false;
+            if (sched.mode === "idle" || !sched.next_run_at) return false;
+
+            var nextRunStr = String(sched.next_run_at);
+            if (autoScheduleDueHandledForRunAt === nextRunStr) return false;
+
+            var targetMs = Date.parse(nextRunStr);
+            if (!Number.isFinite(targetMs)) return false;
+
+            var estNowMs = Date.now() + serverClockOffsetMs;
+            if (targetMs > estNowMs) return false;
+
+            autoScheduleDueHandledForRunAt = nextRunStr;
+            if (estNowMs - targetMs > 15000) {
+                return false;
+            }
+
+            autoScheduleLastObservedRunAt = String(sched.last_auto_apply_at || "");
+            autoSchedulePendingSince = Date.now();
+            setAutoScheduleListLoading(true);
+            scheduleAutoSchedulePoll(600);
+            return true;
+        }
+
+        async function pollAutoScheduleProgress() {
+            autoSchedulePollTimer = null;
+            if (typeof isAuthBlocked !== "undefined" && isAuthBlocked) {
+                resetAutoScheduleLoading();
+                return;
+            }
+            if (!isOverviewActiveAndVisible() || !isAutoScheduleEnabledInUI()) {
+                resetAutoScheduleLoading();
+                return;
+            }
+            if (autoScheduleProbeInFlight) return;
+            autoScheduleProbeInFlight = true;
+            try {
+                var wasActive = autoScheduleLoadingActive;
+                var prevLastRun = autoScheduleLastObservedRunAt;
+                var prevNextRun = autoScheduleDueHandledForRunAt;
+                var data = await apiFetch(DIAGNOSTICS_PATH);
+                latestDiagnostics = data;
+                syncScheduleConfigFromDiagnostics(data);
+                var sched = (data && data.scheduler) || {};
+                updateServerClockOffset(sched);
+                if (sched.running) {
+                    if (syncAutoScheduleFromDiagnostics(data, { skipRender: true })) {
+                        scheduleAutoSchedulePoll(1500);
+                    }
+                } else if (wasActive) {
+                    if (hasAutoScheduleSettled(sched, prevLastRun, prevNextRun)) {
+                        clearAutoSchedulePollTimer();
+                        autoSchedulePendingSince = 0;
+                        autoScheduleLastObservedRunAt = null;
+                        await fetchSnapshot({ silent: true });
+                        setAutoScheduleListLoading(false, { skipRender: true });
+                    } else if (autoSchedulePendingSince > 0 && (Date.now() - autoSchedulePendingSince) < 5000) {
+                        scheduleAutoSchedulePoll(1200);
+                    } else {
+                        resetAutoScheduleLoading({ skipRender: true });
+                    }
+                }
+                if (typeof renderDashboard === "function") renderDashboard();
+                if (typeof renderHistory === "function") renderHistory();
+                if (typeof renderDiagnostics === "function") renderDiagnostics();
+                if (typeof renderScheduleStatus === "function") renderScheduleStatus();
+            } catch (_) {
+                if (autoScheduleLoadingActive && isOverviewActiveAndVisible() && isAutoScheduleEnabledInUI()) {
+                    if (autoSchedulePendingSince === 0 || (Date.now() - autoSchedulePendingSince) < 5000) {
+                        scheduleAutoSchedulePoll(2000);
+                    } else {
+                        resetAutoScheduleLoading();
+                    }
+                }
+            } finally {
+                autoScheduleProbeInFlight = false;
             }
         }
 
@@ -153,15 +407,8 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
                         }
                     } catch (_) {}
                 }
-                if (data && data.scheduler && typeof scheduleConfig !== "undefined") {
-                    if (!scheduleConfig) {
-                        scheduleConfig = {
-                            paused: Boolean(data.scheduler.paused)
-                        };
-                    } else if (data.scheduler.paused !== undefined) {
-                        scheduleConfig.paused = Boolean(data.scheduler.paused);
-                    }
-                }
+                syncScheduleConfigFromDiagnostics(data);
+                syncAutoScheduleFromDiagnostics(data, { skipRender: true });
                 renderDashboard();
                 renderHistory();
                 renderDiagnostics();

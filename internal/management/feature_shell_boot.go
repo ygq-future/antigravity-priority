@@ -20,6 +20,14 @@ const templateScriptBoot = `        // Initialize application with deterministic
                 dashboardRefreshInterval = setInterval(refreshOverviewSilently, 15000);
             }
         }
+        if (typeof document !== "undefined" && typeof document.addEventListener === "function") {
+            document.addEventListener("visibilitychange", function() {
+                if (!document.hidden && activeTab === "overview" && !isAuthBlocked) {
+                    if (typeof checkAutoScheduleReady === "function") checkAutoScheduleReady();
+                    if (typeof refreshOverviewSilently === "function") refreshOverviewSilently();
+                }
+            });
+        }
         initializeApp();
     </script>
 `

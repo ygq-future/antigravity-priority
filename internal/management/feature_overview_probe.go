@@ -165,6 +165,9 @@ const templateScriptProbeSchedule = `        function setListProbeLoading(loadin
                     method: "POST",
                     body: JSON.stringify(newConfig)
                 });
+                if (scheduleConfig && scheduleConfig.paused && typeof resetAutoScheduleLoading === "function") {
+                    resetAutoScheduleLoading({ skipRender: true });
+                }
                 renderScheduleStatus();
                 renderDashboard();
                 renderDiagnostics();

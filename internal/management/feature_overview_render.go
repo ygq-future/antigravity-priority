@@ -155,6 +155,8 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
                         el.innerHTML = (currentLang === "zh-CN" ? "调度状态: " : "Schedule: ") + "<span style=\"color:var(--text-muted); font-weight:600;\">" + t("scheduleDisabled") + "</span>";
                     } else if (isPaused) {
                         el.innerHTML = (currentLang === "zh-CN" ? "调度状态: " : "Schedule: ") + "<span style=\"color:var(--accent-yellow-text); font-weight:600;\">" + t("schedulePaused") + "</span>";
+                    } else if (sched.running || (typeof autoScheduleLoadingActive !== "undefined" && autoScheduleLoadingActive)) {
+                        el.innerHTML = (currentLang === "zh-CN" ? "调度状态: " : "Schedule: ") + "<span style=\"color:var(--accent-blue); font-weight:600;\">" + t("scheduleExecuting") + "</span>";
                     } else if (sched.mode === "idle") {
                         var prevReq = Number(sched.prev_window_requests || 0);
                         var currReq = Number(sched.curr_window_requests || 0);

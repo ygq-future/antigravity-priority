@@ -205,6 +205,10 @@ const templateScriptDiagnostics = `        let latestDiagnostics = null;
                 badge.className = "badge badge-warning";
                 badge.textContent = t("diagStatusPaused");
                 desc.textContent = t("schedulePaused");
+            } else if (sched.running) {
+                badge.className = "badge badge-boost";
+                badge.textContent = t("scheduleExecuting");
+                desc.textContent = t("autoSchedulingDesc");
             } else if (sched.mode === "idle") {
                 badge.className = "badge badge-subtle";
                 badge.textContent = t("diagModeIdle");

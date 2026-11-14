@@ -3168,6 +3168,76 @@ func TestRuntime_ConcurrentUsageDuringProbeIsNotClobbered(t *testing.T) {
 	}
 }
 
+func TestRuntime_Diagnostics_SchedulerRunningDuringAutoApply(t *testing.T) {
+	clock := &testClock{now: time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)}
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	entered := make(chan struct{})
+	release := make(chan struct{})
+
+	r := newTestRuntime(t, runtime.Options{
+		Clock:                    clock,
+		StateCachePath:           cachePath,
+		DisableBackgroundWorkers: true,
+		Runner: func(ctx context.Context, request runtime.TaskRequest) error {
+			if request.Trigger == runtime.TriggerAutoApply {
+				close(entered)
+				<-release
+			}
+			return nil
+		},
+	})
+	t.Cleanup(func() { _ = r.Shutdown(context.Background()) })
+
+	if _, err := r.Register(context.Background(), runtime.RegisterRequest{
+		ConfigYAML: "enabled: true\nauto_apply: true\nstate_cache_path: " + filepath.ToSlash(cachePath) + "\n",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	beforeDiag, err := r.Diagnostics(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeSched := beforeDiag["scheduler"].(map[string]any)
+	if running, ok := beforeSched["running"].(bool); !ok || running {
+		t.Fatalf("expected scheduler.running=false before AutoApply, got %#v", beforeSched["running"])
+	}
+	if serverNow, ok := beforeSched["server_now"].(string); !ok || serverNow == "" {
+		t.Fatalf("expected scheduler.server_now to be populated, got %#v", beforeSched["server_now"])
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- r.AutoApply(context.Background())
+	}()
+
+	<-entered
+	duringDiag, err := r.Diagnostics(context.Background())
+	if err != nil {
+		close(release)
+		t.Fatal(err)
+	}
+	duringSched := duringDiag["scheduler"].(map[string]any)
+	if running, ok := duringSched["running"].(bool); !ok || !running {
+		close(release)
+		t.Fatalf("expected scheduler.running=true while AutoApply is executing, got %#v", duringSched["running"])
+	}
+
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("AutoApply failed: %v", err)
+	}
+
+	afterDiag, err := r.Diagnostics(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterSched := afterDiag["scheduler"].(map[string]any)
+	if running, ok := afterSched["running"].(bool); !ok || running {
+		t.Fatalf("expected scheduler.running=false after AutoApply completes, got %#v", afterSched["running"])
+	}
+}
+
 func activeCooldownUntil(store *state.Store, authIndex string, now time.Time) (time.Time, bool) {
 	for _, entry := range store.GetCooldowns() {
 		if entry.AuthIndex == authIndex && now.Before(entry.CooldownUntil) {

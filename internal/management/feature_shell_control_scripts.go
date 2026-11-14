@@ -513,6 +513,9 @@ const templateScriptControls = `        // Custom Select: shared open/close + vi
             document.getElementById("panelDiagnostics").hidden = tabId !== "diagnostics";
             document.getElementById("panelConfig").hidden = tabId !== "config";
             document.getElementById("panelHelp").hidden = tabId !== "help";
+            if (tabId !== "overview" && typeof resetAutoScheduleLoading === "function") {
+                resetAutoScheduleLoading({ skipRender: true });
+            }
             if (isAuthBlocked) return;
             if (tabId === "history") fetchDiagnostics();
             if (tabId === "diagnostics") fetchDiagnostics();
