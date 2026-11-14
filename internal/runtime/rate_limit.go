@@ -661,6 +661,7 @@ func (r *Runtime) probeHealth(ctx context.Context, entry state.CooldownEntry, cf
 	}
 	r.appendRequestHistory(state.RequestHistoryEntry{
 		ID:           fmt.Sprintf("health-%s-%d", entry.AuthIndex, now.UnixNano()),
+		Source:       state.RequestHistorySourceHealth,
 		At:           now,
 		Model:        model,
 		ModelPool:    entry.ModelGroup,

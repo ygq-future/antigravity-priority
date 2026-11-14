@@ -902,6 +902,7 @@ func (r *Runtime) triggerWarmupForEligibleCredentials(
 
 			r.appendRequestHistory(state.RequestHistoryEntry{
 				ID:              fmt.Sprintf("warmup-%s-%d", authIdx, now.UnixNano()),
+				Source:          state.RequestHistorySourceWarmup,
 				At:              now,
 				Model:           target.model,
 				ModelPool:       string(target.group),

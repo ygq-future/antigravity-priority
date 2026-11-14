@@ -204,6 +204,9 @@ func (s *Store) seedActivityFromRequestHistory() {
 
 	// requestHistory is newest-first; iterate oldest-first for clean append.
 	for _, entry := range slices.Backward(s.requestHistory) {
+		if entry.IsBackgroundSynthetic() {
+			continue
+		}
 		at := entry.At
 		if at.IsZero() {
 			continue

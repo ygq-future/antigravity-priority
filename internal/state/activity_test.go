@@ -75,3 +75,65 @@ func TestStore_RequestActivity_WindowsPersistenceAndBackfill(t *testing.T) {
 		t.Fatalf("expected backfilled SinceLastCount = 5 after reload, got %d", afterReload.SinceLastCount)
 	}
 }
+
+func TestStore_RequestActivity_BackfillSkipsWarmupAndHealthEntries(t *testing.T) {
+	ctx := context.Background()
+	cachePath := filepath.Join(t.TempDir(), "activity-warmup-cache.json")
+
+	store, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatalf("load failed: %v", err)
+	}
+
+	base := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
+	lastAuto := base.Add(-2 * time.Hour)
+	store.SetLastAutoApplyAt(lastAuto)
+	if err := store.SaveAtomic(ctx); err != nil {
+		t.Fatalf("save atomic failed: %v", err)
+	}
+
+	// Persist only warm-up and health-probe entries (both explicit Source and legacy ID prefix).
+	store.SetRequestHistory([]state.RequestHistoryEntry{
+		{ID: "health-auth1-2", Source: state.RequestHistorySourceHealth, At: base.Add(-2 * time.Minute)},
+		{ID: "warmup-auth1-2", Source: state.RequestHistorySourceWarmup, At: base.Add(-5 * time.Minute)},
+		{ID: "health-auth1-1", At: base.Add(-20 * time.Minute)},
+		{ID: "warmup-auth1-1", At: base.Add(-45 * time.Minute)},
+	})
+	if err := store.SaveRequestsAtomic(ctx); err != nil {
+		t.Fatalf("save requests failed: %v", err)
+	}
+
+	reloaded, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatalf("reload failed: %v", err)
+	}
+	summary := reloaded.SummarizeRequestActivity(base, 15*time.Minute, 5*time.Minute, lastAuto)
+	if summary.SinceLastCount != 0 || summary.CurrWindowCount != 0 || summary.PrevWindowCount != 0 || summary.BurstCount != 0 {
+		t.Fatalf("expected zero request activity from warmup/health entries, got %+v", summary)
+	}
+	if !summary.LastRequestAt.IsZero() {
+		t.Fatalf("expected zero LastRequestAt when only warmup/health entries exist, got %v", summary.LastRequestAt)
+	}
+
+	// Add one real inbound request alongside warm-up/health entries and verify only the real request is seeded.
+	realAt := base.Add(-3 * time.Minute)
+	reloaded.AppendRequestHistory(state.RequestHistoryEntry{
+		ID: "req-real-1",
+		At: realAt,
+	}, 100)
+	if err := reloaded.SaveRequestsAtomic(ctx); err != nil {
+		t.Fatalf("save requests with real entry failed: %v", err)
+	}
+
+	reloadedAgain, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatalf("second reload failed: %v", err)
+	}
+	withReal := reloadedAgain.SummarizeRequestActivity(base, 15*time.Minute, 5*time.Minute, lastAuto)
+	if withReal.SinceLastCount != 1 || withReal.CurrWindowCount != 1 || withReal.BurstCount != 1 {
+		t.Fatalf("expected exactly 1 real request seeded, got %+v", withReal)
+	}
+	if !withReal.LastRequestAt.Equal(realAt) {
+		t.Fatalf("LastRequestAt = %v; want %v", withReal.LastRequestAt, realAt)
+	}
+}

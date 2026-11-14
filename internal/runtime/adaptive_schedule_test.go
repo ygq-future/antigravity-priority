@@ -3,14 +3,19 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"antigravity-priority/internal/config"
 	"antigravity-priority/internal/core"
+	"antigravity-priority/internal/evidence"
 	"antigravity-priority/internal/host"
+	"antigravity-priority/internal/priority"
 	"antigravity-priority/internal/state"
 )
 
@@ -289,4 +294,117 @@ func TestRuntime_AdaptiveTicker_IdleSkipsAndBurstWakes(t *testing.T) {
 		t.Fatalf("expected scheduler to return to idle after calibrating burst, got %v", schedAfter["mode"])
 	}
 	_ = host.AuthFile{}
+}
+
+func TestRuntime_AdaptiveSchedule_IgnoresWarmupRequestsLiveAndAfterRestart(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "adaptive-warmup-isolation.json")
+	now := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
+	clock := &fixedAdaptiveClock{now: now}
+
+	store, err := state.Load(context.Background(), cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rem := int64(100)
+	if err := store.MarkProbeSuccess(context.Background(), state.ProbeSuccess{
+		AuthIndex:            "auth-1",
+		Provider:             core.ProviderAntigravity,
+		ModelGroup:           "gemini",
+		ObservedAt:           now.Add(-2 * time.Hour),
+		ShortWindowResetAt:   now.Add(5 * time.Hour),
+		ShortWindowRemaining: &rem,
+		LongWindowResetAt:    now.Add(5 * 24 * time.Hour),
+		LongWindowRemaining:  &rem,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	store.SetLastAutoApplyAt(now.Add(-2 * time.Hour))
+	if err := store.SaveAtomic(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	rt := New(Options{
+		Clock:                    clock,
+		StateCachePath:           cachePath,
+		DisableBackgroundWorkers: true,
+	})
+	doer := quotaHTTPDoerFunc(func(_ context.Context, req host.HTTPRequest) (host.HTTPResponse, error) {
+		if strings.Contains(req.URL, "generateContent") {
+			return host.HTTPResponse{
+				StatusCode: http.StatusOK,
+				Body:       []byte(`{"response":{"usageMetadata":{"promptTokenCount":50,"candidatesTokenCount":650,"totalTokenCount":700}}}`),
+			}, nil
+		}
+		return host.HTTPResponse{StatusCode: http.StatusOK}, nil
+	})
+	resetAt := now.Add(5 * time.Hour)
+	evidenceByGroup := map[config.AntigravityModelGroup]evidence.Result{
+		config.AntigravityModelGroupGemini: {
+			Eligible: []priority.QuotaEvidence{{
+				AuthIndex:            "auth-1",
+				ShortWindowRemaining: &rem,
+				ShortWindowResetAt:   &resetAt,
+			}},
+		},
+	}
+	materials := map[string]authMaterial{
+		"auth-1": {accessToken: "token-1", projectID: "proj-1", email: "user@example.com"},
+	}
+	warmCfg := config.WarmupConfig{
+		GeminiEnabled: true,
+		GeminiModel:   "gemini-3-flash",
+	}
+	rtStore, err := rt.state.Store(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if warmed := rt.triggerWarmupForEligibleCredentials(context.Background(), doer, warmCfg, "", evidenceByGroup, materials, nil, rtStore, now); warmed != 1 {
+		t.Fatalf("expected 1 warmup execution, got %d", warmed)
+	}
+
+	assertIdle := func(label string, target *Runtime) {
+		t.Helper()
+		diag, err := target.Diagnostics(context.Background())
+		if err != nil {
+			t.Fatalf("%s: diagnostics failed: %v", label, err)
+		}
+		sched := diag["scheduler"].(map[string]any)
+		if sched["mode"] != string(ScheduleModeIdle) {
+			t.Fatalf("%s: expected mode=idle, got %v", label, sched["mode"])
+		}
+		if sched["requests_since_last"] != 0 {
+			t.Fatalf("%s: expected requests_since_last=0, got %v", label, sched["requests_since_last"])
+		}
+		if sched["curr_window_requests"] != 0 {
+			t.Fatalf("%s: expected curr_window_requests=0, got %v", label, sched["curr_window_requests"])
+		}
+		if sched["last_request_at"] != nil {
+			t.Fatalf("%s: expected nil last_request_at, got %v", label, sched["last_request_at"])
+		}
+		if sched["next_run_at"] != "" {
+			t.Fatalf("%s: expected empty next_run_at, got %v", label, sched["next_run_at"])
+		}
+	}
+
+	assertIdle("live", rt)
+	if err := rt.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reload a fresh Runtime from disk; seedActivityFromRequestHistory must ignore the persisted warmup entry.
+	restarted := New(Options{
+		Clock:                    clock,
+		StateCachePath:           cachePath,
+		DisableBackgroundWorkers: true,
+	})
+	defer func() { _ = restarted.Shutdown(context.Background()) }()
+
+	history, err := restarted.GetRequestHistory(context.Background())
+	if err != nil || len(history) != 1 {
+		t.Fatalf("expected 1 persisted warmup history entry, got len=%d err=%v", len(history), err)
+	}
+	if history[0].Source != state.RequestHistorySourceWarmup {
+		t.Fatalf("expected source=%q, got %q", state.RequestHistorySourceWarmup, history[0].Source)
+	}
+	assertIdle("restarted", restarted)
 }
