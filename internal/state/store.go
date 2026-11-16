@@ -124,10 +124,11 @@ type DynamicConfig = config.DynamicConfig
 type FailureKind string
 
 const (
-	FailureRateLimit    FailureKind = "rate_limit"
-	FailureServerError  FailureKind = "server_error"
-	FailureForbidden    FailureKind = "forbidden"
-	FailureUnauthorized FailureKind = "unauthorized"
+	FailureRateLimit     FailureKind = "rate_limit"
+	FailureServerError   FailureKind = "server_error"
+	FailureForbidden     FailureKind = "forbidden"
+	FailureUnauthorized  FailureKind = "unauthorized"
+	FailureRequestScoped FailureKind = "request_scoped"
 )
 
 // CooldownEntry tracks a temporary health intervention for a credential.

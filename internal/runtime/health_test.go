@@ -664,6 +664,193 @@ func TestRuntime_ClearCooldown_SingleAndAll429_CallsHostResetCooldown(t *testing
 	}
 }
 
+func TestHealth_GenericResourceExhausted429IsRequestScopedExempt(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
+	r, _, _, cachePath, paths := newHealthRuntime(t, now, "idx-a", "idx-b", "idx-c")
+	if _, err := r.SyncHost(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	genericBodies := []string{
+		`{"error":{"code":429,"message":"Resource has been exhausted (e.g. check quota).","status":"RESOURCE_EXHAUSTED"}}`,
+		`[{"error":{"code":429,"message":"Resource has been exhausted (e.g. check quota).","status":"RESOURCE_EXHAUSTED","details":[]}}]`,
+		`{"error":{"code":429,"message":"Resource has been exhausted","status":"RESOURCE_EXHAUSTED"}}`,
+	}
+
+	for i, authIdx := range []string{"idx-a", "idx-b", "idx-c"} {
+		for range 3 {
+			mustOK(t, r.Handle(ctx, runtime.MethodUsageHandle, marshalHealthTestJSON(t, map[string]any{
+				"Provider":  "antigravity",
+				"Model":     "claude-opus-4-6-thinking",
+				"AuthIndex": authIdx,
+				"Failed":    true,
+				"Failure": map[string]any{
+					"StatusCode": http.StatusTooManyRequests,
+					"Body":       genericBodies[i%len(genericBodies)],
+				},
+			})))
+		}
+	}
+	// Even without explicit StatusCode (StatusCode=0), generic JSON 429 body is still request-scoped exempt.
+	mustOK(t, r.Handle(ctx, runtime.MethodUsageHandle, marshalHealthTestJSON(t, map[string]any{
+		"Provider":  "antigravity",
+		"Model":     "gemini-3.8-flash-high",
+		"AuthIndex": "idx-a",
+		"Failed":    true,
+		"Failure": map[string]any{
+			"StatusCode": 0,
+			"Body":       genericBodies[0],
+		},
+	})))
+	// Filter error event with generic 429 body must also remain exempt.
+	mustOK(t, r.Handle(ctx, runtime.MethodFilterError, marshalHealthTestJSON(t, map[string]any{
+		"auth_index":  "idx-a",
+		"status_code": http.StatusTooManyRequests,
+		"model":       "claude-opus-4-6-thinking",
+		"error":       genericBodies[0],
+	})))
+
+	store, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(store.GetCooldowns()) != 0 {
+		t.Fatalf("generic RESOURCE_EXHAUSTED must not create cooldowns, got %#v", store.GetCooldowns())
+	}
+
+	diag, err := r.Diagnostics(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending, ok := diag["pending_429"].([]map[string]any); ok && len(pending) > 0 {
+		t.Fatalf("generic RESOURCE_EXHAUSTED must not enter pending_429, got %#v", pending)
+	}
+	if storm, ok := diag["rate_limit_storm"].(map[string]any); ok && len(storm) > 0 {
+		t.Fatalf("generic RESOURCE_EXHAUSTED must not trigger rate_limit_storm, got %#v", storm)
+	}
+
+	history, err := r.GetRequestHistory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history) != 10 {
+		t.Fatalf("expected 10 request history entries, got %d", len(history))
+	}
+	for _, rec := range history {
+		if !rec.Failed || rec.StatusCode != http.StatusTooManyRequests {
+			t.Fatalf("unexpected history status: %+v", rec)
+		}
+		if rec.FailureScope != string(state.FailureRequestScoped) {
+			t.Fatalf("expected failure_scope=%q, got %q (%+v)", state.FailureRequestScoped, rec.FailureScope, rec)
+		}
+		if !strings.Contains(rec.ErrorMessage, "RESOURCE_EXHAUSTED") {
+			t.Fatalf("expected raw error payload preserved in ErrorMessage, got %q", rec.ErrorMessage)
+		}
+	}
+	if got := readPriority(t, paths["idx-a"]); got != 100 {
+		t.Fatalf("host priority = %d; want untouched 100", got)
+	}
+}
+
+func TestHealth_Real429QuotaAndRateLimitTriggerCooldown(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
+	r, _, _, cachePath, _ := newHealthRuntime(t, now, "idx-quota", "idx-rate", "idx-custom")
+
+	quotaExhaustedBody := `{"error":{"code":429,"message":"You have exhausted your capacity on this model. Your quota will reset after 2h.","status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"QUOTA_EXHAUSTED","domain":"cloudcode-pa.googleapis.com","metadata":{"quotaResetDelay":"2h"}}]}}`
+	rateLimitExceededBody := `{"error":{"code":429,"message":"Too many requests","status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"RATE_LIMIT_EXCEEDED"},{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"10s"}]}}`
+	customNoDetailsBody := `{"error":{"code":429,"message":"Quota exceeded for quota metric 'Generate Content API requests per minute'.","status":"RESOURCE_EXHAUSTED"}}`
+	genericExemptBody := `{"error":{"code":429,"message":"Resource has been exhausted (e.g. check quota).","status":"RESOURCE_EXHAUSTED"}}`
+
+	// 1. QUOTA_EXHAUSTED x2 -> triggers cooldown.
+	for range 2 {
+		mustOK(t, r.Handle(ctx, runtime.MethodUsageHandle, marshalHealthTestJSON(t, map[string]any{
+			"Provider":  "antigravity",
+			"Model":     "claude-opus-4-6-thinking",
+			"AuthIndex": "idx-quota",
+			"Failed":    true,
+			"Failure":   map[string]any{"StatusCode": http.StatusTooManyRequests, "Body": quotaExhaustedBody},
+		})))
+	}
+
+	// 2. RATE_LIMIT_EXCEEDED x1 + generic exempt 429 x2 -> must NOT escalate yet.
+	mustOK(t, r.Handle(ctx, runtime.MethodUsageHandle, marshalHealthTestJSON(t, map[string]any{
+		"Provider":  "antigravity",
+		"Model":     "gemini-3.8-flash-high",
+		"AuthIndex": "idx-rate",
+		"Failed":    true,
+		"Failure":   map[string]any{"StatusCode": http.StatusTooManyRequests, "Body": rateLimitExceededBody},
+	})))
+	for range 2 {
+		mustOK(t, r.Handle(ctx, runtime.MethodUsageHandle, marshalHealthTestJSON(t, map[string]any{
+			"Provider":  "antigravity",
+			"Model":     "gemini-3.8-flash-high",
+			"AuthIndex": "idx-rate",
+			"Failed":    true,
+			"Failure":   map[string]any{"StatusCode": http.StatusTooManyRequests, "Body": genericExemptBody},
+		})))
+	}
+	storeMid, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := storeMid.GetCooldowns()[state.CooldownKey("idx-rate", "gemini")]; ok {
+		t.Fatalf("generic 429 must not escalate pending real 429 into cooldown: %#v", storeMid.GetCooldowns())
+	}
+
+	// 3. Second real RATE_LIMIT_EXCEEDED -> now escalates to cooldown.
+	mustOK(t, r.Handle(ctx, runtime.MethodUsageHandle, marshalHealthTestJSON(t, map[string]any{
+		"Provider":  "antigravity",
+		"Model":     "gemini-3.8-flash-high",
+		"AuthIndex": "idx-rate",
+		"Failed":    true,
+		"Failure":   map[string]any{"StatusCode": http.StatusTooManyRequests, "Body": rateLimitExceededBody},
+	})))
+
+	// 4. Custom quota exceeded message without details x2 -> fail-safe cooldown.
+	for range 2 {
+		mustOK(t, r.Handle(ctx, runtime.MethodUsageHandle, marshalHealthTestJSON(t, map[string]any{
+			"Provider":  "antigravity",
+			"Model":     "gemini-3.8-flash-high",
+			"AuthIndex": "idx-custom",
+			"Failed":    true,
+			"Failure":   map[string]any{"StatusCode": http.StatusTooManyRequests, "Body": customNoDetailsBody},
+		})))
+	}
+
+	store, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cooldowns := store.GetCooldowns()
+	for _, key := range []string{
+		state.CooldownKey("idx-quota", "claude_gpt"),
+		state.CooldownKey("idx-rate", "gemini"),
+		state.CooldownKey("idx-custom", "gemini"),
+	} {
+		if _, ok := cooldowns[key]; !ok {
+			t.Fatalf("expected cooldown %q to be recorded, got %#v", key, cooldowns)
+		}
+	}
+
+	history, err := r.GetRequestHistory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var exemptCount, realCount int
+	for _, rec := range history {
+		if rec.FailureScope == string(state.FailureRequestScoped) {
+			exemptCount++
+		} else {
+			realCount++
+		}
+	}
+	if exemptCount != 2 || realCount != 6 {
+		t.Fatalf("expected 2 exempt and 6 real 429 history entries, got exempt=%d real=%d", exemptCount, realCount)
+	}
+}
+
 func marshalHealthTestJSON(t *testing.T, v any) []byte {
 	t.Helper()
 	data, err := json.Marshal(v)

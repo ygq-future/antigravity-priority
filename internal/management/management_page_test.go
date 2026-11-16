@@ -1564,6 +1564,8 @@ func TestHistoryTooltipAndCooldownClearUIContracts(t *testing.T) {
 		"clearDiagnosticCooldown",
 		"clearAll429Cooldowns",
 		"formatRequestErrorTooltipText",
+		"statusRequestScoped429",
+		"req-status-exempt",
 	} {
 		if !strings.Contains(StatusHTML, marker) {
 			t.Fatalf("StatusHTML missing expected marker %q", marker)
@@ -1576,8 +1578,59 @@ func TestHistoryTooltipAndCooldownClearUIContracts(t *testing.T) {
 	}
 
 	harness := `
-const document = { getElementById: function() { return null; }, addEventListener: function() {} };
+const els = {
+    historyList: { innerHTML: "" },
+    requestHistoryCountBadge: { textContent: "" },
+};
+const document = {
+    activeElement: null,
+    getElementById: function(id) { return els[id] || null; },
+    addEventListener: function() {}
+};
 const window = { addEventListener: function() {} };
+const currentLang = "zh-CN";
+const translations = {
+    "zh-CN": {
+        noHistory: "none",
+        thTime: "Time",
+        thModel: "Model",
+        thCredential: "Cred",
+        thTokens: "Tokens",
+        thStatus: "Status",
+        statusRateLimited: "限流避让",
+        statusRequestScoped429: "请求豁免 (未冷却)",
+        statusError: "请求失败",
+        historyErrorDetails: "错误详情",
+    }
+};
+function t(k) { return (translations[currentLang] && translations[currentLang][k]) || k; }
+function escapeHTML(v) {
+    return String(v || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+function formatAccountName(v) { return String(v || ""); }
+let latestDiagnostics = {
+    request_history: [
+        {
+            at: "2026-11-16T12:00:00Z",
+            model: "claude-opus-4-6-thinking",
+            model_pool: "claude_gpt",
+            email: "user***",
+            failed: true,
+            status_code: 429,
+            failure_scope: "request_scoped",
+            error_message: "{\"error\":{\"code\":429,\"message\":\"Resource has been exhausted (e.g. check quota).\",\"status\":\"RESOURCE_EXHAUSTED\"}}",
+        },
+        {
+            at: "2026-11-16T11:59:00Z",
+            model: "gemini-3.8-flash-high",
+            model_pool: "gemini",
+            email: "user***",
+            failed: true,
+            status_code: 429,
+            error_message: "{\"error\":{\"code\":429,\"status\":\"RESOURCE_EXHAUSTED\",\"details\":[{\"reason\":\"QUOTA_EXHAUSTED\"}]}}",
+        }
+    ]
+};
 ` + templateScriptHistory + `
 const escapedRaw = "{&#34;error&#34;:{&#34;code&#34;:429,&#34;message&#34;:&#34;Resource has been exhausted (e.g. check quota).&#34;,&#34;status&#34;:&#34;RESOURCE_EXHAUSTED&#34;}}";
 const formatted = formatRequestErrorTooltipText(escapedRaw);
@@ -1591,6 +1644,14 @@ if (parsed.error.status !== "RESOURCE_EXHAUSTED" || formatted.indexOf("\n") < 0)
 const plain = formatRequestErrorTooltipText("plain error &amp; message");
 if (plain !== "plain error & message") {
     throw new Error("expected plain text fallback, got: " + plain);
+}
+renderHistory();
+const rendered = els.historyList.innerHTML;
+if (rendered.indexOf("req-status-exempt") < 0 || rendered.indexOf("请求豁免 (未冷却)") < 0) {
+    throw new Error("expected request_scoped badge in history HTML, got: " + rendered);
+}
+if (rendered.indexOf("req-status-429") < 0 || rendered.indexOf("限流避让") < 0) {
+    throw new Error("expected real 429 badge in history HTML, got: " + rendered);
 }
 `
 	runNodeFixture(t, node, "history-tooltip-format.js", harness)

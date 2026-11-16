@@ -140,6 +140,16 @@ const templateStyleHistory = `        /* Request History Table Styling */
             color: var(--accent-yellow-text);
         }
 
+        .req-status-exempt {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            line-height: 1;
+            font-weight: 650;
+            font-size: 11.5px;
+            color: var(--accent-blue-text);
+        }
+
         .req-status-fail {
             display: inline-flex;
             align-items: center;

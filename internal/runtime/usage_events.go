@@ -79,11 +79,15 @@ func (r *Runtime) handleUsageEvent(ctx context.Context, raw []byte) []byte {
 			statusCode = http.StatusUnauthorized
 		case kind == state.FailureForbidden:
 			statusCode = http.StatusForbidden
-		case kind == state.FailureRateLimit:
+		case kind == state.FailureRateLimit || kind == state.FailureRequestScoped:
 			statusCode = http.StatusTooManyRequests
 		default:
 			statusCode = http.StatusInternalServerError
 		}
+	}
+	failureScope := ""
+	if kind == state.FailureRequestScoped {
+		failureScope = string(state.FailureRequestScoped)
 	}
 	now := r.clock.Now().UTC()
 	r.recordRequestActivity(now)
@@ -104,8 +108,8 @@ func (r *Runtime) handleUsageEvent(ctx context.Context, raw []byte) []byte {
 		Failed:              payload.Failed,
 		StatusCode:          statusCode,
 		ErrorMessage:        requestHistoryErrorMessage(payload.Failed, statusCode, payload.Failure.Body),
+		FailureScope:        failureScope,
 	})
-
 	if !payload.Failed {
 		if err := r.observeUsageSuccess(ctx, resolvedIndex, string(pool), payload.Model, payload.Detail); err != nil {
 			return failure(err)
@@ -173,6 +177,9 @@ func failureKindFor(statusCode int, body string) state.FailureKind {
 	case http.StatusForbidden:
 		return state.FailureForbidden
 	case http.StatusTooManyRequests:
+		if isGenericResourceExhausted429(statusCode, body) {
+			return state.FailureRequestScoped
+		}
 		return state.FailureRateLimit
 	}
 	if statusCode >= 500 && statusCode <= 599 {
@@ -180,6 +187,9 @@ func failureKindFor(statusCode int, body string) state.FailureKind {
 	}
 	if statusCode != 0 {
 		return ""
+	}
+	if isGenericResourceExhausted429(0, body) {
+		return state.FailureRequestScoped
 	}
 	upper := strings.ToUpper(body)
 	switch {
@@ -194,6 +204,73 @@ func failureKindFor(statusCode int, body string) state.FailureKind {
 		return state.FailureServerError
 	default:
 		return ""
+	}
+}
+
+type googleRPCErrorEnvelope struct {
+	Error *googleRPCError `json:"error"`
+}
+
+type googleRPCError struct {
+	Code    int               `json:"code"`
+	Message string            `json:"message"`
+	Status  string            `json:"status"`
+	Details []json.RawMessage `json:"details"`
+}
+
+// isGenericResourceExhausted429 identifies prompt-triggered or request-scoped
+// Google RESOURCE_EXHAUSTED 429 responses that carry no ErrorInfo/RetryInfo
+// details and only emit the generic gRPC fallback message.
+func isGenericResourceExhausted429(statusCode int, body string) bool {
+	if statusCode != 0 && statusCode != http.StatusTooManyRequests {
+		return false
+	}
+	trimmed := strings.TrimSpace(body)
+	if trimmed == "" {
+		return false
+	}
+	var errObj *googleRPCError
+	switch trimmed[0] {
+	case '{':
+		var env googleRPCErrorEnvelope
+		if err := json.Unmarshal([]byte(trimmed), &env); err != nil {
+			return false
+		}
+		errObj = env.Error
+	case '[':
+		var list []googleRPCErrorEnvelope
+		if err := json.Unmarshal([]byte(trimmed), &list); err != nil || len(list) != 1 {
+			return false
+		}
+		errObj = list[0].Error
+	default:
+		return false
+	}
+	if errObj == nil {
+		return false
+	}
+	if errObj.Code != 0 && errObj.Code != http.StatusTooManyRequests {
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(errObj.Status), "RESOURCE_EXHAUSTED") {
+		return false
+	}
+	if len(errObj.Details) > 0 {
+		return false
+	}
+	return isGenericResourceExhaustedMessage(errObj.Message)
+}
+
+func isGenericResourceExhaustedMessage(message string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(message))
+	normalized = strings.TrimRight(normalized, ".! \t\r\n")
+	switch normalized {
+	case "resource has been exhausted (e.g. check quota)",
+		"resource has been exhausted",
+		"resource exhausted":
+		return true
+	default:
+		return false
 	}
 }
 

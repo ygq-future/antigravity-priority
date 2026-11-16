@@ -67,10 +67,13 @@ const templateScriptHistory = `        function renderHistory() {
 
                 let statusBadge = "<span class=\"req-status-ok\">● 200 OK</span>";
                 if (r.failed) {
-                    const statusClass = r.status_code === 429 ? "req-status-429" : "req-status-fail";
-                    const statusText = r.status_code === 429
-                        ? "● 429 " + t("statusRateLimited")
-                        : "● " + (r.status_code || 500) + " " + t("statusError");
+                    const isRequestScoped429 = r.status_code === 429 && r.failure_scope === "request_scoped";
+                    const statusClass = isRequestScoped429 ? "req-status-exempt" : (r.status_code === 429 ? "req-status-429" : "req-status-fail");
+                    const statusText = isRequestScoped429
+                        ? "● 429 " + t("statusRequestScoped429")
+                        : (r.status_code === 429
+                            ? "● 429 " + t("statusRateLimited")
+                            : "● " + (r.status_code || 500) + " " + t("statusError"));
                     const errorDetail = r.error_message || ("HTTP " + (r.status_code || 500));
                     statusBadge = "<span class=\"req-status-cell\">" +
                         "<span class=\"" + statusClass + "\">" + statusText + "</span>" +

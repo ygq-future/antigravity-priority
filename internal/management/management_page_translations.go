@@ -31,7 +31,7 @@ var historyTranslationKeys = []string{
 	"historyRetainLabel", "historyRetainUnit", "btnSaveHistoryLimit", "historyLimitSaved", "historyErrorDetails",
 	"valErrRequestHistoryLimit",
 	"thTime", "thModel", "thCredential", "thTokens", "thStatus",
-	"statusRateLimited", "statusError",
+	"statusRateLimited", "statusRequestScoped429", "statusError",
 }
 
 var diagnosticsTranslationKeys = []string{

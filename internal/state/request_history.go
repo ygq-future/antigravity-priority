@@ -34,6 +34,7 @@ type RequestHistoryEntry struct {
 	Failed              bool      `json:"failed"`
 	StatusCode          int       `json:"status_code"`
 	ErrorMessage        string    `json:"error_message,omitempty"`
+	FailureScope        string    `json:"failure_scope,omitempty"`
 }
 
 // IsBackgroundSynthetic reports whether the entry was generated internally by

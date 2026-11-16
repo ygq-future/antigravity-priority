@@ -17,6 +17,7 @@ const featureHistoryTranslations = `        const HISTORY_ZH = {
                 thTokens: "消耗 Token (输入 / 输出 / 思考 / 缓存 / 总计)",
                 thStatus: "响应状态",
                 statusRateLimited: "限流避让",
+                statusRequestScoped429: "请求豁免 (未冷却)",
                 statusError: "请求失败",
             }
         };
@@ -37,6 +38,7 @@ const featureHistoryTranslations = `        const HISTORY_ZH = {
                 thTokens: "Token Usage (In / Out / Think / Cache / Total)",
                 thStatus: "Status",
                 statusRateLimited: "Rate Limited",
+                statusRequestScoped429: "Request-Scoped (No Cooldown)",
                 statusError: "Failed",
             }
         };
