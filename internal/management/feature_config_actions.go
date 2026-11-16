@@ -133,9 +133,7 @@ const templateScriptConfigRaw = `        let originalConfigState = null;
                     if (hay.indexOf(query) < 0) continue;
                 }
                 renderedCount++;
-                var scopeLabel = rule.scope === "all" ? t("cfgPgScopeAll") : t("cfgPgScopeSystem");
                 var modeLabel = rule.mode === "regex" ? t("cfgPgModeRegex") : t("cfgPgModeText");
-                var scopeCls = rule.scope === "all" ? "pg-pill-btn active-all" : "pg-pill-btn";
                 var modeCls = rule.mode === "regex" ? "pg-pill-btn active-regex" : "pg-pill-btn";
                 var rowCls = rule.on ? "pg-rule-row" : "pg-rule-row pg-rule-disabled";
                 htmlParts.push(
@@ -147,7 +145,6 @@ const templateScriptConfigRaw = `        let originalConfigState = null;
                         '<input type="text" class="pg-rule-input pg-find-input" data-pg-field="find" value="' + escapeHTML(rule.find) + '" placeholder="' + escapeHTML(t("cfgPgFindPlaceholder")) + '" oninput="handlePromptGuardRuleInput(this)">' +
                         '<span class="pg-arrow">→</span>' +
                         '<input type="text" class="pg-rule-input pg-replace-input" data-pg-field="replace" value="' + escapeHTML(rule.replace) + '" placeholder="' + escapeHTML(t("cfgPgReplacePlaceholder")) + '" oninput="handlePromptGuardRuleInput(this)">' +
-                        '<button type="button" class="' + scopeCls + '" onclick="cyclePromptGuardRuleScope(' + i + ')">' + escapeHTML(scopeLabel) + "</button>" +
                         '<button type="button" class="' + modeCls + '" onclick="cyclePromptGuardRuleMode(' + i + ')">' + escapeHTML(modeLabel) + "</button>" +
                         '<button type="button" class="pg-delete-btn" onclick="deletePromptGuardRule(' + i + ')" title="Delete">✕</button>' +
                     "</div>"
@@ -245,27 +242,23 @@ const templateScriptConfigRaw = `        let originalConfigState = null;
         function buildPromptGuardBisectPrompt() {
             if (currentLang === "zh-CN") {
                 return [
-                    "我的请求通过 Antigravity 上游触发了通用 429 (\x60RESOURCE_EXHAUSTED: Resource has been exhausted (e.g. check quota).\x60 且无 details)，这通常是因为系统提示词或消息体中的某个关键词/短语命中了上游风控。",
+                    "我的请求通过 Antigravity 上游触发了通用 429 (\x60RESOURCE_EXHAUSTED: Resource has been exhausted (e.g. check quota).\x60 且无 details)，这通常是因为系统提示词中的某个关键词/短语命中了上游风控。",
                     "",
-                    "请你使用**二分法（Binary Search）**帮我定位具体是哪一个关键词触发了 429：",
-                    "1. 构造最小复现：保留触发 429 的原始请求（将 \x60max_tokens\x60 设为 \x6016\x60 等最小值），确认稳定返回该通用 429。",
-                    "2. 二分系统提示词：将 \x60system\x60 / \x60instructions\x60 / \x60systemInstruction\x60 文本对半拆分，分别测试保留前半段和保留后半段：",
-                    "   - 哪一半继续触发 429，就继续对该半对半拆分测试；",
-                    "   - 若全部清空系统提示词后仍触发 429，再按同样方式二分 \x60messages\x60 / \x60contents\x60。",
+                    "请你使用**二分法（Binary Search）**帮我定位具体是系统提示词中的哪一个关键词触发了 429：",
+                    "1. 构造最小复现：保留触发 429 的原始请求，仅保留系统提示词（将 \x60max_tokens\x60 设为 \x6016\x60 等最小值，用户消息设为简单内容如 \x60hi\x60），确认稳定返回该通用 429。",
+                    "2. 二分系统提示词：将 \x60system\x60 / \x60instructions\x60 / \x60systemInstruction\x60 文本对半拆分，分别测试保留前半段和保留后半段，哪一半继续触发 429 就继续对该半对半拆分测试。",
                     "3. 缩窄至最短短语：逐层从段落 -> 句子 -> 词组继续二分，直到找出删除其中任意关键单词就不再触发 429 的**最短连续触发短语**。",
-                    "4. 输出结果：告诉我定位到的「触发原文」、「所在位置（仅系统 / 全部消息）」以及建议的「无害替换文本」，我将直接添加到 Prompt Guard 规则中。"
+                    "4. 输出结果：告诉我定位到的「触发原文」以及建议的「无害替换文本」，我将直接添加到 Prompt Guard 规则中（仅作用于系统提示词）。"
                 ].join("\n");
             }
             return [
-                "My request hit a generic upstream 429 (\x60RESOURCE_EXHAUSTED: Resource has been exhausted (e.g. check quota).\x60 with no details), which is usually caused by a specific keyword or phrase in the system prompt or message body.",
+                "My request hit a generic upstream 429 (\x60RESOURCE_EXHAUSTED: Resource has been exhausted (e.g. check quota).\x60 with no details), which is usually caused by a specific keyword or phrase in the system prompt.",
                 "",
-                "Please use **binary search (bisecting)** to isolate the exact trigger phrase:",
-                "1. Minimal repro: Keep the failing request with minimal \x60max_tokens\x60 (e.g. \x6016\x60) and confirm it reliably returns the generic 429.",
-                "2. Bisect system instructions: Split \x60system\x60 / \x60instructions\x60 / \x60systemInstruction\x60 in half and test each half separately:",
-                "   - Recurse into whichever half still triggers 429;",
-                "   - If clearing all system instructions still triggers 429, bisect \x60messages\x60 / \x60contents\x60 the same way.",
+                "Please use **binary search (bisecting)** to isolate the exact trigger phrase in the system prompt:",
+                "1. Minimal repro: Keep the failing system prompt with minimal \x60max_tokens\x60 (e.g. \x6016\x60) and a simple user message like \x60hi\x60, and confirm it reliably returns the generic 429.",
+                "2. Bisect system instructions: Split \x60system\x60 / \x60instructions\x60 / \x60systemInstruction\x60 in half and test each half separately, recursing into whichever half still triggers 429.",
                 "3. Narrow down: Shrink from paragraph -> sentence -> phrase until you find the **shortest contiguous trigger phrase** whose removal stops the 429.",
-                "4. Report back: Provide the exact trigger phrase, scope (\x60system\x60 vs \x60all\x60), and a harmless replacement text so I can add it as a Prompt Guard rule."
+                "4. Report back: Provide the exact trigger phrase and a harmless replacement text so I can add it as a Prompt Guard rule (system prompt only)."
             ].join("\n");
         }
 

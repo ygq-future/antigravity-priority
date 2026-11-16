@@ -219,7 +219,7 @@ const configMarkup = `
                     <div class="form-row full-width">
                         <div class="form-label-box">
                             <span class="form-title" data-i18n="cfgPgEnabled">启用请求体关键字改写</span>
-                            <span class="form-hint" data-i18n="cfgPgEnabledHint">请求路由至 Antigravity 后、发往上游前按规则改写系统提示或消息体中的敏感短语，减少误触发无额度 429</span>
+                            <span class="form-hint" data-i18n="cfgPgEnabledHint">请求路由至 Antigravity 后、发往上游前按规则改写系统提示词中的敏感短语，减少误触发无额度 429</span>
                         </div>
                         <div class="form-input-group">
                             <label class="toggle-label">

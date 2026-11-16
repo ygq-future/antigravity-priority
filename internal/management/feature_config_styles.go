@@ -244,7 +244,7 @@ const templateStyleConfig = `        /* Config Center - Two columns with horizon
         }
         .pg-rule-row {
             display: grid;
-            grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr) 74px 54px 26px;
+            grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr) 54px 26px;
             align-items: center;
             gap: 6px;
             padding: 6px 8px;

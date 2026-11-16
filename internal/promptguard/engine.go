@@ -26,14 +26,12 @@ type compiledRule struct {
 	rule    config.PromptGuardRule
 	re      *regexp.Regexp
 	replace string
-	all     bool
 }
 
 // Engine holds pre-compiled Prompt Guard rules ready for concurrent read-only matching.
 type Engine struct {
 	enabled     bool
 	systemRules []*compiledRule
-	allRules    []*compiledRule
 	warnings    []string
 }
 
@@ -54,8 +52,6 @@ func Compile(cfg config.PromptGuardConfig) *Engine {
 
 	limit := min(len(rules), config.MaxPromptGuardRules)
 	eng.systemRules = make([]*compiledRule, 0, limit)
-	eng.allRules = make([]*compiledRule, 0, limit)
-
 	for i := range limit {
 		rule := rules[i]
 		rule.Normalize()
@@ -72,12 +68,8 @@ func Compile(cfg config.PromptGuardConfig) *Engine {
 			rule:    rule,
 			re:      re,
 			replace: rule.Replace,
-			all:     rule.Scope == config.PromptGuardScopeAll,
 		}
 		eng.systemRules = append(eng.systemRules, cr)
-		if cr.all {
-			eng.allRules = append(eng.allRules, cr)
-		}
 	}
 	return eng
 }
@@ -154,7 +146,7 @@ func (e *Engine) RewriteRequest(sourceFormat string, body []byte) ([]byte, bool,
 		return body, false, 0
 	}
 	hits := &hitCounter{}
-	rewritten, changed := rewriteJSONPayload(format, body, e.systemRules, e.allRules, hits)
+	rewritten, changed := rewriteJSONPayload(format, body, e.systemRules, nil, hits)
 	if !changed {
 		return body, false, 0
 	}
@@ -224,15 +216,11 @@ func Preview(cfg config.PromptGuardConfig, req PreviewRequest) PreviewResult {
 
 	hits := &hitCounter{}
 	if format == FormatText {
-		rules := eng.systemRules
-		if strings.EqualFold(strings.TrimSpace(req.Scope), config.PromptGuardScopeAll) {
-			rules = eng.allRules
-		}
-		out, changed := rewriteText(req.Input, rules, hits)
+		out, changed := rewriteText(req.Input, eng.systemRules, hits)
 		res.Output = out
 		res.Changed = changed
 	} else {
-		rewritten, changed := rewriteJSONPayload(format, raw, eng.systemRules, eng.allRules, hits)
+		rewritten, changed := rewriteJSONPayload(format, raw, eng.systemRules, nil, hits)
 		res.Changed = changed
 		if changed {
 			var indented bytes.Buffer
