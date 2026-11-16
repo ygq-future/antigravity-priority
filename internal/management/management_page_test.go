@@ -659,7 +659,11 @@ global.fetch = async function(path) {
 }
 func runNodeFixture(t *testing.T, node, filename, script string) {
 	t.Helper()
-	scriptPath := filepath.Join(t.TempDir(), filename)
+	tempDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tempDir, "package.json"), []byte(`{"type":"commonjs"}`), 0o600); err != nil {
+		t.Fatalf("write fixture package.json: %v", err)
+	}
+	scriptPath := filepath.Join(tempDir, filename)
 	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
 		t.Fatalf("write JavaScript fixture: %v", err)
 	}
@@ -1551,4 +1555,43 @@ apiFetch = async function(path) {
 `
 
 	runNodeFixture(t, node, "auto-schedule-loading-state.js", harness)
+}
+
+func TestHistoryTooltipAndCooldownClearUIContracts(t *testing.T) {
+	for _, marker := range []string{
+		"COOLDOWNS_CLEAR_PATH",
+		"clearCardCooldown",
+		"clearDiagnosticCooldown",
+		"clearAll429Cooldowns",
+		"formatRequestErrorTooltipText",
+	} {
+		if !strings.Contains(StatusHTML, marker) {
+			t.Fatalf("StatusHTML missing expected marker %q", marker)
+		}
+	}
+
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not available; tooltip formatting check skipped")
+	}
+
+	harness := `
+const document = { getElementById: function() { return null; }, addEventListener: function() {} };
+const window = { addEventListener: function() {} };
+` + templateScriptHistory + `
+const escapedRaw = "{&#34;error&#34;:{&#34;code&#34;:429,&#34;message&#34;:&#34;Resource has been exhausted (e.g. check quota).&#34;,&#34;status&#34;:&#34;RESOURCE_EXHAUSTED&#34;}}";
+const formatted = formatRequestErrorTooltipText(escapedRaw);
+if (formatted.indexOf("&#34;") >= 0) {
+    throw new Error("expected &#34; entities to be decoded, got: " + formatted);
+}
+const parsed = JSON.parse(formatted);
+if (parsed.error.status !== "RESOURCE_EXHAUSTED" || formatted.indexOf("\n") < 0) {
+    throw new Error("expected pretty-printed JSON tooltip, got: " + formatted);
+}
+const plain = formatRequestErrorTooltipText("plain error &amp; message");
+if (plain !== "plain error & message") {
+    throw new Error("expected plain text fallback, got: " + plain);
+}
+`
+	runNodeFixture(t, node, "history-tooltip-format.js", harness)
 }

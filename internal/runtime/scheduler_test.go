@@ -442,9 +442,8 @@ func TestScheduler_DepletedFailover_MixedProvider_And_AntigravityOnly(t *testing
 		Result runtime.SchedulerPickResponse `json:"result"`
 	}
 	_ = json.Unmarshal(mixedRes, &mixedEnv)
-	t.Logf("mixed result: %+v, raw: %s", mixedEnv.Result, string(mixedRes))
-	if !mixedEnv.Result.Handled || mixedEnv.Result.AuthID != "anthropic-direct" {
-		t.Errorf("expected failover to highest-priority other candidate 'anthropic-direct', got %+v", mixedEnv.Result)
+	if mixedEnv.Result.Handled || len(mixedEnv.Result.ExcludeCandidates) != 1 || mixedEnv.Result.ExcludeCandidates[0] != "ag-depleted" {
+		t.Errorf("expected Handled=false with ExcludeCandidates=[ag-depleted], got %+v", mixedEnv.Result)
 	}
 
 	// Case 2: Antigravity-only route and depleted
@@ -460,8 +459,8 @@ func TestScheduler_DepletedFailover_MixedProvider_And_AntigravityOnly(t *testing
 		Result runtime.SchedulerPickResponse `json:"result"`
 	}
 	_ = json.Unmarshal(agOnlyRes, &agOnlyEnv)
-	if agOnlyEnv.Result.Handled {
-		t.Errorf("expected Handled: false for depleted antigravity-only route, got %+v", agOnlyEnv.Result)
+	if agOnlyEnv.Result.Handled || len(agOnlyEnv.Result.ExcludeCandidates) != 1 || agOnlyEnv.Result.ExcludeCandidates[0] != "ag-depleted" {
+		t.Errorf("expected Handled=false with ExcludeCandidates=[ag-depleted] for antigravity-only route, got %+v", agOnlyEnv.Result)
 	}
 }
 
@@ -1184,16 +1183,16 @@ func TestScheduler_ExcludedModels_BypassAntigravityAndRouteOther(t *testing.T) {
 		t.Fatalf("unexpected excluded list: %v", updated)
 	}
 
-	// Mixed route must bypass healthy Antigravity and pick highest-priority other provider.
+	// Mixed route must return Handled=false and exclude Antigravity candidates so CPA routes to other providers.
 	excludedMixed := pickSchedulerAuthForModel(t, ctx, r, "gemini-3-flash", mixedCandidates)
-	if !excludedMixed.Handled || excludedMixed.AuthID != "vertex-1" {
-		t.Fatalf("expected vertex-1 when gemini-3-flash is excluded, got %+v", excludedMixed)
+	if excludedMixed.Handled || len(excludedMixed.ExcludeCandidates) != 2 || excludedMixed.ExcludeCandidates[0] != "ag-healthy" || excludedMixed.ExcludeCandidates[1] != "gemini-api-1" {
+		t.Fatalf("expected Handled=false and ExcludeCandidates=[ag-healthy gemini-api-1] when gemini-3-flash is excluded, got %+v", excludedMixed)
 	}
 
-	// Antigravity-only route must not select Antigravity.
+	// Antigravity-only route must also return Handled=false and exclude Antigravity candidates.
 	excludedAGOnly := pickSchedulerAuthForModel(t, ctx, r, "gemini-3-flash", agOnlyCandidates)
-	if excludedAGOnly.Handled {
-		t.Fatalf("expected Handled=false for Antigravity-only excluded model, got %+v", excludedAGOnly)
+	if excludedAGOnly.Handled || len(excludedAGOnly.ExcludeCandidates) != 1 || excludedAGOnly.ExcludeCandidates[0] != "ag-healthy" {
+		t.Fatalf("expected Handled=false and ExcludeCandidates=[ag-healthy] for Antigravity-only excluded model, got %+v", excludedAGOnly)
 	}
 
 	// Sibling model in the same Gemini pool remains routed to Antigravity.
@@ -1208,8 +1207,8 @@ func TestScheduler_ExcludedModels_BypassAntigravityAndRouteOther(t *testing.T) {
 		t.Fatal(err)
 	}
 	reloadedPick := pickSchedulerAuthForModel(t, ctx, r2, "gemini-3-flash", mixedCandidates)
-	if !reloadedPick.Handled || reloadedPick.AuthID != "vertex-1" {
-		t.Fatalf("expected exclusion to persist across reload, got %+v", reloadedPick)
+	if reloadedPick.Handled || len(reloadedPick.ExcludeCandidates) != 2 || reloadedPick.ExcludeCandidates[0] != "ag-healthy" || reloadedPick.ExcludeCandidates[1] != "gemini-api-1" {
+		t.Fatalf("expected exclusion to persist across reload with ExcludeCandidates=[ag-healthy gemini-api-1], got %+v", reloadedPick)
 	}
 
 	// 4. Restore the model and verify Antigravity routing resumes.

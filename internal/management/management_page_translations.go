@@ -23,6 +23,7 @@ var overviewTranslationKeys = []string{
 	"warmupIconFollowTitle", "warmupIconOverrideTitle", "warmupCardEnabled", "warmupCardDisabled",
 	"btnExcludeModel", "btnExcludedModel", "excludeModelTitle", "restoreModelTitle",
 	"statusExcludedModel", "excludedModelBadgeTitle", "modelExcludedToast", "modelRestoredToast",
+	"btnClearCooldown", "cooldownClearedToast", "cooldownClearFailed",
 }
 
 var historyTranslationKeys = []string{
@@ -49,6 +50,7 @@ var diagnosticsTranslationKeys = []string{
 	"diagHealthy", "diagTripped", "diagCoolingDownCount",
 	"diagAllPassed", "diagHasFailed", "diagNoChanges", "diagSuccessPill", "diagFailedPill", "diagAttemptedPill",
 	"diagRemainingSec", "copiedSuccess",
+	"btnClearCooldown", "btnClearAll429", "cooldownClearedToast", "cooldownsClearedCountToast", "cooldownNoneToClearToast",
 }
 
 var configTranslationKeys = []string{

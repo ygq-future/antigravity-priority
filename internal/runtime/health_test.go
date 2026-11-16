@@ -8,10 +8,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"antigravity-priority/internal/core"
+	"antigravity-priority/internal/management"
 	"antigravity-priority/internal/host"
 	"antigravity-priority/internal/runtime"
 	"antigravity-priority/internal/state"
@@ -521,4 +523,152 @@ func waitForHealthClear(t *testing.T, cachePath, authIndex string) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+type hostWithCooldownReset struct {
+	*mockHost
+	mu         sync.Mutex
+	resetCalls []string
+}
+
+func (h *hostWithCooldownReset) ResetRoutingCooldown(_ context.Context, authIndex string) error {
+	h.mu.Lock()
+	h.resetCalls = append(h.resetCalls, authIndex)
+	h.mu.Unlock()
+	return nil
+}
+
+func TestRuntime_ClearCooldown_SingleAndAll429_CallsHostResetCooldown(t *testing.T) {
+	ctx := context.Background()
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	now := time.Date(2026, 11, 16, 10, 0, 0, 0, time.UTC)
+	clock := &testClock{now: now}
+	seedHealthEvidence(t, ctx, cachePath, now, "account-a", "account-b")
+
+	baseHost := newMockHost()
+	baseHost.files = []host.AuthFile{
+		{Name: "account-a", AuthIndex: "account-a", Provider: "antigravity", Status: "active"},
+		{Name: "account-b", AuthIndex: "account-b", Provider: "antigravity", Status: "active"},
+	}
+	hostStub := &hostWithCooldownReset{mockHost: baseHost}
+
+	r := runtime.New(runtime.Options{Host: hostStub, Clock: clock, StateCachePath: cachePath, DisableBackgroundWorkers: true})
+	defer func() { _ = r.Shutdown(context.Background()) }()
+	regRes := r.Handle(ctx, runtime.MethodPluginRegister, marshalHealthTestJSON(t, runtime.RegisterRequest{
+		ConfigYAML: "enabled: true\nstate_cache_path: " + filepath.ToSlash(cachePath) + "\nrate_limit_cooldown_minutes: 5\n",
+	}))
+	var regEnv struct {
+		OK     bool                   `json:"ok"`
+		Result runtime.RegisterResult `json:"result"`
+	}
+	if err := json.Unmarshal(regRes, &regEnv); err != nil {
+		t.Fatalf("decode register: %v", err)
+	}
+	if regEnv.Result.SchemaVersion < 6 {
+		t.Fatalf("expected SchemaVersion >= 6 for raw management JSON, got %d", regEnv.Result.SchemaVersion)
+	}
+	if _, err := r.SyncHost(ctx); err != nil {
+		t.Fatalf("SyncHost: %v", err)
+	}
+
+	// Trigger two 429 failures for account-a in gemini pool to put it into 429 cooldown.
+	for range 2 {
+		payload := marshalHealthTestJSON(t, map[string]any{
+			"Model":     "gemini-3.8-flash-high",
+			"AuthIndex": "account-a",
+			"Provider":  "antigravity",
+			"Failed":    true,
+			"Failure": map[string]any{
+				"StatusCode": 429,
+				"Body":       `{"error":{"code":429,"status":"RESOURCE_EXHAUSTED"}}`,
+			},
+		})
+		_ = r.Handle(ctx, runtime.MethodUsageHandle, payload)
+	}
+
+	// Diagnostics must expose cooldown_id while keeping auth_index redacted.
+	diag, err := r.Diagnostics(ctx)
+	if err != nil {
+		t.Fatalf("Diagnostics: %v", err)
+	}
+	activeCooldowns, _ := diag["active_cooldowns"].([]map[string]any)
+	if len(activeCooldowns) != 1 {
+		t.Fatalf("expected 1 active cooldown, got %d", len(activeCooldowns))
+	}
+	cooldownID, _ := activeCooldowns[0]["cooldown_id"].(string)
+	if cooldownID == "" {
+		t.Fatalf("expected non-empty cooldown_id in diagnostics entry: %#v", activeCooldowns[0])
+	}
+	if gotIdx, _ := activeCooldowns[0]["auth_index"].(string); gotIdx == "account-a" {
+		t.Fatalf("expected redacted auth_index in diagnostics, got raw %q", gotIdx)
+	}
+
+	// Clear by cooldown_id.
+	res, err := r.ClearCooldown(ctx, management.ClearCooldownRequest{CooldownID: cooldownID})
+	if err != nil {
+		t.Fatalf("ClearCooldown by cooldown_id: %v", err)
+	}
+	if res.ClearedCount != 1 || res.HostResetCount != 1 {
+		t.Fatalf("expected ClearedCount=1 HostResetCount=1, got %+v", res)
+	}
+
+	store, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatalf("reload store: %v", err)
+	}
+	if len(store.GetCooldowns()) != 0 {
+		t.Fatalf("expected empty cooldowns after clear, got %#v", store.GetCooldowns())
+	}
+
+	// Trigger 429 cooldowns on both accounts and also a 5xx cooldown, then test ClearCooldown(all=true, kind="rate_limit").
+	for _, idx := range []string{"account-a", "account-b"} {
+		for range 2 {
+			_ = r.Handle(ctx, runtime.MethodUsageHandle, marshalHealthTestJSON(t, map[string]any{
+				"Model":     "gemini-3.8-flash-high",
+				"AuthIndex": idx,
+				"Provider":  "antigravity",
+				"Failed":    true,
+				"Failure":   map[string]any{"StatusCode": 429},
+			}))
+		}
+	}
+	_ = r.Handle(ctx, runtime.MethodUsageHandle, marshalHealthTestJSON(t, map[string]any{
+		"Model":     "claude-sonnet-5-5-high",
+		"AuthIndex": "account-b",
+		"Provider":  "antigravity",
+		"Failed":    true,
+		"Failure":   map[string]any{"StatusCode": 503},
+	}))
+
+	allRes, err := r.ClearCooldown(ctx, management.ClearCooldownRequest{All: true, Kind: "rate_limit"})
+	if err != nil {
+		t.Fatalf("ClearCooldown all 429: %v", err)
+	}
+	if allRes.ClearedCount != 2 || allRes.HostResetCount != 2 {
+		t.Fatalf("expected 2 rate_limit cooldowns cleared and 2 host resets, got %+v", allRes)
+	}
+
+	storeAfter, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatalf("reload store after all 429 clear: %v", err)
+	}
+	if remaining := storeAfter.GetCooldowns(); len(remaining) != 1 {
+		t.Fatalf("expected only non-429 (5xx) cooldown to remain, got %#v", remaining)
+	}
+
+	hostStub.mu.Lock()
+	totalHostResets := len(hostStub.resetCalls)
+	hostStub.mu.Unlock()
+	if totalHostResets != 3 {
+		t.Fatalf("expected 3 host.routing.reset_cooldown calls total, got %d", totalHostResets)
+	}
+}
+
+func marshalHealthTestJSON(t *testing.T, v any) []byte {
+	t.Helper()
+	data, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal JSON: %v", err)
+	}
+	return data
 }

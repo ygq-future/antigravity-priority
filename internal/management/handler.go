@@ -34,6 +34,7 @@ type Runner interface {
 	SetCustomTier(ctx context.Context, authIndex string, tier int) error
 	SetModelExcluded(ctx context.Context, model string, excluded bool) ([]string, error)
 	SetWarmupCredentialState(ctx context.Context, authIndex, group string, enabled bool) error
+	ClearCooldown(ctx context.Context, req ClearCooldownRequest) (ClearCooldownResult, error)
 }
 
 // ProbeOutcome reports the diagnostic outcome of one credential probe for the management UI.
@@ -44,6 +45,25 @@ type ProbeOutcome struct {
 	Error          string    `json:"error,omitempty"`
 	HTTPStatusCode int       `json:"http_status_code,omitempty"`
 	ObservedAt     time.Time `json:"observed_at"`
+}
+
+// ClearCooldownRequest selects one cooldown entry, one credential/pool, or all cooldowns to clear.
+type ClearCooldownRequest struct {
+	All        bool   `json:"all,omitempty"`
+	Kind       string `json:"kind,omitempty"`
+	CooldownID string `json:"cooldown_id,omitempty"`
+	AuthIndex  string `json:"auth_index,omitempty"`
+	ModelGroup string `json:"model_group,omitempty"`
+	Model      string `json:"model,omitempty"`
+}
+
+// ClearCooldownResult reports how many cooldowns and host routing states were cleared.
+type ClearCooldownResult struct {
+	OK               bool   `json:"ok"`
+	ClearedCount     int    `json:"cleared_count"`
+	HostResetCount   int    `json:"host_reset_count"`
+	ClearedStorm     bool   `json:"cleared_storm,omitempty"`
+	Warning          string `json:"warning,omitempty"`
 }
 
 // RunRequest encapsulates parameters for a manual quota probe run.
@@ -89,6 +109,7 @@ const (
 	PathCustomTier          = "/custom-tier"
 	PathWarmupCredential    = "/warmup-credential"
 	PathExcludedModels      = "/excluded-models"
+	PathCooldownsClear      = "/cooldowns/clear"
 
 	// URL Prefixes
 	PrefixResourcePlugin   = "/v0/resource/plugins/" + config.PluginID
@@ -147,6 +168,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleGetExcludedModels(w, r)
 	case (path == PathExcludedModels || path == PrefixManagementPlugin+PathExcludedModels || path == PrefixLegacyPlugin+PathExcludedModels) && method == http.MethodPost:
 		h.handleSetExcludedModel(w, r)
+	case (path == PathCooldownsClear || path == PrefixManagementPlugin+PathCooldownsClear || path == PrefixLegacyPlugin+PathCooldownsClear) && method == http.MethodPost:
+		h.handleClearCooldown(w, r)
 	default:
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(http.StatusNotFound)
@@ -663,4 +686,31 @@ func (h *Handler) handleSetExcludedModel(w http.ResponseWriter, r *http.Request)
 		"excluded":        *req.Excluded,
 		"excluded_models": updated,
 	})
+}
+
+func (h *Handler) handleClearCooldown(w http.ResponseWriter, r *http.Request) {
+	var req ClearCooldownRequest
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			h.writeJSONError(w, http.StatusBadRequest, "invalid request JSON: "+err.Error())
+			return
+		}
+	}
+	req.Kind = strings.ToLower(strings.TrimSpace(req.Kind))
+	req.CooldownID = strings.TrimSpace(req.CooldownID)
+	req.AuthIndex = strings.TrimSpace(req.AuthIndex)
+	req.ModelGroup = strings.ToLower(strings.TrimSpace(req.ModelGroup))
+	req.Model = strings.TrimSpace(req.Model)
+	if !req.All && req.CooldownID == "" && req.AuthIndex == "" {
+		h.writeJSONError(w, http.StatusBadRequest, "all, cooldown_id, or auth_index is required")
+		return
+	}
+	result, err := h.runner.ClearCooldown(r.Context(), req)
+	if err != nil {
+		h.writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(result)
 }

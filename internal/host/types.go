@@ -20,6 +20,7 @@ const (
 	MethodAuthSave       = "host.auth.save"
 	MethodHTTPDo         = "host.http.do"
 	MethodAuthModels     = "host.auth.models"
+	MethodRoutingResetCooldown = "host.routing.reset_cooldown"
 
 	// Auth JSON Top-Level Field Names
 	FieldPriority       = "priority"
@@ -228,4 +229,9 @@ type API interface {
 	ReplaceAuth(ctx context.Context, document AuthDocument, doc json.RawMessage) error
 	HTTPDo(ctx context.Context, req HTTPRequest) (HTTPResponse, error)
 	ListAuthModels(ctx context.Context) ([]AuthModelsEntry, error)
+}
+
+// RoutingCooldownResetter optionally clears host-side routing cooldown state for an auth_index.
+type RoutingCooldownResetter interface {
+	ResetRoutingCooldown(ctx context.Context, authIndex string) error
 }

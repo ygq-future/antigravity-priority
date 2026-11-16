@@ -1507,6 +1507,23 @@ func (s *Store) DeleteCooldownExact(key string) {
 	delete(s.cooldowns, key)
 }
 
+// DeleteCooldownsMatching removes all cooldown entries matching the predicate and returns them.
+func (s *Store) DeleteCooldownsMatching(match func(CooldownEntry) bool) []CooldownEntry {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.cooldowns) == 0 {
+		return nil
+	}
+	var removed []CooldownEntry
+	for key, entry := range s.cooldowns {
+		if match == nil || match(entry) {
+			removed = append(removed, entry)
+			delete(s.cooldowns, key)
+		}
+	}
+	return removed
+}
+
 // GetCooldowns returns a copy of all current cooldown entries.
 func (s *Store) GetCooldowns() map[string]CooldownEntry {
 	s.mu.RLock()

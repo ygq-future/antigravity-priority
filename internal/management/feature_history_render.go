@@ -121,10 +121,30 @@ const templateScriptHistory = `        function renderHistory() {
             }
         }
 
+        function formatRequestErrorTooltipText(raw) {
+            let text = String(raw || "").trim();
+            if (!text) return "";
+            if (text.indexOf("&#34;") >= 0 || text.indexOf("&quot;") >= 0 || text.indexOf("&#39;") >= 0 || text.indexOf("&lt;") >= 0 || text.indexOf("&gt;") >= 0 || text.indexOf("&amp;") >= 0) {
+                text = text
+                    .replace(/&#34;/g, "\"")
+                    .replace(/&quot;/g, "\"")
+                    .replace(/&#39;/g, "'")
+                    .replace(/&lt;/g, "<")
+                    .replace(/&gt;/g, ">")
+                    .replace(/&amp;/g, "&");
+            }
+            if ((text[0] === "{" && text[text.length - 1] === "}") || (text[0] === "[" && text[text.length - 1] === "]")) {
+                try {
+                    return JSON.stringify(JSON.parse(text), null, 2);
+                } catch (_) {}
+            }
+            return text;
+        }
+
         function positionRequestErrorTooltip(target) {
             const tip = document.getElementById("reqErrorTooltip");
             if (!tip) return;
-            const message = target.getAttribute("data-error") || "";
+            const message = formatRequestErrorTooltipText(target.getAttribute("data-error") || "");
             if (!message) return;
             clearRequestErrorTooltipTimer();
             tip.textContent = message;

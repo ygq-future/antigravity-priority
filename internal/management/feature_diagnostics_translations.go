@@ -70,6 +70,11 @@ const featureDiagnosticsTranslations = `        const DIAGNOSTICS_ZH = {
                 diagAttemptedPill: "尝试",
                 diagRemainingSec: "恢复倒计时: ",
                 copiedSuccess: "诊断数据已成功复制到剪贴板",
+                btnClearCooldown: "清除",
+                btnClearAll429: "清除全部 429",
+                cooldownClearedToast: "已清除选中冷却",
+                cooldownsClearedCountToast: "已清除 429 冷却记录: ",
+                cooldownNoneToClearToast: "当前没有可清除的 429 冷却",
             }
         };
         const DIAGNOSTICS_EN = {
@@ -142,6 +147,11 @@ const featureDiagnosticsTranslations = `        const DIAGNOSTICS_ZH = {
                 diagAttemptedPill: "Attempted",
                 diagRemainingSec: "Recover in: ",
                 copiedSuccess: "Diagnostics JSON copied to clipboard",
+                btnClearCooldown: "Clear",
+                btnClearAll429: "Clear All 429",
+                cooldownClearedToast: "Cooldown cleared",
+                cooldownsClearedCountToast: "Cleared 429 cooldowns: ",
+                cooldownNoneToClearToast: "No active 429 cooldowns to clear",
             }
         };
 `

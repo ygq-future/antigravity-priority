@@ -195,8 +195,8 @@ func TestRuntime_Handle_Register(t *testing.T) {
 		t.Fatalf("expected OK=true, got error: %+v", envelope.Error)
 	}
 
-	if envelope.Result.SchemaVersion != 1 {
-		t.Errorf("expected schema_version=1, got %d", envelope.Result.SchemaVersion)
+	if envelope.Result.SchemaVersion != 6 {
+		t.Errorf("expected schema_version=6, got %d", envelope.Result.SchemaVersion)
 	}
 
 	if envelope.Result.Metadata.Name != "Antigravity Priority" {

@@ -160,12 +160,13 @@ type SchedulerAuthCandidate struct {
 
 // SchedulerPickResponse represents the response payload for scheduler.pick.
 type SchedulerPickResponse struct {
-	AuthID          string `json:"auth_id,omitempty"`
-	DelegateBuiltin string `json:"delegate_builtin,omitempty"`
-	Handled         bool   `json:"handled"`
-	Reject          bool   `json:"reject,omitempty"`
-	RejectReason    string `json:"reject_reason,omitempty"`
-	RejectCode      string `json:"reject_code,omitempty"`
+	AuthID            string   `json:"auth_id,omitempty"`
+	DelegateBuiltin   string   `json:"delegate_builtin,omitempty"`
+	ExcludeCandidates []string `json:"exclude_candidates,omitempty"`
+	Handled           bool     `json:"handled"`
+	Reject            bool     `json:"reject,omitempty"`
+	RejectReason      string   `json:"reject_reason,omitempty"`
+	RejectCode        string   `json:"reject_code,omitempty"`
 }
 
 // Metadata describes non-sensitive plugin information displayed in CPA.

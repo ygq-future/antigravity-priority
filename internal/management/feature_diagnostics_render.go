@@ -430,26 +430,84 @@ const templateScriptDiagnostics = `        let latestDiagnostics = null;
             root.innerHTML = html;
         }
 
+        async function clearDiagnosticCooldown(cooldownId, btn) {
+            if (isAuthBlocked || !cooldownId) return;
+            if (btn) btn.disabled = true;
+            try {
+                await apiFetch(COOLDOWNS_CLEAR_PATH, {
+                    method: "POST",
+                    body: JSON.stringify({ cooldown_id: cooldownId })
+                });
+                showToast(t("cooldownClearedToast"), "success");
+                await fetchSnapshot({ silent: true });
+                await fetchDiagnostics({ silent: true });
+            } catch (err) {
+                showToast(err.message || "Clear cooldown failed", "error");
+            } finally {
+                if (btn) btn.disabled = false;
+            }
+        }
+
+        async function clearAll429Cooldowns(btn) {
+            if (isAuthBlocked) return;
+            if (btn) btn.disabled = true;
+            try {
+                var result = await apiFetch(COOLDOWNS_CLEAR_PATH, {
+                    method: "POST",
+                    body: JSON.stringify({ all: true, kind: "rate_limit" })
+                });
+                var clearedCount = result && Number(result.cleared_count) ? Number(result.cleared_count) : 0;
+                if (clearedCount > 0 || (result && result.cleared_storm)) {
+                    showToast(t("cooldownsClearedCountToast") + clearedCount, "success");
+                } else {
+                    showToast(t("cooldownNoneToClearToast"), "info");
+                }
+                await fetchSnapshot({ silent: true });
+                await fetchDiagnostics({ silent: true });
+            } catch (err) {
+                showToast(err.message || "Clear 429 cooldowns failed", "error");
+            } finally {
+                if (btn) btn.disabled = false;
+            }
+        }
+
         function renderCooldowns() {
             var root = document.getElementById("diagCooldownContent");
             if (!root) return;
             var cooldowns = latestDiagnostics.active_cooldowns || [];
+            var pending = latestDiagnostics.pending_429 || [];
+            var storm = latestDiagnostics.rate_limit_storm || null;
+            var hasAny429 = (Array.isArray(pending) && pending.length > 0) ||
+                Boolean(storm && storm.active) ||
+                cooldowns.some(function(item) { return item && item.failure_kind === "rate_limit"; });
             if (cooldowns.length === 0) {
-                root.innerHTML = "<div class=\"diag-cooldown-empty\"><span>✅</span><span>" + escapeHTML(t("diagCooldownEmptyText")) + "</span></div>";
+                var emptyHtml = "<div class=\"diag-cooldown-empty\"><span>✅</span><span>" + escapeHTML(t("diagCooldownEmptyText")) + "</span>";
+                if (hasAny429) {
+                    emptyHtml += "<button type=\"button\" class=\"diag-clear-btn diag-clear-btn-inline\" onclick=\"clearAll429Cooldowns(this)\">" + escapeHTML(t("btnClearAll429")) + "</button>";
+                }
+                emptyHtml += "</div>";
+                root.innerHTML = emptyHtml;
                 return;
             }
-            var html = "<div class=\"diag-subhead\">" + escapeHTML(t("diagSectionCooldown")) +
-                " <span class=\"badge badge-danger\">" + cooldowns.length + "</span></div><div class=\"diag-mini-list\">";
+            var html = "<div class=\"diag-subhead-row\">" +
+                "<div class=\"diag-subhead\">" + escapeHTML(t("diagSectionCooldown")) +
+                " <span class=\"badge badge-danger\">" + cooldowns.length + "</span></div>" +
+                (hasAny429 ? "<button type=\"button\" class=\"diag-clear-btn\" onclick=\"clearAll429Cooldowns(this)\">" + escapeHTML(t("btnClearAll429")) + "</button>" : "") +
+                "</div><div class=\"diag-mini-list\">";
             cooldowns.forEach(function(item) {
                 var until = item.cooldown_until || "";
                 var kind = item.failure_kind || (item.status_code ? String(item.status_code) : "cooldown");
                 var probe = item.probe_enabled ? " · probe" : "";
                 var identity = formatAccountName(item.email || item.auth_index || "Credential");
+                var cid = item.cooldown_id || "";
                 html += "<div class=\"diag-mini-row\">" +
                     "<div class=\"diag-mini-main\"><strong>" + escapeHTML(identity) + "</strong>" +
                     "<span class=\"diag-mini-meta\">" + escapeHTML((item.model_group || "-") + (item.model ? " · " + item.model : "") + " · " + kind + probe) + "</span></div>" +
-                    "<div class=\"diag-mini-countdown\"><span>" + escapeHTML(t("diagRemainingSec")) + "</span>" +
-                    "<strong class=\"meter-countdown\" data-cooldown-countdown=\"" + escapeHTML(until) + "\">" + (until ? formatCountdown(until) : "-") + "</strong></div>" +
+                    "<div class=\"diag-mini-right\">" +
+                        "<div class=\"diag-mini-countdown\"><span>" + escapeHTML(t("diagRemainingSec")) + "</span>" +
+                        "<strong class=\"meter-countdown\" data-cooldown-countdown=\"" + escapeHTML(until) + "\">" + (until ? formatCountdown(until) : "-") + "</strong></div>" +
+                        (cid ? "<button type=\"button\" class=\"diag-clear-btn\" onclick=\"clearDiagnosticCooldown('" + escapeHTML(cid) + "', this)\">" + escapeHTML(t("btnClearCooldown")) + "</button>" : "") +
+                    "</div>" +
                 "</div>";
             });
             html += "</div>";

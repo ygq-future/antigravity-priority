@@ -476,16 +476,6 @@ func (pr *poolRouter) SelectCandidate(pool config.AntigravityModelGroup, winners
 	return picked.ID
 }
 
-func (pr *poolRouter) NextCandidate(pool config.AntigravityModelGroup, candidates []SchedulerAuthCandidate) string {
-	pr.mu.Lock()
-	defer pr.mu.Unlock()
-	pr.ensureMapsLocked()
-	cursor := pr.rrCursorByPool[pool]
-	picked := pickSuccessor(candidates, cursor)
-	pr.rrCursorByPool[pool] = picked.ID
-	return picked.ID
-}
-
 func minFutureTime(current, candidate time.Time) time.Time {
 	if current.IsZero() {
 		return candidate
@@ -513,7 +503,7 @@ func (r *Runtime) handleSchedulerPick(_ context.Context, request []byte) []byte 
 	}
 
 	var agCandidates []SchedulerAuthCandidate
-	var otherCandidates []SchedulerAuthCandidate
+	var agCandidateIDs []string
 
 	for _, c := range req.Candidates {
 		if strings.TrimSpace(c.ID) == "" {
@@ -521,8 +511,7 @@ func (r *Runtime) handleSchedulerPick(_ context.Context, request []byte) []byte 
 		}
 		if isAntigravityUsageProvider(c.Provider) {
 			agCandidates = append(agCandidates, c)
-		} else {
-			otherCandidates = append(otherCandidates, c)
+			agCandidateIDs = append(agCandidateIDs, c.ID)
 		}
 	}
 
@@ -530,11 +519,14 @@ func (r *Runtime) handleSchedulerPick(_ context.Context, request []byte) []byte 
 		return envelopeSchedulerPick(SchedulerPickResponse{Handled: false})
 	}
 
-	pool := config.ClassifyModelQuotaPool(req.Model)
-
 	if excluded {
-		return envelopeSchedulerPick(r.pickFallbackOtherCandidate(pool, otherCandidates))
+		return envelopeSchedulerPick(SchedulerPickResponse{
+			Handled:           false,
+			ExcludeCandidates: agCandidateIDs,
+		})
 	}
+
+	pool := config.ClassifyModelQuotaPool(req.Model)
 
 	now := r.clock.Now().UTC()
 	poolTable := r.getOrRefreshPoolTable(pool, now)
@@ -594,39 +586,12 @@ func (r *Runtime) handleSchedulerPick(_ context.Context, request []byte) []byte 
 		})
 	}
 
-	// Branch B: All Antigravity candidates are depleted or in cooldown (bestScore < 0)
-	return envelopeSchedulerPick(r.pickFallbackOtherCandidate(pool, otherCandidates))
-}
-
-// pickFallbackOtherCandidate routes mixed-provider requests to the highest-priority
-// non-Antigravity candidate when Antigravity is depleted, cooling, or excluded.
-func (r *Runtime) pickFallbackOtherCandidate(pool config.AntigravityModelGroup, otherCandidates []SchedulerAuthCandidate) SchedulerPickResponse {
-	if len(otherCandidates) == 0 {
-		return SchedulerPickResponse{Handled: false}
-	}
-	maxOtherPriority := -1 << 31
-	for _, oc := range otherCandidates {
-		if oc.Priority > maxOtherPriority {
-			maxOtherPriority = oc.Priority
-		}
-	}
-
-	var bestOthers []SchedulerAuthCandidate
-	for _, oc := range otherCandidates {
-		if oc.Priority == maxOtherPriority {
-			bestOthers = append(bestOthers, oc)
-		}
-	}
-
-	sort.Slice(bestOthers, func(i, j int) bool {
-		return bestOthers[i].ID < bestOthers[j].ID
+	// Branch B: All Antigravity candidates are depleted or in cooldown (bestScore < 0).
+	// Hand control back to CPA while excluding Antigravity candidates from this request.
+	return envelopeSchedulerPick(SchedulerPickResponse{
+		Handled:           false,
+		ExcludeCandidates: agCandidateIDs,
 	})
-
-	pickedID := r.router.NextCandidate(pool, bestOthers)
-	return SchedulerPickResponse{
-		AuthID:  pickedID,
-		Handled: true,
-	}
 }
 
 // pickSuccessor picks the next item in a sorted slice following cursor in a round-robin cycle.

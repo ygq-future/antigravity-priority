@@ -140,6 +140,21 @@ func (c *Client) ListAuthModels(ctx context.Context) ([]AuthModelsEntry, error) 
 	return models, nil
 }
 
+// ResetRoutingCooldown clears host-side cooldown/quota routing state when supported by the host.
+func (c *Client) ResetRoutingCooldown(ctx context.Context, authIndex string) error {
+	if c == nil || c.callbacks == nil {
+		return nil
+	}
+	resetter, ok := c.callbacks.(RoutingCooldownResetter)
+	if !ok {
+		return nil
+	}
+	if err := resetter.ResetRoutingCooldown(ctx, authIndex); err != nil {
+		return fmt.Errorf("host.routing.reset_cooldown: %w", err)
+	}
+	return nil
+}
+
 func stableName(name string) (string, error) {
 	trimmed := strings.TrimSpace(name)
 	if trimmed == "" {

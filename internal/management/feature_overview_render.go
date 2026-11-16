@@ -442,6 +442,7 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
                 cardHtml += "<div class=\"cred-footer\">" +
                     "<div class=\"cred-reason " + reasonColorClass + "\" title=\"" + escapeHTML(formattedReason) + "\">" + escapeHTML(formattedReason) + "</div>" +
                     "<div class=\"cred-actions\">" +
+                        (isCooldown ? "<button type=\"button\" class=\"btn-secondary btn-card-action btn-card-clear-cooldown\" onclick=\"clearCardCooldown('" + escapeHTML(authIdx) + "', '" + escapeHTML(pool) + "', this)\">⏱️ " + escapeHTML(t("btnClearCooldown")) + "</button>" : "") +
                         "<button type=\"button\" class=\"btn-secondary btn-card-action\" onclick=\"openCustomTierModal('" + escapeHTML(authIdx) + "', '" + escapeHTML(credDisplayName) + "', " + customTier + ")\">🎯 " + t("btnTier") + "</button>" +
                         "<button type=\"button\" class=\"btn-secondary btn-card-action\" data-probe-action=\"1\" onclick=\"probeSingleCredential('" + escapeHTML(authIdx) + "', this)\">" + credentialProbeButtonContent(isProbing) + "</button>" +
                         "<button type=\"button\" class=\"btn-secondary btn-card-action\" onclick=\"openSamplesModal('" + escapeHTML(authIdx) + "', '" + escapeHTML(credDisplayName) + "')\">📊 " + t("btnSamples") + "</button>" +

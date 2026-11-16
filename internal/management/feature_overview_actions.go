@@ -534,6 +534,24 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
             }
         }
 
+        async function clearCardCooldown(authIndex, pool, btn) {
+            if (isAuthBlocked || !authIndex) return;
+            if (btn) btn.disabled = true;
+            try {
+                await apiFetch(COOLDOWNS_CLEAR_PATH, {
+                    method: "POST",
+                    body: JSON.stringify({ auth_index: authIndex, model_group: pool || "" })
+                });
+                showToast(t("cooldownClearedToast"), "success");
+                await fetchSnapshot({ silent: true });
+                await fetchDiagnostics({ silent: true });
+            } catch (err) {
+                showToast(err.message || t("cooldownClearFailed"), "error");
+            } finally {
+                if (btn) btn.disabled = false;
+            }
+        }
+
         function extractChanges(result) {
             if (!result) return [];
             if (Array.isArray(result.changes) && result.changes.length > 0) {

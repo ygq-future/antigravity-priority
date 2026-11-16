@@ -2,6 +2,8 @@ package runtime
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
@@ -15,6 +17,7 @@ import (
 	"antigravity-priority/internal/config"
 	"antigravity-priority/internal/core"
 	"antigravity-priority/internal/host"
+	"antigravity-priority/internal/management"
 	"antigravity-priority/internal/priority"
 	"antigravity-priority/internal/state"
 )
@@ -124,6 +127,28 @@ func (t *rateLimitTracker) RecordSuccess(key, authIndex string, now time.Time) {
 			t.stormAccounts = make(map[string]bool)
 		}
 	}
+}
+
+func (t *rateLimitTracker) ClearPending(match func(pending429) bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if len(t.pending429) == 0 {
+		return
+	}
+	for key, item := range t.pending429 {
+		if match == nil || match(item) {
+			delete(t.pending429, key)
+		}
+	}
+}
+
+func (t *rateLimitTracker) ClearStorm() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	wasActive := !t.stormUntil.IsZero() || len(t.stormAccounts) > 0
+	t.stormUntil = time.Time{}
+	t.stormAccounts = make(map[string]bool)
+	return wasActive
 }
 
 func (t *rateLimitTracker) NextStormDeadline() time.Time {
@@ -864,4 +889,167 @@ func (r *Runtime) rateLimitDiagnostics(emailsByAuthIndex map[string]string) (pen
 		now = r.clock.Now().UTC()
 	}
 	return r.rateLimiter.Diagnostics(now, emailsByAuthIndex)
+}
+
+func cooldownEntryID(entry state.CooldownEntry) string {
+	sum := sha256.Sum256([]byte(state.FailureKey(entry.AuthIndex, entry.ModelGroup, entry.Model)))
+	return hex.EncodeToString(sum[:8])
+}
+
+// ClearCooldown manually removes matching active cooldowns, clears pending 429 buffers,
+// refreshes routing snapshots, and invokes host.routing.reset_cooldown best-effort.
+func (r *Runtime) ClearCooldown(ctx context.Context, req management.ClearCooldownRequest) (management.ClearCooldownResult, error) {
+	kind := strings.ToLower(strings.TrimSpace(req.Kind))
+	cooldownID := strings.TrimSpace(req.CooldownID)
+	authIndex := strings.TrimSpace(req.AuthIndex)
+	modelGroup := strings.ToLower(strings.TrimSpace(req.ModelGroup))
+	model := strings.TrimSpace(req.Model)
+	if !req.All && cooldownID == "" && authIndex == "" {
+		return management.ClearCooldownResult{}, errors.New("all, cooldown_id, or auth_index is required")
+	}
+
+	store, err := r.state.Store(ctx)
+	if err != nil {
+		return management.ClearCooldownResult{}, fmt.Errorf("load cooldown state: %w", err)
+	}
+
+	now := r.clock.Now().UTC()
+	matchesCooldown := func(entry state.CooldownEntry) bool {
+		if kind != "" && strings.ToLower(strings.TrimSpace(string(entry.FailureKind))) != kind {
+			return false
+		}
+		if cooldownID != "" {
+			return cooldownEntryID(entry) == cooldownID
+		}
+		if req.All {
+			return true
+		}
+		if entry.AuthIndex != authIndex {
+			return false
+		}
+		if model != "" {
+			if normalizeModelKey(entry.Model) != normalizeModelKey(model) {
+				return false
+			}
+			if modelGroup != "" && strings.ToLower(strings.TrimSpace(entry.ModelGroup)) != modelGroup {
+				return false
+			}
+			return true
+		}
+		if modelGroup != "" {
+			entryGroup := strings.ToLower(strings.TrimSpace(entry.ModelGroup))
+			return entryGroup == modelGroup || entryGroup == ""
+		}
+		return true
+	}
+
+	r.runMu.Lock()
+	removed := store.DeleteCooldownsMatching(matchesCooldown)
+
+	clearRateLimitPending := kind == "" || kind == string(state.FailureRateLimit)
+	if clearRateLimitPending {
+		r.rateLimiter.ClearPending(func(item pending429) bool {
+			if req.All {
+				return true
+			}
+			if cooldownID != "" {
+				for _, entry := range removed {
+					if entry.AuthIndex == item.AuthIndex &&
+						(entry.ModelGroup == "" || entry.ModelGroup == item.ModelGroup) {
+						return true
+					}
+				}
+				return false
+			}
+			if item.AuthIndex != authIndex {
+				return false
+			}
+			if model != "" && normalizeModelKey(item.Model) != normalizeModelKey(model) {
+				return false
+			}
+			if modelGroup != "" && item.ModelGroup != "" && strings.ToLower(strings.TrimSpace(item.ModelGroup)) != modelGroup {
+				return false
+			}
+			return true
+		})
+	}
+
+	clearedStorm := false
+	if clearRateLimitPending {
+		hasRemaining429 := false
+		for _, remaining := range store.GetCooldowns() {
+			if remaining.FailureKind == state.FailureRateLimit && now.Before(remaining.CooldownUntil) {
+				hasRemaining429 = true
+				break
+			}
+		}
+		if req.All || !hasRemaining429 {
+			clearedStorm = r.rateLimiter.ClearStorm()
+		}
+	}
+
+	affectedAuths := make(map[string]struct{}, len(removed)+1)
+	for _, entry := range removed {
+		if strings.TrimSpace(entry.AuthIndex) != "" {
+			affectedAuths[entry.AuthIndex] = struct{}{}
+		}
+	}
+	if authIndex != "" && !req.All {
+		affectedAuths[authIndex] = struct{}{}
+	}
+
+	if len(removed) > 0 {
+		if len(removed) == 1 {
+			if recErr := r.applyCooldownRecovery(ctx, store, removed[0], "manually cleared", "manual_clear"); recErr != nil {
+				r.runMu.Unlock()
+				return management.ClearCooldownResult{}, recErr
+			}
+		} else {
+			if saveErr := store.SaveStateAtomic(ctx); saveErr != nil {
+				r.runMu.Unlock()
+				return management.ClearCooldownResult{}, fmt.Errorf("persist manual cooldown clear: %w", saveErr)
+			}
+			credentials := r.resolveCurrentCredentials()
+			for idx := range affectedAuths {
+				candidatesByPool, _, _ := r.recomputeAndCaptureRouting(now, idx, credentials)
+				r.syncSnapshotCooldown(idx, candidatesByPool)
+			}
+			summary := fmt.Sprintf("manual cooldown clear removed=%d kind=%s", len(removed), firstNonEmpty(kind, "all"))
+			if recErr := r.state.RecordRunEvent(ctx, true, summary, RunHistoryEntry{
+				Kind:      KindCooldownRecovery,
+				Trigger:   "manual_clear",
+				Attempted: len(removed),
+				Succeeded: len(removed),
+				Message:   summary,
+			}); recErr != nil {
+				r.runMu.Unlock()
+				return management.ClearCooldownResult{}, recErr
+			}
+		}
+	}
+	r.runMu.Unlock()
+	r.signalRateLimitWorker()
+
+	hostResetCount := 0
+	var hostWarnings []string
+	if resetter, ok := r.hostCallbacks.(host.RoutingCooldownResetter); ok && len(affectedAuths) > 0 {
+		for idx := range affectedAuths {
+			if err := resetter.ResetRoutingCooldown(ctx, idx); err != nil {
+				hostWarnings = append(hostWarnings, host.RedactBytes([]byte(err.Error())))
+				continue
+			}
+			hostResetCount++
+		}
+	}
+
+	result := management.ClearCooldownResult{
+		OK:             true,
+		ClearedCount:   len(removed),
+		HostResetCount: hostResetCount,
+		ClearedStorm:   clearedStorm,
+	}
+	if len(hostWarnings) > 0 {
+		result.Warning = strings.Join(hostWarnings, "; ")
+	}
+	return result, nil
 }

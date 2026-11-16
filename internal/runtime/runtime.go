@@ -636,6 +636,7 @@ func (r *Runtime) Diagnostics(ctx context.Context) (map[string]any, error) {
 		for _, c := range store.GetCooldowns() {
 			if now.Before(c.CooldownUntil) {
 				entry := map[string]any{
+					"cooldown_id":    cooldownEntryID(c),
 					"auth_index":     redactRuntimeIdentifier(c.AuthIndex),
 					"model_group":    c.ModelGroup,
 					"model":          c.Model,
@@ -1161,7 +1162,7 @@ func (r *Runtime) latestAutoApplyEntry() *RunHistoryEntry {
 
 func registrationResult() RegisterResult {
 	return RegisterResult{
-		SchemaVersion: 1,
+		SchemaVersion: 6,
 		Metadata:      buildMetadata(),
 		Capabilities: map[string]bool{
 			"management_api":              true,

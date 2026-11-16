@@ -242,6 +242,13 @@ func (hostCallbackAdapter) ListAuthModels(ctx context.Context) ([]host.AuthModel
 	return response.Credentials, nil
 }
 
+func (hostCallbackAdapter) ResetRoutingCooldown(ctx context.Context, authIndex string) error {
+	var response struct {
+		Reset bool `json:"reset"`
+	}
+	return callHost(ctx, host.MethodRoutingResetCooldown, map[string]string{host.FieldAuthIndex: authIndex}, &response)
+}
+
 func callHost(ctx context.Context, method string, payload any, target any) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -307,3 +314,4 @@ func copyHostResponse(response C.cliproxy_buffer) []byte {
 }
 
 var _ host.HostCallbacks = hostCallbackAdapter{}
+var _ host.RoutingCooldownResetter = hostCallbackAdapter{}

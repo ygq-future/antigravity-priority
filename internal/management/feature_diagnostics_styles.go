@@ -309,6 +309,47 @@ const templateStyleDiagnostics = `        /* System Diagnostics Panel Styles */
             color: var(--accent-yellow-text);
         }
 
+        .diag-subhead-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+        }
+
+        .diag-mini-right {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex: 0 0 auto;
+        }
+
+        .diag-clear-btn {
+            padding: 3px 8px;
+            font-size: 11px;
+            font-weight: 600;
+            line-height: 1.3;
+            border-radius: 6px;
+            border: 1px solid var(--accent-yellow);
+            background: var(--accent-yellow-subtle);
+            color: var(--accent-yellow-text);
+            cursor: pointer;
+            white-space: nowrap;
+            flex: 0 0 auto;
+        }
+
+        .diag-clear-btn:hover:not(:disabled) {
+            filter: brightness(1.06);
+        }
+
+        .diag-clear-btn:disabled {
+            opacity: 0.5;
+            cursor: wait;
+        }
+
+        .diag-clear-btn-inline {
+            margin-left: auto;
+        }
+
         .diag-cooldown-empty {
             display: flex;
             align-items: center;

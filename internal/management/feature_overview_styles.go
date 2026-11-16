@@ -915,4 +915,14 @@ const templateStyleOverviewCards = `        /* Credentials Display (Grid 3 Colum
             from { transform: rotate(0deg); }
             to { transform: rotate(360deg); }
         }
+
+        .btn-card-clear-cooldown {
+            border-color: var(--accent-yellow);
+            color: var(--accent-yellow-text);
+            background: var(--accent-yellow-subtle);
+        }
+
+        .btn-card-clear-cooldown:hover:not(:disabled) {
+            filter: brightness(1.06);
+        }
 `

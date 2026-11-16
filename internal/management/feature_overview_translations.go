@@ -100,6 +100,9 @@ const featureOverviewTranslations = `        const OVERVIEW_ZH = {
                 excludedModelBadgeTitle: "仅从 Antigravity 凭证排除该模型，请求将避开 AG 并改由 CPA 其他渠道处理",
                 modelExcludedToast: "已从 Antigravity 凭证排除该模型（不会调度到 AG）",
                 modelRestoredToast: "已恢复该模型的 Antigravity 凭证调度",
+                btnClearCooldown: "清除冷却",
+                cooldownClearedToast: "已清除冷却倒计时",
+                cooldownClearFailed: "清除冷却失败",
             }
         };
         const OVERVIEW_EN = {
@@ -202,6 +205,9 @@ const featureOverviewTranslations = `        const OVERVIEW_ZH = {
                 excludedModelBadgeTitle: "Excluded from Antigravity credentials only; requests bypass AG and route via other CPA providers",
                 modelExcludedToast: "Excluded model from Antigravity credentials",
                 modelRestoredToast: "Restored model to Antigravity credentials",
+                btnClearCooldown: "Clear Cooldown",
+                cooldownClearedToast: "Cooldown cleared",
+                cooldownClearFailed: "Failed to clear cooldown",
             }
         };
 `

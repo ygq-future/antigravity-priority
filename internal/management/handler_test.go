@@ -26,6 +26,7 @@ type mockRunner struct {
 	requestHistory  []state.RequestHistoryEntry
 	customTiers     map[string]int
 	warmupSwitches  map[string]bool
+	clearCooldownFunc func(ctx context.Context, req management.ClearCooldownRequest) (management.ClearCooldownResult, error)
 }
 
 func (m *mockRunner) Run(ctx context.Context, req management.RunRequest) (apply.Result, error) {
@@ -122,6 +123,13 @@ func (m *mockRunner) SetModelExcluded(ctx context.Context, model string, exclude
 	}
 	m.dynamicConfig.ExcludedModels = next
 	return append([]string(nil), next...), nil
+}
+
+func (m *mockRunner) ClearCooldown(ctx context.Context, req management.ClearCooldownRequest) (management.ClearCooldownResult, error) {
+	if m.clearCooldownFunc != nil {
+		return m.clearCooldownFunc(ctx, req)
+	}
+	return management.ClearCooldownResult{OK: true}, nil
 }
 
 func (m *mockRunner) GetSamples(ctx context.Context, authIndex, modelGroup string) ([]state.QuotaSample, error) {
@@ -949,6 +957,52 @@ func TestHandler_ExcludedModels_GetAndSet(t *testing.T) {
 	// 4. Invalid payloads return 400
 	for _, badBody := range []string{`{"model":"","excluded":true}`, `{"model":"gemini-3-flash"}`, `{bad`} {
 		badReq := httptest.NewRequest(http.MethodPost, "/excluded-models", strings.NewReader(badBody))
+		badRec := httptest.NewRecorder()
+		handler.ServeHTTP(badRec, badReq)
+		if badRec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 for body %s, got %d", badBody, badRec.Code)
+		}
+	}
+}
+
+func TestHandler_ClearCooldown(t *testing.T) {
+	var captured management.ClearCooldownRequest
+	runner := &mockRunner{
+		clearCooldownFunc: func(_ context.Context, req management.ClearCooldownRequest) (management.ClearCooldownResult, error) {
+			captured = req
+			return management.ClearCooldownResult{
+				OK:             true,
+				ClearedCount:   2,
+				HostResetCount: 2,
+				ClearedStorm:   true,
+			}, nil
+		},
+	}
+	handler := management.NewHandler(runner)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/v0/management/plugins/antigravity-priority/cooldowns/clear",
+		strings.NewReader(`{"all":true,"kind":"RATE_LIMIT"}`),
+	)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 on POST /cooldowns/clear, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if !captured.All || captured.Kind != "rate_limit" {
+		t.Fatalf("unexpected captured request: %+v", captured)
+	}
+	var res management.ClearCooldownResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !res.OK || res.ClearedCount != 2 || res.HostResetCount != 2 || !res.ClearedStorm {
+		t.Fatalf("unexpected response payload: %+v", res)
+	}
+
+	for _, badBody := range []string{`{}`, `{"model_group":"gemini"}`, `{bad`} {
+		badReq := httptest.NewRequest(http.MethodPost, "/cooldowns/clear", strings.NewReader(badBody))
 		badRec := httptest.NewRecorder()
 		handler.ServeHTTP(badRec, badReq)
 		if badRec.Code != http.StatusBadRequest {
