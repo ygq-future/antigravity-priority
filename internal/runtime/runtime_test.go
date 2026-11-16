@@ -195,8 +195,8 @@ func TestRuntime_Handle_Register(t *testing.T) {
 		t.Fatalf("expected OK=true, got error: %+v", envelope.Error)
 	}
 
-	if envelope.Result.SchemaVersion != 6 {
-		t.Errorf("expected schema_version=6, got %d", envelope.Result.SchemaVersion)
+	if envelope.Result.SchemaVersion != 7 {
+		t.Errorf("expected schema_version=7, got %d", envelope.Result.SchemaVersion)
 	}
 
 	if envelope.Result.Metadata.Name != "Antigravity Priority" {
@@ -209,9 +209,28 @@ func TestRuntime_Handle_Register(t *testing.T) {
 	if !envelope.Result.Capabilities["usage_plugin"] {
 		t.Errorf("expected usage_plugin capability to be true")
 	}
+	if !envelope.Result.Capabilities["request_interceptor"] {
+		t.Errorf("expected request_interceptor capability to be true")
+	}
+	if !envelope.Result.Capabilities["request_interceptor_omit_body_before"] {
+		t.Errorf("expected request_interceptor_omit_body_before capability to be true")
+	}
 
 	if len(envelope.Result.Metadata.ConfigFields) != 0 {
 		t.Errorf("expected Metadata.ConfigFields to remain empty, got %+v", envelope.Result.Metadata.ConfigFields)
+	}
+
+	// Legacy host schema_version=6 negotiates down cleanly.
+	legacyResp := r.Handle(context.Background(), "plugin.register", []byte(`{"config_yaml":"enabled: true\n","schema_version":6}`))
+	var legacyEnv struct {
+		OK     bool                   `json:"ok"`
+		Result runtime.RegisterResult `json:"result"`
+	}
+	if err := json.Unmarshal(legacyResp, &legacyEnv); err != nil {
+		t.Fatal(err)
+	}
+	if legacyEnv.Result.SchemaVersion != 6 || legacyEnv.Result.Capabilities["request_interceptor_omit_body_before"] {
+		t.Fatalf("unexpected legacy schema negotiation: %+v", legacyEnv.Result)
 	}
 }
 
@@ -413,6 +432,15 @@ func TestRuntime_Handle_ManagementRegister(t *testing.T) {
 	}
 	if !hasRuntimeConfig {
 		t.Errorf("expected runtime config route %q", management.PrefixLegacyPlugin+management.PathRuntimeConfig)
+	}
+	hasPromptGuardPreview := false
+	for _, route := range envelope.Result.Routes {
+		if route.Path == management.PrefixLegacyPlugin+management.PathPromptGuardPreview {
+			hasPromptGuardPreview = true
+		}
+	}
+	if !hasPromptGuardPreview {
+		t.Errorf("expected prompt guard preview route %q", management.PrefixLegacyPlugin+management.PathPromptGuardPreview)
 	}
 }
 
@@ -3235,6 +3263,91 @@ func TestRuntime_Diagnostics_SchedulerRunningDuringAutoApply(t *testing.T) {
 	afterSched := afterDiag["scheduler"].(map[string]any)
 	if running, ok := afterSched["running"].(bool); !ok || running {
 		t.Fatalf("expected scheduler.running=false after AutoApply completes, got %#v", afterSched["running"])
+	}
+}
+
+func TestRuntime_Handle_RequestInterceptAfter(t *testing.T) {
+	ctx := context.Background()
+	cachePath := filepath.Join(t.TempDir(), "state.json")
+	r := newTestRuntime(t, runtime.Options{StateCachePath: cachePath})
+
+	rawPayload := []byte(`{"system":"You are Claude Code, Anthropic's official CLI for Claude.","messages":[{"role":"user","content":"hello"}],"tools":[{"name":"bash"}]}`)
+	callIntercept := func(method, sourceFormat, toFormat string, body []byte) (bool, []byte) {
+		t.Helper()
+		reqBytes, err := json.Marshal(map[string]any{
+			"SourceFormat": sourceFormat,
+			"ToFormat":     toFormat,
+			"Body":         body,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		respBytes := r.Handle(ctx, method, reqBytes)
+		var env struct {
+			OK     bool `json:"ok"`
+			Result struct {
+				Body []byte `json:"Body"`
+			} `json:"result"`
+		}
+		if err := json.Unmarshal(respBytes, &env); err != nil {
+			t.Fatalf("unmarshal intercept response: %v raw=%s", err, string(respBytes))
+		}
+		return env.OK, env.Result.Body
+	}
+
+	// 1. Disabled by default -> pass-through empty body.
+	if ok, body := callIntercept(runtime.MethodRequestInterceptAfter, "claude", "antigravity", rawPayload); !ok || len(body) != 0 {
+		t.Fatalf("disabled prompt guard must pass through, got ok=%v body=%q", ok, string(body))
+	}
+
+	// 2. Enable Prompt Guard dynamically and verify hot-reload + persistence.
+	dyn, err := r.GetDynamicConfig(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dyn.PromptGuard.Enabled = true
+	if err := r.SetDynamicConfig(ctx, dyn); err != nil {
+		t.Fatal(err)
+	}
+
+	// request.intercept_before always passes through without body.
+	if ok, body := callIntercept(runtime.MethodRequestInterceptBefore, "claude", "", nil); !ok || len(body) != 0 {
+		t.Fatalf("intercept_before must pass through, got ok=%v body=%q", ok, string(body))
+	}
+	// Non-antigravity target format must pass through untouched.
+	if ok, body := callIntercept(runtime.MethodRequestInterceptAfter, "claude", "claude", rawPayload); !ok || len(body) != 0 {
+		t.Fatalf("non-antigravity target must pass through, got ok=%v body=%q", ok, string(body))
+	}
+	// Antigravity target rewrites matching system prompt while preserving tools.
+	ok, rewritten := callIntercept(runtime.MethodRequestInterceptAfter, "claude", "antigravity", rawPayload)
+	if !ok || len(rewritten) == 0 {
+		t.Fatalf("expected rewritten body for antigravity target, got ok=%v len=%d", ok, len(rewritten))
+	}
+	if !strings.Contains(string(rewritten), "You are a coding assistant.") || !strings.Contains(string(rewritten), `"bash"`) {
+		t.Fatalf("unexpected rewritten payload: %s", string(rewritten))
+	}
+
+	// Diagnostics reflect counters.
+	diag, err := r.Diagnostics(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pgDiag := diag["prompt_guard"].(map[string]any)
+	if pgDiag["enabled"] != true || pgDiag["rewritten_requests"].(int64) != 1 || pgDiag["rewritten_hits"].(int64) != 1 {
+		t.Fatalf("unexpected prompt_guard diagnostics: %#v", pgDiag)
+	}
+
+	// 3. Reloading runtime from disk restores persisted prompt_guard settings.
+	if err := r.Shutdown(ctx); err != nil {
+		t.Fatal(err)
+	}
+	r2 := newTestRuntime(t, runtime.Options{StateCachePath: cachePath})
+	dyn2, err := r2.GetDynamicConfig(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dyn2.PromptGuard.Enabled || len(dyn2.PromptGuard.Rules) != 14 {
+		t.Fatalf("expected persisted prompt_guard restored after restart, got %+v", dyn2.PromptGuard)
 	}
 }
 

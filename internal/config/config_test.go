@@ -540,3 +540,37 @@ func TestExcludedModelsConfig(t *testing.T) {
 		t.Fatalf("round-trip ExcludedModels got %v, want %v", decoded.ExcludedModels, wantApplied)
 	}
 }
+
+func TestPromptGuardConfig(t *testing.T) {
+	// 1. Omitted/null rules falls back to 14 built-in rules; explicit empty [] stays empty.
+	var omitted config.DynamicConfig
+	if err := json.Unmarshal([]byte(`{"auto_apply":false,"interval":"15m"}`), &omitted); err != nil {
+		t.Fatalf("unmarshal omitted prompt_guard: %v", err)
+	}
+	if omitted.PromptGuard.Enabled || len(omitted.PromptGuard.Rules) != 14 {
+		t.Fatalf("expected default 14 rules disabled, got enabled=%v len=%d", omitted.PromptGuard.Enabled, len(omitted.PromptGuard.Rules))
+	}
+
+	var cleared config.DynamicConfig
+	if err := json.Unmarshal([]byte(`{"prompt_guard":{"enabled":true,"rules":[]}}`), &cleared); err != nil {
+		t.Fatalf("unmarshal cleared rules: %v", err)
+	}
+	if !cleared.PromptGuard.Enabled || cleared.PromptGuard.Rules == nil || len(cleared.PromptGuard.Rules) != 0 {
+		t.Fatalf("expected explicit empty rules slice preserved, got %#v", cleared.PromptGuard.Rules)
+	}
+
+	// 2. Validation rejects >50 rules, bad scope/mode, and invalid regex.
+	tooMany := config.Default().Dynamic()
+	tooMany.PromptGuard.Rules = make([]config.PromptGuardRule, config.MaxPromptGuardRules+1)
+	if err := tooMany.Validate(); err == nil {
+		t.Fatal("expected Validate to reject >50 prompt_guard rules")
+	}
+
+	badRegex := config.Default().Dynamic()
+	badRegex.PromptGuard.Rules = []config.PromptGuardRule{
+		{On: true, Find: "[unclosed", Mode: config.PromptGuardModeRegex, Scope: config.PromptGuardScopeSystem},
+	}
+	if err := badRegex.Validate(); err == nil {
+		t.Fatal("expected Validate to reject invalid regex")
+	}
+}

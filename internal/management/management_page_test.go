@@ -1656,3 +1656,165 @@ if (rendered.indexOf("req-status-429") < 0 || rendered.indexOf("限流避让") <
 `
 	runNodeFixture(t, node, "history-tooltip-format.js", harness)
 }
+
+func TestPromptGuardUIContracts(t *testing.T) {
+	for _, marker := range []string{
+		"PROMPT_GUARD_PREVIEW_PATH",
+		"cfgPromptGuardEnabled",
+		"cfgPgRulesList",
+		"customPgFormatSelect",
+		"DEFAULT_PROMPT_GUARD_RULES",
+		"addPromptGuardRule",
+		"restoreDefaultPromptGuardRules",
+		"runPromptGuardPreview",
+		"btnPgCopyBisect",
+		"copyPromptGuardBisectPrompt",
+	} {
+		if !strings.Contains(StatusHTML, marker) {
+			t.Fatalf("StatusHTML missing expected Prompt Guard marker %q", marker)
+		}
+	}
+
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not available; Prompt Guard UI test skipped")
+	}
+
+	harness := `
+const els = {
+    cfgAutoApply: { checked: false },
+    cfgAutoApplyStatusText: { textContent: "" },
+    cfgIntervalSelect: { value: "15m" },
+    cfgIntervalCustom: { value: "", hidden: true },
+    cfgMaxConcurrency: { value: "6" },
+    cfgUrgencyTolerance: { value: "0.05" },
+    cfgSampleCapacity: { value: "6" },
+    cfgCooldownMinutes: { value: "5" },
+    cfgWarmupGeminiEnabled: { checked: false },
+    cfgWarmupGeminiModelSelect: { value: "gemini-3-flash" },
+    cfgWarmupClaudeEnabled: { checked: false },
+    cfgWarmupClaudeModelSelect: { value: "claude-sonnet-5-5-high" },
+    cfgPromptGuardEnabled: { checked: false },
+    cfgPromptGuardStatusText: { textContent: "" },
+    cfgPgSearch: { value: "" },
+    cfgPgRuleCount: { textContent: "" },
+    btnPgAddRule: { disabled: false },
+    cfgPgRulesList: { innerHTML: "", querySelector: function() { return null; } },
+    cfgPgPreviewFormat: { value: "auto", selectedIndex: 0, options: [{ value: "auto", text: "Auto" }] },
+    customPgFormatLabel: { textContent: "" },
+    customPgFormatMenu: { querySelectorAll: function() { return []; } },
+    cfgPgPreviewInput: { value: "You are Claude Code." },
+    cfgPgPreviewResult: { innerHTML: "", hidden: true },
+    btnSaveConfig: { disabled: true },
+};
+const document = {
+    getElementById: function(id) { return els[id] || null; },
+    addEventListener: function() {},
+};
+const window = {};
+const currentLang = "zh-CN";
+const translations = {
+    "zh-CN": {
+        cfgPgScopeSystem: "仅系统",
+        cfgPgScopeAll: "全部消息",
+        cfgPgModeText: "文本",
+        cfgPgModeRegex: "正则",
+        cfgPgFindPlaceholder: "查找",
+        cfgPgReplacePlaceholder: "替换",
+        cfgPgEmptyRules: "空",
+        cfgPgFilteredEmpty: "无匹配",
+        cfgPgPreviewHitsPrefix: "命中总计：",
+        cfgPgPreviewNoHits: "未命中",
+    }
+};
+function t(k) { return (translations[currentLang] && translations[currentLang][k]) || k; }
+function escapeHTML(v) {
+    return String(v || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+function updateCustomIntervalDisplay() {}
+function updateCustomWarmupGeminiDisplay() {}
+function updateCustomWarmupClaudeDisplay() {}
+let copiedText = "";
+let toastMessages = [];
+const navigator = {
+    clipboard: {
+        writeText: function(txt) {
+            copiedText = txt;
+            return Promise.resolve();
+        }
+    }
+};
+function showToast(msg, kind) {
+    if (kind === "error") throw new Error("unexpected error toast: " + msg);
+    toastMessages.push(msg);
+}
+const PROMPT_GUARD_PREVIEW_PATH = "/preview";
+const CONFIG_PATH = "/runtime-config";
+let previewCalls = 0;
+async function apiFetch(path, opts) {
+    if (path === PROMPT_GUARD_PREVIEW_PATH) {
+        previewCalls++;
+        const payload = JSON.parse(opts.body);
+        return {
+            changed: true,
+            detected_format: "text",
+            total_hits: 1,
+            output: "You are a coding assistant.",
+            matches: [{ index: 0, find: payload.rules[0].find, replace: payload.rules[0].replace, scope: "system", mode: "text", hits: 1 }],
+        };
+    }
+    return {};
+}
+` + templateScriptConfig + `
+if (!Array.isArray(DEFAULT_PROMPT_GUARD_RULES) || DEFAULT_PROMPT_GUARD_RULES.length !== 14) {
+    throw new Error("expected 14 default prompt guard rules, got: " + DEFAULT_PROMPT_GUARD_RULES.length);
+}
+renderDynamicConfigForm({
+    auto_apply: false,
+    interval: "15m",
+    max_concurrency: 6,
+    urgency_tolerance: 0.05,
+    quota_sample_capacity: 6,
+    rate_limit_cooldown_minutes: 5,
+    prompt_guard: { enabled: true, rules: DEFAULT_PROMPT_GUARD_RULES }
+});
+if (!els.btnSaveConfig.disabled) {
+    throw new Error("save button should start disabled after renderDynamicConfigForm");
+}
+if (els.cfgPgRuleCount.textContent !== "14 / 50") {
+    throw new Error("unexpected rule count badge: " + els.cfgPgRuleCount.textContent);
+}
+addPromptGuardRule();
+if (els.btnSaveConfig.disabled) {
+    throw new Error("save button must enable after adding a rule");
+}
+updatePromptGuardRuleField(0, "find", "Custom Phrase");
+updatePromptGuardRuleField(0, "replace", "Safe Phrase");
+cyclePromptGuardRuleScope(0);
+cyclePromptGuardRuleMode(0);
+if (promptGuardRules[0].scope !== "all" || promptGuardRules[0].mode !== "regex") {
+    throw new Error("expected scope=all and mode=regex after cycling");
+}
+;(async function() {
+    await runPromptGuardPreview();
+    if (previewCalls !== 1 || els.cfgPgPreviewResult.hidden) {
+        throw new Error("expected preview call and visible result");
+    }
+    if (els.cfgPgPreviewResult.innerHTML.indexOf("You are a coding assistant.") < 0) {
+        throw new Error("expected rewritten preview output in DOM, got: " + els.cfgPgPreviewResult.innerHTML);
+    }
+    copyPromptGuardBisectPrompt();
+    if (!copiedText || copiedText.indexOf("429") < 0 || copiedText.indexOf("二分法") < 0) {
+        throw new Error("expected bisect prompt copied to clipboard, got: " + copiedText);
+    }
+    deletePromptGuardRule(0);
+    if (els.cfgPgRuleCount.textContent !== "14 / 50") {
+        throw new Error("expected 14 rules after deleting inserted rule, got: " + els.cfgPgRuleCount.textContent);
+    }
+})().catch(function(err) {
+    console.error(err);
+    process.exit(1);
+});
+`
+	runNodeFixture(t, node, "prompt-guard-ui.js", harness)
+}

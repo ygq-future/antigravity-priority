@@ -15,10 +15,10 @@ import (
 	"antigravity-priority/internal/config"
 	"antigravity-priority/internal/evidence"
 	"antigravity-priority/internal/management"
+	"antigravity-priority/internal/promptguard"
 	"antigravity-priority/internal/provider/antigravity"
 	"antigravity-priority/internal/state"
 )
-
 // ManagementRequest represents the HTTP request envelope passed by CPA management.handle.
 type ManagementRequest struct {
 	Method  string
@@ -77,6 +77,7 @@ func (r *Runtime) registerManagement() []byte {
 			{Method: http.MethodGet, Path: management.PrefixLegacyPlugin + management.PathExcludedModels},
 			{Method: http.MethodPost, Path: management.PrefixLegacyPlugin + management.PathExcludedModels},
 			{Method: http.MethodPost, Path: management.PrefixLegacyPlugin + management.PathCooldownsClear},
+			{Method: http.MethodPost, Path: management.PrefixLegacyPlugin + management.PathPromptGuardPreview},
 		},
 		Resources: []managementResource{
 			{Path: management.PathStatus, Menu: "Antigravity Priority", Description: "Shows Antigravity priority status and audit summary."},
@@ -401,6 +402,10 @@ func (r managementRunner) SetModelExcluded(ctx context.Context, model string, ex
 func (r managementRunner) ClearCooldown(ctx context.Context, req management.ClearCooldownRequest) (management.ClearCooldownResult, error) {
 	return r.runtime.ClearCooldown(ctx, req)
 }
+func (r managementRunner) PreviewPromptGuard(ctx context.Context, req promptguard.PreviewRequest) (promptguard.PreviewResult, error) {
+	return r.runtime.PreviewPromptGuard(ctx, req)
+}
+
 
 func probeOutcomes(probes []evidence.ProbeObservation, byGroup map[config.AntigravityModelGroup]evidence.Result) []management.ProbeOutcome {
 	if len(probes) == 0 {

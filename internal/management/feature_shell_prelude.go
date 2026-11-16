@@ -16,5 +16,6 @@ const templateScriptPrelude = `
         const WARMUP_CREDENTIAL_PATH = BASE_PATH + "/warmup-credential";
         const EXCLUDED_MODELS_PATH = BASE_PATH + "/excluded-models";
         const COOLDOWNS_CLEAR_PATH = BASE_PATH + "/cooldowns/clear";
+        const PROMPT_GUARD_PREVIEW_PATH = BASE_PATH + "/prompt-guard/preview";
 
 `

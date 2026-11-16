@@ -206,6 +206,103 @@ const configMarkup = `
 
                     </div>
                 </div>
+
+                <!-- Card 4: Prompt Guard (Antigravity Request Filtering) -->
+                <div class="config-card">
+                    <div class="pg-card-header">
+                        <h3 class="config-card-title">
+                            <span>🛡️</span>
+                            <span data-i18n="cfgCardPromptGuardTitle">Prompt Guard 提示词防护</span>
+                        </h3>
+                        <button type="button" class="btn-secondary pg-copy-bisect-btn" id="btnPgCopyBisect" onclick="copyPromptGuardBisectPrompt()" data-i18n="cfgPgBtnCopyBisect">📋 复制二分排查提示词</button>
+                    </div>
+                    <div class="form-row full-width">
+                        <div class="form-label-box">
+                            <span class="form-title" data-i18n="cfgPgEnabled">启用请求体关键字改写</span>
+                            <span class="form-hint" data-i18n="cfgPgEnabledHint">请求路由至 Antigravity 后、发往上游前按规则改写系统提示或消息体中的敏感短语，减少误触发无额度 429</span>
+                        </div>
+                        <div class="form-input-group">
+                            <label class="toggle-label">
+                                <span class="toggle-switch">
+                                    <input type="checkbox" id="cfgPromptGuardEnabled">
+                                    <span class="toggle-slider"></span>
+                                </span>
+                                <span id="cfgPromptGuardStatusText">已关闭</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="pg-toolbar">
+                        <div class="pg-toolbar-left">
+                            <input type="text" id="cfgPgSearch" class="pg-search-input" data-i18n-placeholder="cfgPgSearchPlaceholder" placeholder="筛选查找或替换文本..." oninput="renderPromptGuardRules()">
+                            <span id="cfgPgRuleCount" class="pg-count-pill">0 / 50</span>
+                        </div>
+                        <div class="pg-toolbar-right">
+                            <button type="button" class="btn-secondary" id="btnPgAddRule" onclick="addPromptGuardRule()" data-i18n="cfgPgBtnAddRule">+ 新增规则</button>
+                            <button type="button" class="btn-secondary" id="btnPgRestoreDefaults" onclick="restoreDefaultPromptGuardRules()" data-i18n="cfgPgBtnRestoreDefaults">恢复默认规则</button>
+                        </div>
+                    </div>
+
+                    <div id="cfgPgRulesList" class="pg-rules-list"></div>
+
+                    <div class="pg-dryrun-box">
+                        <div class="pg-dryrun-header">
+                            <span class="pg-dryrun-title" data-i18n="cfgPgDryRunTitle">试运行预览 (Dry-Run)</span>
+                            <div class="pg-dryrun-controls">
+                                <select id="cfgPgPreviewFormat" hidden>
+                                    <option value="auto" selected data-i18n="cfgPgFormatAuto">自动识别 (JSON / 纯文本)</option>
+                                    <option value="text:system" data-i18n="cfgPgFormatTextSystem">纯文本 (仅系统范围)</option>
+                                    <option value="text:all" data-i18n="cfgPgFormatTextAll">纯文本 (全部消息)</option>
+                                    <option value="claude" data-i18n="cfgPgFormatClaude">Claude / Anthropic JSON</option>
+                                    <option value="openai" data-i18n="cfgPgFormatOpenAI">OpenAI Chat JSON</option>
+                                    <option value="openai-response" data-i18n="cfgPgFormatResponses">OpenAI Responses JSON</option>
+                                    <option value="gemini" data-i18n="cfgPgFormatGemini">Gemini / Antigravity JSON</option>
+                                </select>
+                                <div id="customPgFormatSelect" class="custom-select-wrapper" style="min-width:205px;">
+                                    <button type="button" class="custom-select-trigger" onclick="toggleCustomPgFormatSelect(event)" aria-haspopup="listbox" aria-expanded="false">
+                                        <span id="customPgFormatLabel">自动识别 (JSON / 纯文本)</span>
+                                        <span class="custom-select-arrow">
+                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"></path></svg>
+                                        </span>
+                                    </button>
+                                    <div id="customPgFormatMenu" class="custom-select-options" hidden role="listbox">
+                                        <div class="custom-select-option selected" data-value="auto" onclick="selectPgFormatOption('auto', event)">
+                                            <span data-i18n="cfgPgFormatAuto">自动识别 (JSON / 纯文本)</span>
+                                            <span class="custom-select-check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg></span>
+                                        </div>
+                                        <div class="custom-select-option" data-value="text:system" onclick="selectPgFormatOption('text:system', event)">
+                                            <span data-i18n="cfgPgFormatTextSystem">纯文本 (仅系统范围)</span>
+                                            <span class="custom-select-check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg></span>
+                                        </div>
+                                        <div class="custom-select-option" data-value="text:all" onclick="selectPgFormatOption('text:all', event)">
+                                            <span data-i18n="cfgPgFormatTextAll">纯文本 (全部消息)</span>
+                                            <span class="custom-select-check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg></span>
+                                        </div>
+                                        <div class="custom-select-option" data-value="claude" onclick="selectPgFormatOption('claude', event)">
+                                            <span data-i18n="cfgPgFormatClaude">Claude / Anthropic JSON</span>
+                                            <span class="custom-select-check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg></span>
+                                        </div>
+                                        <div class="custom-select-option" data-value="openai" onclick="selectPgFormatOption('openai', event)">
+                                            <span data-i18n="cfgPgFormatOpenAI">OpenAI Chat JSON</span>
+                                            <span class="custom-select-check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg></span>
+                                        </div>
+                                        <div class="custom-select-option" data-value="openai-response" onclick="selectPgFormatOption('openai-response', event)">
+                                            <span data-i18n="cfgPgFormatResponses">OpenAI Responses JSON</span>
+                                            <span class="custom-select-check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg></span>
+                                        </div>
+                                        <div class="custom-select-option" data-value="gemini" onclick="selectPgFormatOption('gemini', event)">
+                                            <span data-i18n="cfgPgFormatGemini">Gemini / Antigravity JSON</span>
+                                            <span class="custom-select-check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg></span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <button type="button" class="btn-secondary" id="btnPgRunPreview" onclick="runPromptGuardPreview()" data-i18n="cfgPgBtnRunPreview">执行试运行</button>
+                            </div>
+                        </div>
+                        <textarea id="cfgPgPreviewInput" class="pg-textarea" data-i18n-placeholder="cfgPgDryRunPlaceholder" placeholder="粘贴提示词文本或完整 API 请求 JSON，验证规则命中与改写结果（纯本地试运行，不发送上游请求）..."></textarea>
+                        <div id="cfgPgPreviewResult" class="pg-preview-result" hidden></div>
+                    </div>
+                </div>
             </div>
 
             <!-- Floating Capsule Buttons at Bottom Right -->

@@ -101,6 +101,7 @@ type Config struct {
 	CustomTiers              map[string]int
 	Warmup                   WarmupConfig
 	ExcludedModels           []string
+	PromptGuard              PromptGuardConfig
 }
 
 // WarmupConfig encapsulates 5-hour short-window reset countdown warm-up settings.
@@ -234,6 +235,7 @@ type DynamicConfig struct {
 	CustomTiers              map[string]int      `json:"custom_tiers,omitempty"`
 	Warmup                   WarmupConfig        `json:"warmup"`
 	ExcludedModels           []string            `json:"excluded_models,omitempty"`
+	PromptGuard              PromptGuardConfig   `json:"prompt_guard"`
 }
 
 // UnmarshalJSON seeds omitted fields from the canonical defaults before
@@ -269,6 +271,7 @@ func Default() Config {
 			Paused: false,
 		},
 		Warmup: DefaultWarmupConfig(),
+		PromptGuard: DefaultPromptGuardConfig(),
 	}
 }
 
@@ -286,6 +289,7 @@ func (cfg Config) Dynamic() DynamicConfig {
 		CustomTiers:    cloneCustomTiers(cfg.CustomTiers),
 		Warmup:         cfg.Warmup.Clone(),
 		ExcludedModels: NormalizeExcludedModels(cfg.ExcludedModels),
+		PromptGuard:    cfg.PromptGuard.Clone(),
 	}
 }
 
@@ -388,6 +392,9 @@ func (dyn DynamicConfig) Validate() error {
 	if dyn.Warmup.ClaudeEnabled && strings.TrimSpace(dyn.Warmup.ClaudeModel) == "" {
 		return fmt.Errorf("warmup.claude_model cannot be empty when claude warm-up is enabled")
 	}
+	if err := dyn.PromptGuard.Validate(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -412,6 +419,8 @@ func (dyn DynamicConfig) ApplyTo(base Config) (Config, error) {
 	res.Warmup = dyn.Warmup.Clone()
 	res.Warmup.Normalize()
 	res.ExcludedModels = NormalizeExcludedModels(dyn.ExcludedModels)
+	res.PromptGuard = dyn.PromptGuard.Clone()
+	res.PromptGuard.Normalize()
 	return res, nil
 }
 

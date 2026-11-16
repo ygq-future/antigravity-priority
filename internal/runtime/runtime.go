@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"antigravity-priority/internal/apply"
@@ -18,6 +19,7 @@ import (
 	"antigravity-priority/internal/host"
 	"antigravity-priority/internal/management"
 	"antigravity-priority/internal/priority"
+	"antigravity-priority/internal/promptguard"
 	"antigravity-priority/internal/state"
 )
 
@@ -53,6 +55,9 @@ type Runtime struct {
 	scheduleMu          sync.Mutex
 	autoApplyRunning    bool
 	scheduleState       adaptiveScheduleState
+	promptGuardEngine        atomic.Pointer[promptguard.Engine]
+	promptGuardRewrittenReqs atomic.Int64
+	promptGuardRewrittenHits atomic.Int64
 }
 
 // New creates an initialized Runtime instance.
@@ -95,6 +100,7 @@ func New(options Options) *Runtime {
 	// Restore persisted cache, learned rates, and execution snapshot from disk on startup.
 	rt.state = newStateRepository(context.Background(), rt.cfg.StateCachePath, clock, rt.cfg.RequestHistoryLimit)
 	rt.cfg = rt.state.MergeDynamicConfig(rt.cfg)
+	rt.promptGuardEngine.Store(promptguard.Compile(rt.cfg.PromptGuard))
 	if options.DisableBackgroundWorkers {
 		close(rt.rateLimitDone)
 	} else {
@@ -134,6 +140,10 @@ func (r *Runtime) Handle(ctx context.Context, method string, request []byte) []b
 		return r.handleUsageEvent(ctx, request)
 	case MethodSchedulerPick:
 		return r.handleSchedulerPick(ctx, request)
+	case MethodRequestInterceptBefore:
+		return r.handleRequestInterceptBefore()
+	case MethodRequestInterceptAfter:
+		return r.handleRequestInterceptAfter(ctx, request)
 	case MethodFilterResponse, MethodFilterComplete, MethodFilterError, MethodFilterOutbound, MethodFilterInbound:
 		return r.handleFilterEvent(ctx, request)
 	default:
@@ -155,7 +165,7 @@ func (r *Runtime) Register(ctx context.Context, req RegisterRequest) (RegisterRe
 	if err := r.replaceConfig(ctx, cfg); err != nil {
 		return RegisterResult{}, err
 	}
-	return registrationResult(), nil
+	return registrationResult(req.SchemaVersion), nil
 }
 
 // Reconfigure updates runtime configuration dynamically and adjusts scheduled workers.
@@ -172,7 +182,7 @@ func (r *Runtime) Reconfigure(ctx context.Context, req ReconfigureRequest) (Regi
 	if err := r.replaceConfig(ctx, cfg); err != nil {
 		return RegisterResult{}, err
 	}
-	return registrationResult(), nil
+	return registrationResult(req.SchemaVersion), nil
 }
 
 func (r *Runtime) applyStateCacheOverride(cfg config.Config) config.Config {
@@ -658,6 +668,13 @@ func (r *Runtime) Diagnostics(ctx context.Context) (map[string]any, error) {
 	pending429, rateLimitStorm := r.rateLimitDiagnostics(emailsByAuthIndex)
 	requestHistory := r.currentRequestHistory()
 
+	eng := r.promptGuardEngine.Load()
+	pgActiveRules := 0
+	var pgWarnings []string
+	if eng != nil {
+		pgActiveRules = eng.ActiveRuleCount()
+		pgWarnings = eng.Warnings()
+	}
 	return map[string]any{
 		"management_api": map[string]any{
 			"status":     "ready",
@@ -693,6 +710,14 @@ func (r *Runtime) Diagnostics(ctx context.Context) (map[string]any, error) {
 		"run_history":           r.currentRunHistory(),
 		"request_history":       requestHistory,
 		"request_history_limit": cfg.RequestHistoryLimit,
+		"prompt_guard": map[string]any{
+			"enabled":            cfg.PromptGuard.Enabled,
+			"configured_rules":   len(cfg.PromptGuard.Rules),
+			"active_rules":       pgActiveRules,
+			"rewritten_requests": r.promptGuardRewrittenReqs.Load(),
+			"rewritten_hits":     r.promptGuardRewrittenHits.Load(),
+			"warnings":           pgWarnings,
+		},
 		"storage":               storageDiagnostics(cachePath, loadErrors),
 	}, nil
 }
@@ -797,6 +822,7 @@ func (r *Runtime) replaceConfig(ctx context.Context, cfg config.Config) error {
 		oldCfg.AutoApply != cfg.AutoApply ||
 		oldCfg.Interval != cfg.Interval
 	r.cfg = cfg
+	r.promptGuardEngine.Store(promptguard.Compile(cfg.PromptGuard))
 	r.mu.Unlock()
 
 	// Routing reads an immutable config snapshot, so replacing the config must
@@ -1160,17 +1186,32 @@ func (r *Runtime) latestAutoApplyEntry() *RunHistoryEntry {
 	return r.state.LatestAutoApplyEntry()
 }
 
-func registrationResult() RegisterResult {
+const pluginSchemaVersion = 7
+
+func negotiatedSchemaVersion(hostSchemaVersion int) int {
+	if hostSchemaVersion > 0 && hostSchemaVersion < pluginSchemaVersion {
+		return hostSchemaVersion
+	}
+	return pluginSchemaVersion
+}
+
+func registrationResult(hostSchemaVersion int) RegisterResult {
+	schemaVersion := negotiatedSchemaVersion(hostSchemaVersion)
+	caps := map[string]bool{
+		"management_api":              true,
+		"management":                  true,
+		"usage_plugin":                true,
+		"scheduler":                   true,
+		"scheduler_across_priorities": true,
+		"request_interceptor":         true,
+	}
+	if schemaVersion >= pluginSchemaVersion {
+		caps["request_interceptor_omit_body_before"] = true
+	}
 	return RegisterResult{
-		SchemaVersion: 6,
+		SchemaVersion: schemaVersion,
 		Metadata:      buildMetadata(),
-		Capabilities: map[string]bool{
-			"management_api":              true,
-			"management":                  true,
-			"usage_plugin":                true,
-			"scheduler":                   true,
-			"scheduler_across_priorities": true,
-		},
+		Capabilities:  caps,
 	}
 }
 

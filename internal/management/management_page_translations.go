@@ -65,6 +65,16 @@ var configTranslationKeys = []string{
 	"cfgWarmupClaude", "cfgWarmupClaudeHint", "cfgWarmupClaudeHintTitle", "cfgWarmupClaudeModel", "cfgWarmupClaudeModelHint",
 
 	"valErrWarmupGeminiModel", "valErrWarmupClaudeModel",
+	"cfgCardPromptGuardTitle", "cfgPgEnabled", "cfgPgEnabledHint",
+	"cfgPgSearchPlaceholder", "cfgPgBtnAddRule", "cfgPgBtnRestoreDefaults",
+	"cfgPgScopeSystem", "cfgPgScopeAll", "cfgPgModeText", "cfgPgModeRegex",
+	"cfgPgFindPlaceholder", "cfgPgReplacePlaceholder",
+	"cfgPgEmptyRules", "cfgPgFilteredEmpty",
+	"cfgPgDryRunTitle", "cfgPgFormatAuto", "cfgPgFormatTextSystem", "cfgPgFormatTextAll",
+	"cfgPgFormatClaude", "cfgPgFormatOpenAI", "cfgPgFormatResponses", "cfgPgFormatGemini",
+	"cfgPgDryRunPlaceholder", "cfgPgBtnRunPreview", "cfgPgPreviewNoHits", "cfgPgPreviewHitsPrefix",
+	"cfgPgConfirmRestoreTitle", "cfgPgConfirmRestoreMsg", "valErrPgMaxRules",
+	"cfgPgBtnCopyBisect", "cfgPgCopyBisectSuccess", "cfgPgCopyBisectError",
 }
 
 var helpTranslationKeys = []string{

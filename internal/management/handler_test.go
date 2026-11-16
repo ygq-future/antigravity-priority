@@ -9,9 +9,10 @@ import (
 	"strings"
 	"testing"
 	"time"
-
 	"antigravity-priority/internal/apply"
+	"antigravity-priority/internal/config"
 	"antigravity-priority/internal/management"
+	"antigravity-priority/internal/promptguard"
 	"antigravity-priority/internal/state"
 )
 
@@ -27,6 +28,7 @@ type mockRunner struct {
 	customTiers     map[string]int
 	warmupSwitches  map[string]bool
 	clearCooldownFunc func(ctx context.Context, req management.ClearCooldownRequest) (management.ClearCooldownResult, error)
+	previewPromptGuardFunc func(ctx context.Context, req promptguard.PreviewRequest) (promptguard.PreviewResult, error)
 }
 
 func (m *mockRunner) Run(ctx context.Context, req management.RunRequest) (apply.Result, error) {
@@ -131,6 +133,13 @@ func (m *mockRunner) ClearCooldown(ctx context.Context, req management.ClearCool
 	}
 	return management.ClearCooldownResult{OK: true}, nil
 }
+func (m *mockRunner) PreviewPromptGuard(ctx context.Context, req promptguard.PreviewRequest) (promptguard.PreviewResult, error) {
+	if m.previewPromptGuardFunc != nil {
+		return m.previewPromptGuardFunc(ctx, req)
+	}
+	return promptguard.Preview(config.PromptGuardConfig{Enabled: true, Rules: req.Rules}, req), nil
+}
+
 
 func (m *mockRunner) GetSamples(ctx context.Context, authIndex, modelGroup string) ([]state.QuotaSample, error) {
 	return []state.QuotaSample{
@@ -1008,5 +1017,65 @@ func TestHandler_ClearCooldown(t *testing.T) {
 		if badRec.Code != http.StatusBadRequest {
 			t.Fatalf("expected 400 for body %s, got %d", badBody, badRec.Code)
 		}
+	}
+}
+
+func TestHandler_PromptGuardPreviewAndPartialConfigPreservation(t *testing.T) {
+	runner := &mockRunner{
+		dynamicConfig: state.DynamicConfig{
+			AutoApply:                false,
+			Interval:                 "15m",
+			MaxConcurrency:           6,
+			UrgencyTolerance:         0.05,
+			RateLimitCooldownMinutes: 5,
+			QuotaSampleCapacity:      6,
+			RequestHistoryLimit:      100,
+			Warmup:                   config.DefaultWarmupConfig(),
+			PromptGuard: config.PromptGuardConfig{
+				Enabled: true,
+				Rules: []config.PromptGuardRule{
+					{On: true, Find: "You are Claude Code.", Replace: "You are a coding assistant.", Scope: config.PromptGuardScopeSystem, Mode: config.PromptGuardModeText},
+				},
+			},
+		},
+	}
+	handler := management.NewHandler(runner)
+
+	// 1. Preview endpoint
+	previewReq := httptest.NewRequest(
+		http.MethodPost,
+		"/v0/management/plugins/antigravity-priority/prompt-guard/preview",
+		strings.NewReader(`{"input":"You are Claude Code.","format":"text","rules":[{"on":true,"find":"You are Claude Code.","replace":"You are a coding assistant.","scope":"system","mode":"text"}]}`),
+	)
+	previewRec := httptest.NewRecorder()
+	handler.ServeHTTP(previewRec, previewReq)
+	if previewRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 on POST /prompt-guard/preview, got %d body=%s", previewRec.Code, previewRec.Body.String())
+	}
+	var previewOut struct {
+		Changed   bool   `json:"changed"`
+		TotalHits int    `json:"total_hits"`
+		Output    string `json:"output"`
+	}
+	if err := json.Unmarshal(previewRec.Body.Bytes(), &previewOut); err != nil {
+		t.Fatal(err)
+	}
+	if !previewOut.Changed || previewOut.TotalHits != 1 || previewOut.Output != "You are a coding assistant." {
+		t.Fatalf("unexpected preview output: %+v", previewOut)
+	}
+
+	// 2. Partial POST /runtime-config omitting prompt_guard must preserve existing prompt_guard.
+	cfgReq := httptest.NewRequest(
+		http.MethodPost,
+		"/v0/management/plugins/antigravity-priority/runtime-config",
+		strings.NewReader(`{"auto_apply":true,"interval":"15m","max_concurrency":6,"urgency_tolerance":0.05,"rate_limit_cooldown_minutes":5,"quota_sample_capacity":6}`),
+	)
+	cfgRec := httptest.NewRecorder()
+	handler.ServeHTTP(cfgRec, cfgReq)
+	if cfgRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 on partial runtime-config update, got %d body=%s", cfgRec.Code, cfgRec.Body.String())
+	}
+	if !runner.dynamicConfig.PromptGuard.Enabled || len(runner.dynamicConfig.PromptGuard.Rules) != 1 {
+		t.Fatalf("expected existing prompt_guard preserved on partial POST, got %+v", runner.dynamicConfig.PromptGuard)
 	}
 }

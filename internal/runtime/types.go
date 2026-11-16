@@ -32,6 +32,8 @@ const (
 	MethodManagementHandle   = "management.handle"
 	MethodUsageHandle        = "usage.handle"
 	MethodSchedulerPick      = "scheduler.pick"
+	MethodRequestInterceptBefore = "request.intercept_before"
+	MethodRequestInterceptAfter  = "request.intercept_after"
 	MethodFilterResponse     = "filter.response"
 	MethodFilterComplete     = "filter.complete"
 	MethodFilterError        = "filter.error"
@@ -108,12 +110,14 @@ type RunHistoryEntry struct {
 
 // RegisterRequest is the JSON request payload for plugin.register.
 type RegisterRequest struct {
-	ConfigYAML string `json:"config_yaml"`
+	ConfigYAML    string `json:"config_yaml"`
+	SchemaVersion int    `json:"schema_version,omitempty"`
 }
 
 // ReconfigureRequest is the JSON request payload for plugin.reconfigure.
 type ReconfigureRequest struct {
-	ConfigYAML string `json:"config_yaml"`
+	ConfigYAML    string `json:"config_yaml"`
+	SchemaVersion int    `json:"schema_version,omitempty"`
 }
 
 // RegisterResult is the metadata returned to CPA on registration.

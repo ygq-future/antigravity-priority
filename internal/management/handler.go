@@ -3,6 +3,7 @@ package management
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"sync"
@@ -11,9 +12,9 @@ import (
 	"antigravity-priority/internal/apply"
 	"antigravity-priority/internal/config"
 	"antigravity-priority/internal/host"
+	"antigravity-priority/internal/promptguard"
 	"antigravity-priority/internal/state"
 )
-
 // Runner defines the application layer contract required by the management HTTP API.
 type Runner interface {
 	Run(ctx context.Context, request RunRequest) (apply.Result, error)
@@ -35,6 +36,7 @@ type Runner interface {
 	SetModelExcluded(ctx context.Context, model string, excluded bool) ([]string, error)
 	SetWarmupCredentialState(ctx context.Context, authIndex, group string, enabled bool) error
 	ClearCooldown(ctx context.Context, req ClearCooldownRequest) (ClearCooldownResult, error)
+	PreviewPromptGuard(ctx context.Context, req promptguard.PreviewRequest) (promptguard.PreviewResult, error)
 }
 
 // ProbeOutcome reports the diagnostic outcome of one credential probe for the management UI.
@@ -110,6 +112,7 @@ const (
 	PathWarmupCredential    = "/warmup-credential"
 	PathExcludedModels      = "/excluded-models"
 	PathCooldownsClear      = "/cooldowns/clear"
+	PathPromptGuardPreview  = "/prompt-guard/preview"
 
 	// URL Prefixes
 	PrefixResourcePlugin   = "/v0/resource/plugins/" + config.PluginID
@@ -170,6 +173,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleSetExcludedModel(w, r)
 	case (path == PathCooldownsClear || path == PrefixManagementPlugin+PathCooldownsClear || path == PrefixLegacyPlugin+PathCooldownsClear) && method == http.MethodPost:
 		h.handleClearCooldown(w, r)
+	case (path == PathPromptGuardPreview || path == PrefixManagementPlugin+PathPromptGuardPreview || path == PrefixLegacyPlugin+PathPromptGuardPreview) && method == http.MethodPost:
+		h.handlePreviewPromptGuard(w, r)
 	default:
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(http.StatusNotFound)
@@ -330,6 +335,11 @@ func (h *Handler) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 	if err := json.Unmarshal(payload, &req); err != nil {
 		h.writeJSONError(w, http.StatusBadRequest, "invalid dynamic config JSON: "+err.Error())
 		return
+	}
+	if _, hasPromptGuard := fields["prompt_guard"]; !hasPromptGuard {
+		if existing, err := h.runner.GetDynamicConfig(r.Context()); err == nil {
+			req.PromptGuard = existing.PromptGuard.Clone()
+		}
 	}
 
 	if err := h.runner.SetDynamicConfig(r.Context(), req); err != nil {
@@ -713,4 +723,24 @@ func (h *Handler) handleClearCooldown(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(result)
+}
+
+func (h *Handler) handlePreviewPromptGuard(w http.ResponseWriter, r *http.Request) {
+	var req promptguard.PreviewRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.writeJSONError(w, http.StatusBadRequest, "invalid prompt guard preview JSON: "+err.Error())
+		return
+	}
+	res, err := h.runner.PreviewPromptGuard(r.Context(), req)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, config.ErrInvalidConfig) {
+			status = http.StatusBadRequest
+		}
+		h.writeJSONError(w, status, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(res)
 }

@@ -476,6 +476,8 @@ const templateScriptControls = `        // Custom Select: shared open/close + vi
             updateCustomIntervalDisplay();
             updateCustomWarmupGeminiDisplay();
             updateCustomWarmupClaudeDisplay();
+            if (typeof updateCustomPgFormatDisplay === "function") updateCustomPgFormatDisplay();
+            if (typeof updatePromptGuardUILabels === "function") updatePromptGuardUILabels();
         }
 
         function closeAllCustomSelects(exceptId) {
@@ -484,6 +486,7 @@ const templateScriptControls = `        // Custom Select: shared open/close + vi
                 { wrap: "customIntervalSelect", menu: "customIntervalMenu" },
                 { wrap: "customWarmupGeminiModelSelect", menu: "customWarmupGeminiMenu" },
                 { wrap: "customWarmupClaudeModelSelect", menu: "customWarmupClaudeMenu" },
+                { wrap: "customPgFormatSelect", menu: "customPgFormatMenu" },
             ];
             list.forEach(item => {
                 if (item.wrap !== exceptId) {

@@ -1,6 +1,40 @@
 package management
 
-const templateScriptConfig = `        let originalConfigState = null;
+import (
+	"encoding/json"
+	"strings"
+
+	"antigravity-priority/internal/config"
+)
+
+func buildDefaultPromptGuardRulesJSON() string {
+	encoded, err := json.Marshal(config.DefaultPromptGuardRules())
+	if err != nil {
+		return "[]"
+	}
+	return string(encoded)
+}
+
+var templateScriptConfig = strings.Replace(templateScriptConfigRaw, "__DEFAULT_PROMPT_GUARD_RULES_JSON__", buildDefaultPromptGuardRulesJSON(), 1)
+
+const templateScriptConfigRaw = `        let originalConfigState = null;
+        const DEFAULT_PROMPT_GUARD_RULES = __DEFAULT_PROMPT_GUARD_RULES_JSON__;
+        const MAX_PROMPT_GUARD_RULES = 50;
+        let promptGuardRules = clonePromptGuardRules(DEFAULT_PROMPT_GUARD_RULES);
+
+        function clonePromptGuardRules(rules) {
+            if (!Array.isArray(rules)) return [];
+            return rules.map(function(r) {
+                return {
+                    on: r && r.on !== false,
+                    find: r && typeof r.find === "string" ? r.find : "",
+                    replace: r && typeof r.replace === "string" ? r.replace : "",
+                    scope: r && r.scope === "all" ? "all" : "system",
+                    mode: r && r.mode === "regex" ? "regex" : "text",
+                    flags: r && typeof r.flags === "string" ? r.flags : ""
+                };
+            });
+        }
 
         async function fetchDynamicConfig() {
             if (isAuthBlocked) return;
@@ -31,11 +65,13 @@ const templateScriptConfig = `        let originalConfigState = null;
             var warmupGeminiModel = (document.getElementById("cfgWarmupGeminiModelSelect") && document.getElementById("cfgWarmupGeminiModelSelect").value) || "gemini-3-flash";
             var warmupClaudeEnabled = Boolean(document.getElementById("cfgWarmupClaudeEnabled") && document.getElementById("cfgWarmupClaudeEnabled").checked);
             var warmupClaudeModel = (document.getElementById("cfgWarmupClaudeModelSelect") && document.getElementById("cfgWarmupClaudeModelSelect").value) || "claude-sonnet-5-5-high";
+            var pgEnabled = Boolean(document.getElementById("cfgPromptGuardEnabled") && document.getElementById("cfgPromptGuardEnabled").checked);
 
             return JSON.stringify({
                 autoApply, interval,
                 maxConcurrency, urgencyTol, sampleCapacity, cooldownMin,
-                warmupGeminiEnabled, warmupGeminiModel, warmupClaudeEnabled, warmupClaudeModel
+                warmupGeminiEnabled, warmupGeminiModel, warmupClaudeEnabled, warmupClaudeModel,
+                pgEnabled, promptGuardRules
             });
         }
 
@@ -48,6 +84,293 @@ const templateScriptConfig = `        let originalConfigState = null;
             }
             var current = getDynamicConfigFormData();
             btn.disabled = current === originalConfigState;
+        }
+
+        function updatePromptGuardToggleText(enabled) {
+            var pgText = document.getElementById("cfgPromptGuardStatusText");
+            if (pgText) {
+                pgText.textContent = enabled ? (currentLang === "zh-CN" ? "已开启" : "Enabled") : (currentLang === "zh-CN" ? "已关闭" : "Disabled");
+            }
+        }
+
+        function updatePromptGuardUILabels() {
+            var pgCheckbox = document.getElementById("cfgPromptGuardEnabled");
+            if (pgCheckbox) updatePromptGuardToggleText(Boolean(pgCheckbox.checked));
+            var autoApply = document.getElementById("cfgAutoApply");
+            var autoText = document.getElementById("cfgAutoApplyStatusText");
+            if (autoApply && autoText) {
+                autoText.textContent = autoApply.checked ? (currentLang === "zh-CN" ? "已开启" : "Enabled") : (currentLang === "zh-CN" ? "已关闭" : "Disabled");
+            }
+            renderPromptGuardRules();
+        }
+
+        function renderPromptGuardRules(focusIndex) {
+            var listEl = document.getElementById("cfgPgRulesList");
+            var countEl = document.getElementById("cfgPgRuleCount");
+            if (countEl) {
+                countEl.textContent = promptGuardRules.length + " / " + MAX_PROMPT_GUARD_RULES;
+            }
+            var addBtn = document.getElementById("btnPgAddRule");
+            if (addBtn) {
+                addBtn.disabled = promptGuardRules.length >= MAX_PROMPT_GUARD_RULES;
+            }
+            if (!listEl) return;
+
+            var searchInput = document.getElementById("cfgPgSearch");
+            var query = searchInput ? searchInput.value.trim().toLowerCase() : "";
+
+            if (promptGuardRules.length === 0) {
+                listEl.innerHTML = '<div class="pg-empty-box">' + escapeHTML(t("cfgPgEmptyRules")) + "</div>";
+                return;
+            }
+
+            var htmlParts = [];
+            var renderedCount = 0;
+            for (var i = 0; i < promptGuardRules.length; i++) {
+                var rule = promptGuardRules[i];
+                if (query) {
+                    var hay = (rule.find + "\n" + rule.replace).toLowerCase();
+                    if (hay.indexOf(query) < 0) continue;
+                }
+                renderedCount++;
+                var scopeLabel = rule.scope === "all" ? t("cfgPgScopeAll") : t("cfgPgScopeSystem");
+                var modeLabel = rule.mode === "regex" ? t("cfgPgModeRegex") : t("cfgPgModeText");
+                var scopeCls = rule.scope === "all" ? "pg-pill-btn active-all" : "pg-pill-btn";
+                var modeCls = rule.mode === "regex" ? "pg-pill-btn active-regex" : "pg-pill-btn";
+                var rowCls = rule.on ? "pg-rule-row" : "pg-rule-row pg-rule-disabled";
+                htmlParts.push(
+                    '<div class="' + rowCls + '" data-pg-index="' + i + '">' +
+                        '<label class="pg-mini-toggle">' +
+                            '<input type="checkbox" ' + (rule.on ? "checked " : "") + 'onchange="togglePromptGuardRule(' + i + ', this.checked)">' +
+                            '<span class="pg-mini-slider"></span>' +
+                        "</label>" +
+                        '<input type="text" class="pg-rule-input pg-find-input" data-pg-field="find" value="' + escapeHTML(rule.find) + '" placeholder="' + escapeHTML(t("cfgPgFindPlaceholder")) + '" oninput="handlePromptGuardRuleInput(this)">' +
+                        '<span class="pg-arrow">→</span>' +
+                        '<input type="text" class="pg-rule-input pg-replace-input" data-pg-field="replace" value="' + escapeHTML(rule.replace) + '" placeholder="' + escapeHTML(t("cfgPgReplacePlaceholder")) + '" oninput="handlePromptGuardRuleInput(this)">' +
+                        '<button type="button" class="' + scopeCls + '" onclick="cyclePromptGuardRuleScope(' + i + ')">' + escapeHTML(scopeLabel) + "</button>" +
+                        '<button type="button" class="' + modeCls + '" onclick="cyclePromptGuardRuleMode(' + i + ')">' + escapeHTML(modeLabel) + "</button>" +
+                        '<button type="button" class="pg-delete-btn" onclick="deletePromptGuardRule(' + i + ')" title="Delete">✕</button>' +
+                    "</div>"
+                );
+            }
+            if (renderedCount === 0) {
+                listEl.innerHTML = '<div class="pg-empty-box">' + escapeHTML(t("cfgPgFilteredEmpty")) + "</div>";
+                return;
+            }
+            listEl.innerHTML = htmlParts.join("");
+            if (typeof focusIndex === "number" && focusIndex >= 0) {
+                var target = listEl.querySelector('.pg-rule-row[data-pg-index="' + focusIndex + '"] .pg-find-input');
+                if (target && typeof target.focus === "function") target.focus();
+            }
+        }
+
+        function handlePromptGuardRuleInput(el) {
+            if (!el) return;
+            var row = el.closest ? el.closest("[data-pg-index]") : null;
+            if (!row) return;
+            var index = Number(row.getAttribute("data-pg-index"));
+            var field = el.getAttribute("data-pg-field");
+            if (!isNaN(index) && (field === "find" || field === "replace")) {
+                updatePromptGuardRuleField(index, field, el.value);
+            }
+        }
+
+        function togglePromptGuardRule(index, checked) {
+            if (!promptGuardRules[index]) return;
+            promptGuardRules[index].on = Boolean(checked);
+            renderPromptGuardRules();
+            updateSaveButtonState();
+        }
+
+        function updatePromptGuardRuleField(index, field, value) {
+            if (!promptGuardRules[index]) return;
+            promptGuardRules[index][field] = String(value || "");
+            updateSaveButtonState();
+        }
+
+        function cyclePromptGuardRuleScope(index) {
+            if (!promptGuardRules[index]) return;
+            promptGuardRules[index].scope = promptGuardRules[index].scope === "all" ? "system" : "all";
+            renderPromptGuardRules();
+            updateSaveButtonState();
+        }
+
+        function cyclePromptGuardRuleMode(index) {
+            if (!promptGuardRules[index]) return;
+            promptGuardRules[index].mode = promptGuardRules[index].mode === "regex" ? "text" : "regex";
+            renderPromptGuardRules();
+            updateSaveButtonState();
+        }
+
+        function deletePromptGuardRule(index) {
+            if (index < 0 || index >= promptGuardRules.length) return;
+            promptGuardRules.splice(index, 1);
+            renderPromptGuardRules();
+            updateSaveButtonState();
+        }
+
+        function addPromptGuardRule() {
+            if (promptGuardRules.length >= MAX_PROMPT_GUARD_RULES) {
+                showToast(t("valErrPgMaxRules"), "error");
+                return;
+            }
+            var searchInput = document.getElementById("cfgPgSearch");
+            if (searchInput && searchInput.value) searchInput.value = "";
+            promptGuardRules.unshift({
+                on: true,
+                find: "",
+                replace: "",
+                scope: "system",
+                mode: "text",
+                flags: ""
+            });
+            renderPromptGuardRules(0);
+            updateSaveButtonState();
+        }
+
+        async function restoreDefaultPromptGuardRules() {
+            var confirmed = await showThemedConfirm({
+                title: t("cfgPgConfirmRestoreTitle"),
+                message: t("cfgPgConfirmRestoreMsg"),
+                confirmText: currentLang === "zh-CN" ? "确认恢复" : "Restore",
+                cancelText: currentLang === "zh-CN" ? "取消" : "Cancel",
+                isDanger: false
+            });
+            if (!confirmed) return;
+            promptGuardRules = clonePromptGuardRules(DEFAULT_PROMPT_GUARD_RULES);
+            renderPromptGuardRules();
+            updateSaveButtonState();
+        }
+
+        function buildPromptGuardBisectPrompt() {
+            if (currentLang === "zh-CN") {
+                return [
+                    "我的请求通过 Antigravity 上游触发了通用 429 (\x60RESOURCE_EXHAUSTED: Resource has been exhausted (e.g. check quota).\x60 且无 details)，这通常是因为系统提示词或消息体中的某个关键词/短语命中了上游风控。",
+                    "",
+                    "请你使用**二分法（Binary Search）**帮我定位具体是哪一个关键词触发了 429：",
+                    "1. 构造最小复现：保留触发 429 的原始请求（将 \x60max_tokens\x60 设为 \x6016\x60 等最小值），确认稳定返回该通用 429。",
+                    "2. 二分系统提示词：将 \x60system\x60 / \x60instructions\x60 / \x60systemInstruction\x60 文本对半拆分，分别测试保留前半段和保留后半段：",
+                    "   - 哪一半继续触发 429，就继续对该半对半拆分测试；",
+                    "   - 若全部清空系统提示词后仍触发 429，再按同样方式二分 \x60messages\x60 / \x60contents\x60。",
+                    "3. 缩窄至最短短语：逐层从段落 -> 句子 -> 词组继续二分，直到找出删除其中任意关键单词就不再触发 429 的**最短连续触发短语**。",
+                    "4. 输出结果：告诉我定位到的「触发原文」、「所在位置（仅系统 / 全部消息）」以及建议的「无害替换文本」，我将直接添加到 Prompt Guard 规则中。"
+                ].join("\n");
+            }
+            return [
+                "My request hit a generic upstream 429 (\x60RESOURCE_EXHAUSTED: Resource has been exhausted (e.g. check quota).\x60 with no details), which is usually caused by a specific keyword or phrase in the system prompt or message body.",
+                "",
+                "Please use **binary search (bisecting)** to isolate the exact trigger phrase:",
+                "1. Minimal repro: Keep the failing request with minimal \x60max_tokens\x60 (e.g. \x6016\x60) and confirm it reliably returns the generic 429.",
+                "2. Bisect system instructions: Split \x60system\x60 / \x60instructions\x60 / \x60systemInstruction\x60 in half and test each half separately:",
+                "   - Recurse into whichever half still triggers 429;",
+                "   - If clearing all system instructions still triggers 429, bisect \x60messages\x60 / \x60contents\x60 the same way.",
+                "3. Narrow down: Shrink from paragraph -> sentence -> phrase until you find the **shortest contiguous trigger phrase** whose removal stops the 429.",
+                "4. Report back: Provide the exact trigger phrase, scope (\x60system\x60 vs \x60all\x60), and a harmless replacement text so I can add it as a Prompt Guard rule."
+            ].join("\n");
+        }
+
+        function copyPromptGuardBisectPrompt() {
+            var text = buildPromptGuardBisectPrompt();
+            if (navigator && navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).then(function() {
+                    showToast(t("cfgPgCopyBisectSuccess"), "success");
+                }).catch(function() {
+                    showToast(t("cfgPgCopyBisectError"), "error");
+                });
+                return;
+            }
+            try {
+                var ta = document.createElement("textarea");
+                ta.value = text;
+                ta.style.position = "fixed";
+                ta.style.opacity = "0";
+                document.body.appendChild(ta);
+                ta.select();
+                var ok = document.execCommand("copy");
+                document.body.removeChild(ta);
+                showToast(ok ? t("cfgPgCopyBisectSuccess") : t("cfgPgCopyBisectError"), ok ? "success" : "error");
+            } catch (e) {
+                showToast(t("cfgPgCopyBisectError"), "error");
+            }
+        }
+
+        function toggleCustomPgFormatSelect(event) {
+            if (event) event.stopPropagation();
+            if (typeof closeAllCustomSelects === "function") closeAllCustomSelects("customPgFormatSelect");
+            if (typeof toggleCustomSelectMenu === "function") toggleCustomSelectMenu("customPgFormatSelect", "customPgFormatMenu");
+        }
+
+        function selectPgFormatOption(value, event) {
+            if (event) event.stopPropagation();
+            var select = document.getElementById("cfgPgPreviewFormat");
+            if (select) select.value = value;
+            updateCustomPgFormatDisplay();
+            if (typeof closeAllCustomSelects === "function") closeAllCustomSelects();
+        }
+
+        function updateCustomPgFormatDisplay() {
+            var select = document.getElementById("cfgPgPreviewFormat");
+            var label = document.getElementById("customPgFormatLabel");
+            if (select && label && select.options && select.selectedIndex >= 0) {
+                var selectedOpt = select.options[select.selectedIndex];
+                if (selectedOpt) label.textContent = selectedOpt.text || selectedOpt.value;
+            }
+            var menu = document.getElementById("customPgFormatMenu");
+            if (menu && select) {
+                menu.querySelectorAll(".custom-select-option").forEach(function(opt) {
+                    opt.classList.toggle("selected", opt.getAttribute("data-value") === select.value);
+                });
+            }
+        }
+
+        async function runPromptGuardPreview() {
+            var inputEl = document.getElementById("cfgPgPreviewInput");
+            var formatEl = document.getElementById("cfgPgPreviewFormat");
+            var resultEl = document.getElementById("cfgPgPreviewResult");
+            if (!inputEl || !resultEl) return;
+
+            var rawFormat = (formatEl && formatEl.value) || "auto";
+            var format = rawFormat;
+            var scope = "system";
+            if (rawFormat === "text:system") {
+                format = "text";
+                scope = "system";
+            } else if (rawFormat === "text:all") {
+                format = "text";
+                scope = "all";
+            }
+
+            try {
+                var res = await apiFetch(PROMPT_GUARD_PREVIEW_PATH, {
+                    method: "POST",
+                    body: JSON.stringify({
+                        input: inputEl.value || "",
+                        format: format,
+                        scope: scope,
+                        rules: promptGuardRules
+                    })
+                });
+                var parts = [];
+                var summaryText = res.total_hits > 0
+                    ? (t("cfgPgPreviewHitsPrefix") + String(res.total_hits) + " (" + String(res.detected_format || format) + ")")
+                    : (t("cfgPgPreviewNoHits") + " (" + String(res.detected_format || format) + ")");
+                parts.push('<div class="pg-preview-summary"><span>' + escapeHTML(summaryText) + "</span></div>");
+                if (Array.isArray(res.warnings) && res.warnings.length > 0) {
+                    parts.push('<div class="pg-preview-matches">' + res.warnings.map(function(w) {
+                        return '<span class="pg-warn-chip">' + escapeHTML(w) + "</span>";
+                    }).join("") + "</div>");
+                }
+                if (Array.isArray(res.matches) && res.matches.length > 0) {
+                    parts.push('<div class="pg-preview-matches">' + res.matches.map(function(m) {
+                        return '<span class="pg-match-chip">#' + (Number(m.index) + 1) + " ×" + Number(m.hits) + " [" + escapeHTML(m.scope) + "] " + escapeHTML(m.find) + " → " + escapeHTML(m.replace) + "</span>";
+                    }).join("") + "</div>");
+                }
+                parts.push('<pre class="pg-preview-output">' + escapeHTML(res.output || "") + "</pre>");
+                resultEl.innerHTML = parts.join("");
+                resultEl.hidden = false;
+            } catch (err) {
+                showToast(err.message, "error");
+            }
         }
 
         function renderDynamicConfigForm(cfg) {
@@ -76,7 +399,6 @@ const templateScriptConfig = `        let originalConfigState = null;
                 }
                 updateCustomIntervalDisplay();
             }
-
 
             var maxConcurrency = document.getElementById("cfgMaxConcurrency");
             if (maxConcurrency) maxConcurrency.value = cfg.max_concurrency || 6;
@@ -108,7 +430,15 @@ const templateScriptConfig = `        let originalConfigState = null;
                 updateCustomWarmupClaudeDisplay();
             }
 
-
+            var pg = cfg.prompt_guard || {};
+            var pgEnabled = document.getElementById("cfgPromptGuardEnabled");
+            if (pgEnabled) {
+                pgEnabled.checked = Boolean(pg.enabled);
+                updatePromptGuardToggleText(Boolean(pg.enabled));
+            }
+            promptGuardRules = Array.isArray(pg.rules) ? clonePromptGuardRules(pg.rules) : clonePromptGuardRules(DEFAULT_PROMPT_GUARD_RULES);
+            renderPromptGuardRules();
+            updateCustomPgFormatDisplay();
 
             // Sync original snapshot and disable save button
             originalConfigState = getDynamicConfigFormData();
@@ -133,6 +463,9 @@ const templateScriptConfig = `        let originalConfigState = null;
                     autoText.textContent = e.target.checked ? (currentLang === "zh-CN" ? "已开启" : "Enabled") : (currentLang === "zh-CN" ? "已关闭" : "Disabled");
                 }
             }
+            if (e.target && e.target.id === "cfgPromptGuardEnabled") {
+                updatePromptGuardToggleText(Boolean(e.target.checked));
+            }
             if (e.target && e.target.closest("#panelConfig")) {
                 updateSaveButtonState();
             }
@@ -148,7 +481,7 @@ const templateScriptConfig = `        let originalConfigState = null;
         function parseGoDurationMillis(value) {
             var text = String(value || "").trim();
             if (!text) return NaN;
-			if (text.charAt(0) === "+") text = text.slice(1);
+            if (text.charAt(0) === "+") text = text.slice(1);
             var units = { ns: 0.000001, us: 0.001, "µs": 0.001, "μs": 0.001, ms: 1, s: 1000, m: 60000, h: 3600000 };
             var token = /([0-9]+(?:\.[0-9]*)?|\.[0-9]+)(ns|us|µs|μs|ms|s|m|h)/g;
             var total = 0;
@@ -178,7 +511,7 @@ const templateScriptConfig = `        let originalConfigState = null;
                 if (intervalSelect) {
                     if (intervalSelect.value === "custom") {
                         interval = (intervalCustom && intervalCustom.value.trim()) || "";
-						if (!interval || parseGoDurationMillis(interval) < 60000) {
+                        if (!interval || parseGoDurationMillis(interval) < 60000) {
                             showToast(t("valErrInterval"), "error");
                             if (intervalCustom) intervalCustom.focus();
                             updateSaveButtonState();
@@ -189,32 +522,37 @@ const templateScriptConfig = `        let originalConfigState = null;
                     }
                 }
 
-				var maxConcurrency = parseStrictInteger((document.getElementById("cfgMaxConcurrency") && document.getElementById("cfgMaxConcurrency").value) || "6");
+                var maxConcurrency = parseStrictInteger((document.getElementById("cfgMaxConcurrency") && document.getElementById("cfgMaxConcurrency").value) || "6");
                 if (isNaN(maxConcurrency) || maxConcurrency < 1 || maxConcurrency > 32) {
                     showToast(t("valErrConcurrency"), "error");
                     updateSaveButtonState();
                     return;
                 }
 
-
                 var urgencyTolRaw = (document.getElementById("cfgUrgencyTolerance") && document.getElementById("cfgUrgencyTolerance").value) || "0.05";
-				var urgencyTol = Number(urgencyTolRaw);
-				if (urgencyTolRaw.trim() === "" || isNaN(urgencyTol) || urgencyTol < 0.0 || urgencyTol > 0.50) {
+                var urgencyTol = Number(urgencyTolRaw);
+                if (urgencyTolRaw.trim() === "" || isNaN(urgencyTol) || urgencyTol < 0.0 || urgencyTol > 0.50) {
                     showToast(t("valErrUrgencyTol"), "error");
                     updateSaveButtonState();
                     return;
                 }
 
-				var sampleCapacity = parseStrictInteger((document.getElementById("cfgSampleCapacity") && document.getElementById("cfgSampleCapacity").value) || "6");
+                var sampleCapacity = parseStrictInteger((document.getElementById("cfgSampleCapacity") && document.getElementById("cfgSampleCapacity").value) || "6");
                 if (isNaN(sampleCapacity) || sampleCapacity < 2 || sampleCapacity > 30) {
                     showToast(t("valErrSampleCapacity"), "error");
                     updateSaveButtonState();
                     return;
                 }
 
-				var cooldownMin = parseStrictInteger((document.getElementById("cfgCooldownMinutes") && document.getElementById("cfgCooldownMinutes").value) || "5");
+                var cooldownMin = parseStrictInteger((document.getElementById("cfgCooldownMinutes") && document.getElementById("cfgCooldownMinutes").value) || "5");
                 if (isNaN(cooldownMin) || cooldownMin < 1 || cooldownMin > 1440) {
                     showToast(t("valErrCooldown"), "error");
+                    updateSaveButtonState();
+                    return;
+                }
+
+                if (promptGuardRules.length > MAX_PROMPT_GUARD_RULES) {
+                    showToast(t("valErrPgMaxRules"), "error");
                     updateSaveButtonState();
                     return;
                 }
@@ -244,6 +582,10 @@ const templateScriptConfig = `        let originalConfigState = null;
                         overrides: (dynamicConfig && dynamicConfig.warmup && dynamicConfig.warmup.overrides && typeof dynamicConfig.warmup.overrides === "object")
                             ? dynamicConfig.warmup.overrides
                             : undefined
+                    },
+                    prompt_guard: {
+                        enabled: Boolean(document.getElementById("cfgPromptGuardEnabled") && document.getElementById("cfgPromptGuardEnabled").checked),
+                        rules: clonePromptGuardRules(promptGuardRules)
                     },
                 };
 
@@ -285,6 +627,10 @@ const templateScriptConfig = `        let originalConfigState = null;
                     gemini_model: "gemini-3-flash",
                     claude_enabled: false,
                     claude_model: "claude-sonnet-5-5-high"
+                },
+                prompt_guard: {
+                    enabled: false,
+                    rules: clonePromptGuardRules(DEFAULT_PROMPT_GUARD_RULES)
                 },
             };
             renderDynamicConfigForm(defaultCfg);

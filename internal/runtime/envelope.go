@@ -23,38 +23,40 @@ type EnvelopeError struct {
 }
 
 func decodeRegisterRequest(raw []byte) (RegisterRequest, error) {
-	configYAML, err := decodeConfigYAML(raw)
+	configYAML, schemaVersion, err := decodeLifecyclePayload(raw)
 	if err != nil {
 		return RegisterRequest{}, err
 	}
-	return RegisterRequest{ConfigYAML: configYAML}, nil
+	return RegisterRequest{ConfigYAML: configYAML, SchemaVersion: schemaVersion}, nil
 }
 
 func decodeReconfigureRequest(raw []byte) (ReconfigureRequest, error) {
-	configYAML, err := decodeConfigYAML(raw)
+	configYAML, schemaVersion, err := decodeLifecyclePayload(raw)
 	if err != nil {
 		return ReconfigureRequest{}, err
 	}
-	return ReconfigureRequest{ConfigYAML: configYAML}, nil
+	return ReconfigureRequest{ConfigYAML: configYAML, SchemaVersion: schemaVersion}, nil
 }
 
-func decodeConfigYAML(raw []byte) (string, error) {
+func decodeLifecyclePayload(raw []byte) (string, int, error) {
 	if len(raw) == 0 {
-		return "", nil
+		return "", 0, nil
 	}
 	var bytesRequest struct {
-		ConfigYAML []byte `json:"config_yaml"`
+		ConfigYAML    []byte `json:"config_yaml"`
+		SchemaVersion int    `json:"schema_version"`
 	}
 	if err := json.Unmarshal(raw, &bytesRequest); err == nil && len(bytesRequest.ConfigYAML) > 0 {
-		return string(bytesRequest.ConfigYAML), nil
+		return string(bytesRequest.ConfigYAML), bytesRequest.SchemaVersion, nil
 	}
 	var stringRequest struct {
-		ConfigYAML string `json:"config_yaml"`
+		ConfigYAML    string `json:"config_yaml"`
+		SchemaVersion int    `json:"schema_version"`
 	}
 	if err := json.Unmarshal(raw, &stringRequest); err != nil {
-		return "", fmt.Errorf("%w: decode json: %v", ErrInvalidRequest, err)
+		return "", 0, fmt.Errorf("%w: decode json: %v", ErrInvalidRequest, err)
 	}
-	return stringRequest.ConfigYAML, nil
+	return stringRequest.ConfigYAML, stringRequest.SchemaVersion, nil
 }
 
 func envelopeRegister(result RegisterResult, err error) []byte {
