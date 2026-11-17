@@ -3273,7 +3273,7 @@ func TestRuntime_Handle_RequestInterceptAfter(t *testing.T) {
 	cachePath := filepath.Join(t.TempDir(), "state.json")
 	r := newTestRuntime(t, runtime.Options{StateCachePath: cachePath})
 
-	rawPayload := []byte(`{"system":"You are Claude Code, Anthropic's official CLI for Claude.","messages":[{"role":"user","content":"hello"}],"tools":[{"name":"bash"}]}`)
+	rawPayload := []byte(`{"project":"proj-1","request":{"systemInstruction":{"parts":[{"text":"You are Claude Code, Anthropic's official CLI for Claude."}]},"contents":[{"role":"user","parts":[{"text":"You are Claude Code, Anthropic's official CLI for Claude."}]}],"tools":[{"functionDeclarations":[{"name":"bash"}]}]}}`)
 	callIntercept := func(method, sourceFormat, toFormat string, body []byte) (bool, []byte) {
 		t.Helper()
 		reqBytes, err := json.Marshal(map[string]any{
@@ -3329,13 +3329,42 @@ func TestRuntime_Handle_RequestInterceptAfter(t *testing.T) {
 	if ok, body := callIntercept(runtime.MethodRequestInterceptAfter, "claude", "claude", rawPayload); !ok || len(body) != 0 {
 		t.Fatalf("non-antigravity target must pass through, got ok=%v body=%q", ok, string(body))
 	}
-	// Antigravity target rewrites matching system prompt while preserving tools.
-	ok, rewritten := callIntercept(runtime.MethodRequestInterceptAfter, "claude", "antigravity", rawPayload)
-	if !ok || len(rewritten) == 0 {
-		t.Fatalf("expected rewritten body for antigravity target, got ok=%v len=%d", ok, len(rewritten))
-	}
-	if !strings.Contains(string(rewritten), "You are a coding assistant.") || !strings.Contains(string(rewritten), `"bash"`) {
-		t.Fatalf("unexpected rewritten payload: %s", string(rewritten))
+	// Antigravity target rewrites matching systemInstruction across source formats while preserving user contents and tools.
+	for _, srcFormat := range []string{"claude", "openai", "openai-response"} {
+		ok, rewritten := callIntercept(runtime.MethodRequestInterceptAfter, srcFormat, "antigravity", rawPayload)
+		if !ok || len(rewritten) == 0 {
+			t.Fatalf("expected rewritten body for source=%s antigravity target, got ok=%v len=%d", srcFormat, ok, len(rewritten))
+		}
+		var decoded struct {
+			Project string `json:"project"`
+			Request struct {
+				SystemInstruction struct {
+					Parts []struct {
+						Text string `json:"text"`
+					} `json:"parts"`
+				} `json:"systemInstruction"`
+				Contents []struct {
+					Parts []struct {
+						Text string `json:"text"`
+					} `json:"parts"`
+				} `json:"contents"`
+			} `json:"request"`
+		}
+		if err := json.Unmarshal(rewritten, &decoded); err != nil {
+			t.Fatalf("unmarshal rewritten payload: %v", err)
+		}
+		if decoded.Project != "proj-1" {
+			t.Fatalf("expected project preserved, got %q", decoded.Project)
+		}
+		if decoded.Request.SystemInstruction.Parts[0].Text != "You are a coding assistant." {
+			t.Fatalf("expected rewritten systemInstruction for source=%s, got %q", srcFormat, decoded.Request.SystemInstruction.Parts[0].Text)
+		}
+		if decoded.Request.Contents[0].Parts[0].Text != "You are Claude Code, Anthropic's official CLI for Claude." {
+			t.Fatalf("user contents must remain untouched for source=%s, got %q", srcFormat, decoded.Request.Contents[0].Parts[0].Text)
+		}
+		if !strings.Contains(string(rewritten), `"bash"`) {
+			t.Fatalf("expected tools preserved: %s", string(rewritten))
+		}
 	}
 
 	// Diagnostics reflect counters.
@@ -3344,7 +3373,7 @@ func TestRuntime_Handle_RequestInterceptAfter(t *testing.T) {
 		t.Fatal(err)
 	}
 	pgDiag := diag["prompt_guard"].(map[string]any)
-	if pgDiag["enabled"] != true || pgDiag["rewritten_requests"].(int64) != 1 || pgDiag["rewritten_hits"].(int64) != 1 {
+	if pgDiag["enabled"] != true || pgDiag["rewritten_requests"].(int64) != 3 || pgDiag["rewritten_hits"].(int64) != 3 {
 		t.Fatalf("unexpected prompt_guard diagnostics: %#v", pgDiag)
 	}
 
