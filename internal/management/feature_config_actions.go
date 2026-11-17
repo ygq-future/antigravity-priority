@@ -232,7 +232,7 @@ const templateScriptConfigRaw = `        let originalConfigState = null;
         }
 
         async function syncPromptGuardRemoteRules() {
-            var btn = document.getElementById("btnPgSyncRemote") || document.getElementById("btnPgRestoreDefaults");
+            var btn = document.getElementById("btnPgSyncRemote");
             if (btn) btn.disabled = true;
             try {
                 var res = await apiFetch(PROMPT_GUARD_SYNC_PATH, {
@@ -254,10 +254,6 @@ const templateScriptConfigRaw = `        let originalConfigState = null;
             } finally {
                 if (btn) btn.disabled = false;
             }
-        }
-
-        async function restoreDefaultPromptGuardRules() {
-            await syncPromptGuardRemoteRules();
         }
 
         function buildPromptGuardBisectPrompt() {

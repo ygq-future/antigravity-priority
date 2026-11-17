@@ -748,6 +748,7 @@ func (h *Handler) handlePreviewPromptGuard(w http.ResponseWriter, r *http.Reques
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(res)
 }
+
 type syncPromptGuardRequest struct {
 	SyncURL string `json:"sync_url,omitempty"`
 }

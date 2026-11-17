@@ -1667,7 +1667,6 @@ func TestPromptGuardUIContracts(t *testing.T) {
 		"DEFAULT_PROMPT_GUARD_RULES",
 		"addPromptGuardRule",
 		"syncPromptGuardRemoteRules",
-		"restoreDefaultPromptGuardRules",
 		"runPromptGuardPreview",
 		"btnPgCopyBisect",
 		"copyPromptGuardBisectPrompt",

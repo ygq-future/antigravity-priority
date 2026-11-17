@@ -246,7 +246,6 @@ const configMarkup = `
                         <div class="pg-toolbar-right">
                             <button type="button" class="btn-secondary" id="btnPgAddRule" onclick="addPromptGuardRule()" data-i18n="cfgPgBtnAddRule">+ 新增规则</button>
                             <button type="button" class="btn-secondary" id="btnPgSyncRemote" onclick="syncPromptGuardRemoteRules()" data-i18n="cfgPgBtnSyncRemote">🔄 同步远程规则</button>
-                            <button type="button" class="btn-secondary" id="btnPgRestoreDefaults" style="display:none;" onclick="restoreDefaultPromptGuardRules()"></button>
                         </div>
                     </div>
 

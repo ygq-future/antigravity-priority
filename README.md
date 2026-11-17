@@ -31,7 +31,7 @@ CLIProxyAPI (CPA) 专精型 **Google Antigravity 凭证智能配额调度与自�
 - **会话粘性与同分平级分档**：相近紧迫度账号自动分配相同优先级整数，顶层平级集群内支持 `canonical_session_id` 会话粘性绑定与平滑轮询分流，杜绝单点打穿 429。
 - **自定义梯队覆盖与轮询负载均衡 (Custom Tier Overrides)**：支持在概览卡片上为凭证自由设定目标梯队（Tier #1、Tier #2 等），自定义梯队具备最高优先级，同梯队凭证自动获得相同优先级分值并通过 Round-Robin 算法均衡分流。
 - **全链路实时请求调用历史 (Real-Time Request History)**：实时监控记录每次请求的模型、匹配配额池、Token 消耗（输入、输出、思考、缓存）以及返回状态，提供高密度仪表盘与一键清空。
-- **系统提示词 Prompt Guard**：针对路由至 Antigravity 的请求，可在配置中心管理内置或自定义关键词/正则改写规则，并通过预览检查结果；仅改写系统与开发者指令，不修改对话消息。默认关闭。
+- **系统提示词 Prompt Guard**：针对路由至 Antigravity 的请求，从 `magpie-prompt-guard` 远程词库差分同步关键词/正则改写规则（自定义规则优先保留、远程变更自动跟进），可在配置中心增删规则并预览结果；仅改写系统与开发者指令，不修改对话消息。默认关闭。
 - **请求级通用 429 豁免**：不带配额详情的通用 `RESOURCE_EXHAUSTED` 响应按单次请求错误记录，不触发凭证冷却或风暴保护；明确的配额耗尽与速率限制仍按原有池级隔离处理。
 - **健康故障转移与凭证异常隔离 (Health Failover)**：401 与 403 均视为凭证异常直接执行账号级隔离并软降级（不进行重试探测与刷新），5xx 按池级短暂降级；429/5xx 进入指数退避探测队列并复用预热请求验证，一次成功即恢复原梯队。
 - **请求频率自适应校准**：后台校准不再固定周期机械探测，而是根据最近请求窗口与突发量自动切换节奏——空闲跳过、低频拉长（上限 2–6 小时并带抖动）、活跃时在周期上限内必校准、长时间空闲恢复流量后 15–45 秒内补一次校准。
@@ -145,7 +145,7 @@ plugins:
 | **紧迫度分档容差 (`urgency_tolerance`)** | `0.05` | `0.00 ~ 0.50` | 紧迫度差距在此容差内的账号分配相同优先级整数进行平级轮询。 |
 | **自适应时序样本容量 (`quota_sample_capacity`)** | `6` | `2 ~ 30` | FIFO 保留的历史探测样本数，同时用于消耗趋势查看与燃尽率学习。 |
 | **429 熔断冷却时长 (`rate_limit_cooldown_minutes`)** | `5` | `1 ~ 1440` 分钟 | 遭遇 429 限流时将受限配额池临时置入冷却队列避让，到期自动自愈。 |
-| **Prompt Guard (`prompt_guard`)** | 关闭 | 配置中心 | 为路由至 Antigravity 的请求管理系统/开发者指令改写规则，支持短语或正则规则与预览；默认关闭。 |
+| **Prompt Guard (`prompt_guard`)** | 关闭 | 配置中心 | 为路由至 Antigravity 的请求管理系统/开发者指令改写规则，规则来自远程词库差分同步，支持自定义短语或正则规则（上限 200 条）与预览；默认关闭。 |
 | **Gemini 5h 满额自动预热 (`warmup.gemini_enabled`)** | `false` | 开 / 关 | 当 Gemini 5h 短窗 100% 满额、7d 仍有余量且倒计时未激活时，自动发送一次长回答请求（末尾追加不少于 600 token 的约束）提前触发 5h 倒计时；凭证之间随机间隔 60–120 分钟、同凭证不同分组 30–60 分钟。 |
 | **Gemini 预热目标模型 (`warmup.gemini_model`)** | `gemini-3-flash` | 可选 / 自定义 | 用于触发 Gemini 5h 重置倒计时的预热模型。 |
 | **Claude 5h 满额自动预热 (`warmup.claude_enabled`)** | `false` | 开 / 关 | 当 Claude 5h 短窗 100% 满额、7d 仍有余量且倒计时未激活时，自动发送一次短请求提前触发 5h 倒计时；凭证之间随机间隔 60–120 分钟、同凭证不同分组 30–60 分钟。 |
@@ -205,6 +205,10 @@ plugins:
   - 获取当前全局排除的模型列表。
 - `POST /v0/management/plugins/antigravity-priority/excluded-models`
   - 添加或移除全局排除模型（请求体 `{"model": "模型名", "excluded": true|false}`）；被排除模型跳过全部 Antigravity 凭证，改由 CPA 其他渠道承接。
+- `POST /v0/management/plugins/antigravity-priority/prompt-guard/preview`
+  - 预览 Prompt Guard 规则对给定系统指令的改写结果。
+- `POST /v0/management/plugins/antigravity-priority/prompt-guard/sync`
+  - 从远程词库差分同步 Prompt Guard 规则（保留自定义规则、新增/更新/删除远程条目），可选 `{"sync_url": "..."}` 指定词库地址，返回同步后规则与差分统计。
 
 ---
 

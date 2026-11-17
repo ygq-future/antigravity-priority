@@ -87,6 +87,7 @@ func (r *Runtime) PreviewPromptGuard(_ context.Context, req promptguard.PreviewR
 	pgCfg.Normalize()
 	return promptguard.Preview(pgCfg, req), nil
 }
+
 // SyncPromptGuard synchronizes Prompt Guard rules from the remote phrases.json repository.
 // It downloads the remote phrases.json, applies DiffSyncRules (preserving custom user rules,
 // deleting rules removed from remote, adding new remote rules, and updating modified rules),

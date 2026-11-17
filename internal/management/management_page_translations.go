@@ -66,14 +66,14 @@ var configTranslationKeys = []string{
 
 	"valErrWarmupGeminiModel", "valErrWarmupClaudeModel",
 	"cfgCardPromptGuardTitle", "cfgPgRemoteSourcePrefix", "cfgPgRemoteSourceSuffix", "cfgPgEnabled", "cfgPgEnabledHint",
-	"cfgPgSearchPlaceholder", "cfgPgBtnAddRule", "cfgPgBtnRestoreDefaults",
+	"cfgPgSearchPlaceholder", "cfgPgBtnAddRule",
 	"cfgPgScopeSystem", "cfgPgScopeAll", "cfgPgModeText", "cfgPgModeRegex",
 	"cfgPgFindPlaceholder", "cfgPgReplacePlaceholder",
 	"cfgPgEmptyRules", "cfgPgFilteredEmpty",
 	"cfgPgDryRunTitle", "cfgPgFormatAuto", "cfgPgFormatTextSystem", "cfgPgFormatTextAll",
 	"cfgPgFormatClaude", "cfgPgFormatOpenAI", "cfgPgFormatResponses", "cfgPgFormatGemini",
 	"cfgPgDryRunPlaceholder", "cfgPgBtnRunPreview", "cfgPgPreviewNoHits", "cfgPgPreviewHitsPrefix",
-	"cfgPgConfirmRestoreTitle", "cfgPgConfirmRestoreMsg", "valErrPgMaxRules",
+	"valErrPgMaxRules",
 	"cfgPgBtnCopyBisect", "cfgPgCopyBisectSuccess", "cfgPgCopyBisectError",
 	"cfgPgBtnSyncRemote", "cfgPgSyncError", "cfgPgBadgeCustom", "cfgPgBadgeCustomTitle", "cfgPgBadgeRemote", "cfgPgBadgeRemoteTitle",
 }

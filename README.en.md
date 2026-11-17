@@ -31,7 +31,7 @@ A high-performance, single-provider priority scheduler and quota management plug
 - **Session-Sticky Affinity & Equal-Priority Clustering**: Accounts with close urgency metrics share the same priority integer tier, enabling CPA native round-robin distribution with `canonical_session_id` session affinity within the top cluster to eliminate 429 single-point saturation.
 - **Custom Tier Overrides & Round-Robin Load Balancing**: Allows freely assigning explicit target tiers (Tier #1, Tier #2...) on overview cards; custom tiers take absolute precedence, and candidates sharing the same custom tier receive identical priority scores for round-robin load distribution.
 - **Real-Time End-to-End Request History**: Intercepts and logs every inbound request with its model, target quota pool, token breakdown (input, output, reasoning, cache), and status code in a high-density table with one-click clear.
-- **System-Prompt Prompt Guard**: Manage built-in or custom phrase/regex rewrite rules for requests routed to Antigravity, with a preview in the Config Center. It rewrites system and developer instructions only, leaving conversation messages unchanged. Disabled by default.
+- **System-Prompt Prompt Guard**: Differentially syncs phrase/regex rewrite rules from the `magpie-prompt-guard` remote dictionary (custom rules take precedence, upstream changes follow automatically), with rule editing and preview in the Config Center. It rewrites system and developer instructions only, leaving conversation messages unchanged. Disabled by default.
 - **Request-Scoped Generic 429 Exemption**: Generic `RESOURCE_EXHAUSTED` responses without quota details are recorded as request-level failures and do not trigger credential cooldowns or storm protection; explicit quota exhaustion and rate-limit errors retain pool-scoped handling.
 - **Health Failover & Credential Quarantine**: Quarantines 401 and 403 at account scope as credential failures with immediate soft demotion without active retry probes; demotes 5xx at pool scope; 429/5xx enter an exponential-backoff probe queue that reuses warmup generation requests and restores the original tier after one successful probe.
 - **Request-Frequency Adaptive Calibration**: Background calibration no longer probes on a fixed cadence. It follows recent request windows and bursts: skipped while idle, stretched (2–6 hour cap) with jitter when sparse, completed within the interval ceiling when active, and caught up within 15–45 seconds after traffic resumes from a long idle gap.
@@ -145,7 +145,7 @@ In the **`⚙️ Config Center`** tab of the management dashboard, the following
 | **Urgency Bucket Tolerance (`urgency_tolerance`)** | `0.05` | `0.00 ~ 0.50` | Accounts within this tolerance share the same priority for round-robin balancing. |
 | **Adaptive Sample Capacity (`quota_sample_capacity`)** | `6` | `2 ~ 30` | FIFO history retained for both consumption-trend inspection and burn-rate learning. |
 | **429 Cooldown Duration (`rate_limit_cooldown_minutes`)** | `5` | `1 ~ 1440` min | Cooldown duration isolating rate-limited quota pool into fallback tier on 429 errors. |
-| **Prompt Guard (`prompt_guard`)** | Off | Config Center | Manage phrase or regex rewrite rules for system/developer instructions on requests routed to Antigravity, with preview; disabled by default. |
+| **Prompt Guard (`prompt_guard`)** | Off | Config Center | Manages phrase or regex rewrite rules for system/developer instructions on requests routed to Antigravity; rules are differentially synced from the remote dictionary, support custom entries (up to 200), and offer preview; disabled by default. |
 | **Gemini 5h Auto Warm-Up (`warmup.gemini_enabled`)** | `false` | On / Off | Automatically sends a long-form prompt (with a minimum 600-token constraint) when Gemini 5h quota is 100% full, the 7d pool still has quota, and the window is inactive; credentials are spaced 60–120 minutes apart, pools of one credential 30–60 minutes apart. |
 | **Gemini Warm-Up Model (`warmup.gemini_model`)** | `gemini-3-flash` | Selectable | Model used to trigger the Gemini 5h reset countdown. |
 | **Claude 5h Auto Warm-Up (`warmup.claude_enabled`)** | `false` | On / Off | Automatically sends a short prompt when Claude 5h quota is 100% full, the 7d pool still has quota, and the window is inactive; credentials are spaced 60–120 minutes apart, pools of one credential 30–60 minutes apart. |
@@ -205,6 +205,10 @@ The plugin registers **resources** (static management dashboard) and **routes** 
   - Retrieves the current globally excluded model list.
 - `POST /v0/management/plugins/antigravity-priority/excluded-models`
   - Adds or removes a globally excluded model (body `{"model": "model-id", "excluded": true|false}`); excluded models skip every Antigravity credential and are served by other CPA providers.
+- `POST /v0/management/plugins/antigravity-priority/prompt-guard/preview`
+  - Previews how Prompt Guard rules rewrite the given system instructions.
+- `POST /v0/management/plugins/antigravity-priority/prompt-guard/sync`
+  - Differentially syncs Prompt Guard rules from the remote dictionary (custom rules preserved, remote entries added/updated/deleted); accepts an optional `{"sync_url": "..."}` and returns the synchronized rules plus diff statistics.
 
 ---
 
