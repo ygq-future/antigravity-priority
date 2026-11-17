@@ -138,6 +138,15 @@ func (r *Runtime) SyncPromptGuard(ctx context.Context, syncURL string) ([]config
 	return newRules, summary, nil
 }
 
+func (r *Runtime) startPromptGuardInitialSync() {
+	if r.bgWorkersDisabled {
+		return
+	}
+	r.promptGuardSyncOnce.Do(func() {
+		go r.runPromptGuardInitialSync()
+	})
+}
+
 func (r *Runtime) runPromptGuardInitialSync() {
 	select {
 	case <-time.After(3 * time.Second):
