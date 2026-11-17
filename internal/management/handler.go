@@ -37,6 +37,7 @@ type Runner interface {
 	SetWarmupCredentialState(ctx context.Context, authIndex, group string, enabled bool) error
 	ClearCooldown(ctx context.Context, req ClearCooldownRequest) (ClearCooldownResult, error)
 	PreviewPromptGuard(ctx context.Context, req promptguard.PreviewRequest) (promptguard.PreviewResult, error)
+	SyncPromptGuard(ctx context.Context, syncURL string) ([]config.PromptGuardRule, promptguard.SyncSummary, error)
 }
 
 // ProbeOutcome reports the diagnostic outcome of one credential probe for the management UI.
@@ -113,6 +114,7 @@ const (
 	PathExcludedModels      = "/excluded-models"
 	PathCooldownsClear      = "/cooldowns/clear"
 	PathPromptGuardPreview  = "/prompt-guard/preview"
+	PathPromptGuardSync     = "/prompt-guard/sync"
 
 	// URL Prefixes
 	PrefixResourcePlugin   = "/v0/resource/plugins/" + config.PluginID
@@ -175,6 +177,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleClearCooldown(w, r)
 	case (path == PathPromptGuardPreview || path == PrefixManagementPlugin+PathPromptGuardPreview || path == PrefixLegacyPlugin+PathPromptGuardPreview) && method == http.MethodPost:
 		h.handlePreviewPromptGuard(w, r)
+	case (path == PathPromptGuardSync || path == PrefixManagementPlugin+PathPromptGuardSync || path == PrefixLegacyPlugin+PathPromptGuardSync) && method == http.MethodPost:
+		h.handleSyncPromptGuard(w, r)
 	default:
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(http.StatusNotFound)
@@ -743,4 +747,32 @@ func (h *Handler) handlePreviewPromptGuard(w http.ResponseWriter, r *http.Reques
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(res)
+}
+type syncPromptGuardRequest struct {
+	SyncURL string `json:"sync_url,omitempty"`
+}
+
+type syncPromptGuardResponse struct {
+	OK      bool                     `json:"ok"`
+	Rules   []config.PromptGuardRule `json:"rules"`
+	Summary promptguard.SyncSummary  `json:"summary"`
+}
+
+func (h *Handler) handleSyncPromptGuard(w http.ResponseWriter, r *http.Request) {
+	var req syncPromptGuardRequest
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
+	rules, summary, err := h.runner.SyncPromptGuard(r.Context(), req.SyncURL)
+	if err != nil {
+		h.writeJSONError(w, http.StatusBadGateway, "failed to sync prompt guard rules: "+err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(syncPromptGuardResponse{
+		OK:      true,
+		Rules:   rules,
+		Summary: summary,
+	})
 }

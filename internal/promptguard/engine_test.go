@@ -9,15 +9,15 @@ import (
 	"antigravity-priority/internal/promptguard"
 )
 
-func TestCompile_DefaultRulesValid(t *testing.T) {
+func TestCompile_DefaultRulesEmpty(t *testing.T) {
 	cfg := config.DefaultPromptGuardConfig()
 	cfg.Enabled = true
 	eng := promptguard.Compile(cfg)
 	if !eng.Enabled() {
 		t.Fatal("expected engine enabled")
 	}
-	if got := eng.ActiveRuleCount(); got != 14 {
-		t.Fatalf("expected 14 compiled default rules, got %d", got)
+	if got := eng.ActiveRuleCount(); got != 0 {
+		t.Fatalf("expected 0 compiled default rules, got %d", got)
 	}
 	if warnings := eng.Warnings(); len(warnings) != 0 {
 		t.Fatalf("expected zero warnings on default rules, got %v", warnings)

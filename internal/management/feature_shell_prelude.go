@@ -17,5 +17,5 @@ const templateScriptPrelude = `
         const EXCLUDED_MODELS_PATH = BASE_PATH + "/excluded-models";
         const COOLDOWNS_CLEAR_PATH = BASE_PATH + "/cooldowns/clear";
         const PROMPT_GUARD_PREVIEW_PATH = BASE_PATH + "/prompt-guard/preview";
-
+        const PROMPT_GUARD_SYNC_PATH = BASE_PATH + "/prompt-guard/sync";
 `

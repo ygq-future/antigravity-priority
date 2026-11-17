@@ -19,7 +19,7 @@ var templateScriptConfig = strings.Replace(templateScriptConfigRaw, "__DEFAULT_P
 
 const templateScriptConfigRaw = `        let originalConfigState = null;
         const DEFAULT_PROMPT_GUARD_RULES = __DEFAULT_PROMPT_GUARD_RULES_JSON__;
-        const MAX_PROMPT_GUARD_RULES = 50;
+        const MAX_PROMPT_GUARD_RULES = 200;
         let promptGuardRules = clonePromptGuardRules(DEFAULT_PROMPT_GUARD_RULES);
 
         function clonePromptGuardRules(rules) {
@@ -31,7 +31,8 @@ const templateScriptConfigRaw = `        let originalConfigState = null;
                     replace: r && typeof r.replace === "string" ? r.replace : "",
                     scope: r && r.scope === "all" ? "all" : "system",
                     mode: r && r.mode === "regex" ? "regex" : "text",
-                    flags: r && typeof r.flags === "string" ? r.flags : ""
+                    flags: r && typeof r.flags === "string" ? r.flags : "",
+                    custom: Boolean(r && r.custom)
                 };
             });
         }
@@ -133,6 +134,9 @@ const templateScriptConfigRaw = `        let originalConfigState = null;
                     if (hay.indexOf(query) < 0) continue;
                 }
                 renderedCount++;
+                var badgeLabel = rule.custom ? t("cfgPgBadgeCustom") : t("cfgPgBadgeRemote");
+                var badgeCls = rule.custom ? "pg-source-badge pg-source-custom" : "pg-source-badge pg-source-remote";
+                var badgeTitle = rule.custom ? t("cfgPgBadgeCustomTitle") : t("cfgPgBadgeRemoteTitle");
                 var modeLabel = rule.mode === "regex" ? t("cfgPgModeRegex") : t("cfgPgModeText");
                 var modeCls = rule.mode === "regex" ? "pg-pill-btn active-regex" : "pg-pill-btn";
                 var rowCls = rule.on ? "pg-rule-row" : "pg-rule-row pg-rule-disabled";
@@ -142,6 +146,7 @@ const templateScriptConfigRaw = `        let originalConfigState = null;
                             '<input type="checkbox" ' + (rule.on ? "checked " : "") + 'onchange="togglePromptGuardRule(' + i + ', this.checked)">' +
                             '<span class="pg-mini-slider"></span>' +
                         "</label>" +
+                        '<span class="' + badgeCls + '" title="' + escapeHTML(badgeTitle) + '">' + escapeHTML(badgeLabel) + "</span>" +
                         '<input type="text" class="pg-rule-input pg-find-input" data-pg-field="find" value="' + escapeHTML(rule.find) + '" placeholder="' + escapeHTML(t("cfgPgFindPlaceholder")) + '" oninput="handlePromptGuardRuleInput(this)">' +
                         '<span class="pg-arrow">→</span>' +
                         '<input type="text" class="pg-rule-input pg-replace-input" data-pg-field="replace" value="' + escapeHTML(rule.replace) + '" placeholder="' + escapeHTML(t("cfgPgReplacePlaceholder")) + '" oninput="handlePromptGuardRuleInput(this)">' +
@@ -219,24 +224,40 @@ const templateScriptConfigRaw = `        let originalConfigState = null;
                 replace: "",
                 scope: "system",
                 mode: "text",
-                flags: ""
+                flags: "",
+                custom: true
             });
             renderPromptGuardRules(0);
             updateSaveButtonState();
         }
 
+        async function syncPromptGuardRemoteRules() {
+            var btn = document.getElementById("btnPgSyncRemote") || document.getElementById("btnPgRestoreDefaults");
+            if (btn) btn.disabled = true;
+            try {
+                var res = await apiFetch(PROMPT_GUARD_SYNC_PATH, {
+                    method: "POST",
+                    body: JSON.stringify({})
+                });
+                if (res && Array.isArray(res.rules)) {
+                    promptGuardRules = clonePromptGuardRules(res.rules);
+                    renderPromptGuardRules();
+                    updateSaveButtonState();
+                    var summary = res.summary || {};
+                    var msg = currentLang === "zh-CN"
+                        ? ("词库同步成功：新增 " + (summary.added || 0) + " 条，更新 " + (summary.updated || 0) + " 条，删除 " + (summary.deleted || 0) + " 条，保留自定义 " + (summary.preserved_custom || 0) + " 条")
+                        : ("Sync complete: " + (summary.added || 0) + " added, " + (summary.updated || 0) + " updated, " + (summary.deleted || 0) + " deleted, " + (summary.preserved_custom || 0) + " custom preserved");
+                    showToast(msg, "success");
+                }
+            } catch (err) {
+                showToast(err.message || t("cfgPgSyncError"), "error");
+            } finally {
+                if (btn) btn.disabled = false;
+            }
+        }
+
         async function restoreDefaultPromptGuardRules() {
-            var confirmed = await showThemedConfirm({
-                title: t("cfgPgConfirmRestoreTitle"),
-                message: t("cfgPgConfirmRestoreMsg"),
-                confirmText: currentLang === "zh-CN" ? "确认恢复" : "Restore",
-                cancelText: currentLang === "zh-CN" ? "取消" : "Cancel",
-                isDanger: false
-            });
-            if (!confirmed) return;
-            promptGuardRules = clonePromptGuardRules(DEFAULT_PROMPT_GUARD_RULES);
-            renderPromptGuardRules();
-            updateSaveButtonState();
+            await syncPromptGuardRemoteRules();
         }
 
         function buildPromptGuardBisectPrompt() {

@@ -235,11 +235,12 @@ const configMarkup = `
                     <div class="pg-toolbar">
                         <div class="pg-toolbar-left">
                             <input type="text" id="cfgPgSearch" class="pg-search-input" data-i18n-placeholder="cfgPgSearchPlaceholder" placeholder="筛选查找或替换文本..." oninput="renderPromptGuardRules()">
-                            <span id="cfgPgRuleCount" class="pg-count-pill">0 / 50</span>
+                            <span id="cfgPgRuleCount" class="pg-count-pill">0 / 200</span>
                         </div>
                         <div class="pg-toolbar-right">
                             <button type="button" class="btn-secondary" id="btnPgAddRule" onclick="addPromptGuardRule()" data-i18n="cfgPgBtnAddRule">+ 新增规则</button>
-                            <button type="button" class="btn-secondary" id="btnPgRestoreDefaults" onclick="restoreDefaultPromptGuardRules()" data-i18n="cfgPgBtnRestoreDefaults">恢复默认规则</button>
+                            <button type="button" class="btn-secondary" id="btnPgSyncRemote" onclick="syncPromptGuardRemoteRules()" data-i18n="cfgPgBtnSyncRemote">🔄 同步远程规则</button>
+                            <button type="button" class="btn-secondary" id="btnPgRestoreDefaults" style="display:none;" onclick="restoreDefaultPromptGuardRules()"></button>
                         </div>
                     </div>
 

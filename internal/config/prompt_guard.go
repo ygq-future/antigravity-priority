@@ -9,7 +9,7 @@ import (
 
 const (
 	// MaxPromptGuardRules caps the number of configured Prompt Guard rewrite rules.
-	MaxPromptGuardRules = 50
+	MaxPromptGuardRules = 200
 
 	// PromptGuardScopeSystem applies a rule only to system / developer instructions.
 	PromptGuardScopeSystem = "system"
@@ -30,136 +30,39 @@ type PromptGuardRule struct {
 	Scope   string `json:"scope"`
 	Mode    string `json:"mode"`
 	Flags   string `json:"flags,omitempty"`
+	Custom  bool   `json:"custom,omitempty"`
 }
 
 // PromptGuardConfig controls request-body keyword filtering and replacement for Antigravity.
 //
-// Rules == nil means "not customized, seed from DefaultPromptGuardRules()".
-// Rules != nil with len == 0 means "explicitly cleared by the user; keep empty".
+// Rules == nil or empty means "no rules active"; rules are synchronized from the remote phrases.json repository.
 type PromptGuardConfig struct {
 	Enabled bool              `json:"enabled"`
+	SyncURL string            `json:"sync_url,omitempty"`
 	Rules   []PromptGuardRule `json:"rules"`
 }
 
 // DefaultPromptGuardConfig returns the default Prompt Guard configuration (disabled
-// until enabled by the user, pre-populated with the built-in Antigravity rules).
+// until enabled by the user, with empty rules until synchronized from phrases.json).
 func DefaultPromptGuardConfig() PromptGuardConfig {
 	return PromptGuardConfig{
 		Enabled: false,
+		SyncURL: "",
 		Rules:   DefaultPromptGuardRules(),
 	}
 }
 
-// DefaultPromptGuardRules returns a fresh copy of the 14 built-in rules ported from
-// magpie-prompt-guard.
+// DefaultPromptGuardRules returns an empty slice as there are no built-in default rules;
+// rules are synchronized from the remote phrases.json repository or added by the user.
 func DefaultPromptGuardRules() []PromptGuardRule {
-	return []PromptGuardRule{
-		{
-			On:      true,
-			Find:    "You are a Claude agent, built on Anthropic's Claude Agent SDK.",
-			Replace: "You are a coding assistant.",
-			Scope:   PromptGuardScopeSystem,
-			Mode:    PromptGuardModeText,
-		},
-		{
-			On:      true,
-			Find:    "You are a Claude agent, built on the Claude Agent SDK.",
-			Replace: "You are a coding assistant.",
-			Scope:   PromptGuardScopeSystem,
-			Mode:    PromptGuardModeText,
-		},
-		{
-			On:      true,
-			Find:    "You are Claude Code, Anthropic's official CLI for Claude.",
-			Replace: "You are a coding assistant.",
-			Scope:   PromptGuardScopeSystem,
-			Mode:    PromptGuardModeText,
-		},
-		{
-			On:      true,
-			Find:    "You are Claude Code, Anthropic's CLI for Claude.",
-			Replace: "You are a coding assistant.",
-			Scope:   PromptGuardScopeSystem,
-			Mode:    PromptGuardModeText,
-		},
-		{
-			On:      true,
-			Find:    "You are Claude Code.",
-			Replace: "You are a coding assistant.",
-			Scope:   PromptGuardScopeSystem,
-			Mode:    PromptGuardModeText,
-		},
-		{
-			On:      true,
-			Find:    "built on Anthropic's Claude Agent SDK",
-			Replace: "built on the Claude Agent SDK by Anthropic",
-			Scope:   PromptGuardScopeSystem,
-			Mode:    PromptGuardModeText,
-		},
-		{
-			On:      true,
-			Find:    "You are Codex, a coding agent built on GPT-5",
-			Replace: "You are Codex, a coding agent built on GPT-5",
-			Scope:   PromptGuardScopeAll,
-			Mode:    PromptGuardModeText,
-		},
-		{
-			On:      true,
-			Find:    "You are Codex, an agent built on GPT-5",
-			Replace: "You are Codex, an agent built on GPT-5",
-			Scope:   PromptGuardScopeAll,
-			Mode:    PromptGuardModeText,
-		},
-		{
-			On:      true,
-			Find:    "You're a coding agent running in the Codex CLI",
-			Replace: "You're a coding agent running in the Codex CLI",
-			Scope:   PromptGuardScopeAll,
-			Mode:    PromptGuardModeText,
-		},
-		{
-			On:      true,
-			Find:    "RFC 2119 keywords: MUST, REQUIRED, SHOULD, RECOMMENDED, MAY, OPTIONAL.",
-			Replace: "RFC 2119 key words: MUST, REQUIRED, SHOULD, RECOMMENDED, MAY, OPTIONAL.",
-			Scope:   PromptGuardScopeSystem,
-			Mode:    PromptGuardModeText,
-		},
-		{
-			On:      true,
-			Find:    "You are Hermes Agent",
-			Replace: "You're Hermes Agent",
-			Scope:   PromptGuardScopeSystem,
-			Mode:    PromptGuardModeText,
-		},
-		{
-			On:      true,
-			Find:    "You are OpenCode",
-			Replace: "You're OpenCode",
-			Scope:   PromptGuardScopeSystem,
-			Mode:    PromptGuardModeText,
-		},
-		{
-			On:      true,
-			Find:    "a coding assistant running inside pi",
-			Replace: "a coding assistant running within pi",
-			Scope:   PromptGuardScopeSystem,
-			Mode:    PromptGuardModeText,
-		},
-		{
-			On:      true,
-			Find:    "Read xd://<tool> for full docs + JSON schema before first use.",
-			Replace: "Before first use, read xd://<tool> for full docs and the JSON schema.",
-			Scope:   PromptGuardScopeSystem,
-			Mode:    PromptGuardModeText,
-		},
-	}
+	return []PromptGuardRule{}
 }
 
-// UnmarshalJSON distinguishes an omitted/null rules field (falls back to built-in
-// defaults) from an explicit empty array (`"rules": []`, preserved as empty).
+// UnmarshalJSON distinguishes an omitted/null rules field from an explicit empty array (`"rules": []`).
 func (p *PromptGuardConfig) UnmarshalJSON(data []byte) error {
 	var raw struct {
 		Enabled *bool            `json:"enabled"`
+		SyncURL *string          `json:"sync_url"`
 		Rules   *json.RawMessage `json:"rules"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -168,8 +71,11 @@ func (p *PromptGuardConfig) UnmarshalJSON(data []byte) error {
 	if raw.Enabled != nil {
 		p.Enabled = *raw.Enabled
 	}
+	if raw.SyncURL != nil {
+		p.SyncURL = strings.TrimSpace(*raw.SyncURL)
+	}
 	if raw.Rules == nil || string(*raw.Rules) == "null" {
-		p.Rules = DefaultPromptGuardRules()
+		p.Rules = []PromptGuardRule{}
 		return nil
 	}
 	var rules []PromptGuardRule
@@ -188,9 +94,10 @@ func (p *PromptGuardConfig) UnmarshalJSON(data []byte) error {
 func (p PromptGuardConfig) Clone() PromptGuardConfig {
 	out := PromptGuardConfig{
 		Enabled: p.Enabled,
+		SyncURL: p.SyncURL,
 	}
 	if p.Rules == nil {
-		out.Rules = DefaultPromptGuardRules()
+		out.Rules = []PromptGuardRule{}
 		return out
 	}
 	out.Rules = make([]PromptGuardRule, len(p.Rules))
@@ -202,7 +109,7 @@ func (p PromptGuardConfig) Clone() PromptGuardConfig {
 // explicit empty slice when the user cleared all rules.
 func (p *PromptGuardConfig) Normalize() {
 	if p.Rules == nil {
-		p.Rules = DefaultPromptGuardRules()
+		p.Rules = []PromptGuardRule{}
 		return
 	}
 	for i := range p.Rules {

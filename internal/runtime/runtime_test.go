@@ -6,18 +6,20 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
-
 	"antigravity-priority/internal/apply"
 	"antigravity-priority/internal/config"
 	"antigravity-priority/internal/core"
 	"antigravity-priority/internal/host"
 	"antigravity-priority/internal/management"
+	"antigravity-priority/internal/promptguard"
 	"antigravity-priority/internal/provider/antigravity"
 	"antigravity-priority/internal/runtime"
 	"antigravity-priority/internal/state"
@@ -3306,6 +3308,15 @@ func TestRuntime_Handle_RequestInterceptAfter(t *testing.T) {
 		t.Fatal(err)
 	}
 	dyn.PromptGuard.Enabled = true
+	dyn.PromptGuard.Rules = []config.PromptGuardRule{
+		{
+			On:      true,
+			Find:    "You are Claude Code, Anthropic's official CLI for Claude.",
+			Replace: "You are a coding assistant.",
+			Scope:   config.PromptGuardScopeSystem,
+			Mode:    config.PromptGuardModeText,
+		},
+	}
 	if err := r.SetDynamicConfig(ctx, dyn); err != nil {
 		t.Fatal(err)
 	}
@@ -3346,7 +3357,7 @@ func TestRuntime_Handle_RequestInterceptAfter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !dyn2.PromptGuard.Enabled || len(dyn2.PromptGuard.Rules) != 14 {
+	if !dyn2.PromptGuard.Enabled || len(dyn2.PromptGuard.Rules) != 1 {
 		t.Fatalf("expected persisted prompt_guard restored after restart, got %+v", dyn2.PromptGuard)
 	}
 }
@@ -3358,4 +3369,108 @@ func activeCooldownUntil(store *state.Store, authIndex string, now time.Time) (t
 		}
 	}
 	return time.Time{}, false
+}
+func TestRuntime_PromptGuardSyncEndToEnd(t *testing.T) {
+	ctx := context.Background()
+	var remotePayload atomic.Value
+	remotePayload.Store(`{
+		"version": 1,
+		"phrases": [
+			{"find": "remote trigger 1", "replace": "safe 1", "mode": "text"},
+			{"find": "remote trigger 2", "replace": "safe 2", "mode": "text"}
+		]
+	}`)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(remotePayload.Load().(string)))
+	}))
+	defer ts.Close()
+
+	cachePath := filepath.Join(t.TempDir(), "state.json")
+	r := newTestRuntime(t, runtime.Options{
+		StateCachePath: cachePath,
+		HTTPClient:     ts.Client(),
+	})
+
+	// 1. Initial config has 0 rules. Add a custom user rule.
+	dyn, err := r.GetDynamicConfig(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dyn.PromptGuard.Rules) != 0 {
+		t.Fatalf("expected 0 default rules, got %d", len(dyn.PromptGuard.Rules))
+	}
+	dyn.PromptGuard.Enabled = true
+	dyn.PromptGuard.Rules = []config.PromptGuardRule{
+		{
+			On:      true,
+			Find:    "user private instruction",
+			Replace: "clean user instruction",
+			Scope:   config.PromptGuardScopeSystem,
+			Mode:    config.PromptGuardModeText,
+			Custom:  true,
+		},
+	}
+	if err := r.SetDynamicConfig(ctx, dyn); err != nil {
+		t.Fatal(err)
+	}
+
+	// 2. Sync from mock remote server.
+	rules, summary, err := r.SyncPromptGuard(ctx, ts.URL)
+	if err != nil {
+		t.Fatalf("sync prompt guard: %v", err)
+	}
+	if summary.PreservedCustom != 1 || summary.Added != 2 || summary.Deleted != 0 {
+		t.Fatalf("unexpected sync summary: %+v", summary)
+	}
+	if len(rules) != 3 {
+		t.Fatalf("expected 3 total rules (1 custom + 2 remote), got %d", len(rules))
+	}
+	if !rules[0].Custom || rules[0].Find != "user private instruction" {
+		t.Fatalf("expected custom rule at index 0 preserved, got %+v", rules[0])
+	}
+	if rules[1].Custom || rules[1].Find != "remote trigger 1" {
+		t.Fatalf("expected remote rule 1 at index 1, got %+v", rules[1])
+	}
+
+	// 3. Verify hot-reloaded engine rewrites both custom and remote phrases.
+	previewRes, err := r.PreviewPromptGuard(ctx, promptguard.PreviewRequest{
+		Input:  "user private instruction and remote trigger 1",
+		Format: "text",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if previewRes.TotalHits != 2 {
+		t.Fatalf("expected 2 hits, got %d (output: %q)", previewRes.TotalHits, previewRes.Output)
+	}
+	if !strings.Contains(previewRes.Output, "clean user instruction") || !strings.Contains(previewRes.Output, "safe 1") {
+		t.Fatalf("unexpected rewritten output: %s", previewRes.Output)
+	}
+
+	// 4. Remote removes remote trigger 1 and updates remote trigger 2 -> diff sync.
+	remotePayload.Store(`{
+		"version": 2,
+		"phrases": [
+			{"find": "remote trigger 2", "replace": "safe 2 updated", "mode": "text"}
+		]
+	}`)
+
+	rules2, summary2, err := r.SyncPromptGuard(ctx, ts.URL)
+	if err != nil {
+		t.Fatalf("second sync prompt guard: %v", err)
+	}
+	if summary2.PreservedCustom != 1 || summary2.Deleted != 1 || summary2.Updated != 1 {
+		t.Fatalf("unexpected second sync summary: %+v", summary2)
+	}
+	if len(rules2) != 2 {
+		t.Fatalf("expected 2 total rules (1 custom + 1 remote), got %d", len(rules2))
+	}
+	if !rules2[0].Custom || rules2[0].Find != "user private instruction" {
+		t.Fatalf("expected custom rule still preserved, got %+v", rules2[0])
+	}
+	if rules2[1].Find != "remote trigger 2" || rules2[1].Replace != "safe 2 updated" {
+		t.Fatalf("expected remote trigger 2 updated, got %+v", rules2[1])
+	}
 }

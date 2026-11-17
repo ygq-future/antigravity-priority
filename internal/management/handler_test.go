@@ -29,6 +29,7 @@ type mockRunner struct {
 	warmupSwitches  map[string]bool
 	clearCooldownFunc func(ctx context.Context, req management.ClearCooldownRequest) (management.ClearCooldownResult, error)
 	previewPromptGuardFunc func(ctx context.Context, req promptguard.PreviewRequest) (promptguard.PreviewResult, error)
+	syncPromptGuardFunc    func(ctx context.Context, syncURL string) ([]config.PromptGuardRule, promptguard.SyncSummary, error)
 }
 
 func (m *mockRunner) Run(ctx context.Context, req management.RunRequest) (apply.Result, error) {
@@ -138,6 +139,12 @@ func (m *mockRunner) PreviewPromptGuard(ctx context.Context, req promptguard.Pre
 		return m.previewPromptGuardFunc(ctx, req)
 	}
 	return promptguard.Preview(config.PromptGuardConfig{Enabled: true, Rules: req.Rules}, req), nil
+}
+func (m *mockRunner) SyncPromptGuard(ctx context.Context, syncURL string) ([]config.PromptGuardRule, promptguard.SyncSummary, error) {
+	if m.syncPromptGuardFunc != nil {
+		return m.syncPromptGuardFunc(ctx, syncURL)
+	}
+	return []config.PromptGuardRule{}, promptguard.SyncSummary{}, nil
 }
 
 
@@ -1077,5 +1084,38 @@ func TestHandler_PromptGuardPreviewAndPartialConfigPreservation(t *testing.T) {
 	}
 	if !runner.dynamicConfig.PromptGuard.Enabled || len(runner.dynamicConfig.PromptGuard.Rules) != 1 {
 		t.Fatalf("expected existing prompt_guard preserved on partial POST, got %+v", runner.dynamicConfig.PromptGuard)
+	}
+}
+func TestHandler_PromptGuardSync(t *testing.T) {
+	runner := &mockRunner{
+		syncPromptGuardFunc: func(ctx context.Context, syncURL string) ([]config.PromptGuardRule, promptguard.SyncSummary, error) {
+			return []config.PromptGuardRule{
+				{On: true, Find: "synced rule", Replace: "clean", Mode: "text"},
+			}, promptguard.SyncSummary{TotalAfter: 1, Added: 1}, nil
+		},
+	}
+	handler := management.NewHandler(runner)
+
+	syncReq := httptest.NewRequest(
+		http.MethodPost,
+		"/v0/management/plugins/antigravity-priority/prompt-guard/sync",
+		strings.NewReader(`{"sync_url":"https://example.com/phrases.json"}`),
+	)
+	syncRec := httptest.NewRecorder()
+	handler.ServeHTTP(syncRec, syncReq)
+	if syncRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 on POST /prompt-guard/sync, got %d body=%s", syncRec.Code, syncRec.Body.String())
+	}
+
+	var resp struct {
+		OK      bool                     `json:"ok"`
+		Rules   []config.PromptGuardRule `json:"rules"`
+		Summary promptguard.SyncSummary  `json:"summary"`
+	}
+	if err := json.Unmarshal(syncRec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.OK || len(resp.Rules) != 1 || resp.Rules[0].Find != "synced rule" || resp.Summary.Added != 1 {
+		t.Fatalf("unexpected sync response: %+v", resp)
 	}
 }

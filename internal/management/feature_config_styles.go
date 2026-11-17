@@ -244,13 +244,32 @@ const templateStyleConfig = `        /* Config Center - Two columns with horizon
         }
         .pg-rule-row {
             display: grid;
-            grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr) 54px 26px;
+            grid-template-columns: auto auto minmax(0, 1fr) auto minmax(0, 1fr) 54px 26px;
             align-items: center;
             gap: 6px;
             padding: 6px 8px;
             border-radius: 8px;
             border: 1px solid var(--border-color);
             background: var(--bg-secondary);
+        }
+        .pg-source-badge {
+            font-size: 10px;
+            padding: 1px 4px;
+            border-radius: 4px;
+            line-height: 1.2;
+            white-space: nowrap;
+            text-align: center;
+            user-select: none;
+        }
+        .pg-source-custom {
+            background: rgba(14, 165, 233, 0.15);
+            color: var(--accent-color, #0ea5e9);
+            border: 1px solid rgba(14, 165, 233, 0.3);
+        }
+        .pg-source-remote {
+            background: rgba(156, 163, 175, 0.15);
+            color: var(--text-muted, #9ca3af);
+            border: 1px solid rgba(156, 163, 175, 0.3);
         }
         .pg-rule-row.pg-rule-disabled {
             opacity: 0.62;

@@ -3,8 +3,8 @@ package runtime
 import (
 	"context"
 	"errors"
+	"net/http"
 	"time"
-
 	"antigravity-priority/internal/apply"
 	"antigravity-priority/internal/config"
 	"antigravity-priority/internal/host"
@@ -189,6 +189,8 @@ type Options struct {
 	Clock   Clock
 	Sleeper Sleeper
 	Runner  TaskRunner
+	// HTTPClient allows injecting an HTTP client for external sync tasks (e.g. Prompt Guard).
+	HTTPClient *http.Client
 	// StateCachePath overrides the startup cache path. It is primarily used
 	// to isolate runtime instances in tests; production callers may leave it
 	// empty to use the configured default path.

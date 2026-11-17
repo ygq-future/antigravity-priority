@@ -1660,11 +1660,13 @@ if (rendered.indexOf("req-status-429") < 0 || rendered.indexOf("限流避让") <
 func TestPromptGuardUIContracts(t *testing.T) {
 	for _, marker := range []string{
 		"PROMPT_GUARD_PREVIEW_PATH",
+		"PROMPT_GUARD_SYNC_PATH",
 		"cfgPromptGuardEnabled",
 		"cfgPgRulesList",
 		"customPgFormatSelect",
 		"DEFAULT_PROMPT_GUARD_RULES",
 		"addPromptGuardRule",
+		"syncPromptGuardRemoteRules",
 		"restoreDefaultPromptGuardRules",
 		"runPromptGuardPreview",
 		"btnPgCopyBisect",
@@ -1766,8 +1768,8 @@ async function apiFetch(path, opts) {
     return {};
 }
 ` + templateScriptConfig + `
-if (!Array.isArray(DEFAULT_PROMPT_GUARD_RULES) || DEFAULT_PROMPT_GUARD_RULES.length !== 14) {
-    throw new Error("expected 14 default prompt guard rules, got: " + DEFAULT_PROMPT_GUARD_RULES.length);
+if (!Array.isArray(DEFAULT_PROMPT_GUARD_RULES) || DEFAULT_PROMPT_GUARD_RULES.length !== 0) {
+    throw new Error("expected 0 default prompt guard rules, got: " + DEFAULT_PROMPT_GUARD_RULES.length);
 }
 renderDynamicConfigForm({
     auto_apply: false,
@@ -1776,12 +1778,12 @@ renderDynamicConfigForm({
     urgency_tolerance: 0.05,
     quota_sample_capacity: 6,
     rate_limit_cooldown_minutes: 5,
-    prompt_guard: { enabled: true, rules: DEFAULT_PROMPT_GUARD_RULES }
+    prompt_guard: { enabled: true, rules: [] }
 });
 if (!els.btnSaveConfig.disabled) {
     throw new Error("save button should start disabled after renderDynamicConfigForm");
 }
-if (els.cfgPgRuleCount.textContent !== "14 / 50") {
+if (els.cfgPgRuleCount.textContent !== "0 / 200") {
     throw new Error("unexpected rule count badge: " + els.cfgPgRuleCount.textContent);
 }
 addPromptGuardRule();
@@ -1808,8 +1810,8 @@ if (promptGuardRules[0].scope !== "all" || promptGuardRules[0].mode !== "regex")
         throw new Error("expected bisect prompt copied to clipboard, got: " + copiedText);
     }
     deletePromptGuardRule(0);
-    if (els.cfgPgRuleCount.textContent !== "14 / 50") {
-        throw new Error("expected 14 rules after deleting inserted rule, got: " + els.cfgPgRuleCount.textContent);
+    if (els.cfgPgRuleCount.textContent !== "0 / 200") {
+        throw new Error("expected 0 rules after deleting inserted rule, got: " + els.cfgPgRuleCount.textContent);
     }
 })().catch(function(err) {
     console.error(err);

@@ -542,13 +542,13 @@ func TestExcludedModelsConfig(t *testing.T) {
 }
 
 func TestPromptGuardConfig(t *testing.T) {
-	// 1. Omitted/null rules falls back to 14 built-in rules; explicit empty [] stays empty.
+	// 1. Omitted/null rules defaults to empty rules slice (no built-in defaults).
 	var omitted config.DynamicConfig
 	if err := json.Unmarshal([]byte(`{"auto_apply":false,"interval":"15m"}`), &omitted); err != nil {
 		t.Fatalf("unmarshal omitted prompt_guard: %v", err)
 	}
-	if omitted.PromptGuard.Enabled || len(omitted.PromptGuard.Rules) != 14 {
-		t.Fatalf("expected default 14 rules disabled, got enabled=%v len=%d", omitted.PromptGuard.Enabled, len(omitted.PromptGuard.Rules))
+	if omitted.PromptGuard.Enabled || len(omitted.PromptGuard.Rules) != 0 {
+		t.Fatalf("expected default 0 rules disabled, got enabled=%v len=%d", omitted.PromptGuard.Enabled, len(omitted.PromptGuard.Rules))
 	}
 
 	var cleared config.DynamicConfig
@@ -563,7 +563,7 @@ func TestPromptGuardConfig(t *testing.T) {
 	tooMany := config.Default().Dynamic()
 	tooMany.PromptGuard.Rules = make([]config.PromptGuardRule, config.MaxPromptGuardRules+1)
 	if err := tooMany.Validate(); err == nil {
-		t.Fatal("expected Validate to reject >50 prompt_guard rules")
+		t.Fatalf("expected Validate to reject >%d prompt_guard rules", config.MaxPromptGuardRules)
 	}
 
 	badRegex := config.Default().Dynamic()

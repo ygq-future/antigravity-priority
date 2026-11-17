@@ -75,6 +75,7 @@ var configTranslationKeys = []string{
 	"cfgPgDryRunPlaceholder", "cfgPgBtnRunPreview", "cfgPgPreviewNoHits", "cfgPgPreviewHitsPrefix",
 	"cfgPgConfirmRestoreTitle", "cfgPgConfirmRestoreMsg", "valErrPgMaxRules",
 	"cfgPgBtnCopyBisect", "cfgPgCopyBisectSuccess", "cfgPgCopyBisectError",
+	"cfgPgBtnSyncRemote", "cfgPgSyncError", "cfgPgBadgeCustom", "cfgPgBadgeCustomTitle", "cfgPgBadgeRemote", "cfgPgBadgeRemoteTitle",
 }
 
 var helpTranslationKeys = []string{

@@ -57,7 +57,7 @@ const featureConfigTranslations = `        const CONFIG_ZH = {
                 cfgPgModeRegex: "正则",
                 cfgPgFindPlaceholder: "查找短语或正则表达式...",
                 cfgPgReplacePlaceholder: "替换为（纯文本）...",
-                cfgPgEmptyRules: "当前无规则，可点击「+ 新增规则」或「恢复默认规则」",
+                cfgPgEmptyRules: "当前无规则，可点击「+ 新增规则」或「🔄 同步远程规则」",
                 cfgPgFilteredEmpty: "没有符合当前筛选条件的规则",
                 cfgPgDryRunTitle: "试运行预览 (Dry-Run)",
                 cfgPgFormatAuto: "自动识别 (JSON / 纯文本)",
@@ -73,10 +73,16 @@ const featureConfigTranslations = `        const CONFIG_ZH = {
                 cfgPgPreviewHitsPrefix: "命中总计：",
                 cfgPgConfirmRestoreTitle: "恢复默认内置规则",
                 cfgPgConfirmRestoreMsg: "确定用内置的 14 条默认规则替换当前规则列表吗？（需点击「保存并立即生效」写入配置）",
-                valErrPgMaxRules: "Prompt Guard 规则最多支持 50 条",
+                valErrPgMaxRules: "Prompt Guard 规则最多支持 200 条",
                 cfgPgBtnCopyBisect: "📋 复制二分排查提示词",
                 cfgPgCopyBisectSuccess: "已复制二分法排查提示词，可粘贴发送给本地 AI 执行定位",
                 cfgPgCopyBisectError: "复制失败，请检查浏览器剪贴板权限",
+                cfgPgBtnSyncRemote: "🔄 同步远程规则",
+                cfgPgSyncError: "词库同步失败，请检查网络连接或自定义同步地址",
+                cfgPgBadgeCustom: "自定义",
+                cfgPgBadgeCustomTitle: "用户自定义添加的规则，同步时不受影响且不会被删除",
+                cfgPgBadgeRemote: "远程同步",
+                cfgPgBadgeRemoteTitle: "来自 phrases.json 远程同步的规则",
             }
         };
         const CONFIG_EN = {
@@ -136,7 +142,7 @@ const featureConfigTranslations = `        const CONFIG_ZH = {
                 cfgPgModeRegex: "Regex",
                 cfgPgFindPlaceholder: "Find phrase or regex...",
                 cfgPgReplacePlaceholder: "Replace with (literal text)...",
-                cfgPgEmptyRules: "No rules configured. Click '+ Add Rule' or 'Restore Built-in Rules'",
+                cfgPgEmptyRules: "No rules configured. Click '+ Add Rule' or '🔄 Sync Remote Rules'",
                 cfgPgFilteredEmpty: "No rules match the current filter",
                 cfgPgDryRunTitle: "Dry-Run Preview",
                 cfgPgFormatAuto: "Auto-Detect (JSON / Plain Text)",
@@ -155,7 +161,13 @@ const featureConfigTranslations = `        const CONFIG_ZH = {
                 cfgPgBtnCopyBisect: "📋 Copy Bisect Prompt",
                 cfgPgCopyBisectSuccess: "Bisect prompt copied; paste it to your local AI agent to locate the trigger phrase",
                 cfgPgCopyBisectError: "Copy failed; please check clipboard permissions",
-                valErrPgMaxRules: "Prompt Guard supports at most 50 rules",
+                valErrPgMaxRules: "Prompt Guard supports at most 200 rules",
+                cfgPgBtnSyncRemote: "🔄 Sync Remote Rules",
+                cfgPgSyncError: "Failed to sync phrases. Check network connection or custom sync URL",
+                cfgPgBadgeCustom: "Custom",
+                cfgPgBadgeCustomTitle: "User custom rule, preserved untouched during sync",
+                cfgPgBadgeRemote: "Synced",
+                cfgPgBadgeRemoteTitle: "Rule synchronized from remote phrases.json",
             }
         };
 `

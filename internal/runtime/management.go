@@ -78,6 +78,7 @@ func (r *Runtime) registerManagement() []byte {
 			{Method: http.MethodPost, Path: management.PrefixLegacyPlugin + management.PathExcludedModels},
 			{Method: http.MethodPost, Path: management.PrefixLegacyPlugin + management.PathCooldownsClear},
 			{Method: http.MethodPost, Path: management.PrefixLegacyPlugin + management.PathPromptGuardPreview},
+			{Method: http.MethodPost, Path: management.PrefixLegacyPlugin + management.PathPromptGuardSync},
 		},
 		Resources: []managementResource{
 			{Path: management.PathStatus, Menu: "Antigravity Priority", Description: "Shows Antigravity priority status and audit summary."},
@@ -404,6 +405,9 @@ func (r managementRunner) ClearCooldown(ctx context.Context, req management.Clea
 }
 func (r managementRunner) PreviewPromptGuard(ctx context.Context, req promptguard.PreviewRequest) (promptguard.PreviewResult, error) {
 	return r.runtime.PreviewPromptGuard(ctx, req)
+}
+func (r managementRunner) SyncPromptGuard(ctx context.Context, syncURL string) ([]config.PromptGuardRule, promptguard.SyncSummary, error) {
+	return r.runtime.SyncPromptGuard(ctx, syncURL)
 }
 
 

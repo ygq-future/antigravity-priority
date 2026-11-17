@@ -58,6 +58,7 @@ type Runtime struct {
 	promptGuardEngine        atomic.Pointer[promptguard.Engine]
 	promptGuardRewrittenReqs atomic.Int64
 	promptGuardRewrittenHits atomic.Int64
+	httpClient               *http.Client
 }
 
 // New creates an initialized Runtime instance.
@@ -78,6 +79,7 @@ func New(options Options) *Runtime {
 		hostCallbacks:   options.Host,
 		clock:           clock,
 		sleeper:         sleeper,
+		httpClient:      options.HTTPClient,
 		rateLimiter:     newRateLimitTracker(),
 		rateLimitWake:   make(chan struct{}, 1),
 		rateLimitDone:   make(chan struct{}),
@@ -106,6 +108,7 @@ func New(options Options) *Runtime {
 	} else {
 		go rt.runRateLimitWorker()
 		go rt.runWarmupResetWatcher()
+		go rt.runPromptGuardInitialSync()
 	}
 
 	return rt
