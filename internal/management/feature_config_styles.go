@@ -183,14 +183,34 @@ const templateStyleConfig = `        /* Config Center - Two columns with horizon
         }
         .pg-card-header {
             display: flex;
-            align-items: center;
+            align-items: flex-start;
             justify-content: space-between;
             gap: 12px;
             margin-bottom: 6px;
             flex-wrap: nowrap;
         }
+        .pg-card-heading {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            min-width: 0;
+        }
         .pg-card-header .config-card-title {
             margin: 0;
+        }
+        .pg-card-subtitle {
+            margin: 0;
+            font-size: 11.5px;
+            line-height: 1.4;
+            color: var(--text-muted);
+        }
+        .pg-remote-link {
+            color: var(--accent-blue-text);
+            text-decoration: none;
+            font-weight: 500;
+        }
+        .pg-remote-link:hover {
+            text-decoration: underline;
         }
         .pg-copy-bisect-btn {
             height: 28px;

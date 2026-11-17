@@ -210,10 +210,16 @@ const configMarkup = `
                 <!-- Card 4: Prompt Guard (Antigravity Request Filtering) -->
                 <div class="config-card">
                     <div class="pg-card-header">
-                        <h3 class="config-card-title">
-                            <span>🛡️</span>
-                            <span data-i18n="cfgCardPromptGuardTitle">Prompt Guard 提示词防护</span>
-                        </h3>
+                        <div class="pg-card-heading">
+                            <h3 class="config-card-title">
+                                <span>🛡️</span>
+                                <span data-i18n="cfgCardPromptGuardTitle">提示词防护</span>
+                            </h3>
+                            <p class="pg-card-subtitle">
+                                <span data-i18n="cfgPgRemoteSourcePrefix">远程规则来源于</span>
+                                <a href="//github.com/ygq-future/magpie-prompt-guard" target="_blank" rel="noopener noreferrer" class="pg-remote-link">ygq-future/magpie-prompt-guard</a><span data-i18n="cfgPgRemoteSourceSuffix">，欢迎您的贡献</span>
+                            </p>
+                        </div>
                         <button type="button" class="btn-secondary pg-copy-bisect-btn" id="btnPgCopyBisect" onclick="copyPromptGuardBisectPrompt()" data-i18n="cfgPgBtnCopyBisect">📋 复制二分排查提示词</button>
                     </div>
                     <div class="form-row full-width">

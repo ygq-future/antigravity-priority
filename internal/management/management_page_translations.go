@@ -65,7 +65,7 @@ var configTranslationKeys = []string{
 	"cfgWarmupClaude", "cfgWarmupClaudeHint", "cfgWarmupClaudeHintTitle", "cfgWarmupClaudeModel", "cfgWarmupClaudeModelHint",
 
 	"valErrWarmupGeminiModel", "valErrWarmupClaudeModel",
-	"cfgCardPromptGuardTitle", "cfgPgEnabled", "cfgPgEnabledHint",
+	"cfgCardPromptGuardTitle", "cfgPgRemoteSourcePrefix", "cfgPgRemoteSourceSuffix", "cfgPgEnabled", "cfgPgEnabledHint",
 	"cfgPgSearchPlaceholder", "cfgPgBtnAddRule", "cfgPgBtnRestoreDefaults",
 	"cfgPgScopeSystem", "cfgPgScopeAll", "cfgPgModeText", "cfgPgModeRegex",
 	"cfgPgFindPlaceholder", "cfgPgReplacePlaceholder",
