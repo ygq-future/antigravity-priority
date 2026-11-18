@@ -182,7 +182,7 @@ const templateStyleControls = `        /* KPI Cards Grid */
             display: inline-flex;
         }
 
-        input[type="password"], input[type="text"], input[type="number"] {
+        input[type="password"], input[type="text"], input[type="search"], input[type="number"] {
             min-height: 34px;
             height: 34px;
             border: 1px solid var(--border-color);

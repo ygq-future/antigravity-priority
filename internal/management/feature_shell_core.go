@@ -72,7 +72,8 @@ const templateScriptShellCore = `        const LANG_STORAGE_KEY = "antigravity_p
             if (modal) modal.hidden = true;
         }
 
-        function saveKeyAndRefresh() {
+        function saveKeyAndRefresh(event) {
+            event.preventDefault();
             const input = document.getElementById("manualKeyInput");
             if (input) {
                 setSavedKey(input.value);

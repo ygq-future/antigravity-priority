@@ -147,9 +147,9 @@ const templateScriptConfigRaw = `        let originalConfigState = null;
                             '<span class="pg-mini-slider"></span>' +
                         "</label>" +
                         '<span class="' + badgeCls + '" title="' + escapeHTML(badgeTitle) + '">' + escapeHTML(badgeLabel) + "</span>" +
-                        '<input type="text" class="pg-rule-input pg-find-input" data-pg-field="find" value="' + escapeHTML(rule.find) + '" placeholder="' + escapeHTML(t("cfgPgFindPlaceholder")) + '" oninput="handlePromptGuardRuleInput(this)">' +
+                        '<input type="text" class="pg-rule-input pg-find-input" data-pg-field="find" autocomplete="off" value="' + escapeHTML(rule.find) + '" placeholder="' + escapeHTML(t("cfgPgFindPlaceholder")) + '" oninput="handlePromptGuardRuleInput(this)">' +
                         '<span class="pg-arrow">→</span>' +
-                        '<input type="text" class="pg-rule-input pg-replace-input" data-pg-field="replace" value="' + escapeHTML(rule.replace) + '" placeholder="' + escapeHTML(t("cfgPgReplacePlaceholder")) + '" oninput="handlePromptGuardRuleInput(this)">' +
+                        '<input type="text" class="pg-rule-input pg-replace-input" data-pg-field="replace" autocomplete="off" value="' + escapeHTML(rule.replace) + '" placeholder="' + escapeHTML(t("cfgPgReplacePlaceholder")) + '" oninput="handlePromptGuardRuleInput(this)">' +
                         '<button type="button" class="' + modeCls + '" onclick="cyclePromptGuardRuleMode(' + i + ')">' + escapeHTML(modeLabel) + "</button>" +
                         '<button type="button" class="pg-delete-btn" onclick="deletePromptGuardRule(' + i + ')" title="Delete">✕</button>' +
                     "</div>"
