@@ -72,6 +72,7 @@ type ProbeResult struct {
 	LongWindowRemaining  *int64
 	ArgonWindowResetAt   *time.Time
 	ArgonWindowRemaining *int64
+	ArgonWeeklyStatus    core.ArgonWeeklyStatus
 	Status               Status
 	PlanType             core.PlanType
 	Error                string

@@ -15,6 +15,15 @@ const (
 // ModelGroup indicates the upstream independent quota measurement unit in Antigravity.
 type ModelGroup string
 
+// ArgonWeeklyStatus describes only a measured, independent weekly bucket.
+// The zero value means unconfirmed, including caches predating this field.
+type ArgonWeeklyStatus string
+
+const (
+	ArgonWeeklyPartial ArgonWeeklyStatus = "partial"
+	ArgonWeeklyFull    ArgonWeeklyStatus = "full"
+)
+
 const (
 	// ModelGroupGemini represents Gemini models quota group.
 	ModelGroupGemini ModelGroup = "gemini"

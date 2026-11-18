@@ -1,6 +1,11 @@
 package management_test
 
 import (
+	"antigravity-priority/internal/apply"
+	"antigravity-priority/internal/config"
+	"antigravity-priority/internal/management"
+	"antigravity-priority/internal/promptguard"
+	"antigravity-priority/internal/state"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,25 +14,20 @@ import (
 	"strings"
 	"testing"
 	"time"
-	"antigravity-priority/internal/apply"
-	"antigravity-priority/internal/config"
-	"antigravity-priority/internal/management"
-	"antigravity-priority/internal/promptguard"
-	"antigravity-priority/internal/state"
 )
 
 type mockRunner struct {
-	runFunc         func(ctx context.Context, req management.RunRequest) (apply.Result, error)
-	resetFunc       func(ctx context.Context) (map[string]any, error)
-	snapshotFunc    func(ctx context.Context) (apply.SnapshotSet, error)
-	diagnosticsFunc func(ctx context.Context) (map[string]any, error)
-	scheduleConfig  state.ScheduleConfig
-	dynamicConfig   state.DynamicConfig
-	probeOutcomes   []management.ProbeOutcome
-	requestHistory  []state.RequestHistoryEntry
-	customTiers     map[string]int
-	warmupSwitches  map[string]bool
-	clearCooldownFunc func(ctx context.Context, req management.ClearCooldownRequest) (management.ClearCooldownResult, error)
+	runFunc                func(ctx context.Context, req management.RunRequest) (apply.Result, error)
+	resetFunc              func(ctx context.Context) (map[string]any, error)
+	snapshotFunc           func(ctx context.Context) (apply.SnapshotSet, error)
+	diagnosticsFunc        func(ctx context.Context) (map[string]any, error)
+	scheduleConfig         state.ScheduleConfig
+	dynamicConfig          state.DynamicConfig
+	probeOutcomes          []management.ProbeOutcome
+	requestHistory         []state.RequestHistoryEntry
+	customTiers            map[string]int
+	warmupSwitches         map[string]bool
+	clearCooldownFunc      func(ctx context.Context, req management.ClearCooldownRequest) (management.ClearCooldownResult, error)
 	previewPromptGuardFunc func(ctx context.Context, req promptguard.PreviewRequest) (promptguard.PreviewResult, error)
 	syncPromptGuardFunc    func(ctx context.Context, syncURL string) ([]config.PromptGuardRule, promptguard.SyncSummary, error)
 }
@@ -146,7 +146,6 @@ func (m *mockRunner) SyncPromptGuard(ctx context.Context, syncURL string) ([]con
 	}
 	return []config.PromptGuardRule{}, promptguard.SyncSummary{}, nil
 }
-
 
 func (m *mockRunner) GetSamples(ctx context.Context, authIndex, modelGroup string) ([]state.QuotaSample, error) {
 	return []state.QuotaSample{
@@ -623,7 +622,7 @@ func TestHandler_DynamicConfig_WarmupRoundTrip(t *testing.T) {
 	runner := &mockRunner{}
 	handler := management.NewHandler(runner)
 
-	body := `{"auto_apply":true,"interval":"15m","max_concurrency":6,"urgency_tolerance":0.05,"rate_limit_cooldown_minutes":5,"quota_sample_capacity":6,"schedule":{"paused":false},"warmup":{"gemini_enabled":true,"gemini_model":"gemini-2.0-flash","claude_enabled":true,"claude_model":"claude-3-7-sonnet"}}`
+	body := `{"auto_apply":true,"interval":"15m","max_concurrency":6,"urgency_tolerance":0.05,"rate_limit_cooldown_minutes":5,"quota_sample_capacity":6,"schedule":{"paused":false},"warmup":{"gemini_enabled":true,"gemini_model":"gemini-2.0-flash","claude_enabled":true,"claude_model":"claude-3-7-sonnet","argon_enabled":true}}`
 	req := httptest.NewRequest(http.MethodPost, "/runtime-config", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 
@@ -643,7 +642,9 @@ func TestHandler_DynamicConfig_WarmupRoundTrip(t *testing.T) {
 	if !cfg.Warmup.ClaudeEnabled || cfg.Warmup.ClaudeModel != "claude-3-7-sonnet" {
 		t.Fatalf("expected claude enabled with claude-3-7-sonnet, got: %+v", cfg.Warmup)
 	}
-
+	if !cfg.Warmup.ArgonEnabled {
+		t.Fatalf("expected Argon weekly warm-up enabled, got: %+v", cfg.Warmup)
+	}
 }
 func TestHandler_SetDynamicConfig_InvalidJSON(t *testing.T) {
 	handler := management.NewHandler(&mockRunner{})

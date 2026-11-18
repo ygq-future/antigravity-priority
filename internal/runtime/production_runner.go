@@ -102,6 +102,7 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 	}
 	if !request.Warmup.Suppress && (request.Config.Warmup.GeminiEnabled ||
 		request.Config.Warmup.ClaudeEnabled ||
+		request.Config.Warmup.ArgonEnabled ||
 		request.Config.Warmup.HasEnabledOverride()) {
 		disabledAuth := make(map[string]struct{})
 		for _, c := range allCredentials {
@@ -109,11 +110,7 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 				disabledAuth[c.AuthIndex] = struct{}{}
 			}
 		}
-		if r.triggerWarmupForEligibleCredentials(ctx, client, request.Config.Warmup, request.Warmup.Group, evidence.ByGroup, allAuthMaterials, disabledAuth, store, now) > 0 {
-			if err := store.SaveStateAtomic(ctx); err != nil {
-				return fmt.Errorf("persist warm-up state: %w", err)
-			}
-		}
+		r.enqueueEligibleWarmups(client, request.Config.Warmup, request.Warmup.Group, evidence.ByGroup, allAuthMaterials, disabledAuth, store, now)
 	}
 
 	// Reconcile against the authoritative Host inventory after the potentially

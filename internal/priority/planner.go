@@ -41,6 +41,7 @@ type QuotaEvidence struct {
 	LongWindowRemaining  *int64
 	ArgonWindowResetAt   *time.Time
 	ArgonWindowRemaining *int64
+	ArgonWeeklyStatus    core.ArgonWeeklyStatus
 	PlanType             core.PlanType
 	CycleBurnRate        float64
 }

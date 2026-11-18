@@ -319,8 +319,9 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
                 const customTier = Number(item.custom_tier) || 0;
                 const warmupOverridden = Boolean(item.warmup_overridden);
                 const warmupActive = Boolean(item.warmup_active);
-                const isFreePlan = String(item.plan_type || "").trim().toLowerCase() === "free";
-                const warmupIcon = isFreePlan ? "" :
+                const planType = String(item.plan_type || "").trim().toLowerCase();
+                const showShortWarmup = planType !== "free" && (pool !== "argon" || planType !== "pro");
+                const warmupIcon = !showShortWarmup ? "" :
                     "<button type=\"button\" class=\"cred-warmup-icon " + (warmupActive ? "is-on" : "is-off") + "\" " +
                     "aria-pressed=\"" + (warmupActive ? "true" : "false") + "\" " +
                     "title=\"" + escapeHTML(t(warmupOverridden ? "warmupIconOverrideTitle" : "warmupIconFollowTitle")) + "\" " +

@@ -408,6 +408,24 @@ func TestDynamicConfigZeroToleranceAndLegacyPriorityRulesIgnored(t *testing.T) {
 	}
 }
 
+func TestArgonWarmupModelCompatibility(t *testing.T) {
+	base := config.Default()
+	dyn := base.Dynamic()
+	if dyn.Warmup.ArgonModel != config.DefaultArgonWarmupModel {
+		t.Fatalf("unexpected default model: %q", dyn.Warmup.ArgonModel)
+	}
+	dyn.Warmup.ArgonEnabled = true
+	dyn.Warmup.ArgonModel = "" // Older configurations omit argon_model.
+	got, err := dyn.ApplyTo(base)
+	if err != nil || got.Warmup.ArgonModel != config.DefaultArgonWarmupModel {
+		t.Fatalf("legacy model = %q, err = %v", got.Warmup.ArgonModel, err)
+	}
+	dyn.Warmup.ArgonModel = "unsupported-model"
+	if err := dyn.Validate(); err == nil {
+		t.Fatal("accepted an unsupported Argon model")
+	}
+}
+
 func TestWarmupConfig(t *testing.T) {
 	defaults := config.DefaultWarmupConfig()
 	if defaults.GeminiEnabled || defaults.ClaudeEnabled {
