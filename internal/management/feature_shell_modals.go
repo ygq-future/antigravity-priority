@@ -4,7 +4,7 @@ package management
 const shellModalMarkup = `
     <!-- Management Key Modal -->
     <div id="keyModal" class="modal-backdrop" hidden>
-        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="keyModalTitle" style="max-width: 460px;">
+        <form id="managementKeyForm" class="modal" role="dialog" aria-modal="true" aria-labelledby="keyModalTitle" autocomplete="off" onsubmit="saveKeyAndRefresh(event)" style="max-width: 460px;">
             <div style="display:flex; justify-content:space-between; align-items:center;">
                 <h2 id="keyModalTitle" style="margin:0; font-size:17px;" data-i18n="keyModalTitle">CPA 管理密钥认证</h2>
                 <button type="button" class="btn-secondary" onclick="closeKeyModal()" style="min-height:28px; padding:3px 8px;">✕</button>
@@ -15,9 +15,9 @@ const shellModalMarkup = `
             </div>
             <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:6px;">
                 <button type="button" class="btn-secondary" onclick="closeKeyModal()" data-i18n="btnClose">取消</button>
-                <button type="button" class="btn-primary" onclick="saveKeyAndRefresh()" data-i18n="btnSaveKey">保存并验证</button>
+                <button type="submit" class="btn-primary" data-i18n="btnSaveKey">保存并验证</button>
             </div>
-        </div>
+        </form>
     </div>
 
     <!-- Diff & Run Result Modal -->

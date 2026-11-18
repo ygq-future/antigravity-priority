@@ -240,7 +240,7 @@ const configMarkup = `
 
                     <div class="pg-toolbar">
                         <div class="pg-toolbar-left">
-                            <input type="text" id="cfgPgSearch" class="pg-search-input" data-i18n-placeholder="cfgPgSearchPlaceholder" placeholder="筛选查找或替换文本..." oninput="renderPromptGuardRules()">
+                            <input type="search" id="cfgPgSearch" class="pg-search-input" autocomplete="off" data-i18n-placeholder="cfgPgSearchPlaceholder" placeholder="筛选查找或替换文本..." oninput="renderPromptGuardRules()">
                             <span id="cfgPgRuleCount" class="pg-count-pill">0 / 200</span>
                         </div>
                         <div class="pg-toolbar-right">

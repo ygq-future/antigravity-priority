@@ -641,8 +641,12 @@ global.fetch = async function(path) {
         };
     };
     elements.manualKeyInput.value = "secret_key";
-    saveKeyAndRefresh();
+    let defaultPrevented = false;
+    saveKeyAndRefresh({ preventDefault() { defaultPrevented = true; } });
     await new Promise(function(resolve) { setTimeout(resolve, 50); });
+    if (!defaultPrevented) {
+        throw new Error("expected key form to prevent native submission");
+    }
     if (isAuthBlocked) {
         throw new Error("expected isAuthBlocked to be false after saveKeyAndRefresh with valid key");
     }
@@ -1663,6 +1667,7 @@ func TestPromptGuardUIContracts(t *testing.T) {
 		"PROMPT_GUARD_SYNC_PATH",
 		"cfgPromptGuardEnabled",
 		"cfgPgRulesList",
+		`<input type="search" id="cfgPgSearch" class="pg-search-input" autocomplete="off"`,
 		"customPgFormatSelect",
 		"DEFAULT_PROMPT_GUARD_RULES",
 		"addPromptGuardRule",
@@ -1796,6 +1801,22 @@ cyclePromptGuardRuleMode(0);
 if (promptGuardRules[0].scope !== "all" || promptGuardRules[0].mode !== "regex") {
     throw new Error("expected scope=all and mode=regex after cycling");
 }
+for (const field of ["find", "replace"]) {
+    if (!els.cfgPgRulesList.innerHTML.includes('data-pg-field="' + field + '" autocomplete="off"')) {
+        throw new Error("expected autocomplete disabled for rule field: " + field);
+    }
+}
+els.cfgPgSearch.value = "no matching rule";
+renderPromptGuardRules();
+if (!els.cfgPgRulesList.innerHTML.includes("无匹配")) {
+    throw new Error("expected unmatched search to hide the rule");
+}
+els.cfgPgSearch.value = "safe phrase";
+renderPromptGuardRules();
+if (!els.cfgPgRulesList.innerHTML.includes("Custom Phrase")) {
+    throw new Error("expected search to match the replacement text");
+}
+els.cfgPgSearch.value = "";
 ;(async function() {
     await runPromptGuardPreview();
     if (previewCalls !== 1 || els.cfgPgPreviewResult.hidden) {
