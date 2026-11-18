@@ -36,7 +36,8 @@ var historyTranslationKeys = []string{
 
 var diagnosticsTranslationKeys = []string{
 	"diagnosticsTitle", "btnCopyDiagnostics",
-	"diagKpiScheduler", "diagKpiCooldown", "diagKpiLastApply",
+	"diagKpiScheduler", "diagKpiCooldown", "diagKpiLastApply", "diagKpiPromptGuard",
+	"diagPgActive", "diagPgNoRules", "diagPgWarnings", "diagPgReqsUnit", "diagPgHitsUnit", "diagPgRulesLabel", "diagPgWarningsUnit",
 	"diagSectionPools", "diagSectionPlan", "diagSectionCooldown", "diagSectionTimeline", "diagSectionStorage",
 	"diagPoolLabel", "diagColActive", "diagColBoost", "diagColDepleted", "diagColCooldown",
 	"diagColMin5h", "diagColMin7d", "diagColNearestReset", "diagColAvgBurn",
@@ -75,6 +76,7 @@ var configTranslationKeys = []string{
 	"cfgPgFormatClaude", "cfgPgFormatOpenAI", "cfgPgFormatResponses", "cfgPgFormatGemini",
 	"cfgPgDryRunPlaceholder", "cfgPgBtnRunPreview", "cfgPgPreviewNoHits", "cfgPgPreviewHitsPrefix",
 	"valErrPgMaxRules",
+	"cfgPgBtnCopyOutput", "cfgPgCopyOutputSuccess", "cfgPgMatchEmpty",
 	"cfgPgBtnCopyBisect", "cfgPgCopyBisectSuccess", "cfgPgCopyBisectError",
 	"cfgPgBtnSyncRemote", "cfgPgSyncError", "cfgPgBadgeCustom", "cfgPgBadgeCustomTitle", "cfgPgBadgeRemote", "cfgPgBadgeRemoteTitle",
 }

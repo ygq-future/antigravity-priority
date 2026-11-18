@@ -50,6 +50,7 @@ const templateScriptDiagnostics = `        let latestDiagnostics = null;
             renderSchedulerKpi();
             renderIsolationKpi();
             renderLastRunKpi();
+            renderPromptGuardKpi();
             renderPoolMatrix();
             renderPlanTable();
             renderHealthSection();
@@ -287,6 +288,43 @@ const templateScriptDiagnostics = `        let latestDiagnostics = null;
             } else {
                 badge.className = "badge badge-subtle";
                 badge.textContent = t("diagNoChanges");
+            }
+        }
+
+        function renderPromptGuardKpi() {
+            var pg = latestDiagnostics.prompt_guard || {};
+            var badge = document.getElementById("diagPgBadge");
+            var stats = document.getElementById("diagPgStats");
+            var sub = document.getElementById("diagPgSub");
+            if (!badge || !stats || !sub) return;
+
+            var enabled = Boolean(pg.enabled);
+            var activeRules = Number(pg.active_rules) || 0;
+            var configuredRules = Number(pg.configured_rules) || 0;
+            var rewrittenReqs = Number(pg.rewritten_requests) || 0;
+            var rewrittenHits = Number(pg.rewritten_hits) || 0;
+            var warnings = Array.isArray(pg.warnings) ? pg.warnings : [];
+
+            stats.textContent = rewrittenReqs + " " + t("diagPgReqsUnit") + " / " + rewrittenHits + " " + t("diagPgHitsUnit");
+
+            var desc = t("diagPgRulesLabel") + ": " + activeRules + " / " + configuredRules;
+            if (warnings.length > 0) {
+                desc += " · " + warnings.length + " " + t("diagPgWarningsUnit");
+            }
+            sub.textContent = desc;
+
+            if (!enabled) {
+                badge.className = "badge badge-subtle";
+                badge.textContent = t("diagStatusDisabled");
+            } else if (warnings.length > 0) {
+                badge.className = "badge badge-warning";
+                badge.textContent = t("diagPgWarnings");
+            } else if (activeRules === 0) {
+                badge.className = "badge badge-subtle";
+                badge.textContent = t("diagPgNoRules");
+            } else {
+                badge.className = "badge badge-success";
+                badge.textContent = t("diagPgActive");
             }
         }
 

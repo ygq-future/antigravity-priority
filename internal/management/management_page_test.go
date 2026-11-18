@@ -1711,6 +1711,7 @@ const els = {
     customPgFormatMenu: { querySelectorAll: function() { return []; } },
     cfgPgPreviewInput: { value: "You are Claude Code." },
     cfgPgPreviewResult: { innerHTML: "", hidden: true },
+    cfgPgPreviewOutput: { value: "You are a coding assistant." },
     btnSaveConfig: { disabled: true },
 };
 const document = {
@@ -1825,6 +1826,16 @@ els.cfgPgSearch.value = "";
     if (els.cfgPgPreviewResult.innerHTML.indexOf("You are a coding assistant.") < 0) {
         throw new Error("expected rewritten preview output in DOM, got: " + els.cfgPgPreviewResult.innerHTML);
     }
+    if (!els.cfgPgPreviewResult.innerHTML.includes('class="pg-match-card"') || !els.cfgPgPreviewResult.innerHTML.includes('class="pg-match-find"')) {
+        throw new Error("expected card-style diff match in DOM, got: " + els.cfgPgPreviewResult.innerHTML);
+    }
+    if (!els.cfgPgPreviewResult.innerHTML.includes('<textarea id="cfgPgPreviewOutput" class="pg-preview-output" readonly')) {
+        throw new Error("expected readonly textarea output in DOM, got: " + els.cfgPgPreviewResult.innerHTML);
+    }
+    copyPromptGuardPreviewOutput();
+    if (copiedText !== "You are a coding assistant.") {
+        throw new Error("expected preview output copied to clipboard, got: " + copiedText);
+    }
     copyPromptGuardBisectPrompt();
     if (!copiedText || copiedText.indexOf("429") < 0 || copiedText.indexOf("二分法") < 0) {
         throw new Error("expected bisect prompt copied to clipboard, got: " + copiedText);
@@ -1839,4 +1850,63 @@ els.cfgPgSearch.value = "";
 });
 `
 	runNodeFixture(t, node, "prompt-guard-ui.js", harness)
+}
+
+func TestRenderPromptGuardKpi_NodeHarness(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not available; skipping UI JS test")
+	}
+
+	harness := templateScriptDiagnostics + `
+function element() {
+    return { textContent: "", className: "" };
+}
+const elements = {
+    diagPgBadge: element(),
+    diagPgStats: element(),
+    diagPgSub: element()
+};
+const document = {
+    getElementById: function(id) { return elements[id] || null; }
+};
+function t(key) { return key; }
+
+latestDiagnostics = {
+    prompt_guard: {
+        enabled: true,
+        configured_rules: 26,
+        active_rules: 25,
+        rewritten_requests: 12,
+        rewritten_hits: 36,
+        warnings: []
+    }
+};
+renderPromptGuardKpi();
+if (elements.diagPgBadge.textContent !== "diagPgActive" || elements.diagPgBadge.className !== "badge badge-success") {
+    throw new Error("expected active badge, got: " + JSON.stringify(elements.diagPgBadge));
+}
+if (elements.diagPgStats.textContent !== "12 diagPgReqsUnit / 36 diagPgHitsUnit") {
+    throw new Error("unexpected stats text: " + elements.diagPgStats.textContent);
+}
+if (elements.diagPgSub.textContent !== "diagPgRulesLabel: 25 / 26") {
+    throw new Error("unexpected sub text: " + elements.diagPgSub.textContent);
+}
+
+latestDiagnostics.prompt_guard.warnings = ["bad regex"];
+renderPromptGuardKpi();
+if (elements.diagPgBadge.textContent !== "diagPgWarnings" || elements.diagPgBadge.className !== "badge badge-warning") {
+    throw new Error("expected warning badge, got: " + JSON.stringify(elements.diagPgBadge));
+}
+if (!elements.diagPgSub.textContent.includes("1 diagPgWarningsUnit")) {
+    throw new Error("expected warning count in sub text, got: " + elements.diagPgSub.textContent);
+}
+
+latestDiagnostics.prompt_guard = { enabled: false, configured_rules: 5, active_rules: 5, rewritten_requests: 0, rewritten_hits: 0 };
+renderPromptGuardKpi();
+if (elements.diagPgBadge.textContent !== "diagStatusDisabled" || elements.diagPgBadge.className !== "badge badge-subtle") {
+    throw new Error("expected disabled badge, got: " + JSON.stringify(elements.diagPgBadge));
+}
+`
+	runNodeFixture(t, node, "render-prompt-guard-kpi.js", harness)
 }

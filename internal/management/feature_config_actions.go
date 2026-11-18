@@ -283,11 +283,11 @@ const templateScriptConfigRaw = `        let originalConfigState = null;
             ].join("\n");
         }
 
-        function copyPromptGuardBisectPrompt() {
-            var text = buildPromptGuardBisectPrompt();
+        function copyPromptGuardText(text, successKey) {
+            if (!text) return;
             if (navigator && navigator.clipboard && navigator.clipboard.writeText) {
                 navigator.clipboard.writeText(text).then(function() {
-                    showToast(t("cfgPgCopyBisectSuccess"), "success");
+                    showToast(t(successKey), "success");
                 }).catch(function() {
                     showToast(t("cfgPgCopyBisectError"), "error");
                 });
@@ -302,10 +302,21 @@ const templateScriptConfigRaw = `        let originalConfigState = null;
                 ta.select();
                 var ok = document.execCommand("copy");
                 document.body.removeChild(ta);
-                showToast(ok ? t("cfgPgCopyBisectSuccess") : t("cfgPgCopyBisectError"), ok ? "success" : "error");
+                showToast(ok ? t(successKey) : t("cfgPgCopyBisectError"), ok ? "success" : "error");
             } catch (e) {
                 showToast(t("cfgPgCopyBisectError"), "error");
             }
+        }
+
+        function copyPromptGuardBisectPrompt() {
+            copyPromptGuardText(buildPromptGuardBisectPrompt(), "cfgPgCopyBisectSuccess");
+        }
+
+        function copyPromptGuardPreviewOutput() {
+            var outEl = document.getElementById("cfgPgPreviewOutput");
+            if (!outEl) return;
+            var text = outEl.value !== undefined ? outEl.value : (outEl.textContent || "");
+            copyPromptGuardText(text, "cfgPgCopyOutputSuccess");
         }
 
         function toggleCustomPgFormatSelect(event) {
@@ -368,18 +379,25 @@ const templateScriptConfigRaw = `        let originalConfigState = null;
                 var summaryText = res.total_hits > 0
                     ? (t("cfgPgPreviewHitsPrefix") + String(res.total_hits) + " (" + String(res.detected_format || format) + ")")
                     : (t("cfgPgPreviewNoHits") + " (" + String(res.detected_format || format) + ")");
-                parts.push('<div class="pg-preview-summary"><span>' + escapeHTML(summaryText) + "</span></div>");
+                parts.push('<div class="pg-preview-summary"><span>' + escapeHTML(summaryText) + '</span><button type="button" class="btn-secondary pg-preview-copy-btn" onclick="copyPromptGuardPreviewOutput()">' + escapeHTML(t("cfgPgBtnCopyOutput")) + '</button></div>');
                 if (Array.isArray(res.warnings) && res.warnings.length > 0) {
-                    parts.push('<div class="pg-preview-matches">' + res.warnings.map(function(w) {
+                    parts.push('<div class="pg-preview-warnings">' + res.warnings.map(function(w) {
                         return '<span class="pg-warn-chip">' + escapeHTML(w) + "</span>";
                     }).join("") + "</div>");
                 }
                 if (Array.isArray(res.matches) && res.matches.length > 0) {
                     parts.push('<div class="pg-preview-matches">' + res.matches.map(function(m) {
-                        return '<span class="pg-match-chip">#' + (Number(m.index) + 1) + " ×" + Number(m.hits) + " [" + escapeHTML(m.scope) + "] " + escapeHTML(m.find) + " → " + escapeHTML(m.replace) + "</span>";
+                        var replaceHtml = m.replace ? escapeHTML(m.replace) : '<span class="pg-match-empty">(' + escapeHTML(t("cfgPgMatchEmpty")) + ')</span>';
+                        return '<div class="pg-match-card">' +
+                            '<div class="pg-match-diff">' +
+                                '<div class="pg-match-find">' + escapeHTML(m.find) + '</div>' +
+                                '<div class="pg-match-replace">' + replaceHtml + '</div>' +
+                            '</div>' +
+                            '<span class="pg-match-count">×' + Number(m.hits) + '</span>' +
+                        '</div>';
                     }).join("") + "</div>");
                 }
-                parts.push('<pre class="pg-preview-output">' + escapeHTML(res.output || "") + "</pre>");
+                parts.push('<textarea id="cfgPgPreviewOutput" class="pg-preview-output" readonly rows="8">' + escapeHTML(res.output || "") + "</textarea>");
                 resultEl.innerHTML = parts.join("");
                 resultEl.hidden = false;
             } catch (err) {
@@ -431,6 +449,7 @@ const templateScriptConfigRaw = `        let originalConfigState = null;
             if (wArgon) wArgon.checked = Boolean(warmup.argon_enabled);
             var wArgonModel = document.getElementById("cfgWarmupArgonModelSelect");
             if (wArgonModel) wArgonModel.value = warmup.argon_model || "gemini-4-argon-high";
+            if (typeof updateCustomWarmupArgonDisplay === "function") updateCustomWarmupArgonDisplay();
             var wGemini = document.getElementById("cfgWarmupGeminiEnabled");
             if (wGemini) wGemini.checked = Boolean(warmup.gemini_enabled);
             var wGeminiModel = document.getElementById("cfgWarmupGeminiModelSelect");
@@ -446,6 +465,7 @@ const templateScriptConfigRaw = `        let originalConfigState = null;
             } else if (typeof updateCustomWarmupGeminiDisplay === "function") {
                 updateCustomWarmupGeminiDisplay();
                 updateCustomWarmupClaudeDisplay();
+                if (typeof updateCustomWarmupArgonDisplay === "function") updateCustomWarmupArgonDisplay();
             }
 
             var pg = cfg.prompt_guard || {};

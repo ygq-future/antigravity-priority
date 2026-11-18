@@ -262,6 +262,8 @@ func TestStatusHTML_ContainsRequiredUIElements(t *testing.T) {
 		{"Reset config button", "btnResetConfig"},
 		{"Diagnostics panel", "panelDiagnostics"},
 		{"Diagnostics KPI grid", "diag-kpi-grid"},
+		{"Diagnostics Prompt Guard KPI card", "diagPgStats"},
+		{"Argon warmup custom select", "customWarmupArgonModelSelect"},
 		{"Diagnostics copy button", "btnCopyDiagnostics"},
 		{"Diagnostics pool matrix", "diagPoolMatrix"},
 		{"Diagnostics pool section", "diagSectionPools"},

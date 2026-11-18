@@ -40,6 +40,14 @@ const diagnosticsMarkup = `
                         <div id="diagApplyStats" class="diag-kpi-value">-</div>
                         <div id="diagApplyTime" class="diag-kpi-desc">-</div>
                     </div>
+                    <div class="diag-kpi-card">
+                        <div class="diag-kpi-head">
+                            <span class="diag-kpi-title" data-i18n="diagKpiPromptGuard">🧹 Prompt Guard</span>
+                            <span id="diagPgBadge" class="badge badge-subtle">-</span>
+                        </div>
+                        <div id="diagPgStats" class="diag-kpi-value">-</div>
+                        <div id="diagPgSub" class="diag-kpi-desc">-</div>
+                    </div>
                 </div>
 
                 <div class="diag-lower-grid diag-pool-grid">

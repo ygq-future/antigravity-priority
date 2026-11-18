@@ -220,12 +220,21 @@ const configMarkup = `
                         </div>
                         <div class="form-row">
                             <div class="form-label-box">
-                                <label class="form-title" for="cfgWarmupArgonModelSelect" data-i18n="cfgWarmupArgonModel">Argon 预热目标模型</label>
+                                <span class="form-title" data-i18n="cfgWarmupArgonModel">Argon 预热目标模型</span>
                             </div>
                             <div class="form-input-group">
-                                <select id="cfgWarmupArgonModelSelect" class="custom-select-trigger">
-                                    <option value="gemini-4-argon-high">gemini-4-argon-high</option>
+                                <select id="cfgWarmupArgonModelSelect" hidden>
+                                    <option value="gemini-4-argon-high" selected>gemini-4-argon-high</option>
                                 </select>
+                                <div id="customWarmupArgonModelSelect" class="custom-select-wrapper" style="min-width:210px;">
+                                    <button type="button" class="custom-select-trigger" onclick="toggleCustomWarmupArgonSelect(event)" aria-haspopup="listbox" aria-expanded="false">
+                                        <span id="customWarmupArgonLabel">gemini-4-argon-high</span>
+                                        <span class="custom-select-arrow">
+                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"></path></svg>
+                                        </span>
+                                    </button>
+                                    <div id="customWarmupArgonMenu" class="custom-select-options" hidden role="listbox"></div>
+                                </div>
                             </div>
                         </div>
                     </div>

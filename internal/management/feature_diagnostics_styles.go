@@ -51,7 +51,7 @@ const templateStyleDiagnostics = `        /* System Diagnostics Panel Styles */
 
         .diag-kpi-grid {
             display: grid;
-            grid-template-columns: repeat(3, minmax(0, 1fr));
+            grid-template-columns: repeat(4, minmax(0, 1fr));
             gap: 12px;
             width: 100%;
             box-sizing: border-box;

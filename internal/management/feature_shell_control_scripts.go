@@ -291,60 +291,65 @@ const templateScriptControls = `        // Custom Select: shared open/close + vi
 
             const geminiModels = [];
             const claudeModels = [];
+            const argonModels = [];
             models.forEach(m => {
                 const p = m.quota_pool || resolveModelPool(m.id);
                 if (p === "gemini") {
                     geminiModels.push(m);
                 } else if (p === "claude_gpt") {
                     claudeModels.push(m);
+                } else if (p === "argon") {
+                    argonModels.push(m);
                 }
             });
 
-            // 1. Gemini Warmup Select
-            const gSelect = document.getElementById("cfgWarmupGeminiModelSelect");
-            const gMenu = document.getElementById("customWarmupGeminiMenu");
-            if (gSelect && gMenu && geminiModels.length > 0) {
-                const candidateVal = (dynamicConfig && dynamicConfig.warmup && dynamicConfig.warmup.gemini_model) || gSelect.value || geminiModels[0].id;
-                const hasVal = geminiModels.some(m => m.id === candidateVal);
-                const currentVal = hasVal ? candidateVal : geminiModels[0].id;
+            function populateWarmupPoolSelect(selectId, menuId, poolModels, configuredVal, selectFnName, updateFn) {
+                const select = document.getElementById(selectId);
+                const menu = document.getElementById(menuId);
+                if (!select || !menu || poolModels.length === 0) return;
+                const candidateVal = configuredVal || select.value || poolModels[0].id;
+                const hasVal = poolModels.some(m => m.id === candidateVal);
+                const currentVal = hasVal ? candidateVal : poolModels[0].id;
                 let selHtml = "";
                 let menuHtml = "";
-                geminiModels.forEach(m => {
+                poolModels.forEach(m => {
                     const isSel = m.id === currentVal;
                     selHtml += "<option value=\"" + escapeHTML(m.id) + "\"" + (isSel ? " selected" : "") + ">" + escapeHTML(m.display_name || m.id) + "</option>";
-                    menuHtml += "<div class=\"custom-select-option" + (isSel ? " selected" : "") + "\" data-value=\"" + escapeHTML(m.id) + "\" onclick=\"selectWarmupGeminiOption('" + escapeHTML(m.id) + "', event)\" role=\"option\" aria-selected=\"" + isSel + "\">" +
+                    menuHtml += "<div class=\"custom-select-option" + (isSel ? " selected" : "") + "\" data-value=\"" + escapeHTML(m.id) + "\" onclick=\"" + selectFnName + "('" + escapeHTML(m.id) + "', event)\" role=\"option\" aria-selected=\"" + isSel + "\">" +
                         "<span>" + escapeHTML(m.display_name || m.id) + "</span>" +
                         "<span class=\"custom-select-check\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\"><polyline points=\"20 6 9 17 4 12\"></polyline></svg></span>" +
                         "</div>";
                 });
-                gSelect.innerHTML = selHtml;
-                gSelect.value = currentVal;
-                gMenu.innerHTML = menuHtml;
-                updateCustomWarmupGeminiDisplay();
+                select.innerHTML = selHtml;
+                select.value = currentVal;
+                menu.innerHTML = menuHtml;
+                updateFn();
             }
 
-            // 2. Claude Warmup Select
-            const cSelect = document.getElementById("cfgWarmupClaudeModelSelect");
-            const cMenu = document.getElementById("customWarmupClaudeMenu");
-            if (cSelect && cMenu && claudeModels.length > 0) {
-                const candidateVal = (dynamicConfig && dynamicConfig.warmup && dynamicConfig.warmup.claude_model) || cSelect.value || claudeModels[0].id;
-                const hasVal = claudeModels.some(m => m.id === candidateVal);
-                const currentVal = hasVal ? candidateVal : claudeModels[0].id;
-                let selHtml = "";
-                let menuHtml = "";
-                claudeModels.forEach(m => {
-                    const isSel = m.id === currentVal;
-                    selHtml += "<option value=\"" + escapeHTML(m.id) + "\"" + (isSel ? " selected" : "") + ">" + escapeHTML(m.display_name || m.id) + "</option>";
-                    menuHtml += "<div class=\"custom-select-option" + (isSel ? " selected" : "") + "\" data-value=\"" + escapeHTML(m.id) + "\" onclick=\"selectWarmupClaudeOption('" + escapeHTML(m.id) + "', event)\" role=\"option\" aria-selected=\"" + isSel + "\">" +
-                        "<span>" + escapeHTML(m.display_name || m.id) + "</span>" +
-                        "<span class=\"custom-select-check\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\"><polyline points=\"20 6 9 17 4 12\"></polyline></svg></span>" +
-                        "</div>";
-                });
-                cSelect.innerHTML = selHtml;
-                cSelect.value = currentVal;
-                cMenu.innerHTML = menuHtml;
-                updateCustomWarmupClaudeDisplay();
-            }
+            populateWarmupPoolSelect(
+                "cfgWarmupGeminiModelSelect",
+                "customWarmupGeminiMenu",
+                geminiModels,
+                dynamicConfig && dynamicConfig.warmup && dynamicConfig.warmup.gemini_model,
+                "selectWarmupGeminiOption",
+                updateCustomWarmupGeminiDisplay
+            );
+            populateWarmupPoolSelect(
+                "cfgWarmupClaudeModelSelect",
+                "customWarmupClaudeMenu",
+                claudeModels,
+                dynamicConfig && dynamicConfig.warmup && dynamicConfig.warmup.claude_model,
+                "selectWarmupClaudeOption",
+                updateCustomWarmupClaudeDisplay
+            );
+            populateWarmupPoolSelect(
+                "cfgWarmupArgonModelSelect",
+                "customWarmupArgonMenu",
+                argonModels,
+                dynamicConfig && dynamicConfig.warmup && dynamicConfig.warmup.argon_model,
+                "selectWarmupArgonOption",
+                updateCustomWarmupArgonDisplay
+            );
         }
 
 
@@ -469,6 +474,38 @@ const templateScriptControls = `        // Custom Select: shared open/close + vi
             }
         }
 
+        // Custom Select: Warmup Argon Model
+        function toggleCustomWarmupArgonSelect(event) {
+            if (event) event.stopPropagation();
+            closeAllCustomSelects("customWarmupArgonModelSelect");
+            toggleCustomSelectMenu("customWarmupArgonModelSelect", "customWarmupArgonMenu");
+        }
+
+        function selectWarmupArgonOption(value, event) {
+            if (event) event.stopPropagation();
+            const select = document.getElementById("cfgWarmupArgonModelSelect");
+            if (select) select.value = value;
+            updateCustomWarmupArgonDisplay();
+            closeAllCustomSelects();
+            updateSaveButtonState();
+        }
+
+        function updateCustomWarmupArgonDisplay() {
+            const select = document.getElementById("cfgWarmupArgonModelSelect");
+            const label = document.getElementById("customWarmupArgonLabel");
+            if (select && label) {
+                const selectedOpt = select.options[select.selectedIndex];
+                if (selectedOpt) label.textContent = selectedOpt.text || selectedOpt.value;
+            }
+            const menu = document.getElementById("customWarmupArgonMenu");
+            if (menu && select) {
+                menu.querySelectorAll(".custom-select-option").forEach(opt => {
+                    const isSelected = opt.getAttribute("data-value") === select.value;
+                    opt.classList.toggle("selected", isSelected);
+                });
+            }
+        }
+
 
         function updateAllCustomSelectDisplays() {
             updateCustomSelectDisplay();
@@ -476,6 +513,7 @@ const templateScriptControls = `        // Custom Select: shared open/close + vi
             updateCustomIntervalDisplay();
             updateCustomWarmupGeminiDisplay();
             updateCustomWarmupClaudeDisplay();
+            updateCustomWarmupArgonDisplay();
             if (typeof updateCustomPgFormatDisplay === "function") updateCustomPgFormatDisplay();
             if (typeof updatePromptGuardUILabels === "function") updatePromptGuardUILabels();
         }
@@ -486,6 +524,7 @@ const templateScriptControls = `        // Custom Select: shared open/close + vi
                 { wrap: "customIntervalSelect", menu: "customIntervalMenu" },
                 { wrap: "customWarmupGeminiModelSelect", menu: "customWarmupGeminiMenu" },
                 { wrap: "customWarmupClaudeModelSelect", menu: "customWarmupClaudeMenu" },
+                { wrap: "customWarmupArgonModelSelect", menu: "customWarmupArgonMenu" },
                 { wrap: "customPgFormatSelect", menu: "customPgFormatMenu" },
             ];
             list.forEach(item => {
