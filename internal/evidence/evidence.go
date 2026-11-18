@@ -263,6 +263,7 @@ func quotaEvidenceFromProbe(result antigravity.ProbeResult, group config.Antigra
 		LongWindowRemaining:  cloneInt64(result.LongWindowRemaining),
 		ArgonWindowResetAt:   cloneTime(result.ArgonWindowResetAt),
 		ArgonWindowRemaining: cloneInt64(result.ArgonWindowRemaining),
+		ArgonWeeklyStatus:    result.ArgonWeeklyStatus,
 		PlanType:             result.PlanType,
 	}, true
 }

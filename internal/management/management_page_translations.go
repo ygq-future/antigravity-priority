@@ -63,6 +63,7 @@ var configTranslationKeys = []string{
 	"valErrConcurrency", "valErrUrgencyTol", "valErrSampleCapacity", "valErrCooldown",
 	"cfgCardWarmupTitle", "cfgWarmupGemini", "cfgWarmupGeminiHint", "cfgWarmupGeminiHintTitle", "cfgWarmupGeminiModel", "cfgWarmupGeminiModelHint",
 	"cfgWarmupClaude", "cfgWarmupClaudeHint", "cfgWarmupClaudeHintTitle", "cfgWarmupClaudeModel", "cfgWarmupClaudeModelHint",
+	"cfgWarmupArgon", "cfgWarmupArgonHint", "cfgWarmupArgonModel",
 
 	"valErrWarmupGeminiModel", "valErrWarmupClaudeModel",
 	"cfgCardPromptGuardTitle", "cfgPgRemoteSourcePrefix", "cfgPgRemoteSourceSuffix", "cfgPgEnabled", "cfgPgEnabledHint",

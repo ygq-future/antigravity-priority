@@ -20,6 +20,33 @@ import (
 	"antigravity-priority/internal/state"
 )
 
+func waitForWarmups(t *testing.T, rt *Runtime) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	if err := rt.warmups.wait(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func sweepAndDrain(t *testing.T, rt *Runtime, ctx context.Context) time.Duration {
+	t.Helper()
+	wait := rt.sweepWarmupResets(ctx)
+	waitForWarmups(t, rt)
+	return wait
+}
+
+// Exercise selection and completion synchronously in the eligibility tests.
+func (r *Runtime) triggerWarmupForEligibleCredentials(ctx context.Context, doer quotaHTTPDoer, cfg config.WarmupConfig, group config.AntigravityModelGroup, byGroup map[config.AntigravityModelGroup]evidence.Result, materials map[string]authMaterial, disabled map[string]struct{}, store *state.Store, now time.Time) int {
+	count := 0
+	visitEligibleWarmups(cfg, group, byGroup, materials, disabled, store, now, func(job warmupJob) {
+		if r.executeWarmupJob(ctx, doer, job, store, now) {
+			count++
+		}
+	})
+	return count
+}
+
 func TestGenerateNaturalWarmupPrompt(t *testing.T) {
 	// Test that generated prompts are natural, non-empty, and vary across iterations
 	seen := make(map[string]bool)
@@ -395,10 +422,15 @@ func warmupQuotaBody(reset5h, reset7d time.Time) []byte {
 // warmupStubHost is the minimal host surface the warm-up sweep needs: auth
 // inventory, auth material, and a single canned quota response.
 type warmupStubHost struct {
-	mu        sync.Mutex
-	files     []host.AuthFile
-	body      []byte
-	httpCalls []host.HTTPRequest
+	mu                       sync.Mutex
+	files                    []host.AuthFile
+	body                     []byte
+	httpCalls                []host.HTTPRequest
+	failGenerationFor        string
+	generationStarted        chan struct{}
+	generationRelease        chan struct{}
+	finishGenerationOnCancel bool
+	quotaBodyFor             func(string) []byte
 }
 
 func (h *warmupStubHost) ListAuthFiles(context.Context) ([]host.AuthFile, error) {
@@ -420,10 +452,29 @@ func (h *warmupStubHost) GetRuntime(_ context.Context, authIndex string) (host.R
 
 func (h *warmupStubHost) SaveAuth(context.Context, string, json.RawMessage) error { return nil }
 
-func (h *warmupStubHost) HTTPDo(_ context.Context, request host.HTTPRequest) (host.HTTPResponse, error) {
+func (h *warmupStubHost) HTTPDo(ctx context.Context, request host.HTTPRequest) (host.HTTPResponse, error) {
+	if strings.Contains(request.URL, "generateContent") && h.generationStarted != nil {
+		select {
+		case h.generationStarted <- struct{}{}:
+		default:
+		}
+		select {
+		case <-h.generationRelease:
+		case <-ctx.Done():
+			if !h.finishGenerationOnCancel {
+				return host.HTTPResponse{}, ctx.Err()
+			}
+		}
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.httpCalls = append(h.httpCalls, request)
+	if h.quotaBodyFor != nil && strings.Contains(request.URL, "retrieveUserQuota") {
+		return host.HTTPResponse{StatusCode: http.StatusOK, Body: h.quotaBodyFor(request.AuthIndex)}, nil
+	}
+	if request.AuthIndex == h.failGenerationFor && strings.Contains(request.URL, "generateContent") {
+		return host.HTTPResponse{StatusCode: http.StatusInternalServerError}, nil
+	}
 	return host.HTTPResponse{StatusCode: http.StatusOK, Body: h.body}, nil
 }
 
@@ -565,7 +616,7 @@ func TestRuntime_WarmupSweepWarmsReadyWindowWithoutSchedulingRun(t *testing.T) {
 	seedReadyWindow(t, cachePath, now)
 	rt, stub, _, _ := newWarmupSweepRuntimeAt(t, now, cachePath)
 	enableGeminiWarmup(t, rt)
-	rt.sweepWarmupResets(ctx)
+	sweepAndDrain(t, rt, ctx)
 
 	if got := stub.countCalls("generateContent"); got != 1 {
 		t.Fatalf("expected exactly 1 warm-up without a scheduling run, got %d", got)
@@ -578,9 +629,214 @@ func TestRuntime_WarmupSweepWarmsReadyWindowWithoutSchedulingRun(t *testing.T) {
 		t.Fatal("expected the warm-up timestamp to be persisted")
 	}
 
-	rt.sweepWarmupResets(ctx)
+	sweepAndDrain(t, rt, ctx)
 	if got := stub.countCalls("generateContent"); got != 1 {
 		t.Fatalf("expected the debounce window to block a second warm-up, got %d", got)
+	}
+}
+
+func TestRuntime_SlowResetWarmupDoesNotBlockOrDuplicateOnProbe(t *testing.T) {
+	ctx := t.Context()
+	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "cache.json")
+	seedReadyWindow(t, path, now)
+	rt, stub, _, _ := newWarmupSweepRuntimeAt(t, now, path)
+	stub.generationStarted = make(chan struct{}, 1)
+	stub.generationRelease = make(chan struct{})
+	var once sync.Once
+	release := func() { once.Do(func() { close(stub.generationRelease) }) }
+	defer release()
+	enableGeminiWarmup(t, rt)
+	go rt.sweepWarmupResets(ctx)
+	select {
+	case <-stub.generationStarted:
+	case <-time.After(3 * time.Second):
+		t.Fatal("reset generation not started")
+	}
+	// The sweep may still be finishing its short snapshot commit. Wait for that,
+	// not for the deliberately blocked generation.
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		err := rt.Probe(ctx, nil)
+		if err == nil {
+			break
+		}
+		if err != ErrRunInProgress || time.Now().After(deadline) {
+			t.Fatalf("probe during blocked generation: %v", err)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	release()
+	waitForWarmups(t, rt)
+	if got := stub.countCalls("generateContent"); got != 1 {
+		t.Fatalf("got %d generations, want one", got)
+	}
+}
+
+func TestRuntime_ArgonWeeklyWarmupScope(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	group := config.AntigravityModelGroupArgon
+	store, err := state.Load(ctx, filepath.Join(t.TempDir(), "cache.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt := New(Options{DisableBackgroundWorkers: true})
+	doer := quotaHTTPDoerFunc(func(_ context.Context, req host.HTTPRequest) (host.HTTPResponse, error) {
+		t.Errorf("unexpected warm-up request: %s", req.URL)
+		return host.HTTPResponse{}, nil
+	})
+	material := map[string]authMaterial{"idx-a": {accessToken: "token", projectID: "project"}}
+
+	for _, tc := range []struct {
+		name      string
+		scope     config.AntigravityModelGroup
+		plan      core.PlanType
+		remaining *int64
+	}{
+		{name: "another pool's reset probe", scope: config.AntigravityModelGroupGemini, plan: core.PlanTypePro, remaining: new(int64(100))},
+		{name: "Ultra", scope: group, plan: core.PlanTypeUltra, remaining: new(int64(100))},
+		{name: "no independent bucket", scope: group, plan: core.PlanTypePro},
+		{name: "partial quota", scope: group, plan: core.PlanTypePro, remaining: new(int64(80))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resetAt := now.Add(argonWarmupDebounce)
+			byGroup := map[config.AntigravityModelGroup]evidence.Result{
+				group: {Eligible: []priority.QuotaEvidence{{
+					AuthIndex: "idx-a", PlanType: tc.plan,
+					ArgonWindowRemaining: tc.remaining, ArgonWindowResetAt: &resetAt, ArgonWeeklyStatus: core.ArgonWeeklyFull,
+				}}},
+			}
+			if got := rt.triggerWarmupForEligibleCredentials(ctx, doer, config.WarmupConfig{ArgonEnabled: true}, tc.scope, byGroup, material, nil, store, now); got != 0 {
+				t.Fatalf("got %d warm-ups, want 0", got)
+			}
+		})
+	}
+}
+
+func TestRuntime_ProbeWarmsAllEligibleArgonCredentials(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	rt, stub, _, cachePath := newWarmupSweepRuntime(t, now)
+	indexes := []string{"idx-a", "idx-b", "idx-c", "idx-d"}
+	for _, idx := range indexes[1:] {
+		stub.addFile(host.AuthFile{Name: idx, AuthIndex: idx, Provider: "antigravity", Status: "active"})
+	}
+	stub.failGenerationFor = indexes[0]
+	stub.setBody(fmt.Appendf(nil, `{"groups":[
+		{"displayName":"Gemini Models","buckets":[{"bucketId":"gemini-5h","window":"5h","remainingFraction":0,"resetTime":%q}]},
+		{"displayName":"Gemini 4 Argon","buckets":[{"bucketId":"gemini-argon-wtu-weekly","window":"weekly","remainingFraction":1,"resetTime":%q}]}
+	]}`, now.Add(5*time.Hour).Format(time.RFC3339), now.Add(argonWarmupDebounce).Format(time.RFC3339)))
+	dyn := config.Default().Dynamic()
+	dyn.Warmup = config.WarmupConfig{ArgonEnabled: true}
+	if err := rt.SetDynamicConfig(ctx, dyn); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.Probe(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	waitForWarmups(t, rt)
+	if got := stub.countCalls("generateContent"); got != len(indexes) {
+		t.Fatalf("first probe sent %d warm-ups, want one for each of %d credentials", got, len(indexes))
+	}
+	store, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, idx := range indexes {
+		want := now
+		if idx == stub.failGenerationFor {
+			want = time.Time{}
+		}
+		if got := store.GetLastWarmupAt(idx, string(config.AntigravityModelGroupArgon)); !got.Equal(want) {
+			t.Errorf("Argon completion for %s = %v, want %v", idx, got, want)
+		}
+	}
+	if err := rt.Probe(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	waitForWarmups(t, rt)
+	if got := stub.countCalls("generateContent"); got != len(indexes)+1 {
+		t.Fatalf("second probe: %d total warm-ups, want only the failed credential retried", got)
+	}
+}
+
+func TestRuntime_ArgonWeeklyWarmupSweep(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	group := string(config.AntigravityModelGroupArgon)
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	seed, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldReset := now.Add(-time.Minute)
+	if err := seed.MarkProbeSuccess(ctx, state.ProbeSuccess{
+		AuthIndex: "idx-a", Provider: core.ProviderAntigravity, ModelGroup: group,
+		ObservedAt: now.Add(-time.Hour), ResetAt: oldReset, ArgonWindowResetAt: oldReset,
+		ArgonWindowRemaining: new(int64), ArgonWeeklyStatus: core.ArgonWeeklyPartial, PlanType: core.PlanTypePro,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := seed.SaveAtomic(ctx); err != nil {
+		t.Fatal(err)
+	}
+	rt, stub, clock, _ := newWarmupSweepRuntimeAt(t, now, cachePath)
+	quotaBody := func(argonRemaining float64, argonReset time.Time) []byte {
+		return fmt.Appendf(nil, `{"groups":[
+			{"displayName":"Gemini Models","buckets":[
+				{"bucketId":"gemini-5h","window":"5h","remainingFraction":0,"resetTime":%q}]},
+			{"displayName":"Gemini 4 Argon","buckets":[
+				{"bucketId":"gemini-argon-wtu-weekly","window":"weekly","remainingFraction":%g,"resetTime":%q}]}
+		]}`, now.Add(5*time.Hour).Format(time.RFC3339), argonRemaining, argonReset.Format(time.RFC3339))
+	}
+	stub.setBody(quotaBody(0, oldReset))
+	sweepAndDrain(t, rt, ctx)
+	if got := stub.countCalls("retrieveUserQuota"); got != 0 {
+		t.Fatalf("disabled Argon warm-up made %d quota probes", got)
+	}
+	dyn := config.Default().Dynamic()
+	dyn.Warmup.ArgonEnabled = true
+	if err := rt.SetDynamicConfig(ctx, dyn); err != nil {
+		t.Fatal(err)
+	}
+	sweepAndDrain(t, rt, ctx)
+	if got := stub.countCalls("retrieveUserQuota"); got != 1 {
+		t.Fatalf("elapsed Argon bucket: got %d quota probes, want 1", got)
+	}
+	if got := stub.countCalls("generateContent"); got != 0 {
+		t.Fatalf("unreplenished Argon bucket: got %d warm-ups, want 0", got)
+	}
+	clock.advance(WarmupLaneSameCredentialMaxGap)
+	stub.setBody(quotaBody(1, now.Add(argonWarmupDebounce)))
+	sweepAndDrain(t, rt, ctx)
+	if got := stub.countCalls("generateContent"); got != 1 {
+		t.Fatalf("replenished Argon bucket with Gemini 5h at zero: got %d warm-ups, want 1", got)
+	}
+	for _, request := range stub.httpCalls {
+		if !strings.Contains(request.URL, "generateContent") {
+			continue
+		}
+		var payload antigravityGenerateEnvelope
+		if err := json.Unmarshal(request.Body, &payload); err != nil || payload.Model != config.DefaultArgonWarmupModel {
+			t.Fatalf("unexpected warm-up request: model=%q, err=%v", payload.Model, err)
+		}
+	}
+	if err := rt.SetWarmupCredentialState(ctx, "idx-a", string(config.AntigravityModelGroupGemini), true); err != nil {
+		t.Fatal(err)
+	}
+	persisted, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := persisted.GetLastWarmupAt("idx-a", group); !got.Equal(clock.Now()) {
+		t.Fatalf("Argon completion after toggling Gemini warm-up = %v, want %v", got, clock.Now())
+	}
+	restarted, restartedStub, _, _ := newWarmupSweepRuntimeAt(t, now.Add(24*time.Hour), cachePath)
+	restartedStub.setBody(quotaBody(1, now.Add(argonWarmupDebounce)))
+	sweepAndDrain(t, restarted, ctx)
+	if got := restartedStub.countCalls("generateContent"); got != 0 {
+		t.Fatalf("restart inside weekly debounce: got %d warm-ups, want 0", got)
 	}
 }
 
@@ -591,7 +847,7 @@ func TestRuntime_ResetSweepProbesOnlyTheResetCredentialWithoutWarmup(t *testing.
 	seedReadyWindow(t, cachePath, now)
 	rt, stub, _, _ := newWarmupSweepRuntimeAt(t, now, cachePath)
 	stub.addFile(host.AuthFile{Name: "account-b", AuthIndex: "idx-b", Provider: "antigravity", Status: "active"})
-	rt.sweepWarmupResets(ctx)
+	sweepAndDrain(t, rt, ctx)
 
 	if got := stub.countCalls("generateContent"); got != 0 {
 		t.Fatalf("warm-up is disabled; expected no warm-up request, got %d", got)
@@ -616,7 +872,7 @@ func TestRuntime_ResetSweepProbesOnlyTheResetCredentialWithoutWarmup(t *testing.
 		t.Fatalf("expected the refresh to persist the rolled 5h reset, got %v", entry.ShortWindowResetAt)
 	}
 
-	rt.sweepWarmupResets(ctx)
+	sweepAndDrain(t, rt, ctx)
 	if got := stub.countCalls("retrieveUserQuota"); got != quotaCalls {
 		t.Fatalf("expected one refresh per reset boundary, quota requests grew from %d to %d", quotaCalls, got)
 	}
@@ -639,7 +895,7 @@ func TestRuntime_ResetSweepProbesCredentialOnceWhenBothPoolsExpire(t *testing.T)
 		now.Add(7*24*time.Hour).UTC().Format(time.RFC3339),
 	))
 
-	rt.sweepWarmupResets(ctx)
+	sweepAndDrain(t, rt, ctx)
 
 	if got := stub.countCalls("retrieveUserQuota"); got != 1 {
 		t.Fatalf("expected one targeted probe for a credential with both 5h pools due, got %d quota requests", got)
@@ -655,7 +911,7 @@ func TestRuntime_ResetSweepWakesAtResetGraceDeadline(t *testing.T) {
 	cachePath := filepath.Join(t.TempDir(), "cache.json")
 	seedWindow(t, cachePath, now, now, now.Add(20*time.Second), 100)
 	rt, stub, _, _ := newWarmupSweepRuntimeAt(t, now, cachePath)
-	wait := rt.sweepWarmupResets(ctx)
+	wait := sweepAndDrain(t, rt, ctx)
 
 	if want := 20*time.Second + WarmupResetGraceBaseDelay; wait != want {
 		t.Fatalf("expected the watcher to wake at the reset grace deadline (%v), got %v", want, wait)
@@ -686,7 +942,7 @@ func TestRuntime_WarmupSweepBoundsResetProbesWhenWindowDoesNotConverge(t *testin
 	))
 
 	for range 12 {
-		rt.sweepWarmupResets(ctx)
+		sweepAndDrain(t, rt, ctx)
 		clock.advance(time.Minute)
 	}
 
@@ -754,7 +1010,7 @@ func TestRuntime_WarmupSweepStaggersCredentialsThroughGlobalLane(t *testing.T) {
 	stub.addFile(host.AuthFile{Name: "account-b", AuthIndex: "idx-b", Provider: "antigravity", Status: "active"})
 	enableGeminiWarmup(t, rt)
 	stub.setBody(warmupUnstartedBody(now))
-	rt.sweepWarmupResets(ctx)
+	sweepAndDrain(t, rt, ctx)
 	if got := stub.countCalls("generateContent"); got != 1 {
 		t.Fatalf("expected one warm-up per global lane slot, got %d", got)
 	}
@@ -767,7 +1023,7 @@ func TestRuntime_WarmupSweepStaggersCredentialsThroughGlobalLane(t *testing.T) {
 		t.Fatalf("expected the first warm-up to anchor the lane at idx-a, got %+v", lane)
 	}
 
-	rt.sweepWarmupResets(ctx)
+	sweepAndDrain(t, rt, ctx)
 	if got := stub.countCalls("generateContent"); got != 1 {
 		t.Fatalf("expected the lane to block a second warm-up in the same slot, got %d", got)
 	}
@@ -785,7 +1041,7 @@ func TestRuntime_WarmupSweepStaggersCredentialsThroughGlobalLane(t *testing.T) {
 	}
 
 	clock.advance(WarmupLaneCrossCredentialMaxGap)
-	rt.sweepWarmupResets(ctx)
+	sweepAndDrain(t, rt, ctx)
 	if got := stub.countCalls("generateContent"); got != 2 {
 		t.Fatalf("expected the next credential to warm after the lane reopened, got %d", got)
 	}
@@ -802,12 +1058,12 @@ func TestRuntime_WarmupSweepStaggersPoolsOfOneCredential(t *testing.T) {
 	enableAllWarmup(t, rt)
 	stub.setBody(warmupUnstartedBothPoolsBody(now))
 
-	rt.sweepWarmupResets(ctx)
+	sweepAndDrain(t, rt, ctx)
 	if got := stub.countCalls("generateContent"); got != 1 {
 		t.Fatalf("expected pools of one credential to warm one lane slot at a time, got %d", got)
 	}
 
-	rt.sweepWarmupResets(ctx)
+	sweepAndDrain(t, rt, ctx)
 	persisted, err := state.Load(ctx, cachePath)
 	if err != nil {
 		t.Fatalf("reload state failed: %v", err)
@@ -822,7 +1078,7 @@ func TestRuntime_WarmupSweepStaggersPoolsOfOneCredential(t *testing.T) {
 	}
 
 	clock.advance(WarmupLaneSameCredentialMaxGap)
-	rt.sweepWarmupResets(ctx)
+	sweepAndDrain(t, rt, ctx)
 	if got := stub.countCalls("generateContent"); got != 2 {
 		t.Fatalf("expected the sibling pool to warm in the next lane slot, got %d", got)
 	}
@@ -888,7 +1144,7 @@ func TestRuntime_SetWarmupCredentialStateClearsDebounceAndWarmsLocally(t *testin
 	if err := rt.SetWarmupCredentialState(ctx, "idx-a", string(config.AntigravityModelGroupGemini), true); err != nil {
 		t.Fatalf("set local warm-up on failed: %v", err)
 	}
-	rt.sweepWarmupResets(ctx)
+	sweepAndDrain(t, rt, ctx)
 	if got := stub.countCalls("generateContent"); got != 1 {
 		t.Fatalf("expected a local override to warm with the global toggle off, got %d", got)
 	}
@@ -917,7 +1173,7 @@ func TestRuntime_SetWarmupCredentialStateClearsDebounceAndWarmsLocally(t *testin
 		t.Fatal("expected enabling warm-up locally to clear the 4h30m debounce")
 	}
 	clock.advance(WarmupLaneSameCredentialMaxGap)
-	rt.sweepWarmupResets(ctx)
+	sweepAndDrain(t, rt, ctx)
 	if got := stub.countCalls("generateContent"); got != 2 {
 		t.Fatalf("expected warm-up to resume immediately after the local override, got %d", got)
 	}

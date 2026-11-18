@@ -492,10 +492,11 @@ func TestParseAnyTime(t *testing.T) {
 func TestRemainingPercent(t *testing.T) {
 	tests := []struct {
 		raw      any
-		expected int64
+		expected float64
 		ok       bool
 	}{
 		{0.85, 85, true},
+		{99.9, 99.9, true},
 		{1.0, 100, true},
 		{0.0, 0, true},
 		{-0.5, 0, true},

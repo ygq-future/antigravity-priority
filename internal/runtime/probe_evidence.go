@@ -332,6 +332,7 @@ func recordAntigravityProbeResult(ctx context.Context, store *state.Store, resul
 		LongWindowRemaining:  result.LongWindowRemaining,
 		ArgonWindowResetAt:   timeOrZero(result.ArgonWindowResetAt),
 		ArgonWindowRemaining: result.ArgonWindowRemaining,
+		ArgonWeeklyStatus:    result.ArgonWeeklyStatus,
 		PlanType:             result.PlanType,
 		SampleCapacity:       sampleCapacity,
 		ProbeRoundID:         roundID,

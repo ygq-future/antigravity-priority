@@ -29,34 +29,35 @@ var ErrCorruptCache = errors.New("state: corrupt cache")
 
 // Entry represents the persisted and learned state for a single credential and model group.
 type Entry struct {
-	SchemaVersion            int           `json:"schema_version"`
-	Provider                 core.Provider `json:"provider"`
-	ModelGroup               string        `json:"model_group,omitempty"`
-	AuthIndex                string        `json:"auth_index"`
-	ObservedAt               time.Time     `json:"observed_at"`
-	ResetAt                  time.Time     `json:"reset_at,omitzero"`
-	Remaining                int64         `json:"remaining"`
-	ShortWindowResetAt       time.Time     `json:"short_window_reset_at,omitzero"`
-	ShortWindowRemaining     *int64        `json:"short_window_remaining,omitempty"`
-	LongWindowResetAt        time.Time     `json:"long_window_reset_at,omitzero"`
-	LongWindowRemaining      *int64        `json:"long_window_remaining,omitempty"`
-	ArgonWindowResetAt       time.Time     `json:"argon_window_reset_at,omitzero"`
-	ArgonWindowRemaining     *int64        `json:"argon_window_remaining,omitempty"`
-	CycleBurnRate            float64       `json:"cycle_burn_rate"`
-	Samples                  []QuotaSample `json:"samples,omitempty"`
-	LearningBaselineSequence uint64        `json:"learning_baseline_sequence,omitempty"`
-	PendingWeightedTokens    float64       `json:"pending_weighted_tokens,omitempty"`
-	EstimatedShortBurnPct    float64       `json:"estimated_short_burn_pct,omitempty"`
-	EstimatedLongBurnPct     float64       `json:"estimated_long_burn_pct,omitempty"`
-	TokensPerShortPct        float64       `json:"tokens_per_short_pct,omitempty"`
-	LastUsageAt              time.Time     `json:"last_usage_at,omitzero"`
-	LastError                string        `json:"last_error,omitempty"`
-	LastFailureAt            time.Time     `json:"last_failure_at,omitzero"`
-	AuthInvalid              bool          `json:"auth_invalid,omitempty"`
-	PlanType                 core.PlanType `json:"plan_type,omitempty"`
-	Unavailable              bool          `json:"unavailable,omitempty"`
-	UnavailableAt            time.Time     `json:"unavailable_at,omitzero"`
-	UnavailableReason        string        `json:"unavailable_reason,omitempty"`
+	SchemaVersion            int                    `json:"schema_version"`
+	Provider                 core.Provider          `json:"provider"`
+	ModelGroup               string                 `json:"model_group,omitempty"`
+	AuthIndex                string                 `json:"auth_index"`
+	ObservedAt               time.Time              `json:"observed_at"`
+	ResetAt                  time.Time              `json:"reset_at,omitzero"`
+	Remaining                int64                  `json:"remaining"`
+	ShortWindowResetAt       time.Time              `json:"short_window_reset_at,omitzero"`
+	ShortWindowRemaining     *int64                 `json:"short_window_remaining,omitempty"`
+	LongWindowResetAt        time.Time              `json:"long_window_reset_at,omitzero"`
+	LongWindowRemaining      *int64                 `json:"long_window_remaining,omitempty"`
+	ArgonWindowResetAt       time.Time              `json:"argon_window_reset_at,omitzero"`
+	ArgonWindowRemaining     *int64                 `json:"argon_window_remaining,omitempty"`
+	ArgonWeeklyStatus        core.ArgonWeeklyStatus `json:"argon_weekly_status,omitempty"`
+	CycleBurnRate            float64                `json:"cycle_burn_rate"`
+	Samples                  []QuotaSample          `json:"samples,omitempty"`
+	LearningBaselineSequence uint64                 `json:"learning_baseline_sequence,omitempty"`
+	PendingWeightedTokens    float64                `json:"pending_weighted_tokens,omitempty"`
+	EstimatedShortBurnPct    float64                `json:"estimated_short_burn_pct,omitempty"`
+	EstimatedLongBurnPct     float64                `json:"estimated_long_burn_pct,omitempty"`
+	TokensPerShortPct        float64                `json:"tokens_per_short_pct,omitempty"`
+	LastUsageAt              time.Time              `json:"last_usage_at,omitzero"`
+	LastError                string                 `json:"last_error,omitempty"`
+	LastFailureAt            time.Time              `json:"last_failure_at,omitzero"`
+	AuthInvalid              bool                   `json:"auth_invalid,omitempty"`
+	PlanType                 core.PlanType          `json:"plan_type,omitempty"`
+	Unavailable              bool                   `json:"unavailable,omitempty"`
+	UnavailableAt            time.Time              `json:"unavailable_at,omitzero"`
+	UnavailableReason        string                 `json:"unavailable_reason,omitempty"`
 }
 
 // PlanTierRecord is the account-level subscription tier discovered from
@@ -82,6 +83,7 @@ type ProbeSuccess struct {
 	LongWindowRemaining  *int64
 	ArgonWindowResetAt   time.Time
 	ArgonWindowRemaining *int64
+	ArgonWeeklyStatus    core.ArgonWeeklyStatus
 	AuthInvalid          bool
 	PlanType             core.PlanType
 	SampleCapacity       int
@@ -723,7 +725,7 @@ func (s *Store) TrimRequestHistory(limit int) bool {
 	return true
 }
 
-// GetLastWarmupAt returns the last successful 5h warm-up time for a credential
+// GetLastWarmupAt returns the last successful warm-up time for a credential
 // pool. The zero time means the credential has never been warmed up.
 func (s *Store) GetLastWarmupAt(authIndex, modelGroup string) time.Time {
 	s.mu.RLock()
@@ -731,7 +733,7 @@ func (s *Store) GetLastWarmupAt(authIndex, modelGroup string) time.Time {
 	return s.warmupCompleted[entryKey(authIndex, modelGroup)]
 }
 
-// SetWarmupCompleted records a successful 5h warm-up for a credential pool.
+// SetWarmupCompleted records a successful warm-up for a credential pool.
 // Warm-up state is persisted separately from quota evidence so a probe write
 // never clears the debounce window and a restart never forgets it.
 func (s *Store) SetWarmupCompleted(authIndex, modelGroup string, at time.Time) {
@@ -747,7 +749,7 @@ func (s *Store) SetWarmupCompleted(authIndex, modelGroup string, at time.Time) {
 	s.warmupCompleted[key] = at.UTC()
 }
 
-// ClearWarmupCompleted drops every persisted debounce entry of one credential
+// ClearWarmupCompleted drops the short-window debounce entries of one credential
 // and reports how many pools were cleared.
 func (s *Store) ClearWarmupCompleted(authIndex string) int {
 	authKey := authIndexKey(authIndex)
@@ -755,11 +757,12 @@ func (s *Store) ClearWarmupCompleted(authIndex string) int {
 		return 0
 	}
 	prefix := authKey + "|model_group="
+	argonKey := entryKey(authIndex, string(config.AntigravityModelGroupArgon))
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cleared := 0
 	for key := range s.warmupCompleted {
-		if key == authKey || strings.HasPrefix(key, prefix) {
+		if key != argonKey && (key == authKey || strings.HasPrefix(key, prefix)) {
 			delete(s.warmupCompleted, key)
 			cleared++
 		}
@@ -830,6 +833,7 @@ func (s *Store) MarkProbeSuccess(ctx context.Context, success ProbeSuccess) erro
 		LongWindowRemaining:      cloneInt64Ptr(success.LongWindowRemaining),
 		ArgonWindowResetAt:       utcOrZero(success.ArgonWindowResetAt),
 		ArgonWindowRemaining:     cloneInt64Ptr(success.ArgonWindowRemaining),
+		ArgonWeeklyStatus:        success.ArgonWeeklyStatus,
 		CycleBurnRate:            newRate,
 		Samples:                  newSamples,
 		LearningBaselineSequence: newBaseline,
@@ -904,6 +908,7 @@ func (s *Store) MarkProbeUnavailable(ctx context.Context, unavailable ProbeUnava
 	entry.LongWindowRemaining = nil
 	entry.ArgonWindowResetAt = time.Time{}
 	entry.ArgonWindowRemaining = nil
+	entry.ArgonWeeklyStatus = ""
 	entry.CycleBurnRate = 0
 	entry.Samples = nil
 	entry.LearningBaselineSequence = 0
@@ -1389,6 +1394,7 @@ func (s *Store) GetHistoricalEvidence(authIndex, modelGroup string) (priority.Qu
 		LongWindowRemaining:  longRemaining,
 		ArgonWindowResetAt:   argonResetAt,
 		ArgonWindowRemaining: argonRemaining,
+		ArgonWeeklyStatus:    entry.ArgonWeeklyStatus,
 		PlanType:             planType,
 		CycleBurnRate:        cycleBurnRate,
 	}, true

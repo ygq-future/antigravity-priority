@@ -128,11 +128,11 @@ const configMarkup = `
                     </div>
                 </div>
 
-                <!-- Card 3: 5-Hour Window Warm-Up -->
+                <!-- Card 3: Quota Warm-Up -->
                 <div class="config-card">
                     <h3 class="config-card-title">
                         <span>🔥</span>
-                        <span data-i18n="cfgCardWarmupTitle">5小时短窗预热</span>
+                        <span data-i18n="cfgCardWarmupTitle">额度预热</span>
                     </h3>
 
                     <div class="config-form-grid">
@@ -204,6 +204,30 @@ const configMarkup = `
                             </div>
                         </div>
 
+                        <div class="form-row">
+                            <div class="form-label-box">
+                                <span class="form-title" data-i18n="cfgWarmupArgon">Argon 7d 满额自动预热（仅Pro账号）</span>
+                                <span class="form-hint" data-i18n="cfgWarmupArgonHint">周额度 100% 满额时自动触发 7d 重置</span>
+                            </div>
+                            <div class="form-input-group">
+                                <label class="toggle-label">
+                                    <span class="toggle-switch">
+                                        <input type="checkbox" id="cfgWarmupArgonEnabled" aria-label="Pro Argon 7d">
+                                        <span class="toggle-slider"></span>
+                                    </span>
+                                </label>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-label-box">
+                                <label class="form-title" for="cfgWarmupArgonModelSelect" data-i18n="cfgWarmupArgonModel">Argon 预热目标模型</label>
+                            </div>
+                            <div class="form-input-group">
+                                <select id="cfgWarmupArgonModelSelect" class="custom-select-trigger">
+                                    <option value="gemini-4-argon-high">gemini-4-argon-high</option>
+                                </select>
+                            </div>
+                        </div>
                     </div>
                 </div>
 

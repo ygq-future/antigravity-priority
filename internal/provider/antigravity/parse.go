@@ -55,6 +55,7 @@ type candidateWindow struct {
 	remaining int64
 	window    WindowType
 	isArgon   bool
+	full      bool
 }
 
 // ParseAvailableModels parses the Antigravity quota summary JSON into target model group ProbeResult.
@@ -168,6 +169,18 @@ func parseArgonGroup(windows []candidateWindow, observedAt time.Time) ProbeResul
 		LongWindowRemaining:  new(argonLong.remaining),
 		ArgonWindowResetAt:   argonLong.resetAt,
 		ArgonWindowRemaining: new(argonLong.remaining),
+	}
+	// Routing accepts a fallback window and rounded percentages. Generations
+	// need positive evidence that every explicit Argon weekly bucket is full.
+	for _, w := range argonWindows {
+		if w.window != WindowWeekly {
+			continue
+		}
+		if !w.full {
+			result.ArgonWeeklyStatus = core.ArgonWeeklyPartial
+			break
+		}
+		result.ArgonWeeklyStatus = core.ArgonWeeklyFull
 	}
 
 	// 1. Short window: shared Gemini 5h burst window
@@ -330,7 +343,7 @@ func quotaFieldsToWindow(rawRemaining any, rawReset any, windowType WindowType, 
 	if !ok {
 		return candidateWindow{}, false
 	}
-	return candidateWindow{resetAt: resetAt, remaining: remaining, window: windowType, isArgon: isArgon}, true
+	return candidateWindow{resetAt: resetAt, remaining: int64(math.Round(remaining)), window: windowType, isArgon: isArgon, full: remaining == 100}, true
 }
 
 func modelBelongsToGroup(modelID string, provider string, group ModelGroup) bool {
@@ -510,7 +523,7 @@ func parseUnix(value int64) (*time.Time, bool) {
 	return &parsed, true
 }
 
-func remainingPercent(raw any) (int64, bool) {
+func remainingPercent(raw any) (float64, bool) {
 	value, ok := toFloat64(raw)
 	if !ok {
 		return 0, false
@@ -521,7 +534,7 @@ func remainingPercent(raw any) (int64, bool) {
 	if value <= 0 {
 		return 0, true
 	}
-	return int64(math.Round(value)), true
+	return value, true
 }
 
 func toFloat64(raw any) (float64, bool) {

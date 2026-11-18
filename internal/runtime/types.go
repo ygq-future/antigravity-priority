@@ -25,21 +25,21 @@ var ErrUnknownMethod = errors.New("runtime: unknown method")
 
 const (
 	// Plugin JSON-RPC Methods
-	MethodPluginRegister     = "plugin.register"
-	MethodPluginQuiesce      = "plugin.quiesce"
-	MethodPluginReconfigure  = "plugin.reconfigure"
-	MethodPluginShutdown     = "plugin.shutdown"
-	MethodManagementRegister = "management.register"
-	MethodManagementHandle   = "management.handle"
-	MethodUsageHandle        = "usage.handle"
-	MethodSchedulerPick      = "scheduler.pick"
+	MethodPluginRegister         = "plugin.register"
+	MethodPluginQuiesce          = "plugin.quiesce"
+	MethodPluginReconfigure      = "plugin.reconfigure"
+	MethodPluginShutdown         = "plugin.shutdown"
+	MethodManagementRegister     = "management.register"
+	MethodManagementHandle       = "management.handle"
+	MethodUsageHandle            = "usage.handle"
+	MethodSchedulerPick          = "scheduler.pick"
 	MethodRequestInterceptBefore = "request.intercept_before"
 	MethodRequestInterceptAfter  = "request.intercept_after"
-	MethodFilterResponse     = "filter.response"
-	MethodFilterComplete     = "filter.complete"
-	MethodFilterError        = "filter.error"
-	MethodFilterOutbound     = "filter.outbound"
-	MethodFilterInbound      = "filter.inbound"
+	MethodFilterResponse         = "filter.response"
+	MethodFilterComplete         = "filter.complete"
+	MethodFilterError            = "filter.error"
+	MethodFilterOutbound         = "filter.outbound"
+	MethodFilterInbound          = "filter.inbound"
 
 	// Run History Kinds
 	KindProbe            = "probe"
@@ -61,7 +61,7 @@ const (
 	TriggerManualReset Trigger = "manual_reset"
 )
 
-// WarmupScope narrows the 5h reset warm-up a run may perform. The reset
+// WarmupScope narrows the quota warm-up a run may perform. The reset
 // watcher dispatches one credential pool per global lane slot, and runs that
 // only refresh evidence suppress warm-up so the lane spacing cannot be
 // bypassed by the quota probe that precedes it.

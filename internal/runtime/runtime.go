@@ -51,6 +51,7 @@ type Runtime struct {
 	probeMu             sync.Mutex
 	probeAttempts       map[string]probeAttempt
 	warmupResetWake     chan struct{}
+	warmups             warmupQueue
 	autoApplyWake       chan struct{}
 	scheduleMu          sync.Mutex
 	autoApplyRunning    bool
@@ -170,6 +171,8 @@ func (r *Runtime) Register(ctx context.Context, req RegisterRequest) (RegisterRe
 	if err := r.replaceConfig(ctx, cfg); err != nil {
 		return RegisterResult{}, err
 	}
+	r.warmups.resume()
+	r.signalWarmupResetWatcher()
 	r.startPromptGuardInitialSync()
 	return registrationResult(req.SchemaVersion), nil
 }
@@ -783,6 +786,9 @@ func (r *Runtime) Shutdown(ctx context.Context) error {
 	worker := r.worker
 	r.worker = nil
 	r.mu.Unlock()
+	if err := r.warmups.wait(ctx); err != nil {
+		return err
+	}
 	if err := stopWorker(ctx, worker); err != nil {
 		return err
 	}
@@ -800,15 +806,18 @@ func (r *Runtime) Shutdown(ctx context.Context) error {
 // Quiesce stops scheduled background work ahead of a hot replacement while
 // leaving the runtime registered so the host can roll back by re-registering.
 func (r *Runtime) Quiesce(ctx context.Context) error {
+	r.configMu.Lock()
+	defer r.configMu.Unlock()
+	r.warmups.pause()
 	r.mu.Lock()
 	if r.shutdown {
 		r.mu.Unlock()
-		return nil
+		return r.warmups.wait(ctx)
 	}
 	worker := r.worker
 	r.worker = nil
 	r.mu.Unlock()
-	return stopWorker(ctx, worker)
+	return errors.Join(stopWorker(ctx, worker), r.warmups.wait(ctx))
 }
 
 func (r *Runtime) replaceConfig(ctx context.Context, cfg config.Config) error {
