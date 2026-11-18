@@ -139,6 +139,7 @@ In the **`⚙️ Config Center`** tab of the management dashboard, the following
 | **Gemini Warm-Up Model (`warmup.gemini_model`)** | `gemini-3-flash` | Selectable | Model used to trigger the Gemini 5h reset countdown. |
 | **Claude 5h Auto Warm-Up (`warmup.claude_enabled`)** | `false` | On / Off | Automatically sends a short prompt when Claude 5h quota is 100% full, the 7d pool still has quota, and the window is inactive; credentials are spaced 60–120 minutes apart, pools of one credential 30–60 minutes apart. |
 | **Claude Warm-Up Model (`warmup.claude_model`)** | `claude-sonnet-5-5-high` | Selectable | Model used to trigger the Claude 5h reset countdown. |
+| **Argon Weekly Auto Warm-Up (`warmup.argon_enabled`)** | `false` | On / Off | Triggers a 7d reset when a Pro credential's independent Argon weekly quota is at 100%; shares the staggered background lane with Gemini and Claude and skips the credential for seven days after a successful warm-up. |
 | **Argon Warm-Up Model (`warmup.argon_model`)** | `gemini-4-argon-high` | Only supported option | Model used to warm the independent weekly quota on Pro credentials. |
 | **Per-Credential Warm-Up Override (`warmup.overrides`)** | empty | Overview card icon | Clicking the icon writes an `auth_index -> true/false` local state; a click that matches the global state clears it and restores follow mode; turning it on clears that credential's 4h30m debounce. |
 
@@ -158,7 +159,7 @@ The plugin registers **resources** (static management dashboard) and **routes** 
     - **Scheduling & Synchronization Control**: Provides `🔄 Sync Host`, `📡 Fetch Quota (10s cooldown)`, and `🔄 Reset Static Priorities`.
     - **Real-Time Request History**: Retains recent request logs (configurable retention, default 100, max 1000) with model, target quota pool, token breakdown, and response status with one-click clear.
     - **Samples Modal**: Seamlessly toggle between Gemini, Argon, and Claude & GPT sample histories.
-    - **System Diagnostics**: Health banner, three KPIs (scheduler, isolation, last run), a three-pool quota matrix, per-credential decision explanations (priority, urgency, T7d/T_req, C_cycle, reason), 429 storm and cooldown isolation, run timeline, and the path, size, and presence of the four cache files, with one-click JSON Copy.
+    - **System Diagnostics**: Health banner, four KPI cards (scheduler, isolation, last run, Prompt Guard with enablement, active/configured rule counts, rewritten requests and hits, and rule warnings), a three-pool quota matrix, per-credential decision explanations (priority, urgency, T7d/T_req, C_cycle, reason), 429 storm and cooldown isolation, run timeline, and the path, size, and presence of the four cache files, with one-click JSON Copy.
     - **⚙️ Config Center**: Online management of all scheduling and algorithm parameters with instant hot reload.
 
 ### Management API (Dynamic, Key Required)

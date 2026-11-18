@@ -13,12 +13,12 @@ import (
 )
 
 const (
-	FormatAuto      = "auto"
-	FormatText      = "text"
-	FormatClaude    = "claude"
-	FormatOpenAI    = "openai"
-	FormatResponses = "openai-response"
-	FormatGemini    = "gemini"
+	FormatAuto         = "auto"
+	FormatText         = "text"
+	FormatClaude       = "claude"
+	FormatOpenAI       = "openai"
+	FormatResponses    = "openai-response"
+	FormatGemini       = "gemini"
 	FormatInteractions = "interactions"
 )
 

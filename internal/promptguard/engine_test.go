@@ -247,12 +247,12 @@ func TestRewriteRequest_AllCPAEntryFormatsAndShapes(t *testing.T) {
 	eng := promptguard.Compile(cfg)
 
 	cases := []struct {
-		name       string
-		format     string
-		body       string
-		wantSub    string
-		wantUntch  string
-		wantHits   int
+		name      string
+		format    string
+		body      string
+		wantSub   string
+		wantUntch string
+		wantHits  int
 	}{
 		{
 			name:      "openai single object content",
