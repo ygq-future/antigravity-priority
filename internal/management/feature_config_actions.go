@@ -264,20 +264,22 @@ const templateScriptConfigRaw = `        let originalConfigState = null;
                     "我的请求通过 Antigravity 上游触发了通用 429 (\x60RESOURCE_EXHAUSTED: Resource has been exhausted (e.g. check quota).\x60 且无 details)，这通常是因为系统提示词中的某个关键词/短语命中了上游风控。",
                     "",
                     "请你使用**二分法（Binary Search）**帮我定位具体是系统提示词中的哪一个关键词触发了 429：",
-                    "1. 构造最小复现：保留触发 429 的原始请求，仅保留系统提示词（将 \x60max_tokens\x60 设为 \x6016\x60 等最小值，用户消息设为简单内容如 \x60hi\x60），确认稳定返回该通用 429。",
-                    "2. 二分系统提示词：将 \x60system\x60 / \x60instructions\x60 / \x60systemInstruction\x60 文本对半拆分，分别测试保留前半段和保留后半段，哪一半继续触发 429 就继续对该半对半拆分测试。",
-                    "3. 缩窄至最短短语：逐层从段落 -> 句子 -> 词组继续二分，直到找出删除其中任意关键单词就不再触发 429 的**最短连续触发短语**。",
-                    "4. 输出结果：告诉我定位到的「触发原文」以及建议的「无害替换文本」，我将直接添加到 Prompt Guard 规则中（仅作用于系统提示词）。"
+                    "1. 构造最小复现：尽量使用快速的 flash-lite 小模型（如 \x60gemini-3.5-flash-lite\x60）进行验证；保留触发 429 的原始系统提示词（将 \x60max_tokens\x60 设为 \x6016\x60 等最小值，用户消息设为简单内容如 \x60hi\x60），确认稳定返回该通用 429。",
+                    "2. 刷新 429 冷却状态（关键）：**每次遇到 429 后**，都必须先发送一次小的、干净的、不带任何系统提示词的简短提问（如 \x60hi\x60）来刷新冷却状态，确认返回 **200** 后再进行下一轮 429 排查；如果干净请求同样返回 429，说明前面尝试过多已影响干净请求，需**停下来冷却 2 分钟**，再继续用干净请求验证，直到回复 200 才能继续尝试碰撞 429。",
+                    "3. 二分系统提示词：将 \x60system\x60 / \x60instructions\x60 / \x60systemInstruction\x60 文本对半拆分，分别测试保留前半段和保留后半段，哪一半继续触发 429 就继续对该半对半拆分测试。",
+                    "4. 缩窄至最短短语：逐层从段落 -> 句子 -> 词组继续二分，直到找出删除其中任意关键单词就不再触发 429 的**最短连续触发短语**。",
+                    "5. 输出结果：告诉我定位到的「触发原文」以及建议的「无害替换文本」，我将直接添加到 Prompt Guard 规则中（仅作用于系统提示词）。"
                 ].join("\n");
             }
             return [
                 "My request hit a generic upstream 429 (\x60RESOURCE_EXHAUSTED: Resource has been exhausted (e.g. check quota).\x60 with no details), which is usually caused by a specific keyword or phrase in the system prompt.",
                 "",
                 "Please use **binary search (bisecting)** to isolate the exact trigger phrase in the system prompt:",
-                "1. Minimal repro: Keep the failing system prompt with minimal \x60max_tokens\x60 (e.g. \x6016\x60) and a simple user message like \x60hi\x60, and confirm it reliably returns the generic 429.",
-                "2. Bisect system instructions: Split \x60system\x60 / \x60instructions\x60 / \x60systemInstruction\x60 in half and test each half separately, recursing into whichever half still triggers 429.",
-                "3. Narrow down: Shrink from paragraph -> sentence -> phrase until you find the **shortest contiguous trigger phrase** whose removal stops the 429.",
-                "4. Report back: Provide the exact trigger phrase and a harmless replacement text so I can add it as a Prompt Guard rule (system prompt only)."
+                "1. Minimal repro: Prefer a fast flash-lite model (e.g. \x60gemini-3.5-flash-lite\x60) for verification; keep the failing system prompt with minimal \x60max_tokens\x60 (e.g. \x6016\x60) and a simple user message like \x60hi\x60, and confirm it reliably returns the generic 429.",
+                "2. Refresh 429 cooldown (important): **After every 429**, send a small, clean, short request without any system prompt (e.g. \x60hi\x60) to clear the cooldown and wait for a **200** before the next round. If the clean request also returns 429, prior attempts have spilled over—**pause for 2 minutes** to cool down, then retry the clean request until it returns 200 before resuming 429 probing.",
+                "3. Bisect system instructions: Split \x60system\x60 / \x60instructions\x60 / \x60systemInstruction\x60 in half and test each half separately, recursing into whichever half still triggers 429.",
+                "4. Narrow down: Shrink from paragraph -> sentence -> phrase until you find the **shortest contiguous trigger phrase** whose removal stops the 429.",
+                "5. Report back: Provide the exact trigger phrase and a harmless replacement text so I can add it as a Prompt Guard rule (system prompt only)."
             ].join("\n");
         }
 
