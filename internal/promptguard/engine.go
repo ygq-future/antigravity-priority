@@ -19,6 +19,7 @@ const (
 	FormatOpenAI    = "openai"
 	FormatResponses = "openai-response"
 	FormatGemini    = "gemini"
+	FormatInteractions = "interactions"
 )
 
 type compiledRule struct {
@@ -139,7 +140,7 @@ func (e *Engine) RewriteRequest(sourceFormat string, body []byte) ([]byte, bool,
 		return body, false, 0
 	}
 	format := normalizeRequestFormat(sourceFormat)
-	if format == "" {
+	if format == "" || format == FormatAuto {
 		format = DetectFormat(body)
 	}
 	if format == "" {

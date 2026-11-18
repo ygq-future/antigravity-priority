@@ -59,7 +59,7 @@ func (r *Runtime) handleRequestInterceptAfter(ctx context.Context, raw []byte) [
 	if !strings.EqualFold(strings.TrimSpace(req.ToFormat), "antigravity") || len(req.Body) == 0 {
 		return emptyRequestInterceptEnvelope
 	}
-	rewritten, changed, hits := eng.RewriteRequest(req.ToFormat, req.Body)
+	rewritten, changed, hits := eng.RewriteRequest(promptguard.FormatAuto, req.Body)
 	if !changed {
 		return emptyRequestInterceptEnvelope
 	}

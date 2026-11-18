@@ -190,3 +190,133 @@ func TestPreview_AutoDetectTextAndInvalidRegexWarning(t *testing.T) {
 		t.Fatalf("expected rewritten JSON output, got %s", resJSON.Output)
 	}
 }
+
+func TestRewriteRequest_AutoDetectsPayloadFormat(t *testing.T) {
+	cfg := config.PromptGuardConfig{
+		Enabled: true,
+		Rules: []config.PromptGuardRule{
+			{
+				On:      true,
+				Find:    "You are omp's trusted coding assistant.",
+				Replace: "You are a trusted coding assistant.",
+				Scope:   config.PromptGuardScopeSystem,
+				Mode:    config.PromptGuardModeText,
+			},
+		},
+	}
+	eng := promptguard.Compile(cfg)
+
+	body := `{"model":"gemini-3.5-flash-lite","messages":[{"role":"system","content":"You are omp's trusted coding assistant."},{"role":"user","content":"You are omp's trusted coding assistant."}]}`
+	out, changed, hits := eng.RewriteRequest(promptguard.FormatAuto, []byte(body))
+	if !changed || hits != 1 {
+		t.Fatalf("expected changed=true hits=1, got changed=%v hits=%d", changed, hits)
+	}
+	var decoded struct {
+		Messages []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(out, &decoded); err != nil {
+		t.Fatalf("unmarshal rewritten payload: %v", err)
+	}
+	if len(decoded.Messages) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(decoded.Messages))
+	}
+	if decoded.Messages[0].Role != "system" || decoded.Messages[0].Content != "You are a trusted coding assistant." {
+		t.Fatalf("expected rewritten system message, got %+v", decoded.Messages[0])
+	}
+	if decoded.Messages[1].Role != "user" || decoded.Messages[1].Content != "You are omp's trusted coding assistant." {
+		t.Fatalf("expected user message untouched, got %+v", decoded.Messages[1])
+	}
+}
+
+func TestRewriteRequest_AllCPAEntryFormatsAndShapes(t *testing.T) {
+	cfg := config.PromptGuardConfig{
+		Enabled: true,
+		Rules: []config.PromptGuardRule{
+			{
+				On:      true,
+				Find:    "You are omp's trusted coding assistant.",
+				Replace: "You are a trusted coding assistant.",
+				Scope:   config.PromptGuardScopeSystem,
+				Mode:    config.PromptGuardModeText,
+			},
+		},
+	}
+	eng := promptguard.Compile(cfg)
+
+	cases := []struct {
+		name       string
+		format     string
+		body       string
+		wantSub    string
+		wantUntch  string
+		wantHits   int
+	}{
+		{
+			name:      "openai single object content",
+			format:    promptguard.FormatAuto,
+			body:      `{"messages":[{"role":"system","content":{"type":"text","text":"You are omp's trusted coding assistant."}},{"role":"user","content":"You are omp's trusted coding assistant."}]}`,
+			wantSub:   `"text":"You are a trusted coding assistant."`,
+			wantUntch: `"role":"user","content":"You are omp's trusted coding assistant."`,
+			wantHits:  1,
+		},
+		{
+			name:      "claude block array system",
+			format:    promptguard.FormatAuto,
+			body:      `{"system":[{"type":"text","text":"You are omp's trusted coding assistant.","cache_control":{"type":"ephemeral"}}],"messages":[{"role":"user","content":"You are omp's trusted coding assistant."}]}`,
+			wantSub:   `"text":"You are a trusted coding assistant."`,
+			wantUntch: `"role":"user","content":"You are omp's trusted coding assistant."`,
+			wantHits:  1,
+		},
+		{
+			name:      "responses developer input with string array content",
+			format:    promptguard.FormatAuto,
+			body:      `{"input":[{"type":"message","role":"developer","content":["You are omp's trusted coding assistant."]},{"type":"message","role":"user","content":["You are omp's trusted coding assistant."]}]}`,
+			wantSub:   `"content":["You are a trusted coding assistant."]`,
+			wantUntch: `"role":"user","content":["You are omp's trusted coding assistant."]`,
+			wantHits:  1,
+		},
+		{
+			name:      "interactions string system_instruction",
+			format:    promptguard.FormatInteractions,
+			body:      `{"system_instruction":"You are omp's trusted coding assistant.","input":[{"role":"user","content":"You are omp's trusted coding assistant."}]}`,
+			wantSub:   `"system_instruction":"You are a trusted coding assistant."`,
+			wantUntch: `"content":"You are omp's trusted coding assistant."`,
+			wantHits:  1,
+		},
+		{
+			name:      "interactions object text system_instruction with auto detect",
+			format:    promptguard.FormatAuto,
+			body:      `{"system_instruction":{"text":"You are omp's trusted coding assistant."},"input":"You are omp's trusted coding assistant."}`,
+			wantSub:   `"text":"You are a trusted coding assistant."`,
+			wantUntch: `"input":"You are omp's trusted coding assistant."`,
+			wantHits:  1,
+		},
+		{
+			name:      "gemini systemInstruction parts",
+			format:    promptguard.FormatAuto,
+			body:      `{"systemInstruction":{"parts":[{"text":"You are omp's trusted coding assistant."}]},"contents":[{"role":"user","parts":[{"text":"You are omp's trusted coding assistant."}]}]}`,
+			wantSub:   `"systemInstruction":{"parts":[{"text":"You are a trusted coding assistant."}]}`,
+			wantUntch: `"role":"user","parts":[{"text":"You are omp's trusted coding assistant."}]`,
+			wantHits:  1,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, changed, hits := eng.RewriteRequest(tc.format, []byte(tc.body))
+			if !changed || hits != tc.wantHits {
+				t.Fatalf("expected changed=true hits=%d, got changed=%v hits=%d out=%s", tc.wantHits, changed, hits, string(out))
+			}
+			got := string(out)
+			if !strings.Contains(got, tc.wantSub) {
+				t.Fatalf("expected %q in %s", tc.wantSub, got)
+			}
+			if !strings.Contains(got, tc.wantUntch) {
+				t.Fatalf("expected user content untouched (%q) in %s", tc.wantUntch, got)
+			}
+		})
+	}
+}

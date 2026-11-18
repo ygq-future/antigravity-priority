@@ -21,7 +21,7 @@ func normalizeRequestFormat(raw string) string {
 		return FormatOpenAI
 	case FormatResponses, "responses", "codex":
 		return FormatResponses
-	case FormatGemini, "antigravity":
+	case FormatGemini, "antigravity", FormatInteractions:
 		return FormatGemini
 	default:
 		return ""
@@ -301,6 +301,43 @@ func rewriteMessagesRaw(raw json.RawMessage, systemRules, allRules []*compiledRu
 	return encoded, true
 }
 
+func rewriteTextItemRaw(raw json.RawMessage, rules []*compiledRule, hits *hitCounter) (json.RawMessage, bool) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return raw, false
+	}
+	switch trimmed[0] {
+	case '"':
+		return rewriteStringRaw(trimmed, rules, hits)
+	case '{':
+		return rewriteTextFieldInObjectRaw(trimmed, rules, hits)
+	default:
+		return raw, false
+	}
+}
+
+func rewriteTextItemArrayRaw(trimmed []byte, rules []*compiledRule, hits *hitCounter) (json.RawMessage, bool) {
+	var items []json.RawMessage
+	if err := json.Unmarshal(trimmed, &items); err != nil || len(items) == 0 {
+		return trimmed, false
+	}
+	anyChanged := false
+	for i, itemRaw := range items {
+		if updated, okChanged := rewriteTextItemRaw(itemRaw, rules, hits); okChanged {
+			items[i] = updated
+			anyChanged = true
+		}
+	}
+	if !anyChanged {
+		return trimmed, false
+	}
+	encoded, err := json.Marshal(items)
+	if err != nil {
+		return trimmed, false
+	}
+	return encoded, true
+}
+
 func rewriteContentRaw(raw json.RawMessage, rules []*compiledRule, hits *hitCounter) (json.RawMessage, bool) {
 	if len(rules) == 0 {
 		return raw, false
@@ -312,26 +349,10 @@ func rewriteContentRaw(raw json.RawMessage, rules []*compiledRule, hits *hitCoun
 	switch trimmed[0] {
 	case '"':
 		return rewriteStringRaw(trimmed, rules, hits)
+	case '{':
+		return rewriteTextFieldInObjectRaw(trimmed, rules, hits)
 	case '[':
-		var blocks []json.RawMessage
-		if err := json.Unmarshal(trimmed, &blocks); err != nil || len(blocks) == 0 {
-			return raw, false
-		}
-		anyChanged := false
-		for i, blockRaw := range blocks {
-			if updated, okChanged := rewriteTextFieldInObjectRaw(blockRaw, rules, hits); okChanged {
-				blocks[i] = updated
-				anyChanged = true
-			}
-		}
-		if !anyChanged {
-			return raw, false
-		}
-		encoded, err := json.Marshal(blocks)
-		if err != nil {
-			return raw, false
-		}
-		return encoded, true
+		return rewriteTextItemArrayRaw(trimmed, rules, hits)
 	default:
 		return raw, false
 	}
@@ -342,7 +363,16 @@ func rewritePartsContainerRaw(raw json.RawMessage, rules []*compiledRule, hits *
 		return raw, false
 	}
 	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 || trimmed[0] != '{' {
+	if len(trimmed) == 0 {
+		return raw, false
+	}
+	switch trimmed[0] {
+	case '"':
+		return rewriteStringRaw(trimmed, rules, hits)
+	case '[':
+		return rewriteTextItemArrayRaw(trimmed, rules, hits)
+	case '{':
+	default:
 		return raw, false
 	}
 	var container map[string]json.RawMessage
@@ -351,24 +381,14 @@ func rewritePartsContainerRaw(raw json.RawMessage, rules []*compiledRule, hits *
 	}
 	partsRaw, ok := container["parts"]
 	if !ok {
+		return rewriteTextFieldInObjectRaw(trimmed, rules, hits)
+	}
+	partsTrimmed := bytes.TrimSpace(partsRaw)
+	if len(partsTrimmed) == 0 || partsTrimmed[0] != '[' {
 		return raw, false
 	}
-	var parts []json.RawMessage
-	if err := json.Unmarshal(partsRaw, &parts); err != nil || len(parts) == 0 {
-		return raw, false
-	}
-	anyChanged := false
-	for i, partRaw := range parts {
-		if updated, okChanged := rewriteTextFieldInObjectRaw(partRaw, rules, hits); okChanged {
-			parts[i] = updated
-			anyChanged = true
-		}
-	}
-	if !anyChanged {
-		return raw, false
-	}
-	encodedParts, err := json.Marshal(parts)
-	if err != nil {
+	encodedParts, changed := rewriteTextItemArrayRaw(partsTrimmed, rules, hits)
+	if !changed {
 		return raw, false
 	}
 	container["parts"] = encodedParts

@@ -3367,13 +3367,79 @@ func TestRuntime_Handle_RequestInterceptAfter(t *testing.T) {
 		}
 	}
 
+	// Real CPA intercept_after also passes untranslated client-format bodies (OpenAI/Claude/Responses)
+	// with ToFormat="antigravity"; verify they are detected and rewritten before upstream translation.
+	untranslatedCases := []struct {
+		name         string
+		sourceFormat string
+		body         string
+		wantSystem   string
+		wantUntouch  string
+	}{
+		{
+			name:         "openai chat payload with antigravity target",
+			sourceFormat: "openai",
+			body:         `{"model":"gemini-3.5-flash-lite","messages":[{"role":"system","content":"You are Claude Code, Anthropic's official CLI for Claude."},{"role":"user","content":"You are Claude Code, Anthropic's official CLI for Claude."}]}`,
+			wantSystem:   `"content":"You are a coding assistant."`,
+			wantUntouch:  `"role":"user","content":"You are Claude Code, Anthropic's official CLI for Claude."`,
+		},
+		{
+			name:         "claude payload with antigravity target",
+			sourceFormat: "claude",
+			body:         `{"system":"You are Claude Code, Anthropic's official CLI for Claude.","messages":[{"role":"user","content":"You are Claude Code, Anthropic's official CLI for Claude."}]}`,
+			wantSystem:   `"system":"You are a coding assistant."`,
+			wantUntouch:  `"content":"You are Claude Code, Anthropic's official CLI for Claude."`,
+		},
+		{
+			name:         "responses payload with antigravity target",
+			sourceFormat: "openai-response",
+			body:         `{"instructions":"You are Claude Code, Anthropic's official CLI for Claude.","input":[{"role":"user","content":"You are Claude Code, Anthropic's official CLI for Claude."}]}`,
+			wantSystem:   `"instructions":"You are a coding assistant."`,
+			wantUntouch:  `"content":"You are Claude Code, Anthropic's official CLI for Claude."`,
+		},
+		{
+			name:         "claude block array payload with antigravity target",
+			sourceFormat: "claude",
+			body:         `{"system":[{"type":"text","text":"You are Claude Code, Anthropic's official CLI for Claude.","cache_control":{"type":"ephemeral"}}],"messages":[{"role":"user","content":"You are Claude Code, Anthropic's official CLI for Claude."}]}`,
+			wantSystem:   `"text":"You are a coding assistant."`,
+			wantUntouch:  `"content":"You are Claude Code, Anthropic's official CLI for Claude."`,
+		},
+		{
+			name:         "gemini payload with antigravity target",
+			sourceFormat: "gemini",
+			body:         `{"systemInstruction":{"parts":[{"text":"You are Claude Code, Anthropic's official CLI for Claude."}]},"contents":[{"role":"user","parts":[{"text":"You are Claude Code, Anthropic's official CLI for Claude."}]}]}`,
+			wantSystem:   `"systemInstruction":{"parts":[{"text":"You are a coding assistant."}]}`,
+			wantUntouch:  `"role":"user","parts":[{"text":"You are Claude Code, Anthropic's official CLI for Claude."}]`,
+		},
+		{
+			name:         "interactions string system_instruction with antigravity target",
+			sourceFormat: "interactions",
+			body:         `{"system_instruction":"You are Claude Code, Anthropic's official CLI for Claude.","input":"You are Claude Code, Anthropic's official CLI for Claude."}`,
+			wantSystem:   `"system_instruction":"You are a coding assistant."`,
+			wantUntouch:  `"input":"You are Claude Code, Anthropic's official CLI for Claude."`,
+		},
+	}
+	for _, tc := range untranslatedCases {
+		ok, rewritten := callIntercept(runtime.MethodRequestInterceptAfter, tc.sourceFormat, "antigravity", []byte(tc.body))
+		if !ok || len(rewritten) == 0 {
+			t.Fatalf("%s: expected rewritten body, got ok=%v len=%d", tc.name, ok, len(rewritten))
+		}
+		got := string(rewritten)
+		if !strings.Contains(got, tc.wantSystem) {
+			t.Fatalf("%s: expected %q in %s", tc.name, tc.wantSystem, got)
+		}
+		if !strings.Contains(got, tc.wantUntouch) {
+			t.Fatalf("%s: user content must remain untouched (%q) in %s", tc.name, tc.wantUntouch, got)
+		}
+	}
+
 	// Diagnostics reflect counters.
 	diag, err := r.Diagnostics(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	pgDiag := diag["prompt_guard"].(map[string]any)
-	if pgDiag["enabled"] != true || pgDiag["rewritten_requests"].(int64) != 3 || pgDiag["rewritten_hits"].(int64) != 3 {
+	if pgDiag["enabled"] != true || pgDiag["rewritten_requests"].(int64) != 9 || pgDiag["rewritten_hits"].(int64) != 9 {
 		t.Fatalf("unexpected prompt_guard diagnostics: %#v", pgDiag)
 	}
 
