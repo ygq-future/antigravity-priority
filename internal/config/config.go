@@ -54,8 +54,6 @@ const (
 	DefaultGeminiWarmupModel = "gemini-3-flash"
 	// DefaultClaudeWarmupModel is the default lightweight model used for Claude 5h warm-up.
 	DefaultClaudeWarmupModel = "claude-sonnet-5-5-high"
-	// DefaultArgonWarmupModel is currently the only supported Argon weekly warm-up model.
-	DefaultArgonWarmupModel = "gemini-4-argon-high"
 
 	// DefaultUrgencyTolerance is the default numerical delta threshold below which adjacent credentials share identical priority.
 	DefaultUrgencyTolerance = 0.05
@@ -106,14 +104,12 @@ type Config struct {
 	PromptGuard              PromptGuardConfig
 }
 
-// WarmupConfig holds short-window and Pro Argon weekly warm-up settings.
+// WarmupConfig holds short-window warm-up settings.
 type WarmupConfig struct {
 	GeminiEnabled bool   `json:"gemini_enabled"`
 	ClaudeEnabled bool   `json:"claude_enabled"`
-	ArgonEnabled  bool   `json:"argon_enabled"`
 	GeminiModel   string `json:"gemini_model"`
 	ClaudeModel   string `json:"claude_model"`
-	ArgonModel    string `json:"argon_model"`
 	// Overrides holds short-window card states keyed by auth_index. Presence
 	// means a local override of the global pool toggle; absence means the card
 	// follows the global switch. A local value equal to the global is cleared by
@@ -128,7 +124,6 @@ func DefaultWarmupConfig() WarmupConfig {
 		ClaudeEnabled: false,
 		GeminiModel:   DefaultGeminiWarmupModel,
 		ClaudeModel:   DefaultClaudeWarmupModel,
-		ArgonModel:    DefaultArgonWarmupModel,
 	}
 }
 
@@ -146,10 +141,6 @@ func (w *WarmupConfig) Normalize() {
 		w.ClaudeModel = strings.TrimSpace(w.ClaudeModel)
 	}
 	w.Overrides = normalizeWarmupOverrides(w.Overrides)
-	w.ArgonModel = strings.TrimSpace(w.ArgonModel)
-	if w.ArgonModel == "" {
-		w.ArgonModel = DefaultArgonWarmupModel
-	}
 }
 
 func normalizeWarmupOverrides(src map[string]bool) map[string]bool {
@@ -399,9 +390,6 @@ func (dyn DynamicConfig) Validate() error {
 	}
 	if dyn.Warmup.ClaudeEnabled && strings.TrimSpace(dyn.Warmup.ClaudeModel) == "" {
 		return fmt.Errorf("warmup.claude_model cannot be empty when claude warm-up is enabled")
-	}
-	if model := strings.TrimSpace(dyn.Warmup.ArgonModel); model != "" && model != DefaultArgonWarmupModel {
-		return fmt.Errorf("unsupported warmup.argon_model %q: expected %s", model, DefaultArgonWarmupModel)
 	}
 	if err := dyn.PromptGuard.Validate(); err != nil {
 		return err

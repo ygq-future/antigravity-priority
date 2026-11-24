@@ -658,54 +658,54 @@ func TestStore_MarkProbeUnavailableSuppressesHistoricalEvidence(t *testing.T) {
 	now := time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)
 	shortRem := int64(70)
 	_ = store.MarkProbeSuccess(ctx, state.ProbeSuccess{
-		AuthIndex:            "acc-argon",
-		Provider:             core.ProviderAntigravity,
-		ModelGroup:           "argon",
-		ObservedAt:           now,
-		ResetAt:              now.Add(5 * 24 * time.Hour),
-		Remaining:            70,
-		ArgonWindowResetAt:   now.Add(5 * 24 * time.Hour),
-		ArgonWindowRemaining: &shortRem,
+		AuthIndex:           "acc-claude",
+		Provider:            core.ProviderAntigravity,
+		ModelGroup:          "claude_gpt",
+		ObservedAt:          now,
+		ResetAt:             now.Add(5 * 24 * time.Hour),
+		Remaining:           70,
+		LongWindowResetAt:   now.Add(5 * 24 * time.Hour),
+		LongWindowRemaining: &shortRem,
 	})
-	if _, ok := store.GetHistoricalEvidence("acc-argon", "argon"); !ok {
-		t.Fatal("expected Argon evidence before it becomes unavailable")
+	if _, ok := store.GetHistoricalEvidence("acc-claude", "claude_gpt"); !ok {
+		t.Fatal("expected evidence before it becomes unavailable")
 	}
 
 	err := store.MarkProbeUnavailable(ctx, state.ProbeUnavailable{
-		AuthIndex:  "acc-argon",
+		AuthIndex:  "acc-claude",
 		Provider:   core.ProviderAntigravity,
-		ModelGroup: "argon",
+		ModelGroup: "claude_gpt",
 		ObservedAt: now.Add(time.Hour),
 		Reason:     "target model group not entitled",
 	})
 	if err != nil {
 		t.Fatalf("MarkProbeUnavailable failed: %v", err)
 	}
-	entry, ok := store.GetEntry("acc-argon", "argon")
+	entry, ok := store.GetEntry("acc-claude", "claude_gpt")
 	if !ok || !entry.Unavailable || entry.LastError != "" || !entry.LastFailureAt.IsZero() {
 		t.Fatalf("unavailable entry must not carry a failure diagnostic: %#v", entry)
 	}
-	if _, ok := store.GetHistoricalEvidence("acc-argon", "argon"); ok {
-		t.Fatal("stale Argon evidence must be suppressed while unavailable")
+	if _, ok := store.GetHistoricalEvidence("acc-claude", "claude_gpt"); ok {
+		t.Fatal("stale evidence must be suppressed while unavailable")
 	}
 
 	// A later successful probe clears the unavailable marker.
 	_ = store.MarkProbeSuccess(ctx, state.ProbeSuccess{
-		AuthIndex:            "acc-argon",
-		Provider:             core.ProviderAntigravity,
-		ModelGroup:           "argon",
-		ObservedAt:           now.Add(2 * time.Hour),
-		ResetAt:              now.Add(5 * 24 * time.Hour),
-		Remaining:            60,
-		ArgonWindowResetAt:   now.Add(5 * 24 * time.Hour),
-		ArgonWindowRemaining: &shortRem,
+		AuthIndex:           "acc-claude",
+		Provider:            core.ProviderAntigravity,
+		ModelGroup:          "claude_gpt",
+		ObservedAt:          now.Add(2 * time.Hour),
+		ResetAt:             now.Add(5 * 24 * time.Hour),
+		Remaining:           60,
+		LongWindowResetAt:   now.Add(5 * 24 * time.Hour),
+		LongWindowRemaining: &shortRem,
 	})
-	entry, ok = store.GetEntry("acc-argon", "argon")
+	entry, ok = store.GetEntry("acc-claude", "claude_gpt")
 	if !ok || entry.Unavailable {
 		t.Fatalf("successful probe must clear unavailable state: %#v", entry)
 	}
-	if _, ok := store.GetHistoricalEvidence("acc-argon", "argon"); !ok {
-		t.Fatal("successful probe must restore Argon evidence")
+	if _, ok := store.GetHistoricalEvidence("acc-claude", "claude_gpt"); !ok {
+		t.Fatal("successful probe must restore evidence")
 	}
 }
 
@@ -791,110 +791,6 @@ func TestStore_PlanTierPersistsAndOverridesProbePlanType(t *testing.T) {
 	}
 	if evidence.PlanType != core.PlanTypeUltra {
 		t.Fatalf("historical evidence plan type = %q; want ultra", evidence.PlanType)
-	}
-}
-
-func TestStore_CleanseClonedArgonEntriesOnLoad(t *testing.T) {
-	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "legacy-cache.json")
-	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
-	reset7d := now.Add(48 * time.Hour)
-	reset5h := now.Add(3 * time.Hour)
-
-	// Write raw JSON simulating a legacy state document with cloned Argon entries
-	rawDoc := fmt.Sprintf(`{
-		"schema_version": 1,
-		"entries": {
-			"auth-cloned|model_group=gemini": {
-				"schema_version": 1,
-				"provider": "antigravity",
-				"model_group": "gemini",
-				"auth_index": "auth-cloned",
-				"observed_at": %q,
-				"remaining": 89,
-				"short_window_remaining": 100,
-				"short_window_reset_at": %q,
-				"long_window_remaining": 89,
-				"long_window_reset_at": %q,
-				"cycle_burn_rate": 0.15
-			},
-			"auth-cloned|model_group=argon": {
-				"schema_version": 1,
-				"provider": "antigravity",
-				"model_group": "argon",
-				"auth_index": "auth-cloned",
-				"observed_at": %q,
-				"remaining": 89,
-				"short_window_remaining": 100,
-				"short_window_reset_at": %q,
-				"long_window_remaining": 89,
-				"long_window_reset_at": %q,
-				"cycle_burn_rate": 0.15
-			},
-			"auth-valid|model_group=gemini": {
-				"schema_version": 1,
-				"provider": "antigravity",
-				"model_group": "gemini",
-				"auth_index": "auth-valid",
-				"observed_at": %q,
-				"remaining": 95,
-				"long_window_remaining": 95,
-				"long_window_reset_at": %q,
-				"argon_window_remaining": 70,
-				"argon_window_reset_at": %q
-			},
-			"auth-valid|model_group=argon": {
-				"schema_version": 1,
-				"provider": "antigravity",
-				"model_group": "argon",
-				"auth_index": "auth-valid",
-				"observed_at": %q,
-				"remaining": 70,
-				"long_window_remaining": 70,
-				"long_window_reset_at": %q,
-				"argon_window_remaining": 70,
-				"argon_window_reset_at": %q
-			}
-		}
-	}`,
-		now.Format(time.RFC3339), reset5h.Format(time.RFC3339), reset7d.Format(time.RFC3339),
-		now.Format(time.RFC3339), reset5h.Format(time.RFC3339), reset7d.Format(time.RFC3339),
-		now.Format(time.RFC3339), reset7d.Format(time.RFC3339), reset7d.Add(12*time.Hour).Format(time.RFC3339),
-		now.Format(time.RFC3339), reset7d.Add(12*time.Hour).Format(time.RFC3339), reset7d.Add(12*time.Hour).Format(time.RFC3339),
-	)
-	if err := os.WriteFile(path, []byte(rawDoc), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	store, err := state.Load(ctx, path)
-	if err != nil {
-		t.Fatalf("Load failed: %v", err)
-	}
-
-	// Cloned Argon entry must be cleansed on Load
-	if _, ok := store.GetEntry("auth-cloned", "argon"); ok {
-		t.Errorf("expected cloned argon entry to be cleansed")
-	}
-	if _, ok := store.GetHistoricalEvidence("auth-cloned", "argon"); ok {
-		t.Errorf("expected GetHistoricalEvidence for cloned argon to return false")
-	}
-	// Gemini entry for auth-cloned must remain intact
-	if _, ok := store.GetEntry("auth-cloned", "gemini"); !ok {
-		t.Errorf("expected gemini entry for auth-cloned to remain")
-	}
-	if entry, ok := store.GetEntry("auth-cloned", "gemini"); !ok || entry.SchemaVersion != state.SchemaVersion {
-		t.Errorf("expected legacy entry to migrate to schema %d, got %d", state.SchemaVersion, entry.SchemaVersion)
-	}
-	if ev, ok := store.GetHistoricalEvidence("auth-cloned", "gemini"); !ok || ev.Remaining == nil || *ev.Remaining != 89 {
-		t.Errorf("expected valid gemini evidence for auth-cloned")
-	}
-
-	// Valid Argon entry must be preserved
-	if _, ok := store.GetEntry("auth-valid", "argon"); !ok {
-		t.Errorf("expected valid argon entry to be preserved")
-	}
-	if ev, ok := store.GetHistoricalEvidence("auth-valid", "argon"); !ok || ev.Remaining == nil || *ev.Remaining != 70 {
-		t.Errorf("expected valid argon evidence for auth-valid")
 	}
 }
 

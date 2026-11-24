@@ -514,12 +514,6 @@ const templateStyleOverviewCards = `        /* Credentials Display (Grid 3 Colum
             border: 1px solid rgba(37, 99, 235, 0.25);
         }
 
-        .badge-argon {
-            background: rgba(147, 51, 234, 0.12);
-            color: var(--accent-purple-text, #9333ea);
-            border: 1px solid rgba(147, 51, 234, 0.25);
-        }
-
         .badge-claude {
             background: rgba(217, 119, 6, 0.12);
             color: var(--accent-yellow-text, #d97706);

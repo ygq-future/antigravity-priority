@@ -24,12 +24,9 @@ func TestModelSelector_MarkupAndBuiltInCatalog(t *testing.T) {
 		t.Fatal("StatusHTML must contain customModelSelectMenu")
 	}
 
-	// 2. Verify all three quota pool group headers are present
+	// 2. Verify both quota pool group headers are present
 	if !strings.Contains(StatusHTML, `data-i18n="poolGemini"`) {
 		t.Fatal("customModelSelectMenu must render poolGemini header")
-	}
-	if !strings.Contains(StatusHTML, `data-i18n="poolArgon"`) {
-		t.Fatal("customModelSelectMenu must render poolArgon header")
 	}
 	if !strings.Contains(StatusHTML, `data-i18n="poolClaudeGPT"`) {
 		t.Fatal("customModelSelectMenu must render poolClaudeGPT header")
@@ -39,7 +36,6 @@ func TestModelSelector_MarkupAndBuiltInCatalog(t *testing.T) {
 	expectedModels := []string{
 		"gemini-3.8-flash-high",
 		"gemini-3-flash",
-		"gemini-4-argon-high",
 		"claude-sonnet-5-5-high",
 		"claude-opus-5-5-high",
 		"gpt-oss-120b-medium",
@@ -434,9 +430,9 @@ latestSnapshot = sampleSnapshot;
         throw new Error("card 3 in Gemini must be bypassed cooling: " + cardsG[3].innerHTML);
     }
 
-    // Verify all 5 quota bars rendered on every card
+    // Verify all 4 quota bars rendered on every card
     const card0 = cardsG[0].innerHTML;
-    const requiredBars = ["Gemini 5h", "Gemini 7d", "Claude 5h", "Claude 7d", "Argon 7d"];
+    const requiredBars = ["Gemini 5h", "Gemini 7d", "Claude 5h", "Claude 7d"];
     for (const bar of requiredBars) {
         if (card0.indexOf(bar) < 0) {
             throw new Error("card 0 missing quota bar: " + bar);
@@ -462,25 +458,13 @@ latestSnapshot = sampleSnapshot;
         throw new Error("free plan without Claude quota must be marked unsupported in Claude route: " + lastCard);
     }
 
-    // === SCENARIO 3: Select gemini-4-argon-high ===
-    selectModel("gemini-4-argon-high");
-    const cardsA = elements.credentialsContainer.children;
-    if (cardsA.length !== 2) {
-        throw new Error("expected 2 cards in Argon pool, got " + cardsA.length);
-    }
-
     // === SCENARIO 4: Samples modal pool switcher ===
     cachedSamplesData = {
         groups: {
             gemini: { name: "Gemini", samples: [{ observed_at: "2026-11-05T12:00:00Z", short_window_rem: 90, long_window_rem: 85 }] },
-            argon: { name: "Argon", samples: [{ observed_at: "2026-11-05T12:00:00Z", short_window_rem: 90, long_window_rem: 80 }] },
             claude_gpt: { name: "Claude", samples: [{ observed_at: "2026-11-05T12:00:00Z", short_window_rem: 70, long_window_rem: 60 }] }
         }
     };
-    renderSamplesModalGroup("argon", "test@example.com");
-    if (elements.samplesModalBody.innerHTML.indexOf("80%") < 0) {
-        throw new Error("samples modal failed to render Argon sample data: " + elements.samplesModalBody.innerHTML);
-    }
     renderSamplesModalGroup("claude_gpt", "test@example.com");
     if (elements.samplesModalBody.innerHTML.indexOf("60%") < 0) {
         throw new Error("samples modal failed to switch to Claude sample data: " + elements.samplesModalBody.innerHTML);

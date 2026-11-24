@@ -46,10 +46,6 @@ func executeAntigravityQuotaRequest(ctx context.Context, doer quotaHTTPDoer, req
 }
 
 func failedAntigravityQuotaResults(request antigravityQuotaRequest, message string, statusCode int) map[antigravity.ModelGroup]antigravity.ProbeResult {
-	// Only the universal pools are synthesized here. Argon is entitlement-gated:
-	// a total transport failure does not prove the account lacks Argon, so it must
-	// not fabricate an Argon failure record. Distinguishing "no Argon entitlement"
-	// from "Argon probe failed" is a separate status/semantic change.
 	results := make(map[antigravity.ModelGroup]antigravity.ProbeResult, 2)
 	for _, group := range []antigravity.ModelGroup{antigravity.ModelGroupGemini, antigravity.ModelGroupClaudeGPT} {
 		result := antigravity.ParseAvailableModels(nil, request.ObservedAt.UTC(), group)
@@ -72,10 +68,10 @@ func antigravityQuotaBody(projectID string) []byte {
 	return body
 }
 
-// antigravityHubUserAgent identifies the desktop (hub) client. Google gates both
-// the measured Gemini windows and the separate Gemini 4 Argon weekly bucket on the
-// client identity: hub 1.0.0 receives only Claude/GPT on the daily host, while the
-// current 2.24.0 identity receives the measured Gemini, Argon, and Claude/GPT groups.
+// antigravityHubUserAgent identifies the desktop (hub) client. Google gates
+// the measured Gemini windows on the client identity: hub 1.0.0 receives only
+// Claude/GPT on the daily host, while the current 2.24.0 identity receives the
+// measured Gemini and Claude/GPT groups.
 const antigravityHubUserAgent = "antigravity/hub/2.24.0 darwin/arm64"
 
 // antigravityWarmupUserAgent mirrors the identity the host sends for real consumer

@@ -40,10 +40,7 @@ const templateScriptHistory = `        function renderHistory() {
                 const pool = r.model_pool || "";
                 let modelClass = "req-model-gemini";
                 let poolLabel = "Gemini";
-                if (pool === "argon") {
-                    modelClass = "req-model-argon";
-                    poolLabel = "Argon";
-                } else if (pool === "claude_gpt") {
+                if (pool === "claude_gpt") {
                     modelClass = "req-model-claude";
                     poolLabel = "Claude";
                 }

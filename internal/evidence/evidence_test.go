@@ -75,14 +75,14 @@ func TestClassify_CurrentRoundEvidenceAuthority(t *testing.T) {
 func TestClassify_UnavailableProbeIsNotFailure(t *testing.T) {
 	now := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
 	result := evidence.Classify(evidence.Input{
-		Round:       evidence.Round{ID: "round-current", ModelGroup: config.AntigravityModelGroupArgon},
-		Credentials: []core.Credential{{AuthIndex: "no-argon", Provider: core.ProviderAntigravity}},
+		Round:       evidence.Round{ID: "round-current", ModelGroup: config.AntigravityModelGroupClaudeGPT},
+		Credentials: []core.Credential{{AuthIndex: "no-claude", Provider: core.ProviderAntigravity}},
 		Probes: []evidence.ProbeObservation{{
 			RoundID: "round-current",
 			Result: antigravity.ProbeResult{
 				Provider:   core.ProviderAntigravity,
-				AuthIndex:  "no-argon",
-				ModelGroup: antigravity.ModelGroupArgon,
+				AuthIndex:  "no-claude",
+				ModelGroup: antigravity.ModelGroupClaudeGPT,
 				ObservedAt: now,
 				Status:     antigravity.StatusUnavailable,
 				Error:      "target model group not entitled",
@@ -105,11 +105,11 @@ func TestClassify_UnavailableProbeIsNotFailure(t *testing.T) {
 func TestClassify_HistoricalUnavailableIsNotFailure(t *testing.T) {
 	now := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
 	result := evidence.Classify(evidence.Input{
-		Round:       evidence.Round{ID: "historical", ModelGroup: config.AntigravityModelGroupArgon},
-		Credentials: []core.Credential{{AuthIndex: "no-argon", Provider: core.ProviderAntigravity}},
+		Round:       evidence.Round{ID: "historical", ModelGroup: config.AntigravityModelGroupClaudeGPT},
+		Credentials: []core.Credential{{AuthIndex: "no-claude", Provider: core.ProviderAntigravity}},
 		Historical: []evidence.HistoricalObservation{{
-			AuthIndex:         "no-argon",
-			ModelGroup:        config.AntigravityModelGroupArgon,
+			AuthIndex:         "no-claude",
+			ModelGroup:        config.AntigravityModelGroupClaudeGPT,
 			Unavailable:       true,
 			UnavailableAt:     now,
 			UnavailableReason: "target model group not entitled",

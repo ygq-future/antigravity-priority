@@ -15,7 +15,6 @@ const overviewSamplesMarkup = `
                 <div id="samplesModalSubtitle" class="samples-modal-subtitle"></div>
                 <div id="samplesPoolSwitcher" class="samples-pool-switcher">
                     <button type="button" class="btn-pool-pill active" id="btnSamplePoolGemini" onclick="switchSamplesPool('gemini')">Gemini</button>
-                    <button type="button" class="btn-pool-pill" id="btnSamplePoolArgon" onclick="switchSamplesPool('argon')">Argon</button>
                     <button type="button" class="btn-pool-pill" id="btnSamplePoolClaude" onclick="switchSamplesPool('claude_gpt')">Claude &amp; GPT</button>
                 </div>
             </div>
@@ -70,10 +69,8 @@ const templateScriptOverviewSamples = `        let cachedSamplesData = null;
             if (!body) return;
 
             const btnG = document.getElementById("btnSamplePoolGemini");
-            const btnA = document.getElementById("btnSamplePoolArgon");
             const btnC = document.getElementById("btnSamplePoolClaude");
             if (btnG) btnG.classList.toggle("active", selectedGroup === "gemini");
-            if (btnA) btnA.classList.toggle("active", selectedGroup === "argon");
             if (btnC) btnC.classList.toggle("active", selectedGroup === "claude_gpt");
 
             const groups = (cachedSamplesData && cachedSamplesData.groups) || {};

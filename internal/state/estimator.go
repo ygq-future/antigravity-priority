@@ -27,8 +27,8 @@ const (
 
 	// DefaultTokensPerShortPctGemini is default weighted tokens per 1% 5h quota for Gemini.
 	DefaultTokensPerShortPctGemini = 80000.0
-	// DefaultTokensPerShortPctClaudeArgon is default weighted tokens per 1% 5h quota for Claude & Argon.
-	DefaultTokensPerShortPctClaudeArgon = 40000.0
+	// DefaultTokensPerShortPctClaude is default weighted tokens per 1% 5h quota for Claude & GPT.
+	DefaultTokensPerShortPctClaude = 40000.0
 	// MinTokensPerShortPct is the minimum clamp bound for learned token sensitivity.
 	MinTokensPerShortPct = 5000.0
 	// MaxTokensPerShortPct is the maximum clamp bound for learned token sensitivity.
@@ -52,7 +52,7 @@ func defaultTokensPerShortPct(group string) float64 {
 	if strings.Contains(strings.ToLower(group), "gemini") {
 		return DefaultTokensPerShortPctGemini
 	}
-	return DefaultTokensPerShortPctClaudeArgon
+	return DefaultTokensPerShortPctClaude
 }
 
 func effectiveTokensPerShortPct(entry Entry) float64 {

@@ -147,14 +147,14 @@ func TestStatusHTML_CSSTokenCompleteness(t *testing.T) {
 
 func TestStatusHTML_ProbeDetailsCoverBothModelGroups(t *testing.T) {
 	html := management.StatusHTML
-	if !strings.Contains(html, `const probeModelGroups = ["gemini", "argon", "claude_gpt"];`) {
-		t.Fatal("probe details must request all three Antigravity model groups")
+	if !strings.Contains(html, `const probeModelGroups = ["gemini", "claude_gpt"];`) {
+		t.Fatal("probe details must request both Antigravity model groups")
 	}
 	if !strings.Contains(html, "groups: groups") {
 		t.Fatal("probe details must pass grouped records to the modal")
 	}
-	if !strings.Contains(html, "history-comparison-table") || !strings.Contains(html, "本次探测 Gemini 额度") || !strings.Contains(html, "本次探测 Argon 额度") || !strings.Contains(html, "本次探测 Claude/GPT 额度") {
-		t.Fatal("probe details modal must render one account comparison table with all three model-group columns")
+	if !strings.Contains(html, "history-comparison-table") || !strings.Contains(html, "本次探测 Gemini 额度") || !strings.Contains(html, "本次探测 Claude/GPT 额度") {
+		t.Fatal("probe details modal must render one account comparison table with both model-group columns")
 	}
 }
 
@@ -263,7 +263,6 @@ func TestStatusHTML_ContainsRequiredUIElements(t *testing.T) {
 		{"Diagnostics panel", "panelDiagnostics"},
 		{"Diagnostics KPI grid", "diag-kpi-grid"},
 		{"Diagnostics Prompt Guard KPI card", "diagPgStats"},
-		{"Argon warmup custom select", "customWarmupArgonModelSelect"},
 		{"Diagnostics copy button", "btnCopyDiagnostics"},
 		{"Diagnostics pool matrix", "diagPoolMatrix"},
 		{"Diagnostics pool section", "diagSectionPools"},

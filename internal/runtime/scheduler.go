@@ -32,9 +32,6 @@ var builtInAntigravityModels = []ModelCatalogItem{
 	{ID: "gemini-3.5-flash-lite", DisplayName: "Gemini 3.5 Flash Lite", QuotaPool: config.AntigravityModelGroupGemini},
 	{ID: "gemini-3.1-flash-lite", DisplayName: "Gemini 3.1 Flash Lite", QuotaPool: config.AntigravityModelGroupGemini},
 	{ID: "gemini-3.1-flash-image", DisplayName: "Gemini 3.1 Flash Image", QuotaPool: config.AntigravityModelGroupGemini},
-	// Argon Pool
-	{ID: "gemini-4-argon-high", DisplayName: "Gemini 4 Argon High", QuotaPool: config.AntigravityModelGroupArgon},
-
 	// Claude & GPT Pool
 	{ID: "claude-sonnet-5-5-high", DisplayName: "Claude Sonnet 5.5 High", QuotaPool: config.AntigravityModelGroupClaudeGPT},
 	{ID: "claude-opus-5-5-high", DisplayName: "Claude Opus 5.5 High", QuotaPool: config.AntigravityModelGroupClaudeGPT},

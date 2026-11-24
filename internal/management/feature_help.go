@@ -11,7 +11,7 @@ const helpMarkup = `
                         <span data-i18n="helpGithub">GitHub 主页</span>
                     </a>
                 </div>
-                <p class="help-intro" data-i18n="helpP1">本插件专为 CLIProxyAPI 的 Google Antigravity 设计，围绕 Gemini、Argon 与 Claude &amp; GPT 三大独立配额池执行自适应优先级调度与纯内存动态分流：</p>
+                <p class="help-intro" data-i18n="helpP1">本插件专为 CLIProxyAPI 的 Google Antigravity 设计，围绕 Gemini 与 Claude &amp; GPT 两大独立配额池执行自适应优先级调度与纯内存动态分流：</p>
                 <div class="help-feature-list">
                     <div class="help-feature-item">
                         <div class="help-feature-title" data-i18n="help5hTitle">⚡ 5 小时短窗 (5h) 自愈软降级</div>
@@ -19,7 +19,7 @@ const helpMarkup = `
                     </div>
                     <div class="help-feature-item">
                         <div class="help-feature-title" data-i18n="help7dTitle">📅 7 天周长窗 (7d) 全局把控</div>
-                        <div data-i18n="help7dDesc">同时跟踪 Gemini、Argon 与 Claude &amp; GPT 的周配额剩余量与重置进度。周额度耗尽同样执行纯内存软降级（priority=-1, disabled=false），避免单张凭证在周期前半段过早透支。</div>
+                        <div data-i18n="help7dDesc">同时跟踪 Gemini 与 Claude &amp; GPT 的周配额剩余量与重置进度。周额度耗尽同样执行纯内存软降级（priority=-1, disabled=false），避免单张凭证在周期前半段过早透支。</div>
                     </div>
                     <div class="help-feature-item">
                         <div class="help-feature-title" data-i18n="helpBurnTitle">📈 自适应燃尽学习 (C_cycle / K_5h)</div>

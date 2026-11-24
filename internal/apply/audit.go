@@ -28,14 +28,12 @@ type QuotaWindowBar struct {
 	ResetAt   *time.Time `json:"reset_at,omitempty"`
 }
 
-// AllQuotaWindows aggregates the 5 quota progress bars for display across all views.
+// AllQuotaWindows aggregates the 4 quota progress bars for display across all views.
 type AllQuotaWindows struct {
 	Gemini5h              QuotaWindowBar `json:"gemini_5h"`
 	Gemini7d              QuotaWindowBar `json:"gemini_7d"`
 	Claude5h              QuotaWindowBar `json:"claude_5h"`
 	Claude7d              QuotaWindowBar `json:"claude_7d"`
-	Argon7d               QuotaWindowBar `json:"argon_7d"`
-	ArgonSharedWithGemini bool           `json:"argon_shared_with_gemini,omitempty"`
 }
 
 // RoutingStatus represents a credential's authoritative scheduling state within a pool.
@@ -85,8 +83,6 @@ type SnapshotItem struct {
 	ShortWindowRemaining  *int64           `json:"short_window_remaining,omitempty"`
 	LongWindowResetAt     *time.Time       `json:"long_window_reset_at,omitempty"`
 	LongWindowRemaining   *int64           `json:"long_window_remaining,omitempty"`
-	ArgonWindowResetAt    *time.Time       `json:"argon_window_reset_at,omitempty"`
-	ArgonWindowRemaining  *int64           `json:"argon_window_remaining,omitempty"`
 	QuotaWindows          AllQuotaWindows  `json:"quota_windows"`
 	EstimatedShortBurnPct float64          `json:"estimated_short_burn_pct,omitempty"`
 	EstimatedLongBurnPct  float64          `json:"estimated_long_burn_pct,omitempty"`
@@ -165,8 +161,6 @@ func snapshotItem(item priority.PlanItem) SnapshotItem {
 		ShortWindowRemaining: item.ShortWindowRemaining,
 		LongWindowResetAt:    item.LongWindowResetAt,
 		LongWindowRemaining:  item.LongWindowRemaining,
-		ArgonWindowResetAt:   item.ArgonWindowResetAt,
-		ArgonWindowRemaining: item.ArgonWindowRemaining,
 	}
 }
 

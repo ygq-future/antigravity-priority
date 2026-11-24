@@ -102,7 +102,6 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 	}
 	if !request.Warmup.Suppress && (request.Config.Warmup.GeminiEnabled ||
 		request.Config.Warmup.ClaudeEnabled ||
-		request.Config.Warmup.ArgonEnabled ||
 		request.Config.Warmup.HasEnabledOverride()) {
 		disabledAuth := make(map[string]struct{})
 		for _, c := range allCredentials {
@@ -205,14 +204,9 @@ func readyProbeCredentialCount(probes []evidence.ProbeObservation) int {
 }
 
 // hasRetryableProbeFailure reports whether the current round produced a fresh
-// failure in a pool that every account exposes. Argon is excluded because it is
-// a paid-plan pool: Free accounts legitimately have no Argon quota, and treating
-// that absence as retryable would hammer upstream on every scheduled run.
+// failure in any quota pool.
 func hasRetryableProbeFailure(collected collectedEvidence) bool {
 	for _, probe := range collected.Probes {
-		if probe.Result.ModelGroup == antigravity.ModelGroupArgon {
-			continue
-		}
 		if probe.Result.Status != antigravity.StatusReady {
 			return true
 		}

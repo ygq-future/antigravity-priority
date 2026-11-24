@@ -24,14 +24,14 @@ CLIProxyAPI (CPA) 专精型 **Google Antigravity 凭证智能配额调度与自�
 
 ## 功能概览
 
-- **Antigravity 三大配额池专精调度**：针对 `gemini`、`argon` 与 `claude_gpt` 三大配额池深度定制，联动 5 小时短窗与 7 天周长窗；自动识别 `ULTRA` / `ULTRA-LITE` / `PRO` / `FREE` 订阅档位，并将无短窗的 Free 凭证隔离至独立兜底梯队。
+- **Antigravity 两大配额池专精调度**：针对 `gemini` 与 `claude_gpt` 两大配额池深度定制，联动 5 小时短窗与 7 天周长窗；自动识别 `ULTRA` / `ULTRA-LITE` / `PRO` / `FREE` 订阅档位，并将无短窗的 Free 凭证隔离至独立兜底梯队。
 - **CPA 原生 `scheduler.pick` 纯内存动态调度**：通过 `scheduler: true` 与 `scheduler_across_priorities: true` 毫秒级解析模型并路由至最优凭证，实现零磁盘写入、无静态优先级冲突的纯内存调度。
 - **动态提前提权与周紧迫度平衡**：基于 `usage.handle` 实时估算 Token 消耗与自适应周期燃尽率 $C_{\text{cycle}}$，在最佳窗口触发 `999, 998...` 梯次提权并结合周紧迫度平滑轮转，避免大额度账号到期浪费。
 - **会话粘性与自定义梯队**：同梯队凭证支持 `canonical_session_id` 会话粘性与轮询分流；支持在卡片上覆盖自定义梯队（Tier #1、Tier #2 等）实现精确的优先次序与负载均衡。
 - **自愈式软降级与健康故障转移**：短窗或周额度耗尽时仅执行纯内存软降级（优先级 `-1`，不修改宿主机 `disabled` 状态），配额重置后自动恢复；对 401/403 凭证异常与 429/5xx 限流故障执行隔离与退避探测恢复。
-- **智能配额预热（5h 短窗 & Pro Argon 周额度）**：支持为满额且未激活倒计时的 Gemini / Claude 5h 短窗以及 Pro Argon 周额度自动发送轻量预热请求，配合全局错峰车道打散刷新时间点，并支持单卡局部覆盖。
+- **智能配额预热（5h 短窗）**：支持为满额且未激活倒计时的 Gemini / Claude 5h 短窗自动发送轻量预热请求，配合全局错峰车道打散刷新时间点，并支持单卡局部覆盖。
 - **自适应探测校准**：根据近期请求频率与突发流量动态调整后台探测节奏，空闲跳过、活跃校准，在减少无效探测的同时保持配额与灵敏度模型准确。
-- **模型路由看板与全局排除**：提供具体模型路由看板与五进度条凭证卡片（`Gemini 5h/7d`、`Claude 5h/7d`、`Argon 7d`），支持一键全局排除指定模型并即时热生效。
+- **模型路由看板与全局排除**：提供具体模型路由看板与四进度条凭证卡片（`Gemini 5h/7d`、`Claude 5h/7d`），支持一键全局排除指定模型并即时热生效。
 - **系统提示词 Prompt Guard**：支持从远程词库同步规则并本地自定义关键词/正则改写（仅作用于系统与开发者指令），可在配置中心预览与管理（默认关闭）。
 - **零重启配置中心与双主题仪表盘**：CPA 宿主 YAML 仅需启用插件，所有调度与业务参数均可在嵌入式 CSP 安全仪表盘的 **`⚙️ 配置中心`** 实时热生效，同时提供实时请求历史、完整身份展示与一键脱敏视图。
 ---
@@ -44,19 +44,19 @@ CLIProxyAPI (CPA) 专精型 **Google Antigravity 凭证智能配额调度与自�
   -> 注册 scheduler.pick 与 management 能力 (scheduler_across_priorities: true)
   -> 通过 host.auth.list 与 host.auth.models 获取 CPA 凭证与模型列表
   -> 定期探测与初始化
-       - 单次探测并发提取三大配额池 (gemini, argon, claude_gpt) 的 5h 与 7d 双窗口数据
+       - 单次探测并发提取两大配额池 (gemini, claude_gpt) 的 5h 与 7d 双窗口数据
        - 结合自适应 C_cycle 学习率判定各配额池是否进入 Dynamic Boost 提权区间
-       - 预先计算三大配额池的高速内存路由表 (O(1) 查找)
+       - 预先计算两大配额池的高速内存路由表 (O(1) 查找)
   -> 接收业务请求 (scheduler.pick)
-       - 解析请求模型 (如 gemini-3.8-flash-high, gemini-4-argon-high, claude-sonnet-5-5-high)
-       - 映射到目标配额池 (gemini / argon / claude_gpt)
+       - 解析请求模型 (如 gemini-3.8-flash-high, claude-sonnet-5-5-high)
+       - 映射到目标配额池 (gemini / claude_gpt)
        - 过滤耗尽与 429 冷却凭证，选取最优优先级梯队 (999 Boost > 100 Normal > 10 Free)
        - 在最优平级梯队内结合 canonical_session_id 会话粘性与轮询指针分流
        - 纯内存极速返回目标 auth_id，不产生任何磁盘文件 IO
   -> 闭环实时追踪 (usage.handle)
        - 捕获各轮交互消耗 token，实时推算额度扣减，更新路由分档
        - 下一次后台探测时平滑自校准，消除误差
-  -> 在认证管理页面展示具体模型路由看板、调用顺序梯队、5 进度条卡片与脱敏审计摘要
+  -> 在认证管理页面展示具体模型路由看板、调用顺序梯队、4 进度条卡片与脱敏审计摘要
 ```
 
 ---
@@ -139,8 +139,6 @@ plugins:
 | **Gemini 预热目标模型 (`warmup.gemini_model`)** | `gemini-3-flash` | 可选 / 自定义 | 用于触发 Gemini 5h 重置倒计时的预热模型。 |
 | **Claude 5h 满额自动预热 (`warmup.claude_enabled`)** | `false` | 开 / 关 | 当 Claude 5h 短窗 100% 满额、7d 仍有余量且倒计时未激活时，自动发送一次短请求提前触发 5h 倒计时；凭证之间随机间隔 60–120 分钟、同凭证不同分组 30–60 分钟。 |
 | **Claude 预热目标模型 (`warmup.claude_model`)** | `claude-sonnet-5-5-high` | 可选 / 自定义 | 用于触发 Claude 5h 重置倒计时的预热模型。 |
-| **Argon 周额度自动预热 (`warmup.argon_enabled`)** | `false` | 开 / 关 | 为 Pro 凭证的独立 Argon 周额度在 100% 满额时触发 7d 重置；与 Gemini / Claude 共用后台错峰车道，成功后七天内不再重复预热。 |
-| **Argon 预热目标模型 (`warmup.argon_model`)** | `gemini-4-argon-high` | 仅此选项 | 用于 Pro 凭证独立周额度预热。 |
 | **单凭证预热覆盖 (`warmup.overrides`)** | 空 | 概览卡片顶部图标 | 点击图标写入 `auth_index -> true/false` 的局部状态；点击结果与全局一致时自动清除并恢复跟随；局部开启会清除该凭证 4h30m 防抖。 |
 
 ---
@@ -154,12 +152,12 @@ plugins:
 - `GET /v0/resource/plugins/antigravity-priority/status`
   - **访问方式**：在 CPA 管理后台侧边栏点击 **"Antigravity Priority"** 菜单，或在浏览器中直接访问 `http://<CPA_HOST>:<PORT>/v0/resource/plugins/antigravity-priority/status`。
   - **核心功能**：
-    - **模型驱动路由看板**：支持下拉选择具体模型（Gemini 池、Argon 池、Claude & GPT 池），即时展示对应模型的完整凭证调用次序（Tier #1 · 999 提权、Tier #2 · 100 平级轮询等）与生效状态；模型行可直接排除/恢复该模型，选择结果自动记忆。
-    - **全景五进度条卡片**：每个凭证卡片同时渲染全部 5 根配额进度条（Gemini 5h/7d、Claude 5h/7d、Argon 7d），并高亮当前选中模型的生效配额；秒级自适应倒计时与自适应消耗速率 $C_{\text{cycle}}$。
+    - **模型驱动路由看板**：支持下拉选择具体模型（Gemini 池、Claude & GPT 池），即时展示对应模型的完整凭证调用次序（Tier #1 · 999 提权、Tier #2 · 100 平级轮询等）与生效状态；模型行可直接排除/恢复该模型，选择结果自动记忆。
+    - **全景四进度条卡片**：每个凭证卡片同时渲染全部 4 根配额进度条（Gemini 5h/7d、Claude 5h/7d），并高亮当前选中模型的生效配额；秒级自适应倒计时与自适应消耗速率 $C_{\text{cycle}}$。
     - **调度与同步控制**：提供 `🔄 刷新同步 (Sync Host)`、`📡 刷新配额 (10s冷却)`、`🔄 重置静态优先级 (Reset Priorities)`。
     - **实时请求历史**：实时追踪捕获最近请求记录（保留条数可配置，默认 100，最高 1000），记录请求 Model、目标配额池、Token 消耗细分与状态码，支持一键清空。
-    - **采样历史**：支持自由切换 Gemini、Argon 与 Claude & GPT 三大配额池时序样本。
-    - **系统诊断**：运行健康横幅、调度/隔离冷却/最近运行/提示词防护四类 KPI（防护启用状态、活跃/配置规则数、改写请求与命中、规则告警）、三配额池矩阵、逐凭证调度决策解释（优先级、Urgency、T7d/T_req、C_cycle 与原因）、429 风暴与冷却隔离、运行时间线，以及四类缓存文件的路径、体积与缺失状态，支持一键复制诊断 JSON。
+    - **采样历史**：支持自由切换 Gemini 与 Claude & GPT 两大配额池时序样本。
+    - **系统诊断**：运行健康横幅、调度/隔离冷却/最近运行/提示词防护四类 KPI（防护启用状态、活跃/配置规则数、改写请求与命中、规则告警）、双配额池矩阵、逐凭证调度决策解释（优先级、Urgency、T7d/T_req、C_cycle 与原因）、429 风暴与冷却隔离、运行时间线，以及四类缓存文件的路径、体积与缺失状态，支持一键复制诊断 JSON。
     - **⚙️ 配置中心**：在线修改所有调度与算法参数，0 秒热生效与一键恢复默认。
 
 ### 管理 API（动态接口，需 Management Key 鉴权）

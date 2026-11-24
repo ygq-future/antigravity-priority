@@ -66,14 +66,12 @@ const templateScriptConfigRaw = `        let originalConfigState = null;
             var warmupGeminiModel = (document.getElementById("cfgWarmupGeminiModelSelect") && document.getElementById("cfgWarmupGeminiModelSelect").value) || "gemini-3-flash";
             var warmupClaudeEnabled = Boolean(document.getElementById("cfgWarmupClaudeEnabled") && document.getElementById("cfgWarmupClaudeEnabled").checked);
             var warmupClaudeModel = (document.getElementById("cfgWarmupClaudeModelSelect") && document.getElementById("cfgWarmupClaudeModelSelect").value) || "claude-sonnet-5-5-high";
-            var warmupArgonEnabled = Boolean(document.getElementById("cfgWarmupArgonEnabled") && document.getElementById("cfgWarmupArgonEnabled").checked);
-            var warmupArgonModel = document.getElementById("cfgWarmupArgonModelSelect")?.value || "gemini-4-argon-high";
             var pgEnabled = Boolean(document.getElementById("cfgPromptGuardEnabled") && document.getElementById("cfgPromptGuardEnabled").checked);
 
             return JSON.stringify({
                 autoApply, interval,
                 maxConcurrency, urgencyTol, sampleCapacity, cooldownMin,
-                warmupGeminiEnabled, warmupGeminiModel, warmupClaudeEnabled, warmupClaudeModel, warmupArgonEnabled, warmupArgonModel,
+                warmupGeminiEnabled, warmupGeminiModel, warmupClaudeEnabled, warmupClaudeModel,
                 pgEnabled, promptGuardRules
             });
         }
@@ -447,11 +445,6 @@ const templateScriptConfigRaw = `        let originalConfigState = null;
             if (cooldownMin) cooldownMin.value = cfg.rate_limit_cooldown_minutes !== undefined ? cfg.rate_limit_cooldown_minutes : 5;
 
             var warmup = cfg.warmup || {};
-            var wArgon = document.getElementById("cfgWarmupArgonEnabled");
-            if (wArgon) wArgon.checked = Boolean(warmup.argon_enabled);
-            var wArgonModel = document.getElementById("cfgWarmupArgonModelSelect");
-            if (wArgonModel) wArgonModel.value = warmup.argon_model || "gemini-4-argon-high";
-            if (typeof updateCustomWarmupArgonDisplay === "function") updateCustomWarmupArgonDisplay();
             var wGemini = document.getElementById("cfgWarmupGeminiEnabled");
             if (wGemini) wGemini.checked = Boolean(warmup.gemini_enabled);
             var wGeminiModel = document.getElementById("cfgWarmupGeminiModelSelect");
@@ -467,7 +460,6 @@ const templateScriptConfigRaw = `        let originalConfigState = null;
             } else if (typeof updateCustomWarmupGeminiDisplay === "function") {
                 updateCustomWarmupGeminiDisplay();
                 updateCustomWarmupClaudeDisplay();
-                if (typeof updateCustomWarmupArgonDisplay === "function") updateCustomWarmupArgonDisplay();
             }
 
             var pg = cfg.prompt_guard || {};
@@ -615,8 +607,6 @@ const templateScriptConfigRaw = `        let originalConfigState = null;
                     custom_tiers: (dynamicConfig && dynamicConfig.custom_tiers) ? dynamicConfig.custom_tiers : undefined,
                     excluded_models: (dynamicConfig && Array.isArray(dynamicConfig.excluded_models)) ? dynamicConfig.excluded_models : undefined,
                     warmup: {
-                        argon_enabled: Boolean(document.getElementById("cfgWarmupArgonEnabled") && document.getElementById("cfgWarmupArgonEnabled").checked),
-                        argon_model: document.getElementById("cfgWarmupArgonModelSelect")?.value || "gemini-4-argon-high",
                         gemini_enabled: Boolean(document.getElementById("cfgWarmupGeminiEnabled") && document.getElementById("cfgWarmupGeminiEnabled").checked),
                         gemini_model: (document.getElementById("cfgWarmupGeminiModelSelect") && document.getElementById("cfgWarmupGeminiModelSelect").value) || "gemini-3-flash",
                         claude_enabled: Boolean(document.getElementById("cfgWarmupClaudeEnabled") && document.getElementById("cfgWarmupClaudeEnabled").checked),
@@ -665,8 +655,6 @@ const templateScriptConfigRaw = `        let originalConfigState = null;
                     paused: false
                 },
                 warmup: {
-                    argon_enabled: false,
-                    argon_model: "gemini-4-argon-high",
                     gemini_enabled: false,
                     gemini_model: "gemini-3-flash",
                     claude_enabled: false,

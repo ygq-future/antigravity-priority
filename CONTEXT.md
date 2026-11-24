@@ -15,21 +15,17 @@ The 7-day weekly total quota pool allocated by Antigravity for an account.
 _Avoid_: Monthly quota, account balance, total tokens
 
 **Quota Pool (Model Group)**:
-The upstream independent quota resource units in Google Antigravity: `gemini` (Gemini models), `argon` (Gemini 4 Argon), and `claude_gpt` (Claude and GPT models). All three pools are concurrently active first-class scheduling authorities.
+The upstream independent quota resource units in Google Antigravity: `gemini` (Gemini models) and `claude_gpt` (Claude and GPT models). Both pools are concurrently active first-class scheduling authorities.
 _Avoid_: Provider, engine, single control group
 
-**Argon Weekly Window (7d)**:
-Dedicated 7-day weekly quota bucket for Gemini 4 Argon on paid Pro plans; falls back to the shared Gemini 7-day weekly bucket on Ultra/Free plans.
-_Avoid_: Gemini sub-bucket, burst window
-
-**5-Window Unified Quota Projection**:
-A unified real-time representation of all five quota windows (`gemini_5h`, `gemini_7d`, `claude_5h`, `claude_7d`, `argon_7d`) evaluated and rendered simultaneously on every credential card, with active route highlighting based on the selected model.
+**4-Window Unified Quota Projection**:
+A unified real-time representation of all four quota windows (`gemini_5h`, `gemini_7d`, `claude_5h`, `claude_7d`) evaluated and rendered simultaneously on every credential card, with active route highlighting based on the selected model.
 _Avoid_: Two-group toggle snapshot, control vs predicted projection
 
 ### Scheduling & Pacing
 
 **Dynamic Model-Scoped Scheduler (`scheduler.pick`)**:
-Native per-request dynamic scheduling in memory via CPA's `scheduler.pick` (`scheduler_across_priorities: true`), resolving the inbound request's model to its target quota pool (`gemini`, `argon`, or `claude_gpt`) and selecting the optimal credential in memory without mutating static priority on disk.
+Native per-request dynamic scheduling in memory via CPA's `scheduler.pick` (`scheduler_across_priorities: true`), resolving the inbound request's model to its target quota pool (`gemini` or `claude_gpt`) and selecting the optimal credential in memory without mutating static priority on disk.
 _Avoid_: Static priority writeback, disk-bound scheduling, round-robin only
 
 **Session-Sticky Equal-Priority Clustering**:

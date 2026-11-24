@@ -209,8 +209,8 @@ func TestScheduler_DynamicModelSelection_AcrossQuotaPools(t *testing.T) {
 	if err := json.Unmarshal(argonRespBytes, &argonEnv); err != nil || !argonEnv.OK {
 		t.Fatalf("decode argon pick: %s", string(argonRespBytes))
 	}
-	if !argonEnv.Result.Handled || argonEnv.Result.AuthID != "cred-argon-rich" {
-		t.Errorf("expected cred-argon-rich for Argon model, got %+v", argonEnv.Result)
+	if !argonEnv.Result.Handled || argonEnv.Result.AuthID != "cred-gemini-rich" {
+		t.Errorf("expected cred-gemini-rich for Gemini 4 Argon model, got %+v", argonEnv.Result)
 	}
 }
 
@@ -807,7 +807,7 @@ func TestScheduler_UnavailablePoolIsNotRouted(t *testing.T) {
 	if err := store.MarkProbeUnavailable(ctx, state.ProbeUnavailable{
 		AuthIndex:  "idx-noargon",
 		Provider:   core.ProviderAntigravity,
-		ModelGroup: "argon",
+		ModelGroup: "gemini",
 		ObservedAt: now,
 		Reason:     "target model group not entitled",
 	}); err != nil {
@@ -818,14 +818,12 @@ func TestScheduler_UnavailablePoolIsNotRouted(t *testing.T) {
 	if err := store.MarkProbeSuccess(ctx, state.ProbeSuccess{
 		AuthIndex:            "idx-depleted",
 		Provider:             core.ProviderAntigravity,
-		ModelGroup:           "argon",
+		ModelGroup:           "gemini",
 		ObservedAt:           now,
 		ResetAt:              reset,
 		Remaining:            0,
 		LongWindowResetAt:    reset,
 		LongWindowRemaining:  &zero,
-		ArgonWindowResetAt:   reset,
-		ArgonWindowRemaining: &zero,
 	}); err != nil {
 		t.Fatal(err)
 	}

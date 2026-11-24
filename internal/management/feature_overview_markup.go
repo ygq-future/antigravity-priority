@@ -69,13 +69,6 @@ const overviewMarkup = `
                             <span class="custom-select-check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg></span>
                             <button type="button" class="model-exclude-btn" data-model="gemini-3.1-flash-image" aria-pressed="false" onclick="toggleModelExcluded('', this, event)"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9"></circle><line x1="5.6" y1="5.6" x2="18.4" y2="18.4"></line></svg><span data-i18n="btnExcludeModel">排除</span></button>
                         </div>
-                        <div class="model-select-group-header" data-i18n="poolArgon">Argon 额度池</div>
-                        <div class="custom-select-option" data-value="gemini-4-argon-high" data-pool="argon" onclick="selectModel('gemini-4-argon-high', event)" role="option" aria-selected="false">
-                            <span class="model-pool-badge badge-argon">Argon</span>
-                            <span class="model-option-name">gemini-4-argon-high</span>
-                            <span class="custom-select-check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg></span>
-                            <button type="button" class="model-exclude-btn" data-model="gemini-4-argon-high" aria-pressed="false" onclick="toggleModelExcluded('', this, event)"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9"></circle><line x1="5.6" y1="5.6" x2="18.4" y2="18.4"></line></svg><span data-i18n="btnExcludeModel">排除</span></button>
-                        </div>
                         <div class="model-select-group-header" data-i18n="poolClaudeGPT">Claude & GPT 额度池</div>
                         <div class="custom-select-option" data-value="claude-sonnet-5-5-high" data-pool="claude_gpt" onclick="selectModel('claude-sonnet-5-5-high', event)" role="option" aria-selected="false">
                             <span class="model-pool-badge badge-claude">Claude/GPT</span>

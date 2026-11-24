@@ -706,8 +706,6 @@ func defaultProbeModel(cfg config.Config, modelGroup string) string {
 	switch config.AntigravityModelGroup(strings.ToLower(strings.TrimSpace(modelGroup))) {
 	case config.AntigravityModelGroupClaudeGPT:
 		return cfg.Warmup.ClaudeModel
-	case config.AntigravityModelGroupArgon:
-		return "gemini-4-argon-high"
 	default:
 		return cfg.Warmup.GeminiModel
 	}

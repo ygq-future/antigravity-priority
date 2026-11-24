@@ -622,7 +622,7 @@ func TestHandler_DynamicConfig_WarmupRoundTrip(t *testing.T) {
 	runner := &mockRunner{}
 	handler := management.NewHandler(runner)
 
-	body := `{"auto_apply":true,"interval":"15m","max_concurrency":6,"urgency_tolerance":0.05,"rate_limit_cooldown_minutes":5,"quota_sample_capacity":6,"schedule":{"paused":false},"warmup":{"gemini_enabled":true,"gemini_model":"gemini-2.0-flash","claude_enabled":true,"claude_model":"claude-3-7-sonnet","argon_enabled":true}}`
+	body := `{"auto_apply":true,"interval":"15m","max_concurrency":6,"urgency_tolerance":0.05,"rate_limit_cooldown_minutes":5,"quota_sample_capacity":6,"schedule":{"paused":false},"warmup":{"gemini_enabled":true,"gemini_model":"gemini-2.0-flash","claude_enabled":true,"claude_model":"claude-3-7-sonnet"}}`
 	req := httptest.NewRequest(http.MethodPost, "/runtime-config", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 
@@ -641,9 +641,6 @@ func TestHandler_DynamicConfig_WarmupRoundTrip(t *testing.T) {
 	}
 	if !cfg.Warmup.ClaudeEnabled || cfg.Warmup.ClaudeModel != "claude-3-7-sonnet" {
 		t.Fatalf("expected claude enabled with claude-3-7-sonnet, got: %+v", cfg.Warmup)
-	}
-	if !cfg.Warmup.ArgonEnabled {
-		t.Fatalf("expected Argon weekly warm-up enabled, got: %+v", cfg.Warmup)
 	}
 }
 func TestHandler_SetDynamicConfig_InvalidJSON(t *testing.T) {

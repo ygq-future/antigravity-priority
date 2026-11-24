@@ -204,39 +204,6 @@ const configMarkup = `
                             </div>
                         </div>
 
-                        <div class="form-row">
-                            <div class="form-label-box">
-                                <span class="form-title" data-i18n="cfgWarmupArgon">Argon 7d 满额自动预热（仅Pro账号）</span>
-                                <span class="form-hint" data-i18n="cfgWarmupArgonHint">周额度 100% 满额时自动触发 7d 重置</span>
-                            </div>
-                            <div class="form-input-group">
-                                <label class="toggle-label">
-                                    <span class="toggle-switch">
-                                        <input type="checkbox" id="cfgWarmupArgonEnabled" aria-label="Pro Argon 7d">
-                                        <span class="toggle-slider"></span>
-                                    </span>
-                                </label>
-                            </div>
-                        </div>
-                        <div class="form-row">
-                            <div class="form-label-box">
-                                <span class="form-title" data-i18n="cfgWarmupArgonModel">Argon 预热目标模型</span>
-                            </div>
-                            <div class="form-input-group">
-                                <select id="cfgWarmupArgonModelSelect" hidden>
-                                    <option value="gemini-4-argon-high" selected>gemini-4-argon-high</option>
-                                </select>
-                                <div id="customWarmupArgonModelSelect" class="custom-select-wrapper" style="min-width:210px;">
-                                    <button type="button" class="custom-select-trigger" onclick="toggleCustomWarmupArgonSelect(event)" aria-haspopup="listbox" aria-expanded="false">
-                                        <span id="customWarmupArgonLabel">gemini-4-argon-high</span>
-                                        <span class="custom-select-arrow">
-                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"></path></svg>
-                                        </span>
-                                    </button>
-                                    <div id="customWarmupArgonMenu" class="custom-select-options" hidden role="listbox"></div>
-                                </div>
-                            </div>
-                        </div>
                     </div>
                 </div>
 

@@ -99,7 +99,7 @@ func GenerateDetailedGeminiWarmupPrompt() string {
 // RenderWarmupPrompt renders the warm-up prompt for one quota pool.
 func RenderWarmupPrompt(group config.AntigravityModelGroup) string {
 	switch group {
-	case config.AntigravityModelGroupGemini, config.AntigravityModelGroupArgon:
+	case config.AntigravityModelGroupGemini:
 		return GenerateDetailedGeminiWarmupPrompt()
 	default:
 		return GenerateNaturalWarmupPrompt()
@@ -108,8 +108,6 @@ func RenderWarmupPrompt(group config.AntigravityModelGroup) string {
 
 // WarmupDebounceDuration is the minimum interval before a credential in the same pool can be warmed up again.
 const WarmupDebounceDuration = 4*time.Hour + 30*time.Minute
-
-const argonWarmupDebounce = 7 * 24 * time.Hour
 
 // Reset warm-ups are serialized through one global lane so the 5h refresh
 // points of different credentials never coincide. The gap depends on whether
@@ -453,7 +451,7 @@ func (r *Runtime) sweepWarmupResets(ctx context.Context) time.Duration {
 		return isDisabled || r.warmups.contains(candidate.key)
 	})
 
-	// Reserve one credential and pool across all reset warm-ups, including Argon.
+	// Reserve one credential and pool across all reset warm-ups.
 	target, hasTarget := r.allocateWarmupSlot(ctx, store, warm, now)
 	candidates := refresh
 	if hasTarget {
@@ -540,9 +538,7 @@ func (r *Runtime) allocateWarmupSlot(ctx context.Context, store *state.Store, ca
 }
 
 // dueResetRefreshCandidates lists every 5h pool whose reset grace deadline has
-// passed. Argon shares Gemini's physical 5h window, so scanning it would count
-// one credential boundary twice. The refresh probe itself still covers every
-// credential and every pool.
+// passed. The refresh probe itself still covers every credential and every pool.
 func (r *Runtime) dueResetRefreshCandidates(store *state.Store, now time.Time) []warmupCandidate {
 	return r.collectCandidates(store, now, candidateFilter{
 		groups: []config.AntigravityModelGroup{
@@ -566,13 +562,7 @@ func (r *Runtime) dueWarmupCandidates(store *state.Store, warmup config.WarmupCo
 		excludeFreePlan: true,
 		due:             warmupWindowDue,
 		allow: func(authIndex string, group config.AntigravityModelGroup) bool {
-			if group == config.AntigravityModelGroupArgon {
-				return warmup.ArgonEnabled
-			}
 			return warmupEffectiveEnabled(warmup, authIndex, group)
-		},
-		attemptBlocked: func(key string, group config.AntigravityModelGroup, resetAt, now time.Time) bool {
-			return group == config.AntigravityModelGroupArgon && r.probeAttemptBlocked(key, resetAt, now)
 		},
 	})
 }
@@ -581,15 +571,12 @@ func (r *Runtime) dueWarmupCandidates(store *state.Store, warmup config.WarmupCo
 // pools plus any pool that a card-level override may force on.
 func warmupCandidateGroups(warmup config.WarmupConfig) []config.AntigravityModelGroup {
 	overrideOn := warmup.HasEnabledOverride()
-	groups := make([]config.AntigravityModelGroup, 0, 3)
+	groups := make([]config.AntigravityModelGroup, 0, 2)
 	if warmup.GeminiEnabled || overrideOn {
 		groups = append(groups, config.AntigravityModelGroupGemini)
 	}
 	if warmup.ClaudeEnabled || overrideOn {
 		groups = append(groups, config.AntigravityModelGroupClaudeGPT)
-	}
-	if warmup.ArgonEnabled {
-		groups = append(groups, config.AntigravityModelGroupArgon)
 	}
 	return groups
 }
@@ -636,10 +623,6 @@ func (r *Runtime) collectCandidates(store *state.Store, now time.Time, filter ca
 			resetAt = entry.ResetAt
 		}
 		debounce := WarmupDebounceDuration
-		if group == config.AntigravityModelGroupArgon {
-			resetAt = entry.ArgonWindowResetAt
-			debounce = argonWarmupDebounce
-		}
 		if resetAt.IsZero() {
 			continue
 		}
@@ -725,22 +708,8 @@ func resetBoundaryDue(resetAt, now time.Time) bool {
 	return !now.Before(resetAt.Add(WarmupResetGraceBaseDelay))
 }
 
-// warmupWindowDue also admits elapsed Argon buckets so a probe can confirm
-// replenishment before any generation is sent.
+// warmupWindowDue reports whether a 5h pool is ready for a warm-up probe.
 func warmupWindowDue(entry state.Entry, resetAt, now time.Time) bool {
-	if entry.ModelGroup == string(config.AntigravityModelGroupArgon) {
-		if entry.PlanType != core.PlanTypePro || entry.ArgonWindowRemaining == nil {
-			return false
-		}
-		switch entry.ArgonWeeklyStatus {
-		case core.ArgonWeeklyFull:
-			return resetAt.After(now) || resetBoundaryDue(resetAt, now)
-		case core.ArgonWeeklyPartial:
-			return resetBoundaryDue(resetAt, now)
-		default:
-			return false
-		}
-	}
 	// A warm-up consumes the weekly pool too; never probe a 5h window when the
 	// 7d quota is already exhausted.
 	if warmupWeeklyExhausted(entry.LongWindowRemaining) {
@@ -850,13 +819,6 @@ type warmupJob struct {
 	window    string
 }
 
-func argonWarmupEligible(ev priority.QuotaEvidence, now, lastWarmup time.Time) bool {
-	return ev.PlanType == core.PlanTypePro && ev.ArgonWeeklyStatus == core.ArgonWeeklyFull &&
-		ev.ArgonWindowRemaining != nil && *ev.ArgonWindowRemaining == 100 &&
-		ev.ArgonWindowResetAt != nil && ev.ArgonWindowResetAt.After(now) &&
-		(lastWarmup.IsZero() || now.Sub(lastWarmup) >= argonWarmupDebounce)
-}
-
 // visitEligibleWarmups selects jobs from this probe's fresh evidence without issuing generations.
 func visitEligibleWarmups(
 	cfg config.WarmupConfig,
@@ -879,10 +841,6 @@ func visitEligibleWarmups(
 		{group: config.AntigravityModelGroupGemini, model: cfg.GeminiModel},
 		{group: config.AntigravityModelGroupClaudeGPT, model: cfg.ClaudeModel},
 	}
-	// Weekly warm-ups need persisted per-credential completion times.
-	if cfg.ArgonEnabled && store != nil {
-		targets = append(targets, targetTask{group: config.AntigravityModelGroupArgon, model: cfg.ArgonModel})
-	}
 	if groupFilter != "" {
 		targets = slices.DeleteFunc(targets, func(target targetTask) bool {
 			return target.group != groupFilter
@@ -902,8 +860,7 @@ func visitEligibleWarmups(
 			if ev.PlanType == core.PlanTypeFree {
 				continue
 			}
-			isArgon := target.group == config.AntigravityModelGroupArgon
-			if !isArgon && !warmupEffectiveEnabled(cfg, authIdx, target.group) {
+			if !warmupEffectiveEnabled(cfg, authIdx, target.group) {
 				continue
 			}
 			if len(disabledAuthIndexes) > 0 {
@@ -916,13 +873,7 @@ func visitEligibleWarmups(
 			if store != nil {
 				lastWarmup = store.GetLastWarmupAt(authIdx, string(target.group))
 			}
-			window := "5h"
-			if isArgon {
-				window = "Argon 7d"
-				if !argonWarmupEligible(ev, now, lastWarmup) {
-					continue
-				}
-			} else if !isWarmupEligible(&ev, now, lastWarmup) {
+			if !isWarmupEligible(&ev, now, lastWarmup) {
 				continue
 			}
 
@@ -931,7 +882,7 @@ func visitEligibleWarmups(
 				continue
 			}
 
-			visit(warmupJob{authIdx, target.group, target.model, material, window})
+			visit(warmupJob{authIdx, target.group, target.model, material, "5h"})
 		}
 	}
 }

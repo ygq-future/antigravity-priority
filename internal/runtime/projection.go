@@ -59,14 +59,12 @@ func ProjectModelGroups(input ProjectionInput) (ModelGroupProjection, error) {
 	return ModelGroupProjection{Snapshot: out.Snapshot}, nil
 }
 
-// warmupEnabledForGroup reports whether the global warm-up toggle covers this
-// pool. Argon shares Gemini's physical 5h window, so it follows the Gemini
-// toggle.
+// warmupEnabledForGroup reports whether the global warm-up toggle covers this pool.
 func warmupEnabledForGroup(warmup config.WarmupConfig, group config.AntigravityModelGroup) bool {
 	switch group {
 	case config.AntigravityModelGroupClaudeGPT:
 		return warmup.ClaudeEnabled
-	case config.AntigravityModelGroupGemini, config.AntigravityModelGroupArgon:
+	case config.AntigravityModelGroupGemini:
 		return warmup.GeminiEnabled
 	default:
 		return false
@@ -91,12 +89,6 @@ func buildAllQuotaWindows(snapshots map[config.AntigravityModelGroup]apply.PlanS
 		qw := result[authIndex]
 		qw.Gemini5h = itemShortWindowBar(item)
 		qw.Gemini7d = itemLongWindowBar(item)
-		if item.ArgonWindowRemaining != nil && item.PlanType != string(core.PlanTypeFree) {
-			qw.Argon7d = apply.QuotaWindowBar{
-				Remaining: cloneInt64Pointer(item.ArgonWindowRemaining),
-				ResetAt:   cloneTimePointer(item.ArgonWindowResetAt),
-			}
-		}
 		result[authIndex] = qw
 	}
 
@@ -106,20 +98,6 @@ func buildAllQuotaWindows(snapshots map[config.AntigravityModelGroup]apply.PlanS
 		qw := result[authIndex]
 		qw.Claude5h = itemShortWindowBar(item)
 		qw.Claude7d = itemLongWindowBar(item)
-		result[authIndex] = qw
-	}
-
-	argonSnap := snapshots[config.AntigravityModelGroupArgon]
-	for _, item := range argonSnap.Items {
-		authIndex := snapshotAuthIndex(item)
-		qw := result[authIndex]
-		argonBar := itemArgonWindowBar(item)
-		if argonBar.Remaining != nil || qw.Argon7d.Remaining == nil {
-			qw.Argon7d = argonBar
-		}
-		if item.ArgonWindowRemaining == nil && item.LongWindowRemaining != nil && item.PlanType != string(core.PlanTypeFree) {
-			qw.ArgonSharedWithGemini = true
-		}
 		result[authIndex] = qw
 	}
 
@@ -164,16 +142,6 @@ func itemLongWindowBar(item apply.SnapshotItem) apply.QuotaWindowBar {
 	return apply.QuotaWindowBar{
 		Remaining: cloneInt64Pointer(rem),
 		ResetAt:   cloneTimePointer(resetAt),
-	}
-}
-
-func itemArgonWindowBar(item apply.SnapshotItem) apply.QuotaWindowBar {
-	if item.PlanType == string(core.PlanTypeFree) {
-		return apply.QuotaWindowBar{}
-	}
-	return apply.QuotaWindowBar{
-		Remaining: cloneInt64Pointer(item.ArgonWindowRemaining),
-		ResetAt:   cloneTimePointer(item.ArgonWindowResetAt),
 	}
 }
 
@@ -244,11 +212,9 @@ func cloneQuotaEvidence(evidence []priority.QuotaEvidence) []priority.QuotaEvide
 		cloned[index].ResetAt = cloneTimePointer(item.ResetAt)
 		cloned[index].ShortWindowResetAt = cloneTimePointer(item.ShortWindowResetAt)
 		cloned[index].LongWindowResetAt = cloneTimePointer(item.LongWindowResetAt)
-		cloned[index].ArgonWindowResetAt = cloneTimePointer(item.ArgonWindowResetAt)
 		cloned[index].Remaining = cloneInt64Pointer(item.Remaining)
 		cloned[index].ShortWindowRemaining = cloneInt64Pointer(item.ShortWindowRemaining)
 		cloned[index].LongWindowRemaining = cloneInt64Pointer(item.LongWindowRemaining)
-		cloned[index].ArgonWindowRemaining = cloneInt64Pointer(item.ArgonWindowRemaining)
 	}
 	return cloned
 }
@@ -294,10 +260,8 @@ func cloneSnapshotSet(snapshot apply.SnapshotSet) apply.SnapshotSet {
 			items[index].ResetAt = cloneTimePointer(item.ResetAt)
 			items[index].ShortWindowResetAt = cloneTimePointer(item.ShortWindowResetAt)
 			items[index].LongWindowResetAt = cloneTimePointer(item.LongWindowResetAt)
-			items[index].ArgonWindowResetAt = cloneTimePointer(item.ArgonWindowResetAt)
 			items[index].ShortWindowRemaining = cloneInt64Pointer(item.ShortWindowRemaining)
 			items[index].LongWindowRemaining = cloneInt64Pointer(item.LongWindowRemaining)
-			items[index].ArgonWindowRemaining = cloneInt64Pointer(item.ArgonWindowRemaining)
 			items[index].QuotaWindows.Gemini5h.Remaining = cloneInt64Pointer(item.QuotaWindows.Gemini5h.Remaining)
 			items[index].QuotaWindows.Gemini5h.ResetAt = cloneTimePointer(item.QuotaWindows.Gemini5h.ResetAt)
 			items[index].QuotaWindows.Gemini7d.Remaining = cloneInt64Pointer(item.QuotaWindows.Gemini7d.Remaining)
@@ -306,8 +270,6 @@ func cloneSnapshotSet(snapshot apply.SnapshotSet) apply.SnapshotSet {
 			items[index].QuotaWindows.Claude5h.ResetAt = cloneTimePointer(item.QuotaWindows.Claude5h.ResetAt)
 			items[index].QuotaWindows.Claude7d.Remaining = cloneInt64Pointer(item.QuotaWindows.Claude7d.Remaining)
 			items[index].QuotaWindows.Claude7d.ResetAt = cloneTimePointer(item.QuotaWindows.Claude7d.ResetAt)
-			items[index].QuotaWindows.Argon7d.Remaining = cloneInt64Pointer(item.QuotaWindows.Argon7d.Remaining)
-			items[index].QuotaWindows.Argon7d.ResetAt = cloneTimePointer(item.QuotaWindows.Argon7d.ResetAt)
 			if item.SupportedModels != nil {
 				items[index].SupportedModels = make([]string, len(item.SupportedModels))
 				copy(items[index].SupportedModels, item.SupportedModels)

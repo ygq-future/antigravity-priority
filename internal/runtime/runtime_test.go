@@ -746,7 +746,6 @@ func TestRuntime_ProbeProjectsAllPoolsFromOneQuotaResponse(t *testing.T) {
 		t.Fatal(err)
 	}
 	gemini := snapshot.Groups[string(config.AntigravityModelGroupGemini)]
-	argon := snapshot.Groups[string(config.AntigravityModelGroupArgon)]
 	claudeGPT := snapshot.Groups[string(config.AntigravityModelGroupClaudeGPT)]
 	quotaCalls := 0
 	for _, call := range mock.httpCalls {
@@ -759,9 +758,6 @@ func TestRuntime_ProbeProjectsAllPoolsFromOneQuotaResponse(t *testing.T) {
 	}
 	if len(gemini.Items) != 1 || gemini.Items[0].R7d != 0.7 {
 		t.Fatalf("gemini projection = %#v, want fresh quota data", gemini)
-	}
-	if len(argon.Items) != 1 || argon.Items[0].R7d != 0.71 {
-		t.Fatalf("argon projection = %#v, want fresh quota data", argon)
 	}
 	if len(claudeGPT.Items) != 1 || claudeGPT.Items[0].R7d != 0.6 {
 		t.Fatalf("claude/gpt projection = %#v, want fresh live quota data", claudeGPT)
@@ -1353,8 +1349,8 @@ func TestRuntime_SyncHostRefreshesAllPoolsWithoutGoogleCalls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(snapshot.Groups) != 3 {
-		t.Fatalf("groups = %d; want all three quota pools", len(snapshot.Groups))
+	if len(snapshot.Groups) != 2 {
+		t.Fatalf("groups = %d; want both quota pools", len(snapshot.Groups))
 	}
 	if len(mock.httpCalls) != httpCallsBefore {
 		t.Fatal("overview synchronization unexpectedly called Google")
@@ -1517,8 +1513,8 @@ func TestRuntime_LastProbeOutcomes_SuccessAndFailure(t *testing.T) {
 		t.Fatalf("probe failed: %v", err)
 	}
 	successOutcomes := r.LastProbeOutcomes(context.Background())
-	if len(successOutcomes) != 3 {
-		t.Fatalf("expected 3 success probe outcomes, got %d", len(successOutcomes))
+	if len(successOutcomes) != 2 {
+		t.Fatalf("expected 2 success probe outcomes, got %d", len(successOutcomes))
 	}
 	for _, o := range successOutcomes {
 		if o.AuthIndex == "auth_success" {
@@ -1560,37 +1556,6 @@ func TestRuntime_LastProbeOutcomes_SuccessAndFailure(t *testing.T) {
 	}
 	if !found403 {
 		t.Fatalf("did not find 403 outcome for auth_success: %+v", failOutcomes)
-	}
-
-	// 3. Account without an Argon pool: the group is unavailable, not failed.
-	mock.httpResponse = host.HTTPResponse{
-		StatusCode: http.StatusOK,
-		Body: []byte(`{
-			"models": {
-				"gemini-2.5-pro": {"quotaInfo": {"windows": [{"name": "5h", "remainingFraction": 0.8, "resetTime": "2026-08-18T17:00:00Z"}]}},
-				"claude-3-5-sonnet": {"modelProvider": "anthropic", "quotaInfo": {"windows": [{"name": "5hr", "remainingFraction": 0.5, "resetTime": "2026-08-18T17:00:00Z"}]}}
-			}
-		}`),
-	}
-	if err := r.Probe(context.Background(), nil); err != nil {
-		t.Fatalf("probe failed: %v", err)
-	}
-	unavailableOutcomes := r.LastProbeOutcomes(context.Background())
-	foundUnavailable := false
-	for _, o := range unavailableOutcomes {
-		if o.AuthIndex != "auth_success" || o.ModelGroup != "argon" {
-			continue
-		}
-		if o.Status != "unavailable" {
-			t.Errorf("Argon status = %q; want unavailable", o.Status)
-		}
-		if !strings.Contains(o.Error, "not entitled") {
-			t.Errorf("Argon error = %q; want entitlement reason", o.Error)
-		}
-		foundUnavailable = true
-	}
-	if !foundUnavailable {
-		t.Fatalf("did not find unavailable Argon outcome: %+v", unavailableOutcomes)
 	}
 }
 

@@ -59,7 +59,6 @@ type devQuotaState struct {
 type devQuotaGroupState struct {
 	Short        int64     `json:"short_window_remaining"`
 	Long         int64     `json:"long_window_remaining"`
-	ArgonWeekly  int64     `json:"argon_weekly_remaining,omitempty"`
 	ShortResetAt time.Time `json:"short_window_reset_at"`
 	LongResetAt  time.Time `json:"long_window_reset_at"`
 }
@@ -356,7 +355,6 @@ func (d *devHost) ListAuthModels(ctx context.Context) ([]host.AuthModelsEntry, e
 		}
 		if !isFree {
 			models = append(models,
-				"gemini-4-argon-high",
 				"claude-sonnet-5-5-high",
 				"claude-opus-5-5-high",
 				"claude-sonnet-4-6",
@@ -405,7 +403,6 @@ func fullDevQuotaState(now time.Time) devQuotaState {
 		groups[group] = devQuotaGroupState{
 			Short:        100,
 			Long:         100,
-			ArgonWeekly:  100,
 			ShortResetAt: now.Add(5 * time.Hour),
 			LongResetAt:  now.Add(7 * 24 * time.Hour),
 		}
@@ -419,14 +416,12 @@ func initialDevQuotaState(authIndex string, now time.Time) devQuotaState {
 	gemini := devQuotaGroupState{
 		Short:        80,
 		Long:         80,
-		ArgonWeekly:  80,
 		ShortResetAt: now.Add(3 * time.Hour),
 		LongResetAt:  now.Add(5 * 24 * time.Hour),
 	}
 	claude := devQuotaGroupState{
 		Short:        75,
 		Long:         75,
-		ArgonWeekly:  75,
 		ShortResetAt: now.Add(3 * time.Hour),
 		LongResetAt:  now.Add(5 * 24 * time.Hour),
 	}
@@ -447,14 +442,12 @@ func initialDevQuotaState(authIndex string, now time.Time) devQuotaState {
 		gemini = devQuotaGroupState{
 			Short:        0,
 			Long:         rem,
-			ArgonWeekly:  0,
 			ShortResetAt: now,
 			LongResetAt:  now.Add(time.Duration(resetHours) * time.Hour),
 		}
 		claude = devQuotaGroupState{
 			Short:        0,
 			Long:         0,
-			ArgonWeekly:  0,
 			ShortResetAt: now,
 			LongResetAt:  now,
 		}
@@ -462,14 +455,12 @@ func initialDevQuotaState(authIndex string, now time.Time) devQuotaState {
 		gemini = devQuotaGroupState{
 			Short:        92,
 			Long:         88,
-			ArgonWeekly:  86,
 			ShortResetAt: now.Add(2*time.Hour + 30*time.Minute),
 			LongResetAt:  now.Add(20 * time.Hour),
 		}
 		claude = devQuotaGroupState{
 			Short:        90,
 			Long:         85,
-			ArgonWeekly:  86,
 			ShortResetAt: now.Add(2*time.Hour + 30*time.Minute),
 			LongResetAt:  now.Add(20 * time.Hour),
 		}
@@ -477,14 +468,12 @@ func initialDevQuotaState(authIndex string, now time.Time) devQuotaState {
 		gemini = devQuotaGroupState{
 			Short:        85,
 			Long:         82,
-			ArgonWeekly:  80,
 			ShortResetAt: now.Add(3 * time.Hour),
 			LongResetAt:  now.Add(72 * time.Hour),
 		}
 		claude = devQuotaGroupState{
 			Short:        80,
 			Long:         80,
-			ArgonWeekly:  80,
 			ShortResetAt: now.Add(3 * time.Hour),
 			LongResetAt:  now.Add(72 * time.Hour),
 		}
@@ -492,14 +481,12 @@ func initialDevQuotaState(authIndex string, now time.Time) devQuotaState {
 		gemini = devQuotaGroupState{
 			Short:        82,
 			Long:         80,
-			ArgonWeekly:  80,
 			ShortResetAt: now.Add(3 * time.Hour),
 			LongResetAt:  now.Add(70 * time.Hour),
 		}
 		claude = devQuotaGroupState{
 			Short:        78,
 			Long:         78,
-			ArgonWeekly:  80,
 			ShortResetAt: now.Add(3 * time.Hour),
 			LongResetAt:  now.Add(70 * time.Hour),
 		}
@@ -507,14 +494,12 @@ func initialDevQuotaState(authIndex string, now time.Time) devQuotaState {
 		gemini = devQuotaGroupState{
 			Short:        0,
 			Long:         65,
-			ArgonWeekly:  60,
 			ShortResetAt: now.Add(1*time.Hour + 15*time.Minute),
 			LongResetAt:  now.Add(96 * time.Hour),
 		}
 		claude = devQuotaGroupState{
 			Short:        85,
 			Long:         80,
-			ArgonWeekly:  60,
 			ShortResetAt: now.Add(3*time.Hour + 50*time.Minute),
 			LongResetAt:  now.Add(96 * time.Hour),
 		}
@@ -522,14 +507,12 @@ func initialDevQuotaState(authIndex string, now time.Time) devQuotaState {
 		gemini = devQuotaGroupState{
 			Short:        75,
 			Long:         70,
-			ArgonWeekly:  70,
 			ShortResetAt: now.Add(2*time.Hour + 30*time.Minute),
 			LongResetAt:  now.Add(80 * time.Hour),
 		}
 		claude = devQuotaGroupState{
 			Short:        75,
 			Long:         70,
-			ArgonWeekly:  70,
 			ShortResetAt: now.Add(2*time.Hour + 30*time.Minute),
 			LongResetAt:  now.Add(80 * time.Hour),
 		}
@@ -537,14 +520,12 @@ func initialDevQuotaState(authIndex string, now time.Time) devQuotaState {
 		gemini = devQuotaGroupState{
 			Short:        0,
 			Long:         0,
-			ArgonWeekly:  0,
 			ShortResetAt: now.Add(2 * time.Hour),
 			LongResetAt:  now.Add(120 * time.Hour),
 		}
 		claude = devQuotaGroupState{
 			Short:        0,
 			Long:         0,
-			ArgonWeekly:  0,
 			ShortResetAt: now.Add(2 * time.Hour),
 			LongResetAt:  now.Add(120 * time.Hour),
 		}
@@ -552,14 +533,12 @@ func initialDevQuotaState(authIndex string, now time.Time) devQuotaState {
 		gemini = devQuotaGroupState{
 			Short:        50,
 			Long:         50,
-			ArgonWeekly:  50,
 			ShortResetAt: now.Add(2 * time.Hour),
 			LongResetAt:  now.Add(120 * time.Hour),
 		}
 		claude = devQuotaGroupState{
 			Short:        50,
 			Long:         50,
-			ArgonWeekly:  50,
 			ShortResetAt: now.Add(2 * time.Hour),
 			LongResetAt:  now.Add(120 * time.Hour),
 		}
@@ -597,7 +576,6 @@ func (s *devQuotaState) advance(authIndex string, now time.Time, rng *rand.Rand)
 			quota.LongResetAt = now.Add(7 * 24 * time.Hour)
 			if !is006 {
 				quota.Long = 100
-				quota.ArgonWeekly = 100
 			}
 		}
 		if isFree {
@@ -609,13 +587,9 @@ func (s *devQuotaState) advance(authIndex string, now time.Time, rng *rand.Rand)
 		} else if is006 {
 			quota.Short = 0
 			quota.Long = 0
-			quota.ArgonWeekly = 0
 		} else {
 			quota.Short = consumeDevQuota(quota.Short, rng)
 			quota.Long = consumeDevQuota(quota.Long, rng)
-			if group == string(antigravity.ModelGroupGemini) {
-				quota.ArgonWeekly = consumeDevQuota(quota.ArgonWeekly, rng)
-			}
 		}
 		s.Groups[group] = quota
 	}
@@ -667,35 +641,9 @@ func marshalDevQuotaResponse(state devQuotaState, isFree bool) ([]byte, error) {
 			Buckets:     buckets,
 		}
 	}
-	// The live summary reports the Argon weekly limit in its own model group, not inside
-	// the shared Gemini pool, so the simulator must mirror that shape.
-	argonGroup := group{
-		DisplayName: "Gemini 4 Argon",
-		Description: "For paid Pro plans, Argon quota is separate.",
-		Buckets:     []bucket{},
-	}
 	geminiQuota := state.Groups[string(antigravity.ModelGroupGemini)]
-	if !isFree {
-		argonRem := geminiQuota.ArgonWeekly
-		if argonRem < 0 && geminiQuota.Long > 0 {
-			argonRem = geminiQuota.Long
-		}
-		if argonRem >= 0 {
-			argonGroup.Buckets = append(argonGroup.Buckets, bucket{
-				BucketID:          "gemini-argon-wtu-weekly",
-				DisplayName:       "Gemini 4 Argon Weekly Limit",
-				Window:            "weekly",
-				RemainingFraction: float64(argonRem) / 100,
-				ResetTime:         geminiQuota.LongResetAt.UTC().Format(time.RFC3339),
-				Description:       "Dedicated weekly quota for Gemini 4 Argon",
-			})
-		}
-	}
 	groups := []group{
 		makeGroup("gemini", "Gemini Models", "Shared quota for Gemini models", geminiQuota),
-	}
-	if len(argonGroup.Buckets) > 0 {
-		groups = append(groups, argonGroup)
 	}
 	if !isFree {
 		groups = append(groups, makeGroup("claude-gpt", "Claude and GPT Models", "Shared quota for Claude and GPT models", state.Groups[string(antigravity.ModelGroupClaudeGPT)]))

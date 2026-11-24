@@ -39,9 +39,6 @@ type QuotaEvidence struct {
 	ShortWindowRemaining *int64
 	LongWindowResetAt    *time.Time
 	LongWindowRemaining  *int64
-	ArgonWindowResetAt   *time.Time
-	ArgonWindowRemaining *int64
-	ArgonWeeklyStatus    core.ArgonWeeklyStatus
 	PlanType             core.PlanType
 	CycleBurnRate        float64
 }
@@ -91,8 +88,6 @@ type PlanItem struct {
 	ShortWindowRemaining *int64
 	LongWindowResetAt    *time.Time
 	LongWindowRemaining  *int64
-	ArgonWindowResetAt   *time.Time
-	ArgonWindowRemaining *int64
 	Reason               string
 	CooldownUntil        *time.Time
 	IsBoosted            bool
@@ -189,8 +184,6 @@ func planItems(credentials []core.Credential, evidence plannerEvidence, options 
 			item.ShortWindowRemaining = evidence.ShortWindowRemaining
 			item.LongWindowResetAt = evidence.LongWindowResetAt
 			item.LongWindowRemaining = evidence.LongWindowRemaining
-			item.ArgonWindowResetAt = evidence.ArgonWindowResetAt
-			item.ArgonWindowRemaining = evidence.ArgonWindowRemaining
 			item.CycleBurnRate = evidence.CycleBurnRate
 
 			metrics := ExtractQuotaMetrics(evidence, options.Now)

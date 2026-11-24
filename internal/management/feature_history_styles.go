@@ -82,12 +82,6 @@ const templateStyleHistory = `        /* Request History Table Styling */
             background: rgba(59, 130, 246, 0.08);
         }
 
-        .req-model-argon {
-            color: #06b6d4;
-            border-color: rgba(6, 182, 212, 0.3);
-            background: rgba(6, 182, 212, 0.08);
-        }
-
         .req-model-claude {
             color: var(--accent-purple-text);
             border-color: rgba(168, 85, 247, 0.3);

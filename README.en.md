@@ -24,14 +24,14 @@ A high-performance, single-provider priority scheduler and quota management plug
 
 ## Overview
 
-- **Tailored Antigravity Three-Pool Scheduling**: Purpose-built for `gemini`, `argon`, and `claude_gpt` quota pools with 5-hour burst and 7-day weekly window awareness; automatically detects `ULTRA` / `ULTRA-LITE` / `PRO` / `FREE` tiers and isolates Free credentials into a dedicated fallback tier.
+- **Tailored Antigravity Two-Pool Scheduling**: Purpose-built for `gemini` and `claude_gpt` quota pools with 5-hour burst and 7-day weekly window awareness; automatically detects `ULTRA` / `ULTRA-LITE` / `PRO` / `FREE` tiers and isolates Free credentials into a dedicated fallback tier.
 - **Native CPA `scheduler.pick` Pure Memory Dispatch**: Hooks into `scheduler: true` and `scheduler_across_priorities: true` to resolve models and route traffic in memory with zero disk writes and zero static priority conflicts.
 - **Dynamic Boost Horizon & Weekly Urgency**: Estimates per-turn token consumption via `usage.handle` and learns adaptive burn rate $C_{\text{cycle}}$, proactively elevating abundant accounts (`999, 998...`) while balancing weekly urgency to prevent end-of-cycle quota waste.
 - **Session Affinity & Custom Tier Overrides**: Supports `canonical_session_id` sticky routing and round-robin distribution within equal-priority clusters, plus per-card custom tier overrides (Tier #1, Tier #2...) for explicit precedence.
 - **Self-Healing Soft Fallback & Health Failover**: Exhausted windows trigger pure in-memory soft demotion (priority `-1`, never altering host `disabled` state) and recover automatically on reset; isolates 401/403 credential errors and recovers 429/5xx pools via backoff probing.
-- **Smart Quota Warm-Up (5h Short-Window & Pro Argon Weekly)**: Proactively warms eligible full-quota Gemini/Claude 5h windows and opt-in Pro Argon weekly quotas using staggered global slots, with per-card override support.
+- **Smart Quota Warm-Up (5h Short-Window)**: Proactively warms eligible full-quota Gemini/Claude 5h windows using staggered global slots, with per-card override support.
 - **Adaptive Probe Calibration**: Dynamically paces background quota probes based on recent request frequency and bursts—skipping idle periods while keeping active accounts calibrated.
-- **Model Routing Board & Global Exclusion**: Displays a model-centric routing board with 5-bar credential cards (`Gemini 5h/7d`, `Claude 5h/7d`, `Argon 7d`) and supports one-click global model exclusion with instant hot-reload.
+- **Model Routing Board & Global Exclusion**: Displays a model-centric routing board with 4-bar credential cards (`Gemini 5h/7d`, `Claude 5h/7d`) and supports one-click global model exclusion with instant hot-reload.
 - **System-Prompt Prompt Guard**: Syncs phrase/regex rewrite rules from a remote dictionary with local custom overrides and preview (rewriting system/developer instructions only; disabled by default).
 - **Zero-Restart Config Center & Dual-Theme Dashboard**: Keep only `enabled: true` in CPA host YAML and manage all parameters live in **`⚙️ Config Center`** inside an embedded, CSP-compliant dashboard featuring real-time request history and persistent account masking.
 ---
@@ -44,19 +44,19 @@ Load plugin
   -> Register scheduler.pick and management capabilities (scheduler_across_priorities: true)
   -> Fetch CPA credential list and model registry through host.auth.list and host.auth.models
   -> Periodic probing & precomputation
-       - Concurrently extract quota windows across all three pools (gemini, argon, claude_gpt)
+       - Concurrently extract quota windows across both pools (gemini, claude_gpt)
        - Evaluate Dynamic Boost Horizon eligibility using learned C_cycle burn rate
        - Precompute high-speed in-memory routing tables (O(1) lookup)
   -> Handle inbound requests (scheduler.pick)
-       - Resolve requested model (e.g. gemini-3.8-flash-high, gemini-4-argon-high, claude-sonnet-5-5-high)
-       - Map to target quota pool (gemini / argon / claude_gpt)
+       - Resolve requested model (e.g. gemini-3.8-flash-high, claude-sonnet-5-5-high)
+       - Map to target quota pool (gemini / claude_gpt)
        - Filter depleted and 429-cooling credentials, select highest-priority tier (999 Boost > 100 Normal > 10 Free)
        - Dispatch within the top tier using canonical_session_id affinity and round-robin cursors
        - Return target auth_id in pure memory with zero disk I/O
   -> Closed-loop real-time tracking (usage.handle)
        - Deduct estimated quota per turn from reported token usage, updating routing tiers
        - Auto-calibrate against authoritative Google probes to eliminate drift
-  -> Display model-centric routing board, call order tiers, 5-bar cards, and redacted audit summaries
+  -> Display model-centric routing board, call order tiers, 4-bar cards, and redacted audit summaries
 ```
 
 ---
@@ -139,8 +139,6 @@ In the **`⚙️ Config Center`** tab of the management dashboard, the following
 | **Gemini Warm-Up Model (`warmup.gemini_model`)** | `gemini-3-flash` | Selectable | Model used to trigger the Gemini 5h reset countdown. |
 | **Claude 5h Auto Warm-Up (`warmup.claude_enabled`)** | `false` | On / Off | Automatically sends a short prompt when Claude 5h quota is 100% full, the 7d pool still has quota, and the window is inactive; credentials are spaced 60–120 minutes apart, pools of one credential 30–60 minutes apart. |
 | **Claude Warm-Up Model (`warmup.claude_model`)** | `claude-sonnet-5-5-high` | Selectable | Model used to trigger the Claude 5h reset countdown. |
-| **Argon Weekly Auto Warm-Up (`warmup.argon_enabled`)** | `false` | On / Off | Triggers a 7d reset when a Pro credential's independent Argon weekly quota is at 100%; shares the staggered background lane with Gemini and Claude and skips the credential for seven days after a successful warm-up. |
-| **Argon Warm-Up Model (`warmup.argon_model`)** | `gemini-4-argon-high` | Only supported option | Model used to warm the independent weekly quota on Pro credentials. |
 | **Per-Credential Warm-Up Override (`warmup.overrides`)** | empty | Overview card icon | Clicking the icon writes an `auth_index -> true/false` local state; a click that matches the global state clears it and restores follow mode; turning it on clears that credential's 4h30m debounce. |
 
 ---
@@ -154,12 +152,12 @@ The plugin registers **resources** (static management dashboard) and **routes** 
 - `GET /v0/resource/plugins/antigravity-priority/status`
   - **Access**: Click **"Antigravity Priority"** in the CPA management sidebar, or open `http://<CPA_HOST>:<PORT>/v0/resource/plugins/antigravity-priority/status` in your browser.
   - **Key Features**:
-    - **Model-Centric Routing Board**: Dropdown to select concrete models (Gemini pool, Argon pool, Claude & GPT pool), instantly rendering call order tiers (Tier #1 · 999 Boost, Tier #2 · 100 Clustered Round-Robin, etc.) and active eligibility; each row can exclude/restore that model, and the selection is remembered.
-    - **Panoramic 5-Bar Quota Cards**: Every card displays all 5 quota bars (Gemini 5h/7d, Claude 5h/7d, Argon 7d), highlighting the active route bars for the selected model with adaptive countdown timers and learned $C_{\text{cycle}}$.
+    - **Model-Centric Routing Board**: Dropdown to select concrete models (Gemini pool, Claude & GPT pool), instantly rendering call order tiers (Tier #1 · 999 Boost, Tier #2 · 100 Clustered Round-Robin, etc.) and active eligibility; each row can exclude/restore that model, and the selection is remembered.
+    - **Panoramic 4-Bar Quota Cards**: Every card displays all 4 quota bars (Gemini 5h/7d, Claude 5h/7d), highlighting the active route bars for the selected model with adaptive countdown timers and learned $C_{\text{cycle}}$.
     - **Scheduling & Synchronization Control**: Provides `🔄 Sync Host`, `📡 Fetch Quota (10s cooldown)`, and `🔄 Reset Static Priorities`.
     - **Real-Time Request History**: Retains recent request logs (configurable retention, default 100, max 1000) with model, target quota pool, token breakdown, and response status with one-click clear.
-    - **Samples Modal**: Seamlessly toggle between Gemini, Argon, and Claude & GPT sample histories.
-    - **System Diagnostics**: Health banner, four KPI cards (scheduler, isolation, last run, Prompt Guard with enablement, active/configured rule counts, rewritten requests and hits, and rule warnings), a three-pool quota matrix, per-credential decision explanations (priority, urgency, T7d/T_req, C_cycle, reason), 429 storm and cooldown isolation, run timeline, and the path, size, and presence of the four cache files, with one-click JSON Copy.
+    - **Samples Modal**: Seamlessly toggle between Gemini and Claude & GPT sample histories.
+    - **System Diagnostics**: Health banner, four KPI cards (scheduler, isolation, last run, Prompt Guard with enablement, active/configured rule counts, rewritten requests and hits, and rule warnings), a two-pool quota matrix, per-credential decision explanations (priority, urgency, T7d/T_req, C_cycle, reason), 429 storm and cooldown isolation, run timeline, and the path, size, and presence of the four cache files, with one-click JSON Copy.
     - **⚙️ Config Center**: Online management of all scheduling and algorithm parameters with instant hot reload.
 
 ### Management API (Dynamic, Key Required)

@@ -438,7 +438,6 @@ func (h *Handler) handleGetSamples(w http.ResponseWriter, r *http.Request) {
 	}
 
 	geminiSamples, _ := h.runner.GetSamples(r.Context(), authIndex, "gemini")
-	argonSamples, _ := h.runner.GetSamples(r.Context(), authIndex, "argon")
 	claudeSamples, _ := h.runner.GetSamples(r.Context(), authIndex, "claude_gpt")
 
 	resp := map[string]any{
@@ -447,10 +446,6 @@ func (h *Handler) handleGetSamples(w http.ResponseWriter, r *http.Request) {
 			"gemini": map[string]any{
 				"name":    "Gemini 模型",
 				"samples": geminiSamples,
-			},
-			"argon": map[string]any{
-				"name":    "Argon 模型",
-				"samples": argonSamples,
 			},
 			"claude_gpt": map[string]any{
 				"name":    "Claude & GPT 模型",

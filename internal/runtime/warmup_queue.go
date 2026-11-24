@@ -81,9 +81,6 @@ func (r *Runtime) runQueuedWarmup(client *host.Client, j queuedWarmup) {
 		return
 	}
 	enabled := warmupEffectiveEnabled(cfg.Warmup, j.authIndex, j.group)
-	if j.group == config.AntigravityModelGroupArgon {
-		enabled = cfg.Warmup.ArgonEnabled
-	}
 	if !enabled {
 		return
 	}
@@ -111,13 +108,6 @@ func (r *Runtime) runQueuedWarmup(client *host.Client, j queuedWarmup) {
 		now := r.clock.Now().UTC()
 		if _, blocked := j.store.GetActiveCooldownEntriesForGroup(now, string(j.group))[j.authIndex]; blocked {
 			return
-		}
-		if j.group == config.AntigravityModelGroupArgon {
-			// Another probe can replace the quota or tier while this job waits.
-			ev, ok := j.store.GetHistoricalEvidence(j.authIndex, string(j.group))
-			if !ok || !argonWarmupEligible(ev, now, j.store.GetLastWarmupAt(j.authIndex, string(j.group))) {
-				return
-			}
 		}
 		if ctx.Err() == nil && r.executeWarmupJob(ctx, client, j.warmupJob, j.store, now) {
 			// A successful upstream generation counts even if shutdown canceled

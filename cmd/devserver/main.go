@@ -118,8 +118,8 @@ func newDevServer(options devServerOptions) (*devServer, error) {
 				{
 					ID:           "req-seed-003",
 					At:           nowTime.Add(-2 * time.Minute),
-					Model:        "gemini-4-argon-high",
-					ModelPool:    "argon",
+					Model:        "gemini-4-neon-high",
+					ModelPool:    "gemini",
 					AuthIndex:    "dev-auth-003",
 					Email:        "mojs***",
 					InputTokens:  2100,
@@ -159,8 +159,8 @@ func newDevServer(options devServerOptions) (*devServer, error) {
 				{
 					ID:           "req-seed-006",
 					At:           nowTime.Add(-11 * time.Minute),
-					Model:        "gemini-4-argon-high",
-					ModelPool:    "argon",
+					Model:        "gemini-4-neon-high",
+					ModelPool:    "gemini",
 					AuthIndex:    "dev-auth-003",
 					Email:        "mojs***",
 					InputTokens:  320,

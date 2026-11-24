@@ -4,11 +4,11 @@ const featureHelpTranslations = `        const HELP_ZH = {
             "zh-CN": {
                 helpTitle: "Antigravity Priority 原理与核心特色说明",
                 helpGithub: "GitHub 主页",
-                helpP1: "本插件专为 CLIProxyAPI 的 Google Antigravity 设计，围绕 Gemini、Argon 与 Claude & GPT 三大独立配额池执行自适应优先级调度与纯内存动态分流：",
+                helpP1: "本插件专为 CLIProxyAPI 的 Google Antigravity 设计，围绕 Gemini 与 Claude & GPT 两大独立配额池执行自适应优先级调度与纯内存动态分流：",
                 help5hTitle: "⚡ 5 小时短窗 (5h) 自愈软降级",
                 help5hDesc: "实时跟踪 Gemini 与 Claude & GPT 的高频配额与重置倒计时。短窗耗尽时仅在内存中将优先级降至 -1（保持 disabled=false），窗口刷新后自动恢复调度，绝不改写宿主凭证的禁用状态。",
                 help7dTitle: "📅 7 天周长窗 (7d) 全局把控",
-                help7dDesc: "同时跟踪 Gemini、Argon 与 Claude & GPT 的周配额剩余量与重置进度。周额度耗尽同样执行纯内存软降级（priority=-1, disabled=false），避免单张凭证在周期前半段过早透支。",
+                help7dDesc: "同时跟踪 Gemini 与 Claude & GPT 的周配额剩余量与重置进度。周额度耗尽同样执行纯内存软降级（priority=-1, disabled=false），避免单张凭证在周期前半段过早透支。",
                 helpBurnTitle: "📈 自适应燃尽学习 (C_cycle / K_5h)",
                 helpBurnDesc: "结合后台探测增量与实时请求用量，自动学习每个账号的周期燃尽率 C_cycle 与 5h 消耗灵敏度 K_5h，并通过 EMA 平滑收敛，无需手动配置数学系数。",
                 helpUrgencyTitle: "⚖️ 配额燃尽紧迫度 (Weekly Urgency) 与平滑轮换",
@@ -22,18 +22,18 @@ const featureHelpTranslations = `        const HELP_ZH = {
                 help429Title: "🛡️ 健康故障转移与池级自愈",
                 help429Desc: "401/403 视为账号级异常直接隔离并软降级；429 与 5xx 精准隔离至受影响配额池，并进入带抖动的指数退避探测队列，探测成功后自动恢复原梯队，同账号其他配额池不受影响。",
                 helpUITitle: "🖥️ 可视化调度与观测",
-                helpUIDesc: "概览看板展示模型路由与 5 条配额进度条，请求历史记录模型、Token 消耗与状态，系统诊断透出配额池矩阵、决策解释、健康隔离、运行时间线与四类缓存文件状态；配置中心修改后即时热生效。",
+                helpUIDesc: "概览看板展示模型路由与 4 条配额进度条，请求历史记录模型、Token 消耗与状态，系统诊断透出配额池矩阵、决策解释、健康隔离、运行时间线与四类缓存文件状态；配置中心修改后即时热生效。",
             }
         };
         const HELP_EN = {
             "en-US": {
                 helpTitle: "Antigravity Priority Mechanics & Features",
                 helpGithub: "GitHub Homepage",
-                helpP1: "Tailored for Google Antigravity in CLIProxyAPI, scheduling the Gemini, Argon, and Claude & GPT quota pools with adaptive priorities and in-memory dynamic dispatch:",
+                helpP1: "Tailored for Google Antigravity in CLIProxyAPI, scheduling the Gemini and Claude & GPT quota pools with adaptive priorities and in-memory dynamic dispatch:",
                 help5hTitle: "⚡ 5-Hour Short Window (5h) Self-Healing Soft Demotion",
                 help5hDesc: "Tracks burst quota and reset countdowns for Gemini and Claude & GPT. Exhaustion only demotes priority to -1 in memory (disabled=false) and recovers automatically after reset; the host credential's disabled state is never mutated.",
                 help7dTitle: "📅 7-Day Weekly Window (7d) Global Control",
-                help7dDesc: "Tracks weekly remaining quota and reset progress across Gemini, Argon, and Claude & GPT. Weekly exhaustion also performs in-memory soft demotion (priority=-1, disabled=false) to prevent early overdraw.",
+                help7dDesc: "Tracks weekly remaining quota and reset progress across Gemini and Claude & GPT. Weekly exhaustion also performs in-memory soft demotion (priority=-1, disabled=false) to prevent early overdraw.",
                 helpBurnTitle: "📈 Adaptive Burn Learning (C_cycle / K_5h)",
                 helpBurnDesc: "Learns each account's cycle burn rate C_cycle and 5h token sensitivity K_5h from probe deltas and live request usage, smoothed via EMA with no manual coefficient tuning.",
                 helpUrgencyTitle: "⚖️ Weekly Urgency & Smooth Rotation",

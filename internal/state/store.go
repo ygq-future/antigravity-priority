@@ -40,9 +40,6 @@ type Entry struct {
 	ShortWindowRemaining     *int64                 `json:"short_window_remaining,omitempty"`
 	LongWindowResetAt        time.Time              `json:"long_window_reset_at,omitzero"`
 	LongWindowRemaining      *int64                 `json:"long_window_remaining,omitempty"`
-	ArgonWindowResetAt       time.Time              `json:"argon_window_reset_at,omitzero"`
-	ArgonWindowRemaining     *int64                 `json:"argon_window_remaining,omitempty"`
-	ArgonWeeklyStatus        core.ArgonWeeklyStatus `json:"argon_weekly_status,omitempty"`
 	CycleBurnRate            float64                `json:"cycle_burn_rate"`
 	Samples                  []QuotaSample          `json:"samples,omitempty"`
 	LearningBaselineSequence uint64                 `json:"learning_baseline_sequence,omitempty"`
@@ -81,9 +78,6 @@ type ProbeSuccess struct {
 	ShortWindowRemaining *int64
 	LongWindowResetAt    time.Time
 	LongWindowRemaining  *int64
-	ArgonWindowResetAt   time.Time
-	ArgonWindowRemaining *int64
-	ArgonWeeklyStatus    core.ArgonWeeklyStatus
 	AuthInvalid          bool
 	PlanType             core.PlanType
 	SampleCapacity       int
@@ -431,7 +425,6 @@ func (s *Store) applyStateDocument(doc legacyStateDocument) {
 			}
 			s.entries[key] = entry
 		}
-		cleanseClonedArgonEntries(s.entries)
 	}
 	if doc.PlanTiers != nil {
 		s.planTiers = make(map[string]PlanTierRecord, len(doc.PlanTiers))
@@ -757,12 +750,11 @@ func (s *Store) ClearWarmupCompleted(authIndex string) int {
 		return 0
 	}
 	prefix := authKey + "|model_group="
-	argonKey := entryKey(authIndex, string(config.AntigravityModelGroupArgon))
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cleared := 0
 	for key := range s.warmupCompleted {
-		if key != argonKey && (key == authKey || strings.HasPrefix(key, prefix)) {
+		if key == authKey || strings.HasPrefix(key, prefix) {
 			delete(s.warmupCompleted, key)
 			cleared++
 		}
@@ -831,9 +823,6 @@ func (s *Store) MarkProbeSuccess(ctx context.Context, success ProbeSuccess) erro
 		ShortWindowRemaining:     cloneInt64Ptr(success.ShortWindowRemaining),
 		LongWindowResetAt:        utcOrZero(success.LongWindowResetAt),
 		LongWindowRemaining:      cloneInt64Ptr(success.LongWindowRemaining),
-		ArgonWindowResetAt:       utcOrZero(success.ArgonWindowResetAt),
-		ArgonWindowRemaining:     cloneInt64Ptr(success.ArgonWindowRemaining),
-		ArgonWeeklyStatus:        success.ArgonWeeklyStatus,
 		CycleBurnRate:            newRate,
 		Samples:                  newSamples,
 		LearningBaselineSequence: newBaseline,
@@ -906,9 +895,6 @@ func (s *Store) MarkProbeUnavailable(ctx context.Context, unavailable ProbeUnava
 	entry.ShortWindowRemaining = nil
 	entry.LongWindowResetAt = time.Time{}
 	entry.LongWindowRemaining = nil
-	entry.ArgonWindowResetAt = time.Time{}
-	entry.ArgonWindowRemaining = nil
-	entry.ArgonWeeklyStatus = ""
 	entry.CycleBurnRate = 0
 	entry.Samples = nil
 	entry.LearningBaselineSequence = 0
@@ -946,24 +932,6 @@ func (s *Store) RecordUsageConsumption(authIndex, modelGroup string, weightedTok
 	entry.EstimatedLongBurnPct += deltaShortPct * cCycle
 	s.entries[key] = entry
 
-	// Gemini and Argon share the physical 5h short window while retaining independent 7d weekly pools.
-	// Accumulate the exact short burn percentage onto the sibling group without mutating its EstimatedLongBurnPct.
-	normGroup := strings.ToLower(strings.TrimSpace(modelGroup))
-	var siblingGroup string
-	if normGroup == string(config.AntigravityModelGroupGemini) {
-		siblingGroup = string(config.AntigravityModelGroupArgon)
-	} else if normGroup == string(config.AntigravityModelGroupArgon) {
-		siblingGroup = string(config.AntigravityModelGroupGemini)
-	}
-
-	if siblingGroup != "" {
-		sibKey := entryKey(authIndex, siblingGroup)
-		if sibEntry, sibOk := s.entries[sibKey]; sibOk {
-			sibEntry.EstimatedShortBurnPct += deltaShortPct
-			sibEntry.LastUsageAt = now.UTC()
-			s.entries[sibKey] = sibEntry
-		}
-	}
 }
 
 // GetEntry retrieves a copy of the cached entry for authIndex and modelGroup.
@@ -1296,11 +1264,6 @@ func (s *Store) GetHistoricalEvidence(authIndex, modelGroup string) (priority.Qu
 	normGroup := entryModelGroup(modelGroup)
 	s.mu.RLock()
 	entry, ok := s.entries[entryKey(authIndex, normGroup)]
-	var geminiEntry Entry
-	var hasGemini bool
-	if normGroup == string(config.AntigravityModelGroupArgon) {
-		geminiEntry, hasGemini = s.entries[entryKey(authIndex, string(config.AntigravityModelGroupGemini))]
-	}
 	planTierRecord, hasPlanTier := s.planTiers[authIndexKey(authIndex)]
 	s.mu.RUnlock()
 	if !ok || entry.SchemaVersion != SchemaVersion {
@@ -1312,14 +1275,6 @@ func (s *Store) GetHistoricalEvidence(authIndex, modelGroup string) (priority.Qu
 
 	if entry.ObservedAt.IsZero() || (entry.ResetAt.IsZero() && entry.ShortWindowResetAt.IsZero() && entry.LongWindowResetAt.IsZero()) {
 		return priority.QuotaEvidence{}, false
-	}
-	if normGroup == string(config.AntigravityModelGroupArgon) {
-		if hasGemini && geminiEntry.ArgonWindowRemaining == nil &&
-			entry.LongWindowRemaining != nil && geminiEntry.LongWindowRemaining != nil &&
-			*entry.LongWindowRemaining == *geminiEntry.LongWindowRemaining &&
-			!entry.LongWindowResetAt.IsZero() && entry.LongWindowResetAt.Equal(geminiEntry.LongWindowResetAt) {
-			return priority.QuotaEvidence{}, false
-		}
 	}
 
 	var resetAt *time.Time
@@ -1343,16 +1298,10 @@ func (s *Store) GetHistoricalEvidence(authIndex, modelGroup string) (priority.Qu
 		r := entry.LongWindowResetAt
 		longResetAt = &r
 	}
-	var argonResetAt *time.Time
-	if !entry.ArgonWindowResetAt.IsZero() {
-		r := entry.ArgonWindowResetAt
-		argonResetAt = &r
-	}
 
 	remaining := entry.Remaining
 	shortRemaining := cloneInt64Ptr(entry.ShortWindowRemaining)
 	longRemaining := cloneInt64Ptr(entry.LongWindowRemaining)
-	argonRemaining := cloneInt64Ptr(entry.ArgonWindowRemaining)
 
 	if entry.EstimatedShortBurnPct > 0 && shortRemaining != nil {
 		deducted := max(*shortRemaining-int64(math.Round(entry.EstimatedShortBurnPct)), 0)
@@ -1361,10 +1310,6 @@ func (s *Store) GetHistoricalEvidence(authIndex, modelGroup string) (priority.Qu
 	if entry.EstimatedLongBurnPct > 0 && longRemaining != nil {
 		deducted := max(*longRemaining-int64(math.Round(entry.EstimatedLongBurnPct)), 0)
 		longRemaining = &deducted
-	}
-	if entry.EstimatedLongBurnPct > 0 && argonRemaining != nil {
-		deducted := max(*argonRemaining-int64(math.Round(entry.EstimatedLongBurnPct)), 0)
-		argonRemaining = &deducted
 	}
 	if shortRemaining != nil && remaining > *shortRemaining {
 		remaining = *shortRemaining
@@ -1392,9 +1337,6 @@ func (s *Store) GetHistoricalEvidence(authIndex, modelGroup string) (priority.Qu
 		ShortWindowRemaining: shortRemaining,
 		LongWindowResetAt:    longResetAt,
 		LongWindowRemaining:  longRemaining,
-		ArgonWindowResetAt:   argonResetAt,
-		ArgonWindowRemaining: argonRemaining,
-		ArgonWeeklyStatus:    entry.ArgonWeeklyStatus,
 		PlanType:             planType,
 		CycleBurnRate:        cycleBurnRate,
 	}, true
@@ -1557,22 +1499,4 @@ func (s *Store) SetCooldown(entry CooldownEntry) {
 	}
 	key := FailureKey(entry.AuthIndex, entry.ModelGroup, entry.Model)
 	s.cooldowns[key] = entry
-}
-
-func cleanseClonedArgonEntries(entries map[string]Entry) {
-	for key, entry := range entries {
-		if entryModelGroup(entry.ModelGroup) != string(config.AntigravityModelGroupArgon) {
-			continue
-		}
-		geminiKey := entryKey(entry.AuthIndex, string(config.AntigravityModelGroupGemini))
-		geminiEntry, hasGemini := entries[geminiKey]
-		if !hasGemini || geminiEntry.ArgonWindowRemaining != nil {
-			continue
-		}
-		if entry.LongWindowRemaining != nil && geminiEntry.LongWindowRemaining != nil &&
-			*entry.LongWindowRemaining == *geminiEntry.LongWindowRemaining &&
-			!entry.LongWindowResetAt.IsZero() && entry.LongWindowResetAt.Equal(geminiEntry.LongWindowResetAt) {
-			delete(entries, key)
-		}
-	}
 }

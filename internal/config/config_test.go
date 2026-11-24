@@ -184,8 +184,6 @@ func TestParseAntigravityModelGroup(t *testing.T) {
 		"":               config.AntigravityModelGroupGemini,
 		"gemini":         config.AntigravityModelGroupGemini,
 		"GEMINI":         config.AntigravityModelGroupGemini,
-		"argon":          config.AntigravityModelGroupArgon,
-		"ARGON":          config.AntigravityModelGroupArgon,
 		"claude_gpt":     config.AntigravityModelGroupClaudeGPT,
 		"claude-gpt":     config.AntigravityModelGroupClaudeGPT,
 		"claudegpt":      config.AntigravityModelGroupClaudeGPT,
@@ -405,24 +403,6 @@ func TestDynamicConfigZeroToleranceAndLegacyPriorityRulesIgnored(t *testing.T) {
 	}
 	if err := decoded.Validate(); err != nil {
 		t.Fatalf("legacy dynamic config with ignored priority_rules must remain valid: %v", err)
-	}
-}
-
-func TestArgonWarmupModelCompatibility(t *testing.T) {
-	base := config.Default()
-	dyn := base.Dynamic()
-	if dyn.Warmup.ArgonModel != config.DefaultArgonWarmupModel {
-		t.Fatalf("unexpected default model: %q", dyn.Warmup.ArgonModel)
-	}
-	dyn.Warmup.ArgonEnabled = true
-	dyn.Warmup.ArgonModel = "" // Older configurations omit argon_model.
-	got, err := dyn.ApplyTo(base)
-	if err != nil || got.Warmup.ArgonModel != config.DefaultArgonWarmupModel {
-		t.Fatalf("legacy model = %q, err = %v", got.Warmup.ArgonModel, err)
-	}
-	dyn.Warmup.ArgonModel = "unsupported-model"
-	if err := dyn.Validate(); err == nil {
-		t.Fatal("accepted an unsupported Argon model")
 	}
 }
 

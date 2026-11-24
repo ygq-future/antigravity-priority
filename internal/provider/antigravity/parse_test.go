@@ -568,118 +568,11 @@ func TestParseAvailableModels_PerModelWithoutExplicitWindows(t *testing.T) {
 	}
 }
 
-func TestParseAvailableModels_ArgonInGeminiGroup(t *testing.T) {
-	// Test 1: Groups with dedicated Argon bucket under Gemini Models
-	rawWithGroup := []byte(`{
-		"groups": [
-			{
-				"displayName": "Gemini Models",
-				"buckets": [
-					{"bucketId":"gemini-5h","window":"5h","remainingFraction":0.90,"resetTime":"2026-10-27T15:00:00Z"},
-					{"bucketId":"gemini-7d","window":"7d","remainingFraction":0.80,"resetTime":"2026-11-03T00:00:00Z"},
-					{"bucketId":"gemini_argon_weekly","displayName":"Gemini 4 Argon Weekly","window":"7d","remainingFraction":0.40,"resetTime":"2026-11-03T00:00:00Z"}
-				]
-			}
-		]
-	}`)
-	now := time.Date(2026, 10, 27, 10, 0, 0, 0, time.UTC)
-	res := ParseAvailableModels(rawWithGroup, now, ModelGroupGemini)
-	if res.Status != StatusReady {
-		t.Fatalf("expected StatusReady, got %v (err: %v)", res.Status, res.Error)
-	}
-	// 5h short window should be 90%
-	if res.ShortWindowRemaining == nil || *res.ShortWindowRemaining != 90 {
-		t.Fatalf("expected ShortWindowRemaining=90, got %v", res.ShortWindowRemaining)
-	}
-	// Normal weekly window should be 80% (from gemini-7d)
-	if res.LongWindowRemaining == nil || *res.LongWindowRemaining != 80 {
-		t.Fatalf("expected LongWindowRemaining=80, got %v", res.LongWindowRemaining)
-	}
-	// Dedicated Argon window should be 40% (from gemini_argon_weekly)
-	if res.ArgonWindowRemaining == nil || *res.ArgonWindowRemaining != 40 {
-		t.Fatalf("expected ArgonWindowRemaining=40, got %v", res.ArgonWindowRemaining)
-	}
-	// Test 2: Fallback with pure 'argon' standalone model / bucket (without explicit 'gemini' in name)
-	rawFallback := []byte(`{
-		"models": {
-			"argon-preview": {
-				"modelProvider": "google",
-				"quotaInfo": {
-					"windows": [
-						{"name": "5 hour", "remainingFraction": 0.85, "resetTime": "2026-10-27T15:00:00Z"},
-						{"name": "7 day", "remainingFraction": 0.50, "resetTime": "2026-11-03T00:00:00Z"}
-					]
-				}
-			}
-		},
-		"buckets": [
-			{
-				"bucketId": "argon_pool",
-				"displayName": "Argon Capacity",
-				"window": "7d",
-				"remainingFraction": 0.35,
-				"resetTime": "2026-11-03T00:00:00Z"
-			}
-		]
-	}`)
-	resFallback := ParseAvailableModels(rawFallback, now, ModelGroupGemini)
-	if resFallback.Status != StatusReady {
-		t.Fatalf("expected StatusReady for fallback argon, got %v (err: %v)", resFallback.Status, resFallback.Error)
-	}
-	if resFallback.ShortWindowRemaining == nil || *resFallback.ShortWindowRemaining != 85 {
-		t.Fatalf("expected ShortWindowRemaining=85, got %v", resFallback.ShortWindowRemaining)
-	}
-	// Dedicated Argon window should pick 35% from the argon_pool bucket
-	if resFallback.ArgonWindowRemaining == nil || *resFallback.ArgonWindowRemaining != 35 {
-		t.Fatalf("expected ArgonWindowRemaining=35, got %v", resFallback.ArgonWindowRemaining)
-	}
-}
-
-// The live quota summary reports the Argon weekly limit in its own "Gemini 4 Argon"
-// group (bucket gemini-argon-wtu-weekly, window "weekly"), separate from the shared
-// Gemini pool. It must surface as the dedicated Argon window without displacing the
-// shared 5h/weekly values.
-func TestParseAvailableModels_ArgonSeparateGroup(t *testing.T) {
+func TestParseAllModelGroups_TwoPools(t *testing.T) {
 	raw := []byte(`{"groups":[
-		{"displayName":"Gemini Models","description":"Shared quota for Gemini models","buckets":[
+		{"displayName":"Gemini Models","description":"Models within this group: Gemini 4 Neon, Gemini 4 Carbon, Gemini 4 Argon, Gemini 4 Hydrogen, Gemini 3.8 Flash","buckets":[
 			{"bucketId":"gemini-5h","displayName":"Five Hour Limit","window":"5h","remainingFraction":0.99,"resetTime":"2026-10-28T17:00:00Z"},
 			{"bucketId":"gemini-weekly","displayName":"Weekly Limit","window":"weekly","remainingFraction":0.79,"resetTime":"2026-10-31T00:00:00Z"}
-		]},
-		{"displayName":"Gemini 4 Argon","description":"For paid Pro plans, Argon quota is separate. Higher Argon quota (included as part of the larger Gemini quota bucket) is available on Ultra plans.","buckets":[
-			{"bucketId":"gemini-argon-wtu-weekly","displayName":"Gemini 4 Argon Weekly Limit","window":"weekly","remainingFraction":0.71,"resetTime":"2026-10-29T23:24:33Z"}
-		]}
-	]}`)
-	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
-
-	res := ParseAvailableModels(raw, now, ModelGroupGemini)
-	if res.Status != StatusReady {
-		t.Fatalf("expected StatusReady, got %v (err: %v)", res.Status, res.Error)
-	}
-	if res.ShortWindowRemaining == nil || *res.ShortWindowRemaining != 99 {
-		t.Fatalf("ShortWindowRemaining = %v; want 99", res.ShortWindowRemaining)
-	}
-	if res.LongWindowRemaining == nil || *res.LongWindowRemaining != 79 {
-		t.Fatalf("LongWindowRemaining = %v; want 79 from the shared Gemini pool", res.LongWindowRemaining)
-	}
-	if res.ArgonWindowRemaining == nil || *res.ArgonWindowRemaining != 71 {
-		t.Fatalf("ArgonWindowRemaining = %v; want 71", res.ArgonWindowRemaining)
-	}
-	if res.ArgonWindowResetAt == nil || res.ArgonWindowResetAt.Format(time.RFC3339) != "2026-10-29T23:24:33Z" {
-		t.Fatalf("ArgonWindowResetAt = %v; want 2026-10-29T23:24:33Z", res.ArgonWindowResetAt)
-	}
-	if res.PlanType != core.PlanTypePro {
-		t.Fatalf("PlanType = %q; want %q", res.PlanType, core.PlanTypePro)
-	}
-}
-
-func TestParseAllModelGroups_ThreePools(t *testing.T) {
-	raw := []byte(`{"groups":[
-		{"displayName":"Gemini Models","description":"Shared quota for Gemini models","buckets":[
-			{"bucketId":"gemini-5h","displayName":"Five Hour Limit","window":"5h","remainingFraction":0.99,"resetTime":"2026-10-28T17:00:00Z"},
-			{"bucketId":"gemini-weekly","displayName":"Weekly Limit","window":"weekly","remainingFraction":0.79,"resetTime":"2026-10-31T00:00:00Z"}
-		]},
-		{"displayName":"Gemini 4 Argon","description":"For paid Pro plans, Argon quota is separate.","buckets":[
-			{"bucketId":"gemini-argon-wtu-weekly","displayName":"Gemini 4 Argon Weekly Limit","window":"weekly","remainingFraction":0.71,"resetTime":"2026-10-29T23:24:33Z"}
 		]},
 		{"displayName":"Claude and GPT Models","description":"Shared quota for Claude and GPT models","buckets":[
 			{"bucketId":"claude-5h","displayName":"Five Hour Limit","window":"5h","remainingFraction":0.80,"resetTime":"2026-10-28T17:00:00Z"},
@@ -689,8 +582,8 @@ func TestParseAllModelGroups_ThreePools(t *testing.T) {
 	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
 
 	results := ParseAllModelGroups(raw, now)
-	if len(results) != 3 {
-		t.Fatalf("expected 3 results, got %d", len(results))
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
 	}
 
 	gemini, ok := results[ModelGroupGemini]
@@ -703,20 +596,6 @@ func TestParseAllModelGroups_ThreePools(t *testing.T) {
 	if gemini.LongWindowRemaining == nil || *gemini.LongWindowRemaining != 79 {
 		t.Errorf("gemini long window = %v, want 79", gemini.LongWindowRemaining)
 	}
-	if gemini.ArgonWindowRemaining == nil || *gemini.ArgonWindowRemaining != 71 {
-		t.Errorf("gemini argon window = %v, want 71", gemini.ArgonWindowRemaining)
-	}
-
-	argon, ok := results[ModelGroupArgon]
-	if !ok || argon.Status != StatusReady {
-		t.Fatalf("argon not ready: %+v", argon)
-	}
-	if argon.ShortWindowRemaining == nil || *argon.ShortWindowRemaining != 99 {
-		t.Errorf("argon short window = %v, want 99 (shared from Gemini)", argon.ShortWindowRemaining)
-	}
-	if argon.LongWindowRemaining == nil || *argon.LongWindowRemaining != 71 {
-		t.Errorf("argon long window = %v, want 71", argon.LongWindowRemaining)
-	}
 
 	claude, ok := results[ModelGroupClaudeGPT]
 	if !ok || claude.Status != StatusReady {
@@ -727,56 +606,5 @@ func TestParseAllModelGroups_ThreePools(t *testing.T) {
 	}
 	if claude.LongWindowRemaining == nil || *claude.LongWindowRemaining != 45 {
 		t.Errorf("claude long window = %v, want 45", claude.LongWindowRemaining)
-	}
-}
-
-func TestParseAllModelGroups_NoArgonBucketReturnsUnavailableForArgon(t *testing.T) {
-	raw := []byte(`{"groups":[
-		{"displayName":"Gemini Models","description":"Shared quota for Gemini models","buckets":[
-			{"bucketId":"gemini-5h","displayName":"Five Hour Limit","window":"5h","remainingFraction":0.99,"resetTime":"2026-10-28T17:00:00Z"},
-			{"bucketId":"gemini-weekly","displayName":"Weekly Limit","window":"weekly","remainingFraction":0.79,"resetTime":"2026-10-31T00:00:00Z"}
-		]},
-		{"displayName":"Claude and GPT Models","description":"Shared quota for Claude and GPT models","buckets":[
-			{"bucketId":"claude-5h","displayName":"Five Hour Limit","window":"5h","remainingFraction":0.80,"resetTime":"2026-10-28T17:00:00Z"},
-			{"bucketId":"claude-weekly","displayName":"Weekly Limit","window":"weekly","remainingFraction":0.45,"resetTime":"2026-10-31T00:00:00Z"}
-		]}
-	]}`)
-	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
-
-	results := ParseAllModelGroups(raw, now)
-	gemini := results[ModelGroupGemini]
-	if gemini.Status != StatusReady {
-		t.Fatalf("gemini status = %v, want ready", gemini.Status)
-	}
-	if gemini.ArgonWindowRemaining != nil {
-		t.Errorf("gemini ArgonWindowRemaining = %v, want nil when no Argon bucket exists", gemini.ArgonWindowRemaining)
-	}
-
-	argon := results[ModelGroupArgon]
-	if argon.Status != StatusUnavailable {
-		t.Fatalf("argon status = %v, want unavailable when no Argon bucket exists", argon.Status)
-	}
-	if argon.Error != "target model group not entitled" {
-		t.Errorf("argon error = %q, want 'target model group not entitled'", argon.Error)
-	}
-}
-
-func TestParseAllModelGroups_MalformedArgonBucketFails(t *testing.T) {
-	raw := []byte(`{"groups":[
-		{"displayName":"Gemini Models","description":"Shared quota for Gemini models","buckets":[
-			{"bucketId":"gemini-5h","displayName":"Five Hour Limit","window":"5h","remainingFraction":0.99,"resetTime":"2026-10-28T17:00:00Z"}
-		]},
-		{"displayName":"Gemini 4 Argon","description":"Separate Argon weekly pool","buckets":[
-			{"bucketId":"gemini-argon-wtu-weekly","displayName":"Argon Weekly Limit","window":"weekly"}
-		]},
-		{"displayName":"Claude and GPT Models","description":"Shared quota for Claude and GPT models","buckets":[
-			{"bucketId":"claude-5h","displayName":"Five Hour Limit","window":"5h","remainingFraction":0.80,"resetTime":"2026-10-28T17:00:00Z"}
-		]}
-	]}`)
-	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
-
-	argon := ParseAllModelGroups(raw, now)[ModelGroupArgon]
-	if argon.Status != StatusProbeFailed {
-		t.Fatalf("argon status = %v, want probe failed when the Argon bucket is malformed", argon.Status)
 	}
 }

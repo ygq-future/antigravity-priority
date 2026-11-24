@@ -59,17 +59,15 @@ const templateScriptDiagnostics = `        let latestDiagnostics = null;
         }
 
         function diagGroupKeys() {
-            return ["gemini", "argon", "claude_gpt"];
+            return ["gemini", "claude_gpt"];
         }
 
         function diagPoolLabel(key) {
-            if (key === "argon") return t("poolArgon");
             if (key === "claude_gpt") return t("poolClaudeGPT");
             return t("poolGemini");
         }
 
         function diagPoolBadgeClass(key) {
-            if (key === "argon") return "badge-argon";
             if (key === "claude_gpt") return "badge-claude";
             return "badge-gemini";
         }
@@ -354,7 +352,7 @@ const templateScriptDiagnostics = `        let latestDiagnostics = null;
                     }
                     var qw = item.quota_windows || {};
                     var shortBar = key === "claude_gpt" ? qw.claude_5h : (key === "gemini" ? qw.gemini_5h : null);
-                    var longBar = key === "claude_gpt" ? qw.claude_7d : (key === "argon" ? qw.argon_7d : qw.gemini_7d);
+                    var longBar = key === "claude_gpt" ? qw.claude_7d : qw.gemini_7d;
                     min5h = diagMinRemaining(min5h, shortBar);
                     min7d = diagMinRemaining(min7d, longBar);
                     nearestReset = diagNearestReset(nearestReset, shortBar);

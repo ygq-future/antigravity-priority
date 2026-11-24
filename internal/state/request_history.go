@@ -21,7 +21,7 @@ type RequestHistoryEntry struct {
 	Source              string    `json:"source,omitempty"`
 	At                  time.Time `json:"at"`
 	Model               string    `json:"model"`
-	ModelPool           string    `json:"model_pool"` // "gemini", "argon", "claude_gpt"
+	ModelPool           string    `json:"model_pool"` // "gemini", "claude_gpt"
 	AuthIndex           string    `json:"auth_index"`
 	Email               string    `json:"email"`
 	InputTokens         int64     `json:"input_tokens"`

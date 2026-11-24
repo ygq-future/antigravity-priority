@@ -35,9 +35,6 @@ func TestProjectModelGroups_AllPoolsAreActiveAndIndependent(t *testing.T) {
 		config.AntigravityModelGroupGemini: {Eligible: []priority.QuotaEvidence{
 			readyEvidence("auth-1", core.PlanTypePro, 92, now.Add(3*time.Hour)),
 		}},
-		config.AntigravityModelGroupArgon: {Eligible: []priority.QuotaEvidence{
-			readyArgonEvidence("auth-1", core.PlanTypePro, 75, now.Add(5*time.Hour)),
-		}},
 		config.AntigravityModelGroupClaudeGPT: {Eligible: []priority.QuotaEvidence{
 			readyEvidence("auth-1", core.PlanTypeFree, 61, now.Add(4*time.Hour)),
 		}},
@@ -55,8 +52,8 @@ func TestProjectModelGroups_AllPoolsAreActiveAndIndependent(t *testing.T) {
 	if !projection.Snapshot.ObservedAt.Equal(now) {
 		t.Fatalf("observed_at = %s, want %s", projection.Snapshot.ObservedAt, now)
 	}
-	if len(projection.Snapshot.Groups) != 3 {
-		t.Fatalf("groups count = %d, want 3 active canonical groups", len(projection.Snapshot.Groups))
+	if len(projection.Snapshot.Groups) != 2 {
+		t.Fatalf("groups count = %d, want 2 active canonical groups", len(projection.Snapshot.Groups))
 	}
 
 	for _, group := range config.AllAntigravityModelGroups {
@@ -76,9 +73,6 @@ func TestProjectModelGroups_AllPoolsAreActiveAndIndependent(t *testing.T) {
 	}
 	if qw.Claude5h.Remaining != nil {
 		t.Errorf("QuotaWindows Claude5h = %v, want nil on Free tier", qw.Claude5h.Remaining)
-	}
-	if qw.Argon7d.Remaining == nil || *qw.Argon7d.Remaining != 75 {
-		t.Errorf("QuotaWindows Argon7d = %v, want 75", qw.Argon7d.Remaining)
 	}
 }
 
@@ -108,10 +102,6 @@ func TestProjectModelGroups_QuotaWindowsRemainPerCredentialWhenRedactedIndexesCo
 		config.AntigravityModelGroupClaudeGPT: {Eligible: []priority.QuotaEvidence{
 			readyEvidence("auth-alpha", core.PlanTypePro, 83, now.Add(3*time.Hour)),
 			readyEvidence("auth-beta", core.PlanTypePro, 47, now.Add(4*time.Hour)),
-		}},
-		config.AntigravityModelGroupArgon: {Eligible: []priority.QuotaEvidence{
-			readyArgonEvidence("auth-alpha", core.PlanTypePro, 74, now.Add(5*time.Hour)),
-			readyArgonEvidence("auth-beta", core.PlanTypePro, 38, now.Add(6*time.Hour)),
 		}},
 	}
 
@@ -156,8 +146,6 @@ func TestProjectModelGroups_QuotaWindowsRemainPerCredentialWhenRedactedIndexesCo
 	assertWindow("auth-beta gemini5h", beta.QuotaWindows.Gemini5h, 61)
 	assertWindow("auth-alpha claude7d", alpha.QuotaWindows.Claude7d, 83)
 	assertWindow("auth-beta claude7d", beta.QuotaWindows.Claude7d, 47)
-	assertWindow("auth-alpha argon7d", alpha.QuotaWindows.Argon7d, 74)
-	assertWindow("auth-beta argon7d", beta.QuotaWindows.Argon7d, 38)
 }
 
 func TestProjectModelGroups_MissingGroupRemainsStableAndUnknown(t *testing.T) {
@@ -274,8 +262,8 @@ func TestRuntime_LatestSnapshotFallbackIsStableAndComplete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Groups) != 3 || len(first.Groups["gemini"].Items) != 0 || len(first.Groups["claude_gpt"].Items) != 0 || len(first.Groups["argon"].Items) != 0 {
-		t.Fatalf("fallback = %#v, want three stable empty groups", first)
+	if len(first.Groups) != 2 || len(first.Groups["gemini"].Items) != 0 || len(first.Groups["claude_gpt"].Items) != 0 {
+		t.Fatalf("fallback = %#v, want two stable empty groups", first)
 	}
 	first.Groups["gemini"] = apply.PoolSnapshot{Items: []apply.SnapshotItem{{AuthIndex: "mutated"}}}
 
@@ -291,14 +279,11 @@ func TestRuntime_LatestSnapshotFallbackIsStableAndComplete(t *testing.T) {
 	}
 }
 
-func TestProjectModelGroups_ThreePoolIndependentPlansAndQuotaWindows(t *testing.T) {
+func TestProjectModelGroups_TwoPoolIndependentPlansAndQuotaWindows(t *testing.T) {
 	raw := []byte(`{"groups":[
 		{"displayName":"Gemini Models","description":"Shared quota for Gemini models","buckets":[
 			{"bucketId":"gemini-5h","displayName":"Five Hour Limit","window":"5h","remainingFraction":0.99,"resetTime":"2026-10-28T17:00:00Z"},
 			{"bucketId":"gemini-weekly","displayName":"Weekly Limit","window":"weekly","remainingFraction":0.79,"resetTime":"2026-10-31T00:00:00Z"}
-		]},
-		{"displayName":"Gemini 4 Argon","description":"For paid Pro plans, Argon quota is separate.","buckets":[
-			{"bucketId":"gemini-argon-wtu-weekly","displayName":"Gemini 4 Argon Weekly Limit","window":"weekly","remainingFraction":0.71,"resetTime":"2026-10-29T23:24:33Z"}
 		]},
 		{"displayName":"Claude and GPT Models","description":"Shared quota for Claude and GPT models","buckets":[
 			{"bucketId":"claude-5h","displayName":"Five Hour Limit","window":"5h","remainingFraction":0.80,"resetTime":"2026-10-28T17:00:00Z"},
@@ -330,8 +315,6 @@ func TestProjectModelGroups_ThreePoolIndependentPlansAndQuotaWindows(t *testing.
 				ShortWindowRemaining: res.ShortWindowRemaining,
 				LongWindowResetAt:    res.LongWindowResetAt,
 				LongWindowRemaining:  res.LongWindowRemaining,
-				ArgonWindowResetAt:   res.ArgonWindowResetAt,
-				ArgonWindowRemaining: res.ArgonWindowRemaining,
 				PlanType:             res.PlanType,
 			}},
 		}
@@ -353,18 +336,13 @@ func TestProjectModelGroups_ThreePoolIndependentPlansAndQuotaWindows(t *testing.
 		t.Fatalf("gemini plan R5h=%v R7d=%v, want R5h=0.99 R7d=0.79", geminiItem.R5h, geminiItem.R7d)
 	}
 
-	argonItem := projection.Snapshot.Groups["argon"].Items[0]
-	if math.Abs(argonItem.R5h-0.99) > 1e-4 || math.Abs(argonItem.R7d-0.71) > 1e-4 {
-		t.Fatalf("argon plan R5h=%v R7d=%v, want R5h=0.99 R7d=0.71", argonItem.R5h, argonItem.R7d)
-	}
-
 	claudeItem := projection.Snapshot.Groups["claude_gpt"].Items[0]
 	if math.Abs(claudeItem.R5h-0.80) > 1e-4 || math.Abs(claudeItem.R7d-0.45) > 1e-4 {
 		t.Fatalf("claude plan R5h=%v R7d=%v, want R5h=0.80 R7d=0.45", claudeItem.R5h, claudeItem.R7d)
 	}
 
-	// Verify populated 5-bar QuotaWindows across all 3 groups
-	for _, group := range []string{"gemini", "argon", "claude_gpt"} {
+	// Verify populated 4-bar QuotaWindows across both groups
+	for _, group := range []string{"gemini", "claude_gpt"} {
 		item := projection.Snapshot.Groups[group].Items[0]
 		qw := item.QuotaWindows
 		if qw.Gemini5h.Remaining == nil || *qw.Gemini5h.Remaining != 99 {
@@ -379,158 +357,7 @@ func TestProjectModelGroups_ThreePoolIndependentPlansAndQuotaWindows(t *testing.
 		if qw.Claude7d.Remaining == nil || *qw.Claude7d.Remaining != 45 {
 			t.Errorf("[%s] QuotaWindows Claude7d = %v, want 45", group, qw.Claude7d.Remaining)
 		}
-		if qw.Argon7d.Remaining == nil || *qw.Argon7d.Remaining != 71 {
-			t.Errorf("[%s] QuotaWindows Argon7d = %v, want 71", group, qw.Argon7d.Remaining)
-		}
 	}
-}
-
-func TestProjectModelGroups_NoArgonBucketDoesNotFabricateArgon7d(t *testing.T) {
-	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
-	credentials := []core.Credential{{
-		Name:      "pro-no-argon",
-		AuthIndex: "auth-no-argon",
-		Provider:  core.ProviderAntigravity,
-		Type:      core.CredentialTypeAntigravity,
-		Priority:  100,
-	}}
-
-	reset5h := now.Add(4 * time.Hour)
-	reset7d := now.Add(120 * time.Hour)
-	rem5h := int64(95)
-	rem7d := int64(88)
-
-	evidenceByGroup := map[config.AntigravityModelGroup]evidence.Result{
-		config.AntigravityModelGroupGemini: {
-			Eligible: []priority.QuotaEvidence{{
-				AuthIndex:            "auth-no-argon",
-				Provider:             core.ProviderAntigravity,
-				ModelGroup:           config.AntigravityModelGroupGemini,
-				ObservedAt:           now,
-				ResetAt:              &reset5h,
-				Remaining:            &rem5h,
-				ShortWindowResetAt:   &reset5h,
-				ShortWindowRemaining: &rem5h,
-				LongWindowResetAt:    &reset7d,
-				LongWindowRemaining:  &rem7d,
-				PlanType:             core.PlanTypePro,
-			}},
-		},
-		config.AntigravityModelGroupClaudeGPT: {
-			Eligible: []priority.QuotaEvidence{{
-				AuthIndex:            "auth-no-argon",
-				Provider:             core.ProviderAntigravity,
-				ModelGroup:           config.AntigravityModelGroupClaudeGPT,
-				ObservedAt:           now,
-				ResetAt:              &reset5h,
-				Remaining:            &rem5h,
-				ShortWindowResetAt:   &reset5h,
-				ShortWindowRemaining: &rem5h,
-				LongWindowResetAt:    &reset7d,
-				LongWindowRemaining:  &rem7d,
-				PlanType:             core.PlanTypePro,
-			}},
-		},
-		// Argon has NO quota evidence because parseArgonGroup found no Argon windows
-		config.AntigravityModelGroupArgon: {},
-	}
-
-	projection, err := runtime.ProjectModelGroups(runtime.ProjectionInput{
-		Credentials:     credentials,
-		EvidenceByGroup: evidenceByGroup,
-		PlanningOptions: priority.Options{},
-		ProjectionTime:  now,
-	})
-	if err != nil {
-		t.Fatalf("ProjectModelGroups failed: %v", err)
-	}
-
-	for _, group := range []string{"gemini", "argon", "claude_gpt"} {
-		item := projection.Snapshot.Groups[group].Items[0]
-		qw := item.QuotaWindows
-		if qw.Gemini5h.Remaining == nil || *qw.Gemini5h.Remaining != 95 {
-			t.Errorf("[%s] QuotaWindows Gemini5h = %v, want 95", group, qw.Gemini5h.Remaining)
-		}
-		if qw.Gemini7d.Remaining == nil || *qw.Gemini7d.Remaining != 88 {
-			t.Errorf("[%s] QuotaWindows Gemini7d = %v, want 88", group, qw.Gemini7d.Remaining)
-		}
-		if qw.Argon7d.Remaining != nil {
-			t.Errorf("[%s] QuotaWindows Argon7d.Remaining = %v, want nil when no Argon bucket exists", group, *qw.Argon7d.Remaining)
-		}
-		if qw.ArgonSharedWithGemini {
-			t.Errorf("[%s] QuotaWindows ArgonSharedWithGemini = true, want false for a Pro account", group)
-		}
-	}
-}
-
-func TestProjectModelGroups_UltraSharedArgonMarksGeminiWindow(t *testing.T) {
-	now := time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)
-	credentials := []core.Credential{{
-		Name:      "ultra-shared-argon",
-		AuthIndex: "auth-ultra",
-		Provider:  core.ProviderAntigravity,
-		Type:      core.CredentialTypeAntigravity,
-		Priority:  100,
-	}}
-
-	reset5h := now.Add(4 * time.Hour)
-	reset7d := now.Add(120 * time.Hour)
-	rem5h := int64(90)
-	rem7d := int64(88)
-	sharedEvidence := func(group config.AntigravityModelGroup) priority.QuotaEvidence {
-		return priority.QuotaEvidence{
-			AuthIndex:            "auth-ultra",
-			Provider:             core.ProviderAntigravity,
-			ModelGroup:           group,
-			ObservedAt:           now,
-			ResetAt:              &reset5h,
-			Remaining:            &rem5h,
-			ShortWindowResetAt:   &reset5h,
-			ShortWindowRemaining: &rem5h,
-			LongWindowResetAt:    &reset7d,
-			LongWindowRemaining:  &rem7d,
-			PlanType:             core.PlanTypeUltra,
-		}
-	}
-
-	projection, err := runtime.ProjectModelGroups(runtime.ProjectionInput{
-		Credentials: credentials,
-		EvidenceByGroup: map[config.AntigravityModelGroup]evidence.Result{
-			config.AntigravityModelGroupGemini:    {Eligible: []priority.QuotaEvidence{sharedEvidence(config.AntigravityModelGroupGemini)}},
-			config.AntigravityModelGroupClaudeGPT: {Eligible: []priority.QuotaEvidence{sharedEvidence(config.AntigravityModelGroupClaudeGPT)}},
-			// Argon has no independent bucket; the probe copied the Gemini pool.
-			config.AntigravityModelGroupArgon: {Eligible: []priority.QuotaEvidence{sharedEvidence(config.AntigravityModelGroupArgon)}},
-		},
-		PlanningOptions: priority.Options{},
-		ProjectionTime:  now,
-	})
-	if err != nil {
-		t.Fatalf("ProjectModelGroups failed: %v", err)
-	}
-
-	argon := projection.Snapshot.Groups["argon"].Items[0]
-	qw := argon.QuotaWindows
-	if !qw.ArgonSharedWithGemini {
-		t.Fatal("argon_shared_with_gemini = false; want true for an Ultra shared pool")
-	}
-	if qw.Argon7d.Remaining != nil {
-		t.Fatalf("Argon7d.Remaining = %v; want nil for an independent-bucket-free Ultra account", qw.Argon7d.Remaining)
-	}
-	if qw.Gemini7d.Remaining == nil || *qw.Gemini7d.Remaining != 88 {
-		t.Fatalf("Gemini7d.Remaining = %v; want 88 as the governing Argon weekly window", qw.Gemini7d.Remaining)
-	}
-	if argon.Target.Priority != 100 {
-		t.Fatalf("argon priority = %d; want 100 from shared Gemini evidence", argon.Target.Priority)
-	}
-}
-
-func readyArgonEvidence(authIndex string, planType core.PlanType, remaining int64, resetAt time.Time) priority.QuotaEvidence {
-	evidence := readyEvidence(authIndex, planType, remaining, resetAt)
-	evidence.ArgonWindowRemaining = &remaining
-	evidence.ArgonWindowResetAt = &resetAt
-	evidence.LongWindowRemaining = &remaining
-	evidence.LongWindowResetAt = &resetAt
-	return evidence
 }
 
 func readyEvidence(authIndex string, planType core.PlanType, remaining int64, resetAt time.Time) priority.QuotaEvidence {
@@ -593,7 +420,7 @@ func TestProjectModelGroups_CarriesPerCredentialWarmupState(t *testing.T) {
 	}
 
 	for _, group := range config.AllAntigravityModelGroups {
-		geminiToggle := group == config.AntigravityModelGroupGemini || group == config.AntigravityModelGroupArgon
+		geminiToggle := group == config.AntigravityModelGroupGemini
 		pool := projection.Snapshot.Groups[string(group)]
 		if len(pool.Items) != 3 {
 			t.Fatalf("%s items = %d, want 3", group, len(pool.Items))
@@ -666,7 +493,7 @@ func TestEvaluateRoutingAndSnapshot_UnifiesScoresAndStatusesAcrossTablesAndSnaps
 	reset5h := now.Add(3 * time.Hour)
 	reset7d := now.Add(72 * time.Hour)
 
-	// Healthy active credential in Gemini; unavailable in Argon
+	// Healthy active credential in Gemini; unavailable in Claude & GPT
 	if err := store.MarkProbeSuccess(ctx, state.ProbeSuccess{
 		AuthIndex: "auth-active", Provider: core.ProviderAntigravity, ModelGroup: "gemini",
 		ObservedAt: now, ShortWindowResetAt: reset5h, ShortWindowRemaining: &rem80,
@@ -675,8 +502,8 @@ func TestEvaluateRoutingAndSnapshot_UnifiesScoresAndStatusesAcrossTablesAndSnaps
 		t.Fatal(err)
 	}
 	if err := store.MarkProbeUnavailable(ctx, state.ProbeUnavailable{
-		AuthIndex: "auth-active", Provider: core.ProviderAntigravity, ModelGroup: "argon",
-		ObservedAt: now, Reason: "no argon bucket",
+		AuthIndex: "auth-active", Provider: core.ProviderAntigravity, ModelGroup: "claude_gpt",
+		ObservedAt: now, Reason: "no claude bucket",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -756,12 +583,8 @@ func TestEvaluateRoutingAndSnapshot_UnifiesScoresAndStatusesAcrossTablesAndSnaps
 		t.Errorf("auth-cold-cool claude_gpt = %+v, want cold_start 0 with Host.Priority=999 preserved", claudeByAuth["auth-cold-cool"])
 	}
 
-	// In Argon pool, auth-active is unavailable -> pool_unavailable, pool_eligible=false, priority=-1
-	argonByAuth := make(map[string]apply.SnapshotItem)
-	for _, item := range out.Snapshot.Groups["argon"].Items {
-		argonByAuth[item.Identity.AuthIndex] = item
-	}
-	if argonByAuth["auth-active"].RoutingStatus != apply.RoutingStatusPoolUnavailable || argonByAuth["auth-active"].Target.Priority != -1 || argonByAuth["auth-active"].PoolEligible == nil || *argonByAuth["auth-active"].PoolEligible {
-		t.Errorf("auth-active argon = %+v, want pool_unavailable -1 with pool_eligible=false", argonByAuth["auth-active"])
+	// In Claude pool, auth-active is unavailable -> pool_unavailable, pool_eligible=false, priority=-1
+	if claudeByAuth["auth-active"].RoutingStatus != apply.RoutingStatusPoolUnavailable || claudeByAuth["auth-active"].Target.Priority != -1 || claudeByAuth["auth-active"].PoolEligible == nil || *claudeByAuth["auth-active"].PoolEligible {
+		t.Errorf("auth-active claude_gpt = %+v, want pool_unavailable -1 with pool_eligible=false", claudeByAuth["auth-active"])
 	}
 }

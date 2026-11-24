@@ -32,11 +32,11 @@ const templateScriptModals = `        function historyIdentity(value) {
             var quotaRecordCount = 0;
             function ensure(value) {
                 var key = historyIdentity(value);
-                if (!rows[key]) rows[key] = {email: value && value.email ? String(value.email) : "", gemini: null, argon: null, claude_gpt: null};
+                if (!rows[key]) rows[key] = {email: value && value.email ? String(value.email) : "", gemini: null, claude_gpt: null};
                 if (!rows[key].email && value && value.email) rows[key].email = String(value.email);
                 return rows[key];
             }
-            ["gemini", "argon", "claude_gpt"].forEach(function(modelGroup) {
+            ["gemini", "claude_gpt"].forEach(function(modelGroup) {
                 (Array.isArray(groups[modelGroup]) ? groups[modelGroup] : []).forEach(function(record) {
                     var row = ensure(record);
                     var sample = record.sample || {};
@@ -59,7 +59,6 @@ const templateScriptModals = `        function historyIdentity(value) {
                 "<div class=\"history-comparison-row history-comparison-header\">" +
                     "<div>" + (currentLang === "zh-CN" ? "账号" : "Account") + "</div>" +
                     "<div>" + (currentLang === "zh-CN" ? "本次探测 Gemini 额度" : "Gemini Quota This Probe") + "</div>" +
-                    "<div>" + (currentLang === "zh-CN" ? "本次探测 Argon 额度" : "Argon Quota This Probe") + "</div>" +
                     "<div>" + (currentLang === "zh-CN" ? "本次探测 Claude/GPT 额度" : "Claude/GPT Quota This Probe") + "</div>" +
                 "</div>";
             rowKeys.forEach(function(key) {
@@ -67,7 +66,6 @@ const templateScriptModals = `        function historyIdentity(value) {
                 html += "<div class=\"history-comparison-row\">" +
                     "<div class=\"history-account-cell\">" + escapeHTML(formatAccountName(row.email || "Credential")) + "</div>" +
                     "<div>" + historyQuotaCell(row.gemini) + "</div>" +
-                    "<div>" + historyQuotaCell(row.argon) + "</div>" +
                     "<div>" + historyQuotaCell(row.claude_gpt) + "</div>" +
                 "</div>";
             });

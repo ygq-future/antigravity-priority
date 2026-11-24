@@ -99,9 +99,6 @@ func TestExecuteAntigravityQuotaRequest_SingleSummaryCoversAllPools(t *testing.T
 	if results[antigravity.ModelGroupClaudeGPT].Status != antigravity.StatusReady {
 		t.Fatalf("expected ClaudeGPT StatusReady, got %#v", results[antigravity.ModelGroupClaudeGPT])
 	}
-	if results[antigravity.ModelGroupArgon].Status != antigravity.StatusReady {
-		t.Fatalf("expected Argon StatusReady, got %#v", results[antigravity.ModelGroupArgon])
-	}
 }
 
 func TestExecuteAntigravityQuotaRequest_MissingGroupIsNotFabricated(t *testing.T) {
@@ -209,8 +206,8 @@ func TestExecuteAntigravityQuotaRequest_PrefersDailySummaryHost(t *testing.T) {
 	if !strings.Contains(requestedURLs[0], "daily-") {
 		t.Fatalf("first call URL = %q; daily host must be asked before production", requestedURLs[0])
 	}
-	if argon := results[antigravity.ModelGroupGemini].ArgonWindowRemaining; argon == nil || *argon != 71 {
-		t.Fatalf("ArgonWindowRemaining = %v; want 71", argon)
+	if results[antigravity.ModelGroupGemini].Status != antigravity.StatusReady {
+		t.Fatalf("gemini status = %v; want ready", results[antigravity.ModelGroupGemini].Status)
 	}
 }
 
@@ -258,7 +255,7 @@ func TestExecuteAntigravityQuotaRequest_UntouchedBucketsStayReady(t *testing.T) 
 
 // Google gates the separate Gemini 4 Argon weekly bucket on the client identity, so the
 // probe must advertise the hub identity that receives it.
-func TestExecuteAntigravityQuotaRequest_UsesHubIdentityThatReceivesArgonBucket(t *testing.T) {
+func TestExecuteAntigravityQuotaRequest_UsesHubIdentityForMeasuredBuckets(t *testing.T) {
 	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
 	var userAgent string
 	doer := quotaHTTPDoerFunc(func(_ context.Context, request host.HTTPRequest) (host.HTTPResponse, error) {
@@ -283,8 +280,8 @@ func TestExecuteAntigravityQuotaRequest_UsesHubIdentityThatReceivesArgonBucket(t
 	if !strings.Contains(userAgent, "/2.24.0 ") {
 		t.Fatalf("User-Agent = %q; hub 2.24.0 is required for measured Gemini buckets", userAgent)
 	}
-	if argon := results[antigravity.ModelGroupGemini].ArgonWindowRemaining; argon == nil || *argon != 71 {
-		t.Fatalf("ArgonWindowRemaining = %v; want 71 from the identity-gated Argon bucket", argon)
+	if results[antigravity.ModelGroupGemini].Status != antigravity.StatusReady {
+		t.Fatalf("gemini status = %v; want ready", results[antigravity.ModelGroupGemini].Status)
 	}
 }
 

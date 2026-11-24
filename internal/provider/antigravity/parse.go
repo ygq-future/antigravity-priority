@@ -54,8 +54,6 @@ type candidateWindow struct {
 	resetAt   *time.Time
 	remaining int64
 	window    WindowType
-	isArgon   bool
-	full      bool
 }
 
 // ParseAvailableModels parses the Antigravity quota summary JSON into target model group ProbeResult.
@@ -71,7 +69,7 @@ func ParseAvailableModels(raw []byte, observedAt time.Time, group ModelGroup) Pr
 
 // ParseAllModelGroups parses the Antigravity quota summary JSON into ProbeResults
 // for all known model groups from a single decode pass. A single HTTP response
-// contains quota for all models; this extracts gemini, argon, and claude_gpt groups.
+// contains quota for all models; this extracts gemini and claude_gpt groups.
 func ParseAllModelGroups(raw []byte, observedAt time.Time) map[ModelGroup]ProbeResult {
 	var response availableModelsResponse
 	decoder := json.NewDecoder(bytes.NewReader(raw))
@@ -79,31 +77,21 @@ func ParseAllModelGroups(raw []byte, observedAt time.Time) map[ModelGroup]ProbeR
 	if err := decoder.Decode(&response); err != nil {
 		return map[ModelGroup]ProbeResult{
 			ModelGroupGemini:    failedResult(observedAt, ModelGroupGemini, "parse antigravity quota failed"),
-			ModelGroupArgon:     failedResult(observedAt, ModelGroupArgon, "parse antigravity quota failed"),
 			ModelGroupClaudeGPT: failedResult(observedAt, ModelGroupClaudeGPT, "parse antigravity quota failed"),
 		}
 	}
 	return map[ModelGroup]ProbeResult{
 		ModelGroupGemini:    parseGroupFromResponse(response, observedAt, ModelGroupGemini),
-		ModelGroupArgon:     parseGroupFromResponse(response, observedAt, ModelGroupArgon),
 		ModelGroupClaudeGPT: parseGroupFromResponse(response, observedAt, ModelGroupClaudeGPT),
 	}
 }
 
 func parseGroupFromResponse(response availableModelsResponse, observedAt time.Time, group ModelGroup) ProbeResult {
 	windows := collectGroupWindows(response, group)
-	if group == ModelGroupArgon && !hasArgonData(response) {
-		// Argon is entitlement-gated. Its absence is not a probe failure; there is
-		// simply no Argon pool on this account.
-		return unavailableResult(observedAt, group, "target model group not entitled")
-	}
 	if len(windows) == 0 {
 		return failedResult(observedAt, group, "target model group quota unavailable")
 	}
 
-	if group == ModelGroupArgon {
-		return parseArgonGroup(windows, observedAt)
-	}
 
 	selected, ok := pickEffectiveWindow(windows)
 	if !ok {
@@ -126,91 +114,14 @@ func parseGroupFromResponse(response availableModelsResponse, observedAt time.Ti
 		result.ShortWindowRemaining = new(fiveHour.remaining)
 	}
 
-	// Normal weekly (non-Argon)
-	normalWindows := filterArgonWindows(windows, false)
-	if weekly, ok := conservativeWindow(normalWindows, WindowWeekly); ok {
+	if weekly, ok := conservativeWindow(windows, WindowWeekly); ok {
 		result.LongWindowResetAt = weekly.resetAt
 		result.LongWindowRemaining = new(weekly.remaining)
-	} else if weekly, ok := conservativeWindow(windows, WindowWeekly); ok {
-		result.LongWindowResetAt = weekly.resetAt
-		result.LongWindowRemaining = new(weekly.remaining)
-	}
-
-	// Argon weekly
-	argonWindows := filterArgonWindows(windows, true)
-	if argon, ok := conservativeWindow(argonWindows, WindowWeekly); ok {
-		result.ArgonWindowResetAt = argon.resetAt
-		result.ArgonWindowRemaining = new(argon.remaining)
-	} else if argon, ok := conservativeAnyWindow(argonWindows); ok {
-		result.ArgonWindowResetAt = argon.resetAt
-		result.ArgonWindowRemaining = new(argon.remaining)
 	}
 
 	return result
 }
 
-func parseArgonGroup(windows []candidateWindow, observedAt time.Time) ProbeResult {
-	argonWindows := filterArgonWindows(windows, true)
-	argonLong, hasArgonLong := conservativeWindow(argonWindows, WindowWeekly)
-	if !hasArgonLong {
-		argonLong, hasArgonLong = conservativeAnyWindow(argonWindows)
-	}
-	if !hasArgonLong {
-		return failedResult(observedAt, ModelGroupArgon, "target model group quota unavailable")
-	}
-
-	result := ProbeResult{
-		Provider:             core.ProviderAntigravity,
-		ModelGroup:           ModelGroupArgon,
-		ObservedAt:           observedAt.UTC(),
-		Status:               StatusReady,
-		PlanType:             inferPlanType(windows),
-		LongWindowResetAt:    argonLong.resetAt,
-		LongWindowRemaining:  new(argonLong.remaining),
-		ArgonWindowResetAt:   argonLong.resetAt,
-		ArgonWindowRemaining: new(argonLong.remaining),
-	}
-	// Routing accepts a fallback window and rounded percentages. Generations
-	// need positive evidence that every explicit Argon weekly bucket is full.
-	for _, w := range argonWindows {
-		if w.window != WindowWeekly {
-			continue
-		}
-		if !w.full {
-			result.ArgonWeeklyStatus = core.ArgonWeeklyPartial
-			break
-		}
-		result.ArgonWeeklyStatus = core.ArgonWeeklyFull
-	}
-
-	// 1. Short window: shared Gemini 5h burst window
-	fiveHour, hasFiveHour := conservativeWindow(windows, WindowFiveHour)
-	if hasFiveHour {
-		result.ShortWindowResetAt = fiveHour.resetAt
-		result.ShortWindowRemaining = new(fiveHour.remaining)
-	}
-
-	// 2. Effective window selection for Argon
-	selected := argonLong
-	if hasFiveHour && argonLong.remaining > 0 {
-		selected = fiveHour
-	}
-
-	result.ResetAt = selected.resetAt
-	result.Remaining = new(selected.remaining)
-	result.Window = selected.window
-	return result
-}
-
-func filterArgonWindows(windows []candidateWindow, isArgon bool) []candidateWindow {
-	res := make([]candidateWindow, 0, len(windows))
-	for _, w := range windows {
-		if w.isArgon == isArgon {
-			res = append(res, w)
-		}
-	}
-	return res
-}
 
 func collectGroupWindows(response availableModelsResponse, group ModelGroup) []candidateWindow {
 	canonical, foundCanonicalGroup := collectCanonicalGroupWindows(response.Groups, group)
@@ -223,15 +134,14 @@ func collectGroupWindows(response availableModelsResponse, group ModelGroup) []c
 		if !modelBelongsToGroup(modelID, model.ModelProvider, group) {
 			continue
 		}
-		isArgon := isArgonIdentifier(modelID)
 		if len(model.QuotaInfo.Windows) == 0 {
-			if window, ok := quotaFieldsToWindow(model.QuotaInfo.RemainingFraction, model.QuotaInfo.ResetTime, WindowUnknown, isArgon); ok {
+			if window, ok := quotaFieldsToWindow(model.QuotaInfo.RemainingFraction, model.QuotaInfo.ResetTime, WindowUnknown); ok {
 				windows = append(windows, window)
 			}
 			continue
 		}
 		for _, item := range model.QuotaInfo.Windows {
-			if window, ok := quotaFieldsToWindow(item.RemainingFraction, item.ResetTime, classifyWindow(item.Name), isArgon); ok {
+			if window, ok := quotaFieldsToWindow(item.RemainingFraction, item.ResetTime, classifyWindow(item.Name)); ok {
 				windows = append(windows, window)
 			}
 		}
@@ -241,9 +151,8 @@ func collectGroupWindows(response availableModelsResponse, group ModelGroup) []c
 		if !modelBelongsToGroup(bucketIdentifier, "", group) {
 			continue
 		}
-		isArgon := isArgonIdentifier(bucketIdentifier)
 		windowType := classifyWindow(bucket.Window)
-		if window, ok := quotaFieldsToWindow(bucket.RemainingFraction, bucket.ResetTime, windowType, isArgon); ok {
+		if window, ok := quotaFieldsToWindow(bucket.RemainingFraction, bucket.ResetTime, windowType); ok {
 			windows = append(windows, window)
 		}
 	}
@@ -259,8 +168,7 @@ func collectCanonicalGroupWindows(groups []quotaGroup, group ModelGroup) ([]cand
 		}
 		found = true
 		for _, bucket := range quotaGroup.Buckets {
-			isArgon := isArgonIdentifier(bucket.BucketID + " " + bucket.DisplayName + " " + bucket.Description)
-			if window, ok := quotaFieldsToWindow(bucket.RemainingFraction, bucket.ResetTime, classifyWindow(bucket.Window), isArgon); ok {
+			if window, ok := quotaFieldsToWindow(bucket.RemainingFraction, bucket.ResetTime, classifyWindow(bucket.Window)); ok {
 				windows = append(windows, window)
 			}
 		}
@@ -330,11 +238,8 @@ func isMoreConservative(candidate candidateWindow, current candidateWindow) bool
 	}
 	return candidate.resetAt != nil && (current.resetAt == nil || candidate.resetAt.After(*current.resetAt))
 }
-func isArgonIdentifier(text string) bool {
-	return strings.Contains(strings.ToLower(text), "argon")
-}
 
-func quotaFieldsToWindow(rawRemaining any, rawReset any, windowType WindowType, isArgon bool) (candidateWindow, bool) {
+func quotaFieldsToWindow(rawRemaining any, rawReset any, windowType WindowType) (candidateWindow, bool) {
 	resetAt, ok := parseAnyTime(rawReset)
 	if !ok {
 		return candidateWindow{}, false
@@ -343,7 +248,7 @@ func quotaFieldsToWindow(rawRemaining any, rawReset any, windowType WindowType, 
 	if !ok {
 		return candidateWindow{}, false
 	}
-	return candidateWindow{resetAt: resetAt, remaining: int64(math.Round(remaining)), window: windowType, isArgon: isArgon, full: remaining == 100}, true
+	return candidateWindow{resetAt: resetAt, remaining: int64(math.Round(remaining)), window: windowType}, true
 }
 
 func modelBelongsToGroup(modelID string, provider string, group ModelGroup) bool {
@@ -549,47 +454,6 @@ func toFloat64(raw any) (float64, bool) {
 		return parsed, err == nil
 	default:
 		return 0, false
-	}
-}
-
-// hasArgonData reports whether the response contains any Argon-specific group,
-// bucket, or model. It distinguishes "the account has no Argon pool" from "the
-// Argon pool exists but its buckets are malformed".
-func hasArgonData(response availableModelsResponse) bool {
-	for _, quotaGroup := range response.Groups {
-		if isArgonIdentifier(quotaGroup.DisplayName + " " + quotaGroup.Description) {
-			return true
-		}
-		for _, bucket := range quotaGroup.Buckets {
-			if isArgonIdentifier(bucket.BucketID + " " + bucket.DisplayName + " " + bucket.Description) {
-				return true
-			}
-		}
-	}
-	for modelID := range response.Models {
-		if isArgonIdentifier(modelID) {
-			return true
-		}
-	}
-	for _, bucket := range response.Buckets {
-		if isArgonIdentifier(bucket.BucketID + " " + bucket.DisplayName + " " + bucket.Description) {
-			return true
-		}
-	}
-	return false
-}
-
-// unavailableResult describes a model group the upstream does not expose for
-// this account. It carries no quota evidence and must not be treated as failure.
-func unavailableResult(observedAt time.Time, group ModelGroup, message string) ProbeResult {
-	return ProbeResult{
-		Provider:   core.ProviderAntigravity,
-		ModelGroup: group,
-		ObservedAt: observedAt.UTC(),
-		Window:     WindowUnknown,
-		Status:     StatusUnavailable,
-		PlanType:   core.PlanTypeUnknown,
-		Error:      message,
 	}
 }
 

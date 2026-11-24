@@ -400,7 +400,6 @@ const document = {
 };
 function resolveModelPool(modelId) {
     if (String(modelId).indexOf("claude") === 0) return "claude_gpt";
-    if (String(modelId).indexOf("argon") >= 0) return "argon";
     return "gemini";
 }
 const SAMPLES_PATH = "/samples";
@@ -465,9 +464,6 @@ function apiFetch(path) {
     if (path.indexOf("model_group=gemini") >= 0) {
         return Promise.resolve({records:[{email:"gemini@example.com",sample:{observed_at:"2026-08-23T02:00:00Z",short_window_rem:0,long_window_rem:25}}]});
     }
-    if (path.indexOf("model_group=argon") >= 0) {
-        return Promise.resolve({records:[{email:"argon@example.com",sample:{observed_at:"2026-08-23T02:00:30Z",long_window_rem:80}}]});
-    }
     return Promise.resolve({records:[{email:"claude@example.com",sample:{observed_at:"2026-08-23T02:01:00Z",short_window_rem:75,long_window_rem:0}}]});
 }
 function t(key) { return key; }
@@ -475,15 +471,14 @@ accountMaskingEnabled = false;
 (async function() {
     showHistoryDetails(0);
     await new Promise(function(resolve) { setTimeout(resolve, 0); });
-    if (calls.length !== 3) throw new Error("probe history did not request all three model groups, got " + calls.length);
+    if (calls.length !== 2) throw new Error("probe history did not request both model groups, got " + calls.length);
     if (!calls.some(function(path) { return path.indexOf("model_group=gemini") >= 0; })) throw new Error("Gemini probe samples were not requested");
-    if (!calls.some(function(path) { return path.indexOf("model_group=argon") >= 0; })) throw new Error("Argon probe samples were not requested");
     if (!calls.some(function(path) { return path.indexOf("model_group=claude_gpt") >= 0; })) throw new Error("Claude/GPT probe samples were not requested");
     if (elements.modalDiffList.innerHTML.indexOf("history-comparison-table") < 0) throw new Error("probe history comparison table is missing");
     if (elements.modalDiffList.innerHTML.indexOf("history-comparison-quota-only") < 0) throw new Error("probe history must use the quota-only table layout");
-    if (elements.modalDiffList.innerHTML.indexOf("本次探测 Gemini 额度") < 0 || elements.modalDiffList.innerHTML.indexOf("本次探测 Argon 额度") < 0 || elements.modalDiffList.innerHTML.indexOf("本次探测 Claude/GPT 额度") < 0) throw new Error("probe history model-group columns are missing");
+    if (elements.modalDiffList.innerHTML.indexOf("本次探测 Gemini 额度") < 0 || elements.modalDiffList.innerHTML.indexOf("本次探测 Claude/GPT 额度") < 0) throw new Error("probe history model-group columns are missing");
     if (elements.modalDiffList.innerHTML.indexOf("优先级变化") >= 0) throw new Error("probe history must not render a priority column");
-    if (elements.modalDiffList.innerHTML.indexOf("gemini@example.com") < 0 || elements.modalDiffList.innerHTML.indexOf("argon@example.com") < 0 || elements.modalDiffList.innerHTML.indexOf("claude@example.com") < 0) throw new Error("probe history accounts are missing");
+    if (elements.modalDiffList.innerHTML.indexOf("gemini@example.com") < 0 || elements.modalDiffList.innerHTML.indexOf("claude@example.com") < 0) throw new Error("probe history accounts are missing");
 })().catch(function(err) {
     console.error(err.stack || err.message);
     process.exit(1);
@@ -539,7 +534,7 @@ accountMaskingEnabled = false;
     if (elements.modalDiffList.innerHTML.indexOf("优先级变化") >= 0) throw new Error("automatic schedule must not render a priority change column");
     if (elements.modalDiffList.innerHTML.indexOf("account@example.com") < 0) throw new Error("automatic schedule account is missing");
     if (elements.modalDiffList.innerHTML.indexOf("90%") < 0 || elements.modalDiffList.innerHTML.indexOf("55%") < 0) throw new Error("automatic schedule quota meters are missing");
-    if ((elements.modalDiffList.innerHTML.match(/history-comparison-row/g) || []).length !== 2) throw new Error("Gemini, Claude/GPT, and Argon data were not merged into one account row");
+    if ((elements.modalDiffList.innerHTML.match(/history-comparison-row/g) || []).length !== 2) throw new Error("Gemini and Claude/GPT data were not merged into one account row");
 })().catch(function(err) {
     console.error(err.stack || err.message);
     process.exit(1);

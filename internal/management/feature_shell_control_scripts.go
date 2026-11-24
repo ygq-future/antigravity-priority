@@ -221,8 +221,8 @@ const templateScriptControls = `        // Custom Select: shared open/close + vi
             const label = document.getElementById("customModelSelectLabel");
 
             if (badge) {
-                badge.className = "model-pool-badge " + (pool === "argon" ? "badge-argon" : (pool === "claude_gpt" ? "badge-claude" : "badge-gemini"));
-                badge.textContent = pool === "argon" ? (t("badgeArgon") || "Argon") : (pool === "claude_gpt" ? (t("badgeClaudeGPT") || "Claude/GPT") : (t("badgeGemini") || "Gemini"));
+                badge.className = "model-pool-badge " + (pool === "claude_gpt" ? "badge-claude" : "badge-gemini");
+                badge.textContent = pool === "claude_gpt" ? (t("badgeClaudeGPT") || "Claude/GPT") : (t("badgeGemini") || "Gemini");
             }
             if (label) {
                 label.textContent = modelId;
@@ -240,12 +240,10 @@ const templateScriptControls = `        // Custom Select: shared open/close + vi
             if (!menu) return;
 
             const geminiModels = [];
-            const argonModels = [];
             const claudeModels = [];
             models.forEach(m => {
                 const p = m.quota_pool || resolveModelPool(m.id);
-                if (p === "argon") argonModels.push(m);
-                else if (p === "claude_gpt") claudeModels.push(m);
+                if (p === "claude_gpt") claudeModels.push(m);
                 else geminiModels.push(m);
             });
 
@@ -279,7 +277,6 @@ const templateScriptControls = `        // Custom Select: shared open/close + vi
             }
 
             renderGroup("poolGemini", "Gemini 额度池", geminiModels, "badge-gemini", t("badgeGemini") || "Gemini");
-            renderGroup("poolArgon", "Argon 额度池", argonModels, "badge-argon", t("badgeArgon") || "Argon");
             renderGroup("poolClaudeGPT", "Claude & GPT 额度池", claudeModels, "badge-claude", t("badgeClaudeGPT") || "Claude/GPT");
 
             menu.innerHTML = html;
@@ -291,15 +288,12 @@ const templateScriptControls = `        // Custom Select: shared open/close + vi
 
             const geminiModels = [];
             const claudeModels = [];
-            const argonModels = [];
             models.forEach(m => {
                 const p = m.quota_pool || resolveModelPool(m.id);
                 if (p === "gemini") {
                     geminiModels.push(m);
                 } else if (p === "claude_gpt") {
                     claudeModels.push(m);
-                } else if (p === "argon") {
-                    argonModels.push(m);
                 }
             });
 
@@ -342,14 +336,6 @@ const templateScriptControls = `        // Custom Select: shared open/close + vi
                 "selectWarmupClaudeOption",
                 updateCustomWarmupClaudeDisplay
             );
-            populateWarmupPoolSelect(
-                "cfgWarmupArgonModelSelect",
-                "customWarmupArgonMenu",
-                argonModels,
-                dynamicConfig && dynamicConfig.warmup && dynamicConfig.warmup.argon_model,
-                "selectWarmupArgonOption",
-                updateCustomWarmupArgonDisplay
-            );
         }
 
 
@@ -359,8 +345,7 @@ const templateScriptControls = `        // Custom Select: shared open/close + vi
         }
         function selectModelGroup(value, event) {
             let model = "gemini-3.8-flash-high";
-            if (value === "argon") model = "gemini-4-argon-high";
-            else if (value === "claude_gpt") model = "claude-sonnet-5-5-high";
+            if (value === "claude_gpt") model = "claude-sonnet-5-5-high";
             selectModel(model, event);
         }
         function updateCustomSelectDisplay() {
@@ -474,38 +459,6 @@ const templateScriptControls = `        // Custom Select: shared open/close + vi
             }
         }
 
-        // Custom Select: Warmup Argon Model
-        function toggleCustomWarmupArgonSelect(event) {
-            if (event) event.stopPropagation();
-            closeAllCustomSelects("customWarmupArgonModelSelect");
-            toggleCustomSelectMenu("customWarmupArgonModelSelect", "customWarmupArgonMenu");
-        }
-
-        function selectWarmupArgonOption(value, event) {
-            if (event) event.stopPropagation();
-            const select = document.getElementById("cfgWarmupArgonModelSelect");
-            if (select) select.value = value;
-            updateCustomWarmupArgonDisplay();
-            closeAllCustomSelects();
-            updateSaveButtonState();
-        }
-
-        function updateCustomWarmupArgonDisplay() {
-            const select = document.getElementById("cfgWarmupArgonModelSelect");
-            const label = document.getElementById("customWarmupArgonLabel");
-            if (select && label) {
-                const selectedOpt = select.options[select.selectedIndex];
-                if (selectedOpt) label.textContent = selectedOpt.text || selectedOpt.value;
-            }
-            const menu = document.getElementById("customWarmupArgonMenu");
-            if (menu && select) {
-                menu.querySelectorAll(".custom-select-option").forEach(opt => {
-                    const isSelected = opt.getAttribute("data-value") === select.value;
-                    opt.classList.toggle("selected", isSelected);
-                });
-            }
-        }
-
 
         function updateAllCustomSelectDisplays() {
             updateCustomSelectDisplay();
@@ -513,7 +466,6 @@ const templateScriptControls = `        // Custom Select: shared open/close + vi
             updateCustomIntervalDisplay();
             updateCustomWarmupGeminiDisplay();
             updateCustomWarmupClaudeDisplay();
-            updateCustomWarmupArgonDisplay();
             if (typeof updateCustomPgFormatDisplay === "function") updateCustomPgFormatDisplay();
             if (typeof updatePromptGuardUILabels === "function") updatePromptGuardUILabels();
         }
@@ -524,7 +476,6 @@ const templateScriptControls = `        // Custom Select: shared open/close + vi
                 { wrap: "customIntervalSelect", menu: "customIntervalMenu" },
                 { wrap: "customWarmupGeminiModelSelect", menu: "customWarmupGeminiMenu" },
                 { wrap: "customWarmupClaudeModelSelect", menu: "customWarmupClaudeMenu" },
-                { wrap: "customWarmupArgonModelSelect", menu: "customWarmupArgonMenu" },
                 { wrap: "customPgFormatSelect", menu: "customPgFormatMenu" },
             ];
             list.forEach(item => {

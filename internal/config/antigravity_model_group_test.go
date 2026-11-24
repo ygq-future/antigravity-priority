@@ -18,10 +18,10 @@ func TestClassifyModelQuotaPool(t *testing.T) {
 		{"gemini-3.5-flash-lite", config.AntigravityModelGroupGemini},
 		{"google/gemini-2.5-pro", config.AntigravityModelGroupGemini},
 
-		// Argon models
-		{"gemini-4-argon-high", config.AntigravityModelGroupArgon},
-		{"teamA/gemini-4-argon-high", config.AntigravityModelGroupArgon},
-		{"argon-experimental", config.AntigravityModelGroupArgon},
+		// Former Argon models belong to Gemini pool
+		{"gemini-4-argon-high", config.AntigravityModelGroupGemini},
+		{"teamA/gemini-4-argon-high", config.AntigravityModelGroupGemini},
+		{"argon-experimental", config.AntigravityModelGroupGemini},
 
 		// Claude & GPT models
 		{"claude-sonnet-5-5-high", config.AntigravityModelGroupClaudeGPT},
