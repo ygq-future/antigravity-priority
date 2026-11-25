@@ -202,8 +202,8 @@ func TestHealth_403DemotesAccountWithoutProbe(t *testing.T) {
 	if got := readPriority(t, paths["idx-a"]); got != 100 {
 		t.Fatalf("host priority = %d; want untouched 100", got)
 	}
-	if len(mock.httpCalls) != 0 {
-		t.Fatalf("403 must not trigger an active refresh/probe, got %d HTTP calls", len(mock.httpCalls))
+	if len(mock.httpCalls) != 1 {
+		t.Fatalf("403 should trigger 1 on-demand tier probe call, got %d HTTP calls", len(mock.httpCalls))
 	}
 
 	// 403 demotes the entire account across all models in pool
