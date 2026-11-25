@@ -19,6 +19,6 @@ const templateStyleResponsive = `        @media (max-width: 1100px) {
             .diag-timeline-item { grid-template-columns: 46px minmax(0, 1fr) auto auto; padding: 6px 8px; gap: 8px; }
             .diag-timeline-msg { display: none; }
             .topbar { flex-direction: column; align-items: flex-start; }
-            .topbar-actions { width: 100%; justify-content: space-between; margin-right: 0; }
+            .topbar-actions { width: 100%; justify-content: space-between; }
         }
 `

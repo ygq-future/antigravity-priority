@@ -66,7 +66,6 @@ const templateStyleShell = `        body {
             align-items: center;
             gap: 8px;
             flex-wrap: wrap;
-            margin-right: 140px;
         }
 
         .tabs {
