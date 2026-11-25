@@ -419,7 +419,7 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
         }
 
         async function syncHost(options) {
-            if (isAuthBlocked) return;
+            if (isAuthBlocked) return false;
             const settings = options || {};
             try {
 				const data = await apiFetch(SYNC_PATH, { method: "POST" });
@@ -427,10 +427,11 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
                 if (data && Array.isArray(data.models)) {
                     updateModelDropdownFromSnapshot(data.models);
                 }
-                if (settings.notifySync) showToast(t("syncSuccess"), "success");
+                return true;
             } catch (err) {
                 if (isAuthBlocked) throw err;
                 await fetchSnapshot(settings);
+                return false;
             }
         }
 
@@ -453,9 +454,10 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
                     icon: "🔄"
                 });
             }
+            let syncSucceeded = false;
             try {
                 if (settings.withSync) {
-                    await syncHost(settings);
+                    syncSucceeded = await syncHost(settings);
                 } else {
                     await fetchSnapshot(settings);
                 }
@@ -471,6 +473,9 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
                     btn.classList.remove("btn-refreshing");
                 }
             }
+            if (syncSucceeded && isManualSync && !isAuthBlocked) {
+                showToast(t("syncSuccess"), "success");
+            }
         }
 
         async function probeSingleCredential(authIndex, btn) {
@@ -478,6 +483,8 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
             const probeKey = String(authIndex);
             probingAuthIndexes.add(probeKey);
             applyCredentialProbing(probeKey, true, btn);
+            let toastMessage = "";
+            let toastKind = "success";
             try {
                 const url = RUN_PATH + "?mode=probe&auth_index=" + encodeURIComponent(authIndex);
                 const data = await apiFetch(url, { method: "POST" });
@@ -488,24 +495,29 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
 
                 if (targetOutcome && targetOutcome.status === "unavailable") {
                     var unavailableDetail = targetOutcome.error ? " · " + targetOutcome.error : "";
-                    showToast(t("probeUnavailable") + unavailableDetail, "info");
+                    toastMessage = t("probeUnavailable") + unavailableDetail;
+                    toastKind = "info";
                 } else if (targetOutcome && targetOutcome.status !== "success") {
                     let detail = targetOutcome.error || (currentLang === "zh-CN" ? "探测未成功" : "Probe unsuccessful");
                     if (targetOutcome.http_status_code && detail.indexOf(String(targetOutcome.http_status_code)) < 0) {
                         detail += " (HTTP " + targetOutcome.http_status_code + ")";
                     }
-                    showToast(t("probeSingleFailed") + " · " + detail, "error");
+                    toastMessage = t("probeSingleFailed") + " · " + detail;
+                    toastKind = "error";
                 } else if (targetOutcome && targetOutcome.status === "success") {
-                    showToast(t("probeSingleSuccess"), "success");
+                    toastMessage = t("probeSingleSuccess");
                 } else {
-                    showToast(t("probeSingleNoResult"), "error");
+                    toastMessage = t("probeSingleNoResult");
+                    toastKind = "error";
                 }
             } catch (err) {
-                showToast(err.message, "error");
+                toastMessage = err.message;
+                toastKind = "error";
             } finally {
                 probingAuthIndexes.delete(probeKey);
                 applyCredentialProbing(probeKey, false, btn);
             }
+            if (toastMessage) showToast(toastMessage, toastKind);
         }
 
         async function toggleCredentialWarmup(authIndex, group, enabled, button) {

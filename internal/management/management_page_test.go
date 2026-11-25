@@ -1004,9 +1004,14 @@ const document = {
 
 const RUN_PATH = "/run";
 
-function showToast() {}
+var toastCount = 0;
+var toastOverlayHidden = null;
+function showToast() {
+    toastCount++;
+    toastOverlayHidden = elements.credentialsLoadingOverlay.hidden;
+}
 function t(key) { return key; }
-function refreshDashboard() { return Promise.resolve(); }
+function refreshDashboard() { return new Promise(function(resolve) { setTimeout(resolve, 20); }); }
 
 var loadingDuringProbe = null;
 var gridClassDuringProbe = null;
@@ -1032,6 +1037,9 @@ apiFetch = async function(path, opts) {
     }
     if (elements.credentialsContainer.classList.contains("credentials-probing")) {
         throw new Error("expected credentialsContainer to have removed credentials-probing class after probe");
+    }
+    if (toastCount !== 1 || toastOverlayHidden !== true) {
+        throw new Error("expected the probe toast to fire once after loading clears, got count=" + toastCount + " overlayHidden=" + toastOverlayHidden);
     }
 })().catch(function(err) {
     console.error(err.stack || err.message);
@@ -1079,7 +1087,10 @@ const SYNC_PATH = "/sync";
 const DIAGNOSTICS_PATH = "/diagnostics";
 var isAuthBlocked = false;
 
-function showToast() {}
+function showToast() {
+    toastCount++;
+    toastOverlayHidden = elements.credentialsLoadingOverlay.hidden;
+}
 function t(key) { return key; }
 function renderDashboard() {}
 function renderHistory() {}
@@ -1090,11 +1101,16 @@ function updateModelDropdownFromSnapshot() {}
 var loadingDuringSync = null;
 var gridClassDuringSync = null;
 var btnRefreshingDuringSync = null;
+var toastCount = 0;
+var toastOverlayHidden = null;
 
 apiFetch = async function(path, opts) {
     loadingDuringSync = elements.credentialsLoadingOverlay.hidden;
     gridClassDuringSync = elements.credentialsContainer.classList.contains("credentials-probing");
     btnRefreshingDuringSync = elements.btnRefresh.classList.contains("btn-refreshing");
+    if (path === DIAGNOSTICS_PATH) {
+        await new Promise(function(resolve) { setTimeout(resolve, 20); });
+    }
     return { models: [] };
 };
 
@@ -1119,6 +1135,9 @@ apiFetch = async function(path, opts) {
     }
     if (elements.btnRefresh.classList.contains("btn-refreshing")) {
         throw new Error("expected btnRefresh to have removed btn-refreshing class after sync");
+    }
+    if (toastCount !== 1 || toastOverlayHidden !== true) {
+        throw new Error("expected the sync toast to fire once after loading clears, got count=" + toastCount + " overlayHidden=" + toastOverlayHidden);
     }
 })().catch(function(err) {
     console.error(err.stack || err.message);

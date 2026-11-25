@@ -39,6 +39,8 @@ const templateScriptProbeSchedule = `        function setListProbeLoading(loadin
             if (label) label.textContent = t("probing");
 
             setListProbeLoading(true);
+            var toastMessage = "";
+            var toastKind = "success";
             try {
                 var path = RUN_PATH + "?mode=probe";
                 var data = await apiFetch(path, { method: "POST" });
@@ -58,19 +60,23 @@ const templateScriptProbeSchedule = `        function setListProbeLoading(loadin
                     }
                 }
                 if (failedCount > 0) {
-                    showToast(t("probeBatchFailed") + " (" + failedCount + ")", "error");
+                    toastMessage = t("probeBatchFailed") + " (" + failedCount + ")";
+                    toastKind = "error";
                 } else if (successCount === 0 && unavailableCount > 0) {
-                    showToast(t("probeUnavailable"), "info");
+                    toastMessage = t("probeUnavailable");
+                    toastKind = "info";
                 } else {
-                    showToast(t("probeSuccess"), "success");
+                    toastMessage = t("probeSuccess");
                 }
                 await refreshDashboard();
             } catch (err) {
-                showToast(err.message, "error");
+                toastMessage = err.message;
+                toastKind = "error";
             } finally {
                 setListProbeLoading(false);
                 btn.classList.remove("btn-probing");
             }
+            if (toastMessage) showToast(toastMessage, toastKind);
 
             btn.classList.add("btn-cooldown");
             var remaining = 10;
