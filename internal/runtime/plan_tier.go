@@ -18,6 +18,7 @@ const (
 	planTierRefreshInterval = 24 * time.Hour
 	planTierRetryInterval   = time.Hour
 	planTierRequestTimeout  = 5 * time.Second
+	onDemandTierProbeCooldown = 10 * time.Minute
 	planTierMaxWorkers      = 4
 )
 
@@ -188,4 +189,89 @@ func planTierDue(record state.PlanTierRecord, now time.Time) bool {
 		return false
 	}
 	return record.AttemptedAt.IsZero() || now.Sub(record.AttemptedAt) >= planTierRetryInterval
+}
+
+func shouldTriggerOnDemandTierProbe(kind state.FailureKind, statusCode int, body string) bool {
+	if kind == state.FailureForbidden {
+		return true
+	}
+	if statusCode == http.StatusServiceUnavailable && strings.Contains(strings.ToUpper(body), "MODEL_CAPACITY_EXHAUSTED") {
+		return true
+	}
+	return false
+}
+
+func (r *Runtime) maybeTriggerOnDemandTierProbe(authIndex string, kind state.FailureKind, statusCode int, body string) {
+	if r == nil || r.bgWorkersDisabled || authIndex == "" || r.hostCallbacks == nil {
+		return
+	}
+	if r.rootCtx == nil || r.rootCtx.Err() != nil {
+		return
+	}
+	if !shouldTriggerOnDemandTierProbe(kind, statusCode, body) {
+		return
+	}
+	store := r.state.StoreOrNil()
+	if store == nil {
+		return
+	}
+	if record, ok := store.GetPlanTier(authIndex); ok && record.PlanType == core.PlanTypeFree {
+		return
+	}
+
+	now := r.clock.Now().UTC()
+	r.tierProbeMu.Lock()
+	if r.tierProbeInFlight == nil {
+		r.tierProbeInFlight = make(map[string]bool)
+	}
+	if r.tierProbeLastAt == nil {
+		r.tierProbeLastAt = make(map[string]time.Time)
+	}
+	if r.tierProbeInFlight[authIndex] {
+		r.tierProbeMu.Unlock()
+		return
+	}
+	if lastAt, ok := r.tierProbeLastAt[authIndex]; ok && now.Sub(lastAt) < onDemandTierProbeCooldown {
+		r.tierProbeMu.Unlock()
+		return
+	}
+	r.tierProbeInFlight[authIndex] = true
+	r.tierProbeLastAt[authIndex] = now
+	r.tierProbeMu.Unlock()
+
+	go func() {
+		defer func() {
+			r.tierProbeMu.Lock()
+			delete(r.tierProbeInFlight, authIndex)
+			r.tierProbeMu.Unlock()
+		}()
+		r.runOnDemandTierProbe(authIndex)
+	}()
+}
+
+func (r *Runtime) runOnDemandTierProbe(authIndex string) {
+	ctx := r.rootCtx
+	if ctx == nil || ctx.Err() != nil {
+		return
+	}
+	client := host.NewClient(r.hostCallbacks)
+	planType, err := fetchPlanTier(ctx, client, authIndex, "")
+	if ctx.Err() != nil {
+		return
+	}
+	store := r.state.StoreOrNil()
+	if store == nil {
+		return
+	}
+	now := r.clock.Now().UTC()
+	record, _ := store.GetPlanTier(authIndex)
+	record.AttemptedAt = now
+	if err == nil && planType != core.PlanTypeUnknown {
+		record.PlanType = planType
+		record.ObservedAt = now
+	}
+	store.SetPlanTier(authIndex, record)
+	if err == nil && planType == core.PlanTypeFree {
+		r.recomputeAndCaptureRouting(now, authIndex)
+	}
 }

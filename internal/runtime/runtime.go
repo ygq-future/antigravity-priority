@@ -62,6 +62,9 @@ type Runtime struct {
 	promptGuardSyncOnce      sync.Once
 	httpClient               *http.Client
 	bgWorkersDisabled        bool
+	tierProbeMu              sync.Mutex
+	tierProbeInFlight        map[string]bool
+	tierProbeLastAt          map[string]time.Time
 }
 
 // New creates an initialized Runtime instance.

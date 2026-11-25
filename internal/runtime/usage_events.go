@@ -117,6 +117,7 @@ func (r *Runtime) handleUsageEvent(ctx context.Context, raw []byte) []byte {
 		return mustMarshal(Envelope{OK: true})
 	}
 
+	r.maybeTriggerOnDemandTierProbe(resolvedIndex, kind, statusCode, payload.Failure.Body)
 	switch kind {
 	case state.FailureRateLimit:
 		if err := r.observe429(ctx, resolvedIndex, string(pool), payload.Model, true); err != nil {

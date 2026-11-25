@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -329,5 +330,100 @@ func TestProbeAndRecordUsesCachedAuthoritativeTier(t *testing.T) {
 	}
 	if len(mock.httpCalls) != 1 || mock.httpCalls[0].URL != antigravity.RetrieveUserQuotaSummaryDailyURL {
 		t.Fatalf("probe made unexpected HTTP calls: %+v", mock.httpCalls)
+	}
+}
+
+func TestShouldTriggerOnDemandTierProbe(t *testing.T) {
+	if !shouldTriggerOnDemandTierProbe(state.FailureForbidden, http.StatusForbidden, "") {
+		t.Fatal("expected 403 forbidden to trigger on-demand tier probe")
+	}
+	if !shouldTriggerOnDemandTierProbe(state.FailureServerError, http.StatusServiceUnavailable, `{"error":{"code":503,"details":[{"reason":"MODEL_CAPACITY_EXHAUSTED"}]}}`) {
+		t.Fatal("expected 503 MODEL_CAPACITY_EXHAUSTED to trigger on-demand tier probe")
+	}
+	if shouldTriggerOnDemandTierProbe(state.FailureServerError, http.StatusServiceUnavailable, "upstream connect error") {
+		t.Fatal("expected generic 503 not to trigger on-demand tier probe")
+	}
+	if shouldTriggerOnDemandTierProbe(state.FailureRateLimit, http.StatusTooManyRequests, "RESOURCE_EXHAUSTED") {
+		t.Fatal("expected 429 not to trigger on-demand tier probe")
+	}
+}
+
+type onDemandTierTestClock struct {
+	now time.Time
+}
+
+func (c onDemandTierTestClock) Now() time.Time { return c.now }
+
+type onDemandTierTestHost struct {
+	host.HostCallbacks
+	httpDoRaw func(context.Context, host.HTTPRequest) (host.HTTPResponse, error)
+}
+
+func (h *onDemandTierTestHost) ListAuthFiles(context.Context) ([]host.AuthFile, error) {
+	return nil, nil
+}
+func (h *onDemandTierTestHost) HTTPDo(ctx context.Context, req host.HTTPRequest) (host.HTTPResponse, error) {
+	return h.httpDoRaw(ctx, req)
+}
+
+func TestMaybeTriggerOnDemandTierProbeCooldownAndFreeSkip(t *testing.T) {
+	now := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
+	var calls atomic.Int32
+	done := make(chan struct{}, 2)
+
+	rt := New(Options{
+		Clock:          onDemandTierTestClock{now: now},
+		StateCachePath: filepath.Join(t.TempDir(), "state.json"),
+		Host: &onDemandTierTestHost{
+			httpDoRaw: func(context.Context, host.HTTPRequest) (host.HTTPResponse, error) {
+				calls.Add(1)
+				done <- struct{}{}
+				return host.HTTPResponse{
+					StatusCode: http.StatusOK,
+					Body:       []byte(`{"currentTier":{"id":"free-tier"}}`),
+				}, nil
+			},
+		},
+	})
+	t.Cleanup(func() { _ = rt.Shutdown(context.Background()) })
+	store := rt.state.StoreOrNil()
+	if store == nil {
+		t.Fatal("expected state store to be loaded")
+	}
+	store.SetPlanTier("auth-1", state.PlanTierRecord{
+		PlanType:   core.PlanTypePro,
+		ObservedAt: now.Add(-time.Hour),
+	})
+
+	body := `{"error":{"code":503,"status":"UNAVAILABLE","details":[{"reason":"MODEL_CAPACITY_EXHAUSTED"}]}}`
+	rt.maybeTriggerOnDemandTierProbe("auth-1", state.FailureServerError, http.StatusServiceUnavailable, body)
+	rt.maybeTriggerOnDemandTierProbe("auth-1", state.FailureServerError, http.StatusServiceUnavailable, body)
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for async tier probe")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if rec, ok := store.GetPlanTier("auth-1"); ok && rec.PlanType == core.PlanTypeFree {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	rec, ok := store.GetPlanTier("auth-1")
+	if !ok || rec.PlanType != core.PlanTypeFree {
+		t.Fatalf("plan tier = %+v, ok=%v; want free", rec, ok)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("HTTPDoRaw calls = %d; want 1", got)
+	}
+
+	// Already Free: must not trigger even after cooldown.
+	rt.maybeTriggerOnDemandTierProbe("auth-1", state.FailureForbidden, http.StatusForbidden, "")
+	time.Sleep(50 * time.Millisecond)
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("HTTPDoRaw calls after free = %d; want 1", got)
 	}
 }
