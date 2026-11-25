@@ -1,7 +1,9 @@
 package management
 
 const templateScriptHistory = `        function renderHistory() {
-            hideRequestErrorTooltip();
+            if (!isRequestErrorTooltipPinned()) {
+                hideRequestErrorTooltip();
+            }
             const list = document.getElementById("historyList");
             if (!list) return;
 
@@ -113,12 +115,25 @@ const templateScriptHistory = `        function renderHistory() {
 
         let requestErrorTooltipTimer = null;
         let requestErrorTooltipHovered = false;
+        let requestErrorTooltipSelecting = false;
 
         function clearRequestErrorTooltipTimer() {
             if (requestErrorTooltipTimer) {
                 clearTimeout(requestErrorTooltipTimer);
                 requestErrorTooltipTimer = null;
             }
+        }
+
+        function hasRequestErrorTooltipSelection() {
+            const tip = document.getElementById("reqErrorTooltip");
+            if (!tip || !window.getSelection) return false;
+            const sel = window.getSelection();
+            if (!sel || sel.isCollapsed || !sel.rangeCount) return false;
+            return tip.contains(sel.anchorNode) || tip.contains(sel.focusNode);
+        }
+
+        function isRequestErrorTooltipPinned() {
+            return requestErrorTooltipHovered || requestErrorTooltipSelecting || hasRequestErrorTooltipSelection();
         }
 
         function formatRequestErrorTooltipText(raw) {
@@ -166,13 +181,19 @@ const templateScriptHistory = `        function renderHistory() {
         }
 
         function scheduleHideRequestErrorTooltip() {
-            if (requestErrorTooltipHovered) return;
+            if (isRequestErrorTooltipPinned()) return;
             clearRequestErrorTooltipTimer();
-            requestErrorTooltipTimer = setTimeout(hideRequestErrorTooltip, 300);
+            requestErrorTooltipTimer = setTimeout(function() {
+                if (!isRequestErrorTooltipPinned()) {
+                    hideRequestErrorTooltip();
+                }
+            }, 300);
         }
 
         function hideRequestErrorTooltip() {
             clearRequestErrorTooltipTimer();
+            requestErrorTooltipHovered = false;
+            requestErrorTooltipSelecting = false;
             const tip = document.getElementById("reqErrorTooltip");
             if (tip) tip.classList.remove("visible");
         }
@@ -187,10 +208,26 @@ const templateScriptHistory = `        function renderHistory() {
                 requestErrorTooltipHovered = false;
                 scheduleHideRequestErrorTooltip();
             });
+            requestErrorTooltipElement.addEventListener("mousedown", function() {
+                requestErrorTooltipSelecting = true;
+                clearRequestErrorTooltipTimer();
+            });
             requestErrorTooltipElement.addEventListener("focusin", clearRequestErrorTooltipTimer);
             requestErrorTooltipElement.addEventListener("focusout", scheduleHideRequestErrorTooltip);
         }
 
+        document.addEventListener("mouseup", function() {
+            if (requestErrorTooltipSelecting) {
+                requestErrorTooltipSelecting = false;
+            }
+        });
+        document.addEventListener("mousedown", function(e) {
+            const tip = document.getElementById("reqErrorTooltip");
+            if (!tip || !tip.classList.contains("visible")) return;
+            if (tip.contains(e.target)) return;
+            if (e.target && e.target.closest && e.target.closest(".req-error-info")) return;
+            hideRequestErrorTooltip();
+        });
         document.addEventListener("mouseover", function(e) {
             const target = e.target && e.target.closest ? e.target.closest(".req-error-info") : null;
             if (target) positionRequestErrorTooltip(target);
@@ -207,7 +244,15 @@ const templateScriptHistory = `        function renderHistory() {
             const target = e.target && e.target.closest ? e.target.closest(".req-error-info") : null;
             if (target) scheduleHideRequestErrorTooltip();
         });
-        window.addEventListener("scroll", hideRequestErrorTooltip, true);
+        window.addEventListener("scroll", function(e) {
+            const tip = document.getElementById("reqErrorTooltip");
+            if (tip && e && e.target && (e.target === tip || tip.contains(e.target))) {
+                return;
+            }
+            if (!isRequestErrorTooltipPinned()) {
+                hideRequestErrorTooltip();
+            }
+        }, true);
         window.addEventListener("resize", hideRequestErrorTooltip);
 
         async function clearRequestHistoryAction() {
