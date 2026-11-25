@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -29,14 +30,14 @@ func TestManagementRunHistoryOverlaysFullEmailAtAdapterBoundary(t *testing.T) {
 		}},
 	}
 
-	history := r.managementRunHistory()
-	if len(history) != 1 || history[0].Snapshot == nil || len(history[0].Snapshot.Items) != 1 {
-		t.Fatalf("unexpected management history: %#v", history)
+	snap, found, snapErr := managementRunner{runtime: r}.RunHistoryDetail(context.Background(), r.state.RunHistory()[0].At)
+	if snapErr != nil || !found || snap == nil || len(snap.Items) != 1 {
+		t.Fatalf("unexpected management snapshot: err=%v snap=%#v", snapErr, snap)
 	}
-	if got := history[0].Snapshot.Items[0].Email; got != "user@example.com" {
+	if got := snap.Items[0].Email; got != "user@example.com" {
 		t.Fatalf("management email=%q, want full CPA Host email", got)
 	}
-	encoded, err := json.Marshal(history)
+	encoded, err := json.Marshal(snap)
 	if err != nil {
 		t.Fatalf("marshal management history: %v", err)
 	}
@@ -91,13 +92,14 @@ func TestManagementRunHistoryDoesNotExposeMaskedIdentityFallback(t *testing.T) {
 		}}},
 	}}}}
 
-	history := r.managementRunHistory()
-	if len(history) != 1 || history[0].Snapshot == nil || len(history[0].Snapshot.Items) != 1 {
-		t.Fatalf("unexpected management history: %#v", history)
+	snap, found, snapErr := managementRunner{runtime: r}.RunHistoryDetail(context.Background(), r.state.RunHistory()[0].At)
+	if snapErr != nil || !found || snap == nil || len(snap.Items) != 1 {
+		t.Fatalf("unexpected management snapshot: err=%v snap=%#v", snapErr, snap)
 	}
-	if got := history[0].Snapshot.Items[0].Email; got != "" {
+	if got := snap.Items[0].Email; got != "" {
 		t.Fatalf("unresolved management email=%q, want empty display fallback", got)
 	}
+	history := r.managementRunHistorySummary()
 	encoded, err := json.Marshal(history)
 	if err != nil {
 		t.Fatalf("marshal management history: %v", err)

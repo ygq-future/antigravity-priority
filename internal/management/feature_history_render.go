@@ -1,20 +1,98 @@
 package management
 
-const templateScriptHistory = `        function renderHistory() {
+const templateScriptHistory = `        const historyState = {
+            items: [],
+            total: 0,
+            offset: 0,
+            limit: 50,
+            hasMore: false,
+            loading: false,
+            requestHistoryLimit: null,
+            observer: null,
+            requestSeq: 0
+        };
+
+        function historyRecordKey(r) {
+            return (r && r.at ? r.at : "") + "|" + (r && r.model ? r.model : "") + "|" + (r && r.auth_index ? r.auth_index : "");
+        }
+
+        async function fetchRequestHistory(options) {
+            if (isAuthBlocked) return;
+            const settings = options || {};
+            const reset = Boolean(settings.reset);
+            if (!reset && (historyState.loading || !historyState.hasMore)) return;
+            if (reset) {
+                historyState.items = [];
+                historyState.offset = 0;
+                historyState.hasMore = false;
+            }
+            const seq = ++historyState.requestSeq;
+            historyState.loading = true;
+            try {
+                const url = REQUEST_HISTORY_PATH + "?limit=" + encodeURIComponent(historyState.limit) + "&offset=" + encodeURIComponent(historyState.offset);
+                const data = await apiFetch(url);
+                if (seq !== historyState.requestSeq) return;
+                const records = Array.isArray(data && data.records) ? data.records : [];
+                if (reset) {
+                    historyState.items = records;
+                } else {
+                    const seen = new Set(historyState.items.map(historyRecordKey));
+                    records.forEach(function(rec) {
+                        if (!seen.has(historyRecordKey(rec))) {
+                            historyState.items.push(rec);
+                        }
+                    });
+                }
+                historyState.total = typeof (data && data.total) === "number" ? data.total : historyState.items.length;
+                historyState.offset = historyState.offset + records.length;
+                historyState.hasMore = Boolean(data && data.has_more);
+                if (data && data.request_history_limit !== undefined) {
+                    historyState.requestHistoryLimit = data.request_history_limit;
+                }
+                renderHistory();
+            } catch (err) {
+                if (seq === historyState.requestSeq && !settings.silent && !isAuthBlocked) showToast(err.message, "error");
+            } finally {
+                if (seq === historyState.requestSeq) {
+                    historyState.loading = false;
+                }
+            }
+        }
+
+        function attachHistoryScrollObserver() {
+            if (historyState.observer) {
+                historyState.observer.disconnect();
+                historyState.observer = null;
+            }
+            const list = document.getElementById("historyList");
+            const sentinel = (list && typeof list.querySelector === "function") ? list.querySelector(".history-load-more") : null;
+            if (!sentinel || !historyState.hasMore || typeof IntersectionObserver === "undefined") return;
+            historyState.observer = new IntersectionObserver(function(entries) {
+                if (entries && entries.some(function(e) { return e.isIntersecting; })) {
+                    fetchRequestHistory({ reset: false, silent: true });
+                }
+            }, { rootMargin: "120px" });
+            historyState.observer.observe(sentinel);
+        }
+
+        function renderHistory() {
             if (!isRequestErrorTooltipPinned()) {
                 hideRequestErrorTooltip();
             }
             const list = document.getElementById("historyList");
             if (!list) return;
 
-            const records = (latestDiagnostics && latestDiagnostics.request_history) || [];
+            const records = historyState.items || [];
+            const totalCount = historyState.total || records.length;
             const badge = document.getElementById("requestHistoryCountBadge");
             if (badge) {
-                badge.textContent = records.length + (currentLang === "zh-CN" ? " 条记录" : " records");
+                badge.textContent = records.length < totalCount
+                    ? (records.length + " / " + totalCount + (currentLang === "zh-CN" ? " 条记录" : " records"))
+                    : (totalCount + (currentLang === "zh-CN" ? " 条记录" : " records"));
             }
             const limitInput = document.getElementById("historyLimitInput");
-            if (limitInput && latestDiagnostics && latestDiagnostics.request_history_limit !== undefined && document.activeElement !== limitInput) {
-                limitInput.value = latestDiagnostics.request_history_limit;
+            if (limitInput && historyState.requestHistoryLimit !== null && historyState.requestHistoryLimit !== undefined && document.activeElement !== limitInput) {
+                limitInput.value = historyState.requestHistoryLimit;
             }
 
             if (records.length === 0) {
@@ -90,7 +168,13 @@ const templateScriptHistory = `        function renderHistory() {
             });
 
             html += "</tbody></table>";
+            if (historyState.hasMore) {
+                html += "<div class=\"history-load-more\">" +
+                    (currentLang === "zh-CN" ? "下滑加载更多..." : "Scroll to load more...") +
+                    "</div>";
+            }
             list.innerHTML = html;
+            attachHistoryScrollObserver();
         }
 
         async function saveRequestHistoryLimit() {
@@ -107,7 +191,7 @@ const templateScriptHistory = `        function renderHistory() {
                 cfg.request_history_limit = limit;
                 dynamicConfig = await apiFetch(CONFIG_PATH, { method: "POST", body: JSON.stringify(cfg) });
                 showToast(t("historyLimitSaved"), "success");
-                await fetchDiagnostics({ silent: true });
+                await fetchRequestHistory({ reset: true, silent: true });
             } catch (err) {
                 showToast(err.message || t("valErrRequestHistoryLimit"), "error");
             }
@@ -262,9 +346,10 @@ const templateScriptHistory = `        function renderHistory() {
             try {
                 await apiFetch(REQUEST_HISTORY_CLEAR_PATH, { method: "POST" });
                 showToast(currentLang === "zh-CN" ? "已清空请求历史" : "Request history cleared");
-                if (latestDiagnostics) {
-                    latestDiagnostics.request_history = [];
-                }
+                historyState.items = [];
+                historyState.total = 0;
+                historyState.offset = 0;
+                historyState.hasMore = false;
                 renderHistory();
             } catch (err) {
                 showToast(err.message || (currentLang === "zh-CN" ? "清空失败" : "Failed to clear"), "error");

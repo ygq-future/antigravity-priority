@@ -10,10 +10,21 @@ const templateScriptHistoryDetails = `        function formatHistoryKind(entry) 
             return (kind || "RUN").toUpperCase();
         }
 
-        function showHistoryDetails(index) {
+        async function showHistoryDetails(index) {
             if (!latestDiagnostics || !latestDiagnostics.run_history) return;
             var entry = latestDiagnostics.run_history[index];
             if (!entry) return;
+            if (!entry.snapshot && entry.has_snapshot && entry.at) {
+                try {
+                    var detailResp = await apiFetch(RUN_HISTORY_DETAIL_PATH + "?at=" + encodeURIComponent(entry.at));
+                    if (detailResp && detailResp.snapshot) {
+                        entry.snapshot = detailResp.snapshot;
+                    }
+                } catch (err) {
+                    showToast(err.message || (currentLang === "zh-CN" ? "读取快照详情失败" : "Failed to load snapshot details"), "error");
+                    return;
+                }
+            }
 
             var isAutoSchedule = entry.kind === "auto_apply" || entry.trigger === "auto_apply";
             if (entry.kind === "probe" || isAutoSchedule) {

@@ -1085,6 +1085,7 @@ const document = {
 
 const SYNC_PATH = "/sync";
 const DIAGNOSTICS_PATH = "/diagnostics";
+const SCHEDULE_STATUS_PATH = "/schedule/status";
 var isAuthBlocked = false;
 
 function showToast() {
@@ -1108,7 +1109,7 @@ apiFetch = async function(path, opts) {
     loadingDuringSync = elements.credentialsLoadingOverlay.hidden;
     gridClassDuringSync = elements.credentialsContainer.classList.contains("credentials-probing");
     btnRefreshingDuringSync = elements.btnRefresh.classList.contains("btn-refreshing");
-    if (path === DIAGNOSTICS_PATH) {
+    if (path === DIAGNOSTICS_PATH || path === SCHEDULE_STATUS_PATH) {
         await new Promise(function(resolve) { setTimeout(resolve, 20); });
     }
     return { models: [] };
@@ -1436,6 +1437,7 @@ var dynamicConfig = { auto_apply: true };
 var scheduleConfig = { paused: false };
 var latestDiagnostics = null;
 const DIAGNOSTICS_PATH = "/diagnostics";
+const SCHEDULE_STATUS_PATH = "/schedule/status";
 const SNAPSHOT_PATH = "/snapshot/latest";
 const SYNC_PATH = "/sync";
 
@@ -1448,7 +1450,7 @@ function updateModelDropdownFromSnapshot() {}
 var snapshotFetchCount = 0;
 var diagQueue = [];
 apiFetch = async function(path) {
-    if (path === DIAGNOSTICS_PATH) {
+    if (path === DIAGNOSTICS_PATH || path === SCHEDULE_STATUS_PATH) {
         if (diagQueue.length === 0) throw new Error("unexpected diagnostics fetch");
         return diagQueue.shift();
     }
@@ -1663,6 +1665,8 @@ const plain = formatRequestErrorTooltipText("plain error &amp; message");
 if (plain !== "plain error & message") {
     throw new Error("expected plain text fallback, got: " + plain);
 }
+historyState.items = latestDiagnostics.request_history;
+historyState.total = historyState.items.length;
 renderHistory();
 const rendered = els.historyList.innerHTML;
 if (rendered.indexOf("req-status-exempt") < 0 || rendered.indexOf("请求豁免 (未冷却)") < 0) {

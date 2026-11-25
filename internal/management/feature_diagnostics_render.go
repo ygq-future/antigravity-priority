@@ -605,8 +605,9 @@ const templateScriptDiagnostics = `        let latestDiagnostics = null;
                 runs: t("diagStorageRoleRuns"),
                 requests: t("diagStorageRoleRequests")
             };
-            var historyCount = Array.isArray(latestDiagnostics.request_history) ? latestDiagnostics.request_history.length : 0;
-            var historyMeta = " · " + historyCount + " / " + (latestDiagnostics.request_history_limit || 0);
+            var historyCount = typeof storage.request_history_count === "number" ? storage.request_history_count : 0;
+            var historyLimit = typeof storage.request_history_limit === "number" ? storage.request_history_limit : 0;
+            var historyMeta = " · " + historyCount + " / " + historyLimit;
 
             var html = "";
             if (Array.isArray(storage.load_errors) && storage.load_errors.length > 0) {

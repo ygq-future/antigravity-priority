@@ -616,13 +616,13 @@ func (r *Runtime) LatestSnapshot(ctx context.Context) (apply.SnapshotSet, error)
 	return cloned, nil
 }
 
-// Diagnostics returns a comprehensive diagnostics map.
-func (r *Runtime) Diagnostics(ctx context.Context) (map[string]any, error) {
+// ScheduleStatus returns lightweight scheduler and management API status for overview polling.
+func (r *Runtime) ScheduleStatus(ctx context.Context) (map[string]any, error) {
 	cfg, err := r.Config()
 	if err != nil {
 		return nil, err
 	}
-	result, audit := r.currentRunSnapshot()
+	_, audit := r.currentRunSnapshot()
 	r.mu.Lock()
 	workerActive := r.worker != nil
 	autoApplyRunning := r.autoApplyRunning
@@ -645,6 +645,47 @@ func (r *Runtime) Diagnostics(ctx context.Context) (map[string]any, error) {
 	if !plan.LastRequestAt.IsZero() {
 		lastRequestAtStr = plan.LastRequestAt.Format(time.RFC3339)
 	}
+	return map[string]any{
+		"management_api": map[string]any{
+			"status":     "ready",
+			"auto_apply": cfg.AutoApply,
+			"enabled":    cfg.Enabled,
+		},
+		"scheduler": map[string]any{
+			"interval":             cfg.Interval.String(),
+			"mode":                 string(plan.Mode),
+			"running":              autoApplyRunning,
+			"server_now":           nowUTC.Format(time.RFC3339),
+			"target_interval":      targetIntervalStr,
+			"last_auto_apply_at":   lastAuto,
+			"next_wait":            nextWaitStr,
+			"next_run_at":          nextRunAtStr,
+			"worker_active":        workerActive,
+			"paused":               sched.Paused,
+			"prev_window_requests": plan.PrevWindowCount,
+			"prev_window_rate_rpm": plan.PrevWindowRateRPM,
+			"curr_window_requests": plan.CurrWindowCount,
+			"curr_window_rate_rpm": plan.CurrWindowRateRPM,
+			"requests_since_last":  plan.SinceLastCount,
+			"baseline_requests":    plan.BaselineRequests,
+			"activity_ratio":       plan.ActivityRatio,
+			"last_request_at":      lastRequestAtStr,
+		},
+		"latest_audit": audit,
+	}, nil
+}
+
+// Diagnostics returns a comprehensive diagnostics map.
+func (r *Runtime) Diagnostics(ctx context.Context) (map[string]any, error) {
+	diag, err := r.ScheduleStatus(ctx)
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := r.Config()
+	if err != nil {
+		return nil, err
+	}
+	nowUTC := r.clock.Now().UTC()
 
 	emailsByAuthIndex := r.currentSnapshotEmails()
 	activeCooldowns := make([]map[string]any, 0)
@@ -676,8 +717,10 @@ func (r *Runtime) Diagnostics(ctx context.Context) (map[string]any, error) {
 		}
 	}
 	pending429, rateLimitStorm := r.rateLimitDiagnostics(emailsByAuthIndex)
-	requestHistory := r.currentRequestHistory()
-
+	requestHistoryCount := len(r.currentRequestHistory())
+	storage := storageDiagnostics(cachePath, loadErrors)
+	storage["request_history_count"] = requestHistoryCount
+	storage["request_history_limit"] = cfg.RequestHistoryLimit
 	eng := r.promptGuardEngine.Load()
 	pgActiveRules := 0
 	var pgWarnings []string
@@ -685,51 +728,21 @@ func (r *Runtime) Diagnostics(ctx context.Context) (map[string]any, error) {
 		pgActiveRules = eng.ActiveRuleCount()
 		pgWarnings = eng.Warnings()
 	}
-	return map[string]any{
-		"management_api": map[string]any{
-			"status":     "ready",
-			"auto_apply": cfg.AutoApply,
-			"enabled":    cfg.Enabled,
-		},
-		"scheduler": map[string]any{
-			"interval":             cfg.Interval.String(),
-			"mode":                 string(plan.Mode),
-			"running":              autoApplyRunning,
-			"server_now":           nowUTC.Format(time.RFC3339),
-			"target_interval":      targetIntervalStr,
-			"last_auto_apply_at":   lastAuto,
-			"next_wait":            nextWaitStr,
-			"next_run_at":          nextRunAtStr,
-			"worker_active":        workerActive,
-			"paused":               sched.Paused,
-			"prev_window_requests": plan.PrevWindowCount,
-			"prev_window_rate_rpm": plan.PrevWindowRateRPM,
-			"curr_window_requests": plan.CurrWindowCount,
-			"curr_window_rate_rpm": plan.CurrWindowRateRPM,
-			"requests_since_last":  plan.SinceLastCount,
-			"baseline_requests":    plan.BaselineRequests,
-			"activity_ratio":       plan.ActivityRatio,
-			"last_request_at":      lastRequestAtStr,
-		},
-		"active_cooldowns":      activeCooldowns,
-		"pending_429":           pending429,
-		"rate_limit_storm":      rateLimitStorm,
-		"latest_audit":          audit,
-		"last_result":           result,
-		"latest_apply":          r.latestAutoApplyEntry(),
-		"run_history":           r.currentRunHistory(),
-		"request_history":       requestHistory,
-		"request_history_limit": cfg.RequestHistoryLimit,
-		"prompt_guard": map[string]any{
-			"enabled":            cfg.PromptGuard.Enabled,
-			"configured_rules":   len(cfg.PromptGuard.Rules),
-			"active_rules":       pgActiveRules,
-			"rewritten_requests": r.promptGuardRewrittenReqs.Load(),
-			"rewritten_hits":     r.promptGuardRewrittenHits.Load(),
-			"warnings":           pgWarnings,
-		},
-		"storage":               storageDiagnostics(cachePath, loadErrors),
-	}, nil
+	diag["active_cooldowns"] = activeCooldowns
+	diag["pending_429"] = pending429
+	diag["rate_limit_storm"] = rateLimitStorm
+	diag["latest_apply"] = r.latestAutoApplyEntry()
+	diag["run_history"] = r.currentRunHistory()
+	diag["prompt_guard"] = map[string]any{
+		"enabled":            cfg.PromptGuard.Enabled,
+		"configured_rules":   len(cfg.PromptGuard.Rules),
+		"active_rules":       pgActiveRules,
+		"rewritten_requests": r.promptGuardRewrittenReqs.Load(),
+		"rewritten_hits":     r.promptGuardRewrittenHits.Load(),
+		"warnings":           pgWarnings,
+	}
+	diag["storage"] = storage
+	return diag, nil
 }
 
 // storageDiagnostics reports the split cache documents backing the runtime.

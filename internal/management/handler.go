@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -21,7 +22,9 @@ type Runner interface {
 	Reset(ctx context.Context) (map[string]any, error)
 	LatestSnapshot(ctx context.Context) (apply.SnapshotSet, error)
 	SyncHost(ctx context.Context) (apply.SnapshotSet, error)
+	ScheduleStatus(ctx context.Context) (map[string]any, error)
 	Diagnostics(ctx context.Context) (map[string]any, error)
+	RunHistoryDetail(ctx context.Context, at time.Time) (*apply.PlanSnapshot, bool, error)
 	GetScheduleConfig(ctx context.Context) (config.ScheduleConfig, error)
 	SetScheduleConfig(ctx context.Context, cfg config.ScheduleConfig) error
 	GetDynamicConfig(ctx context.Context) (config.DynamicConfig, error)
@@ -30,6 +33,7 @@ type Runner interface {
 	GetProbeSamples(ctx context.Context, probeRoundID, modelGroup string) ([]state.ProbeSampleRecord, error)
 	LastProbeOutcomes(ctx context.Context) []ProbeOutcome
 	GetRequestHistory(ctx context.Context) ([]state.RequestHistoryEntry, error)
+	GetRequestHistoryPage(ctx context.Context, limit, offset int) ([]state.RequestHistoryEntry, int, int, error)
 	ClearRequestHistory(ctx context.Context) error
 	GetCustomTiers(ctx context.Context) (map[string]int, error)
 	SetCustomTier(ctx context.Context, authIndex string, tier int) error
@@ -103,6 +107,8 @@ const (
 	PathSync                = "/sync"
 	PathReset               = "/reset"
 	PathDiagnostics         = "/diagnostics"
+	PathScheduleStatus      = "/schedule/status"
+	PathRunHistoryDetail    = "/run-history/detail"
 	PathSnapshotLatest      = "/snapshot/latest"
 	PathScheduleConfig      = "/schedule/config"
 	PathRuntimeConfig       = "/runtime-config"
@@ -147,6 +153,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleReset(w, r)
 	case (path == PathDiagnostics || path == PrefixManagementPlugin+PathDiagnostics) && method == http.MethodGet:
 		h.handleDiagnostics(w, r)
+	case (path == PathScheduleStatus || path == PrefixManagementPlugin+PathScheduleStatus) && method == http.MethodGet:
+		h.handleScheduleStatus(w, r)
+	case (path == PathRunHistoryDetail || path == PrefixManagementPlugin+PathRunHistoryDetail) && method == http.MethodGet:
+		h.handleRunHistoryDetail(w, r)
 	case (path == PathSnapshotLatest || path == PrefixManagementPlugin+PathSnapshotLatest) && method == http.MethodGet:
 		h.handleSnapshot(w, r)
 	case (path == PathScheduleConfig || path == PrefixManagementPlugin+PathScheduleConfig) && method == http.MethodGet:
@@ -249,6 +259,42 @@ func (h *Handler) handleRun(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(runProbeResponse{
 		Result:        result,
 		ProbeOutcomes: outcomes,
+	})
+}
+
+func (h *Handler) handleScheduleStatus(w http.ResponseWriter, r *http.Request) {
+	status, err := h.runner.ScheduleStatus(r.Context())
+	if err != nil {
+		h.writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(status)
+}
+
+func (h *Handler) handleRunHistoryDetail(w http.ResponseWriter, r *http.Request) {
+	atStr := strings.TrimSpace(r.URL.Query().Get("at"))
+	at, err := time.Parse(time.RFC3339Nano, atStr)
+	if err != nil {
+		h.writeJSONError(w, http.StatusBadRequest, "valid RFC3339 at timestamp is required")
+		return
+	}
+	snapshot, found, err := h.runner.RunHistoryDetail(r.Context(), at)
+	if err != nil {
+		h.writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !found {
+		h.writeJSONError(w, http.StatusNotFound, "run history entry not found")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"at":       at.Format(time.RFC3339Nano),
+		"snapshot": snapshot,
 	})
 }
 
@@ -576,16 +622,36 @@ func isSensitiveKey(key string) bool {
 }
 
 func (h *Handler) handleGetRequestHistory(w http.ResponseWriter, r *http.Request) {
-	records, err := h.runner.GetRequestHistory(r.Context())
+	q := r.URL.Query()
+	limit := 50
+	if rawLimit := strings.TrimSpace(q.Get("limit")); rawLimit != "" {
+		if parsed, err := strconv.Atoi(rawLimit); err == nil && parsed > 0 {
+			if parsed > 200 {
+				parsed = 200
+			}
+			limit = parsed
+		}
+	}
+	offset := 0
+	if rawOffset := strings.TrimSpace(q.Get("offset")); rawOffset != "" {
+		if parsed, err := strconv.Atoi(rawOffset); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+	records, total, historyLimit, err := h.runner.GetRequestHistoryPage(r.Context(), limit, offset)
 	if err != nil {
 		h.writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"ok":      true,
-		"total":   len(records),
-		"records": records,
+		"ok":                    true,
+		"total":                 total,
+		"offset":                offset,
+		"limit":                 limit,
+		"has_more":              offset+len(records) < total,
+		"request_history_limit": historyLimit,
+		"records":               records,
 	})
 }
 

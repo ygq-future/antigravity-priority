@@ -338,8 +338,8 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
                 var wasActive = autoScheduleLoadingActive;
                 var prevLastRun = autoScheduleLastObservedRunAt;
                 var prevNextRun = autoScheduleDueHandledForRunAt;
-                var data = await apiFetch(DIAGNOSTICS_PATH);
-                latestDiagnostics = data;
+                var data = await apiFetch(SCHEDULE_STATUS_PATH);
+                if (typeof latestDiagnostics !== "undefined") latestDiagnostics = Object.assign({}, latestDiagnostics || {}, data || {});
                 syncScheduleConfigFromDiagnostics(data);
                 var sched = (data && data.scheduler) || {};
                 updateServerClockOffset(sched);
@@ -361,8 +361,6 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
                     }
                 }
                 if (typeof renderDashboard === "function") renderDashboard();
-                if (typeof renderHistory === "function") renderHistory();
-                if (typeof renderDiagnostics === "function") renderDiagnostics();
                 if (typeof renderScheduleStatus === "function") renderScheduleStatus();
             } catch (_) {
                 if (autoScheduleLoadingActive && isOverviewActiveAndVisible() && isAutoScheduleEnabledInUI()) {
@@ -387,6 +385,21 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
                     updateModelDropdownFromSnapshot(data.models);
                 }
                 renderDashboard();
+            } catch (err) {
+                if (!settings.silent && !isAuthBlocked) showToast(err.message, "error");
+            }
+        }
+
+        async function fetchScheduleStatus(options) {
+            if (isAuthBlocked) return;
+            const settings = options || {};
+            try {
+                const data = await apiFetch(SCHEDULE_STATUS_PATH);
+                if (typeof latestDiagnostics !== "undefined") latestDiagnostics = Object.assign({}, latestDiagnostics || {}, data || {});
+                if (typeof syncScheduleConfigFromDiagnostics === "function") syncScheduleConfigFromDiagnostics(data);
+                if (typeof syncAutoScheduleFromDiagnostics === "function") syncAutoScheduleFromDiagnostics(data, { skipRender: true });
+                renderDashboard();
+                renderScheduleStatus();
             } catch (err) {
                 if (!settings.silent && !isAuthBlocked) showToast(err.message, "error");
             }
@@ -462,7 +475,7 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
                     await fetchSnapshot(settings);
                 }
                 if (!isAuthBlocked) {
-                    await fetchDiagnostics(settings);
+                    await fetchScheduleStatus(settings);
                 }
             } finally {
                 if (shouldShowListLoading) {
@@ -556,7 +569,7 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
                 });
                 showToast(t("cooldownClearedToast"), "success");
                 await fetchSnapshot({ silent: true });
-                await fetchDiagnostics({ silent: true });
+                await fetchScheduleStatus({ silent: true });
             } catch (err) {
                 showToast(err.message || t("cooldownClearFailed"), "error");
             } finally {

@@ -60,6 +60,33 @@ func (m *mockRunner) SyncHost(ctx context.Context) (apply.SnapshotSet, error) {
 	return apply.SnapshotSet{}, nil
 }
 
+func (m *mockRunner) ScheduleStatus(ctx context.Context) (map[string]any, error) {
+	return m.Diagnostics(ctx)
+}
+
+func (m *mockRunner) RunHistoryDetail(ctx context.Context, at time.Time) (*apply.PlanSnapshot, bool, error) {
+	return nil, false, nil
+}
+
+func (m *mockRunner) GetRequestHistoryPage(ctx context.Context, limit, offset int) ([]state.RequestHistoryEntry, int, int, error) {
+	entries, err := m.GetRequestHistory(ctx)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	total := len(entries)
+	if offset < 0 {
+		offset = 0
+	}
+	if offset >= total {
+		return []state.RequestHistoryEntry{}, total, 1000, nil
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	end := min(offset+limit, total)
+	return entries[offset:end], total, 1000, nil
+}
+
 func (m *mockRunner) Diagnostics(ctx context.Context) (map[string]any, error) {
 	if m.diagnosticsFunc != nil {
 		return m.diagnosticsFunc(ctx)

@@ -108,6 +108,7 @@ type RunHistoryEntry struct {
 	Uncertain    int                 `json:"uncertain"`
 	Message      string              `json:"message"`
 	ProbeRoundID string              `json:"probe_round_id,omitempty"`
+	HasSnapshot  bool                `json:"has_snapshot,omitempty"`
 	Snapshot     *apply.PlanSnapshot `json:"snapshot,omitempty"`
 	Record       apply.RecordResult  `json:"record"`
 }

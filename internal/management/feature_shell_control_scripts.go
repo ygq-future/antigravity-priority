@@ -510,7 +510,7 @@ const templateScriptControls = `        // Custom Select: shared open/close + vi
                 resetAutoScheduleLoading({ skipRender: true });
             }
             if (isAuthBlocked) return;
-            if (tabId === "history") fetchDiagnostics();
+            if (tabId === "history" && typeof fetchRequestHistory === "function") fetchRequestHistory({ reset: true });
             if (tabId === "diagnostics") fetchDiagnostics();
             if (tabId === "config") fetchDynamicConfig();
             if (tabId === "overview") refreshDashboard({ withSync: true, silent: true });

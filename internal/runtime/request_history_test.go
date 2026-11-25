@@ -102,12 +102,12 @@ func TestRuntime_RequestHistory_RecordsOnUsage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	slice, okSlice := diag["request_history"].([]state.RequestHistoryEntry)
-	if !okSlice {
-		t.Fatalf("expected []state.RequestHistoryEntry in diagnostics, got %T", diag["request_history"])
+	storage, okStorage := diag["storage"].(map[string]any)
+	if !okStorage {
+		t.Fatalf("expected storage map in diagnostics, got %T", diag["storage"])
 	}
-	if len(slice) != 2 {
-		t.Errorf("expected 2 diag records, got %d", len(slice))
+	if count, _ := storage["request_history_count"].(int); count != 2 {
+		t.Errorf("expected request_history_count=2 in diagnostics storage, got %v", storage["request_history_count"])
 	}
 
 	// 5. Clear Request History

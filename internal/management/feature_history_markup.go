@@ -16,7 +16,7 @@ const historyMarkup = `
                             <span data-i18n="historyRetainUnit">条</span>
                             <button type="button" class="btn-secondary history-limit-save" onclick="saveRequestHistoryLimit()" data-i18n="btnSaveHistoryLimit">保存</button>
                         </div>
-                        <button type="button" class="btn-secondary" onclick="fetchDiagnostics()" data-i18n="btnRefresh">🔄 刷新</button>
+                        <button type="button" class="btn-secondary" onclick="fetchRequestHistory({ reset: true })" data-i18n="btnRefresh">🔄 刷新</button>
                         <button type="button" class="btn-secondary" onclick="clearRequestHistoryAction()" data-i18n="btnClearHistory" style="color:var(--accent-red-text);">🧹 清空记录</button>
                     </div>
                 </div>

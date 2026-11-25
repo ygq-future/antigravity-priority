@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"time"
 
 	"antigravity-priority/internal/apply"
 	"antigravity-priority/internal/config"
@@ -263,37 +264,72 @@ func (r managementRunner) SyncHost(ctx context.Context) (apply.SnapshotSet, erro
 	return r.runtime.SyncHost(ctx)
 }
 
+func (r managementRunner) ScheduleStatus(ctx context.Context) (map[string]any, error) {
+	return r.runtime.ScheduleStatus(ctx)
+}
+
 func (r managementRunner) Diagnostics(ctx context.Context) (map[string]any, error) {
 	diagnostics, err := r.runtime.Diagnostics(ctx)
 	if err != nil {
 		return nil, err
 	}
-	diagnostics["run_history"] = r.runtime.managementRunHistory()
-	if entries, ok := diagnostics["request_history"].([]state.RequestHistoryEntry); ok {
-		overlayManagementRequestHistoryEmails(entries, r.runtime.currentSnapshotEmails())
-		diagnostics["request_history"] = entries
-	}
+	diagnostics["run_history"] = r.runtime.managementRunHistorySummary()
 	return diagnostics, nil
 }
 
-// managementRunHistory projects full display emails only at the authenticated
-// management adapter boundary. Persisted run history remains redacted.
-func (r *Runtime) managementRunHistory() []RunHistoryEntry {
-	history := r.currentRunHistory()
-	emailByMask := uniqueEmailByMask(r.currentSnapshotEmails(), func(_ string, email string) string {
-		return redactRuntimeIdentifier(email)
-	})
-	emailByAuthMask := uniqueEmailByMask(r.currentSnapshotEmails(), func(authIndex, _ string) string {
-		return redactRuntimeIdentifier(authIndex)
-	})
-	result := make([]RunHistoryEntry, 0, len(history))
+func (r managementRunner) RunHistoryDetail(ctx context.Context, at time.Time) (*apply.PlanSnapshot, bool, error) {
+	history := r.runtime.currentRunHistory()
 	for _, entry := range history {
-		if entry.Snapshot != nil {
+		if entry.At.Equal(at) {
+			if entry.Snapshot == nil {
+				return nil, true, nil
+			}
+			emailByMask := uniqueEmailByMask(r.runtime.currentSnapshotEmails(), func(_ string, email string) string {
+				return redactRuntimeIdentifier(email)
+			})
+			emailByAuthMask := uniqueEmailByMask(r.runtime.currentSnapshotEmails(), func(authIndex, _ string) string {
+				return redactRuntimeIdentifier(authIndex)
+			})
 			projected := entry.Snapshot.ManagementView(func(item apply.SnapshotItem) string {
 				return resolveManagementEmail(item, emailByMask, emailByAuthMask)
 			})
-			entry.Snapshot = &projected
+			return &projected, true, nil
 		}
+	}
+	return nil, false, nil
+}
+
+
+func (r managementRunner) GetRequestHistoryPage(ctx context.Context, limit, offset int) ([]state.RequestHistoryEntry, int, int, error) {
+	entries := r.runtime.currentRequestHistory()
+	total := len(entries)
+	historyLimit := 0
+	if cfg, err := r.runtime.Config(); err == nil {
+		historyLimit = cfg.RequestHistoryLimit
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if offset >= total {
+		return []state.RequestHistoryEntry{}, total, historyLimit, nil
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	end := min(offset+limit, total)
+	page := make([]state.RequestHistoryEntry, end-offset)
+	copy(page, entries[offset:end])
+	overlayManagementRequestHistoryEmails(page, r.runtime.currentSnapshotEmails())
+	return page, total, historyLimit, nil
+}
+
+// managementRunHistorySummary returns run history entries without heavy snapshots for diagnostics listing.
+func (r *Runtime) managementRunHistorySummary() []RunHistoryEntry {
+	history := r.currentRunHistory()
+	result := make([]RunHistoryEntry, 0, len(history))
+	for _, entry := range history {
+		entry.HasSnapshot = entry.Snapshot != nil
+		entry.Snapshot = nil
 		result = append(result, entry)
 	}
 	return result
