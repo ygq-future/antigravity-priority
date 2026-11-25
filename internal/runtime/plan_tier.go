@@ -35,8 +35,10 @@ type planTierResult struct {
 }
 
 // refreshPlanTiers discovers the real subscription tier for accounts whose
-// cached tier is missing or stale. It is best-effort: individual account
-// failures update retry metadata but never fail scheduling.
+// cached tier is missing or stale. A manual probe passes force=true so the
+// operator-visible refresh always re-reads loadCodeAssist instead of reusing
+// the daily cache. It is best-effort: individual account failures update retry
+// metadata but never fail scheduling.
 func refreshPlanTiers(
 	ctx context.Context,
 	doer quotaHTTPDoer,
@@ -45,6 +47,7 @@ func refreshPlanTiers(
 	store *state.Store,
 	now time.Time,
 	targetedSingleAuth bool,
+	force bool,
 	maxConcurrency int,
 ) (bool, error) {
 	if doer == nil || store == nil {
@@ -59,7 +62,7 @@ func refreshPlanTiers(
 		if credential.Disabled && !targetedSingleAuth {
 			continue
 		}
-		if record, ok := store.GetPlanTier(credential.AuthIndex); ok && !planTierDue(record, now) {
+		if record, ok := store.GetPlanTier(credential.AuthIndex); ok && !force && !planTierDue(record, now) {
 			continue
 		}
 		material, ok := materials[credential.AuthIndex]

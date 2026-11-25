@@ -76,6 +76,9 @@ type TaskRequest struct {
 	Trigger     Trigger
 	AuthIndexes []string
 	Warmup      WarmupScope
+	// ForceTierRefresh makes an operator-triggered probe re-read
+	// loadCodeAssist instead of reusing the daily tier cache.
+	ForceTierRefresh bool
 }
 
 // TaskRunner executes a scheduling task.

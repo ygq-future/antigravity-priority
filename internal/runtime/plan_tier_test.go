@@ -53,7 +53,7 @@ func TestRefreshPlanTiersFetchesAndCachesAuthoritativeTier(t *testing.T) {
 	credentials := []core.Credential{{AuthIndex: "auth-ultra", Provider: core.ProviderAntigravity}}
 	materials := map[string]authMaterial{"auth-ultra": {accessToken: "secret-token"}}
 
-	changed, err := refreshPlanTiers(ctx, doer, credentials, materials, store, now, false, 4)
+	changed, err := refreshPlanTiers(ctx, doer, credentials, materials, store, now, false, false, 4)
 	if err != nil {
 		t.Fatalf("refreshPlanTiers() error = %v", err)
 	}
@@ -112,7 +112,7 @@ func TestRefreshPlanTiersSkipsFreshCache(t *testing.T) {
 
 	changed, err := refreshPlanTiers(ctx, doer, credentials, map[string]authMaterial{
 		"auth-pro": {accessToken: "token"},
-	}, store, now, false, 4)
+	}, store, now, false, false, 4)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,6 +121,42 @@ func TestRefreshPlanTiersSkipsFreshCache(t *testing.T) {
 	}
 	if doer.callCount() != 0 {
 		t.Fatalf("HTTP calls = %d; want 0", doer.callCount())
+	}
+}
+
+func TestRefreshPlanTiersForceBypassesFreshCache(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)
+	store, err := state.Load(ctx, filepath.Join(t.TempDir(), "plan-tier.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.SetPlanTier("auth-pro", state.PlanTierRecord{
+		PlanType:    core.PlanTypePro,
+		ObservedAt:  now.Add(-time.Hour),
+		AttemptedAt: now.Add(-10 * time.Minute),
+	})
+	doer := &planTierMockDoer{response: host.HTTPResponse{
+		StatusCode: http.StatusOK,
+		Body:       []byte(`{"paidTier":{"id":"g1-ultra-tier"}}`),
+	}}
+	credentials := []core.Credential{{AuthIndex: "auth-pro", Provider: core.ProviderAntigravity}}
+
+	changed, err := refreshPlanTiers(ctx, doer, credentials, map[string]authMaterial{
+		"auth-pro": {accessToken: "token"},
+	}, store, now, false, true, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("forced refresh must hit loadCodeAssist despite a fresh cache")
+	}
+	if doer.callCount() != 1 {
+		t.Fatalf("HTTP calls = %d; want 1", doer.callCount())
+	}
+	record, _ := store.GetPlanTier("auth-pro")
+	if record.PlanType != core.PlanTypeUltra || !record.ObservedAt.Equal(now) {
+		t.Fatalf("record = %#v; want ultra observed now", record)
 	}
 }
 
@@ -140,7 +176,7 @@ func TestRefreshPlanTiersKeepsKnownTierOnFailureAndThrottlesRetry(t *testing.T) 
 	credentials := []core.Credential{{AuthIndex: "auth-pro", Provider: core.ProviderAntigravity}}
 	materials := map[string]authMaterial{"auth-pro": {accessToken: "token"}}
 
-	changed, err := refreshPlanTiers(ctx, doer, credentials, materials, store, now, false, 4)
+	changed, err := refreshPlanTiers(ctx, doer, credentials, materials, store, now, false, false, 4)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,14 +191,14 @@ func TestRefreshPlanTiersKeepsKnownTierOnFailureAndThrottlesRetry(t *testing.T) 
 		t.Fatalf("attempted_at = %v; want %v", record.AttemptedAt, now)
 	}
 
-	if _, err := refreshPlanTiers(ctx, doer, credentials, materials, store, now.Add(10*time.Minute), false, 4); err != nil {
+	if _, err := refreshPlanTiers(ctx, doer, credentials, materials, store, now.Add(10*time.Minute), false, false, 4); err != nil {
 		t.Fatal(err)
 	}
 	if doer.callCount() != 1 {
 		t.Fatalf("HTTP calls = %d; want retry throttled at 1", doer.callCount())
 	}
 
-	if _, err := refreshPlanTiers(ctx, doer, credentials, materials, store, now.Add(61*time.Minute), false, 4); err != nil {
+	if _, err := refreshPlanTiers(ctx, doer, credentials, materials, store, now.Add(61*time.Minute), false, false, 4); err != nil {
 		t.Fatal(err)
 	}
 	if doer.callCount() != 2 {
@@ -181,7 +217,7 @@ func TestRefreshPlanTiersFailureFallsBackToWindowInference(t *testing.T) {
 	credentials := []core.Credential{{AuthIndex: "auth-pro", Provider: core.ProviderAntigravity}}
 	materials := map[string]authMaterial{"auth-pro": {accessToken: "token"}}
 
-	if _, err := refreshPlanTiers(ctx, doer, credentials, materials, store, now, false, 4); err != nil {
+	if _, err := refreshPlanTiers(ctx, doer, credentials, materials, store, now, false, false, 4); err != nil {
 		t.Fatal(err)
 	}
 	record, ok := store.GetPlanTier("auth-pro")
@@ -240,7 +276,7 @@ func TestRefreshPlanTiersSkipsDisabledAccountsInBatch(t *testing.T) {
 
 	changed, err := refreshPlanTiers(ctx, doer, credentials, map[string]authMaterial{
 		"auth-disabled": {accessToken: "token"},
-	}, store, now, false, 4)
+	}, store, now, false, false, 4)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -60,7 +60,7 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 		return err
 	}
 	targetedSingleAuth := len(request.AuthIndexes) > 0
-	tierChanged, err := refreshPlanTiers(ctx, client, probeCredentials, probeAuthMaterials, store, now, targetedSingleAuth, request.Config.MaxConcurrency)
+	tierChanged, err := refreshPlanTiers(ctx, client, probeCredentials, probeAuthMaterials, store, now, targetedSingleAuth, request.ForceTierRefresh, request.Config.MaxConcurrency)
 	if err != nil {
 		return err
 	}

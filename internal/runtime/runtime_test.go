@@ -894,7 +894,12 @@ func TestRuntime_ProbeUsesLoadCodeAssistTierOverWindowInference(t *testing.T) {
 		t.Fatalf("loadCodeAssist calls = %d; want 1", loadCalls)
 	}
 
-	// A second probe within the cache window must not refetch the tier.
+	// A second explicit probe must refresh the tier even inside the daily cache
+	// window; the overview has to reflect a subscription change immediately.
+	mock.httpResponses[antigravity.LoadCodeAssistDailyURL] = host.HTTPResponse{
+		StatusCode: http.StatusOK,
+		Body:       []byte(`{"paidTier":{"id":"free-tier"}}`),
+	}
 	if err := r.Probe(context.Background(), nil); err != nil {
 		t.Fatal(err)
 	}
@@ -904,8 +909,16 @@ func TestRuntime_ProbeUsesLoadCodeAssistTierOverWindowInference(t *testing.T) {
 			loadCalls++
 		}
 	}
-	if loadCalls != 1 {
-		t.Fatalf("loadCodeAssist calls after cached probe = %d; want 1", loadCalls)
+	if loadCalls != 2 {
+		t.Fatalf("loadCodeAssist calls after manual probe = %d; want 2", loadCalls)
+	}
+	snapshot, err = r.LatestSnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	items = snapshot.Groups[string(config.AntigravityModelGroupGemini)].Items
+	if len(items) != 1 || items[0].PlanType != string(core.PlanTypeFree) {
+		t.Fatalf("plan type after refresh = %#v; want free", items)
 	}
 }
 

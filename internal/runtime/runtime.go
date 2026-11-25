@@ -204,9 +204,14 @@ func (r *Runtime) applyStateCacheOverride(cfg config.Config) config.Config {
 	return cfg
 }
 
-// Probe triggers a probe-only execution: fetches fresh quota and updates the cache without planning or applying.
+// Probe triggers a probe-only execution: fetches fresh quota and the current
+// subscription tier, then updates the cache without planning or applying.
 func (r *Runtime) Probe(ctx context.Context, authIndexes []string) error {
-	return r.run(ctx, TriggerProbe, authIndexes)
+	return r.runTaskRequest(ctx, TaskRequest{
+		Trigger:          TriggerProbe,
+		AuthIndexes:      authIndexes,
+		ForceTierRefresh: true,
+	})
 }
 
 // ResetAllPriorities clears the static priority field from all Antigravity
@@ -382,13 +387,6 @@ func (r *Runtime) GetProbeSamples(ctx context.Context, probeRoundID, modelGroup 
 // AutoApply executes a background scheduled run respecting interval cooldown.
 func (r *Runtime) AutoApply(ctx context.Context) error {
 	return r.runAuto(ctx)
-}
-
-func (r *Runtime) run(ctx context.Context, trigger Trigger, authIndexes []string) error {
-	return r.runTaskRequest(ctx, TaskRequest{
-		Trigger:     trigger,
-		AuthIndexes: authIndexes,
-	})
 }
 
 // runTaskRequest executes one scheduling run under the single-flight lock.
