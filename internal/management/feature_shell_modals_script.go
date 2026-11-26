@@ -84,6 +84,21 @@ const templateScriptModals = `        function historyIdentity(value) {
 			const isAutoHistory = (mode === "auto-history");
 			if (modalPanel) modalPanel.classList.toggle("modal-history-comparison", isProbeHistory || isAutoHistory);
 
+			if (result && result.loading) {
+				if (isAutoHistory) {
+					title.textContent = currentLang === "zh-CN" ? "自动调度明细" : "Automatic Schedule Details";
+				} else if (isProbeHistory) {
+					title.textContent = currentLang === "zh-CN" ? "配额探测明细" : "Quota Probe Details";
+				} else {
+					title.textContent = currentLang === "zh-CN" ? "执行明细快照" : "Execution Details Snapshot";
+				}
+				summary.textContent = currentLang === "zh-CN" ? "正在加载明细..." : "Loading details...";
+				list.innerHTML = "<div class=\"modal-loading-state\"><span class=\"probe-spinner\"></span><span>" +
+					(currentLang === "zh-CN" ? "正在获取数据..." : "Fetching data...") + "</span></div>";
+				modal.hidden = false;
+				return;
+			}
+
 			if (isProbeHistory || isAutoHistory) {
 				title.textContent = isAutoHistory
 					? (currentLang === "zh-CN" ? "自动调度明细" : "Automatic Schedule Details")

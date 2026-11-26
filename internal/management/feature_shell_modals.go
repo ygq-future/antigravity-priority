@@ -23,15 +23,14 @@ const shellModalMarkup = `
     <!-- Diff & Run Result Modal -->
     <div id="diffModal" class="modal-backdrop" hidden onclick="closeModalFromBackdrop(event)">
         <div id="diffModalPanel" class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-                <h2 id="modalTitle" style="margin:0; font-size:17px;">调度变更预览</h2>
-                <button type="button" class="btn-secondary" onclick="closeModal()" style="min-height:28px; padding:3px 8px;">✕</button>
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
+                <div style="display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; min-width:0;">
+                    <h2 id="modalTitle" style="margin:0; font-size:16px;">调度变更预览</h2>
+                    <span id="modalSummary" style="font-size:12px; color:var(--text-secondary);"></span>
+                </div>
+                <button type="button" class="btn-secondary" onclick="closeModal()" style="min-height:28px; padding:3px 8px; flex-shrink:0;">✕</button>
             </div>
-            <div id="modalSummary" style="font-size:12px; color:var(--text-secondary);"></div>
             <div id="modalDiffList" class="modal-body"></div>
-            <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:6px;">
-                <button type="button" class="btn-secondary" onclick="closeModal()" data-i18n="btnClose">关闭</button>
-            </div>
         </div>
     </div>
 

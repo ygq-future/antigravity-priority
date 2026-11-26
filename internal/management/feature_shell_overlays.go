@@ -28,7 +28,19 @@ const templateStyleOverlays = `        /* Modals */
 
         .modal.modal-history-comparison {
             width: fit-content;
+            min-width: min(540px, 100%);
             max-width: 100%;
+        }
+
+        .modal-loading-state {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            padding: 36px 16px;
+            color: var(--text-secondary);
+            font-size: 13px;
+            font-weight: 500;
         }
 
         .modal-body {
