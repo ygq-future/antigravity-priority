@@ -451,8 +451,14 @@ func (r *Runtime) sweepWarmupResets(ctx context.Context) time.Duration {
 		return isDisabled || r.warmups.contains(candidate.key)
 	})
 
-	// Reserve one credential and pool across all reset warm-ups.
-	target, hasTarget := r.allocateWarmupSlot(ctx, store, warm, now)
+	// Reserve one credential and pool across all reset warm-ups, skipping slot
+	// allocation while an earlier warm-up generation is still in flight.
+	prevLane := store.GetWarmupLane()
+	var target warmupCandidate
+	var hasTarget bool
+	if !r.warmups.hasActive() {
+		target, hasTarget = r.allocateWarmupSlot(ctx, store, warm, now)
+	}
 	candidates := refresh
 	if hasTarget {
 		candidates = mergeCandidates(refresh, []warmupCandidate{target})
@@ -480,19 +486,25 @@ func (r *Runtime) sweepWarmupResets(ctx context.Context) time.Duration {
 		}
 		due := byAuth[authIndex]
 		probeCandidate := due[0]
-		scope := WarmupScope{Suppress: true}
+		scope := WarmupScope{}
 		isTarget := hasTarget && authIndex == target.authIndex
 		if isTarget {
 			probeCandidate = target
-			scope = WarmupScope{Group: target.group}
+			scope = WarmupScope{Allow: true, Group: target.group}
 		}
 		for _, candidate := range due {
 			r.recordProbeAttempt(candidate, now)
 		}
 		if err := r.probeResetCandidate(ctx, probeCandidate, scope); errors.Is(err, ErrRunInProgress) {
-			// Another run owns the lock; do not spend a retry budget on it.
+			// Another run owns the lock; do not spend a retry budget or consume
+			// the reserved warm-up lane slot on a skipped attempt.
 			for _, candidate := range due {
 				r.clearProbeAttempt(candidate.key)
+			}
+			if isTarget {
+				if restoreErr := r.state.SetWarmupLane(ctx, prevLane); restoreErr != nil {
+					log.Printf("[antigravity-priority] restore 5h warmup lane after contention: %v", restoreErr)
+				}
 			}
 		}
 	}

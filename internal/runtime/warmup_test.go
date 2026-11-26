@@ -1098,3 +1098,93 @@ func TestRuntime_TriggerWarmupSkipsCardDisabledAndFiltersGroup(t *testing.T) {
 		t.Fatal("expected the group filter to keep the Gemini pool untouched")
 	}
 }
+
+func TestRuntime_AutoApplyAndProbeDoNotBypassWarmupLane(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	rt, stub, clock, _ := newWarmupSweepRuntimeAt(t, now, cachePath)
+	stub.addFile(host.AuthFile{Name: "account-b", AuthIndex: "idx-b", Provider: "antigravity", Status: "active"})
+	stub.addFile(host.AuthFile{Name: "account-c", AuthIndex: "idx-c", Provider: "antigravity", Status: "active"})
+	stub.setBody(warmupUnstartedBody(now))
+	enableGeminiWarmup(t, rt)
+
+	if err := rt.AutoApply(ctx); err != nil {
+		t.Fatalf("AutoApply failed: %v", err)
+	}
+	waitForWarmups(t, rt)
+	if got := stub.countCalls("generateContent"); got != 0 {
+		t.Fatalf("AutoApply must not bypass global warmup lane, got %d generations", got)
+	}
+
+	if err := rt.Probe(ctx, nil); err != nil {
+		t.Fatalf("Probe failed: %v", err)
+	}
+	waitForWarmups(t, rt)
+	if got := stub.countCalls("generateContent"); got != 0 {
+		t.Fatalf("Probe must not bypass global warmup lane, got %d generations", got)
+	}
+
+	// The reset watcher admits one credential per global lane slot.
+	sweepAndDrain(t, rt, ctx)
+	if got := stub.countCalls("generateContent"); got != 1 {
+		t.Fatalf("expected 1 generation in first lane slot, got %d", got)
+	}
+
+	// Subsequent probes or auto-apply runs inside the lane gate must not warm the remaining credentials.
+	clock.advance(10 * time.Minute)
+	if err := rt.Probe(ctx, nil); err != nil {
+		t.Fatalf("Probe inside lane gate failed: %v", err)
+	}
+	if err := rt.AutoApply(ctx); err != nil {
+		t.Fatalf("AutoApply inside lane gate failed: %v", err)
+	}
+	sweepAndDrain(t, rt, ctx)
+	if got := stub.countCalls("generateContent"); got != 1 {
+		t.Fatalf("expected remaining credentials to wait for lane gate, got %d generations", got)
+	}
+
+	clock.advance(WarmupLaneCrossCredentialMaxGap)
+	sweepAndDrain(t, rt, ctx)
+	if got := stub.countCalls("generateContent"); got != 2 {
+		t.Fatalf("expected 2nd credential to warm after lane gate, got %d", got)
+	}
+
+	clock.advance(WarmupLaneCrossCredentialMaxGap)
+	sweepAndDrain(t, rt, ctx)
+	if got := stub.countCalls("generateContent"); got != 3 {
+		t.Fatalf("expected 3rd credential to warm after second lane gate, got %d", got)
+	}
+}
+
+func TestRuntime_WarmupSweepRestoresLaneWhenProbeContended(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	cachePath := filepath.Join(t.TempDir(), "cache.json")
+	seedGroupWindowForAuth(t, cachePath, "idx-a", now, config.AntigravityModelGroupGemini, now.Add(-2*time.Hour), now.Add(-30*time.Minute), 100)
+	seedGroupWindowForAuth(t, cachePath, "idx-b", now, config.AntigravityModelGroupGemini, now.Add(-2*time.Hour), now.Add(-30*time.Minute), 100)
+	rt, stub, _, _ := newWarmupSweepRuntimeAt(t, now, cachePath)
+	stub.addFile(host.AuthFile{Name: "account-b", AuthIndex: "idx-b", Provider: "antigravity", Status: "active"})
+	stub.setBody(warmupUnstartedBody(now))
+	enableGeminiWarmup(t, rt)
+
+	rt.runMu.Lock()
+	sweepAndDrain(t, rt, ctx)
+	rt.runMu.Unlock()
+
+	if got := stub.countCalls("generateContent"); got != 0 {
+		t.Fatalf("expected no generation while runMu held, got %d", got)
+	}
+	persisted, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatalf("reload state failed: %v", err)
+	}
+	if lane := persisted.GetWarmupLane(); !lane.IsZero() {
+		t.Fatalf("expected contended sweep to restore empty warmup lane, got %+v", lane)
+	}
+
+	sweepAndDrain(t, rt, ctx)
+	if got := stub.countCalls("generateContent"); got != 1 {
+		t.Fatalf("expected uncontended sweep to warm immediately, got %d", got)
+	}
+}

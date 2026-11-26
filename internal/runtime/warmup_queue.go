@@ -151,6 +151,12 @@ func (q *warmupQueue) isPaused() bool {
 	return q.paused
 }
 
+func (q *warmupQueue) hasActive() bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.done != nil || len(q.pending) > 0 || len(q.keys) > 0
+}
+
 func (q *warmupQueue) wait(ctx context.Context) error {
 	q.mu.Lock()
 	done := q.done

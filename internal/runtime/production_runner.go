@@ -100,9 +100,7 @@ func (r *Runtime) runProductionTask(ctx context.Context, request TaskRequest) er
 			return err
 		}
 	}
-	if !request.Warmup.Suppress && (request.Config.Warmup.GeminiEnabled ||
-		request.Config.Warmup.ClaudeEnabled ||
-		request.Config.Warmup.HasEnabledOverride()) {
+	if request.Warmup.Allow && request.Warmup.Group != "" && hasAnyWarmupEnabled(request.Config.Warmup) {
 		disabledAuth := make(map[string]struct{})
 		for _, c := range allCredentials {
 			if c.Disabled {

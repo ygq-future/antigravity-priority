@@ -392,35 +392,61 @@ func (r *Runtime) AutoApply(ctx context.Context) error {
 	return r.runAuto(ctx)
 }
 
+func hasAnyWarmupEnabled(cfg config.WarmupConfig) bool {
+	return cfg.GeminiEnabled || cfg.ClaudeEnabled || cfg.HasEnabledOverride()
+}
+
 // runTaskRequest executes one scheduling run under the single-flight lock.
 // Callers own the trigger semantics; the runner fills in the live config.
 func (r *Runtime) runTaskRequest(ctx context.Context, request TaskRequest) error {
+	shouldSignal, err := r.runTaskLocked(ctx, request)
+	if err != nil {
+		return err
+	}
+	if shouldSignal {
+		r.signalWarmupResetWatcher()
+	}
+	return nil
+}
+
+func (r *Runtime) runTaskLocked(ctx context.Context, request TaskRequest) (bool, error) {
 	if !r.runMu.TryLock() {
-		return ErrRunInProgress
+		return false, ErrRunInProgress
 	}
 	defer r.runMu.Unlock()
 
 	taskCtx, cleanup, cfg, runner, err := r.taskContext(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer cleanup()
 
 	if !cfg.Enabled {
-		return errors.New("plugin is disabled")
+		return false, errors.New("plugin is disabled")
 	}
 
 	request.Config = cfg
 	request.AuthIndexes = append([]string(nil), request.AuthIndexes...)
 	if err := runner(taskCtx, request); err != nil && !errors.Is(err, context.Canceled) {
-		return fmt.Errorf("run %s: %w", request.Trigger, err)
+		return false, fmt.Errorf("run %s: %w", request.Trigger, err)
+	}
+	return !request.Warmup.Allow && hasAnyWarmupEnabled(cfg.Warmup), nil
+}
+
+func (r *Runtime) runAuto(ctx context.Context) error {
+	shouldSignal, err := r.runAutoLocked(ctx)
+	if err != nil {
+		return err
+	}
+	if shouldSignal {
+		r.signalWarmupResetWatcher()
 	}
 	return nil
 }
 
-func (r *Runtime) runAuto(ctx context.Context) error {
+func (r *Runtime) runAutoLocked(ctx context.Context) (bool, error) {
 	if !r.runMu.TryLock() {
-		return ErrRunInProgress
+		return false, ErrRunInProgress
 	}
 	defer r.runMu.Unlock()
 
@@ -430,12 +456,12 @@ func (r *Runtime) runAuto(ctx context.Context) error {
 	sched := r.state.ScheduleConfig()
 	// Guard: skip if plugin is disabled or scheduler is paused
 	if !cfg.Enabled || sched.Paused {
-		return nil
+		return false, nil
 	}
 
 	taskCtx, cleanup, cfg, runner, err := r.taskContext(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer cleanup()
 
@@ -445,7 +471,7 @@ func (r *Runtime) runAuto(ctx context.Context) error {
 	r.mu.Unlock()
 	plan := r.evaluateAutoSchedule(now.UTC(), interval, true)
 	if !plan.ShouldRunNow {
-		return nil
+		return false, nil
 	}
 
 	r.setAutoApplyRunning(true)
@@ -463,16 +489,16 @@ func (r *Runtime) runAuto(ctx context.Context) error {
 				Message: "auto_apply error: " + host.RedactBytes([]byte(runErr.Error())),
 			})
 		}
-		return fmt.Errorf("run %s: %w", TriggerAutoApply, runErr)
+		return false, fmt.Errorf("run %s: %w", TriggerAutoApply, runErr)
 	}
 
 	completedAt := r.clock.Now().UTC()
 	if err := r.persistLastAutoApplyAt(taskCtx, completedAt); err != nil {
-		return err
+		return false, err
 	}
 	r.resetAdaptiveScheduleState()
 	r.signalAutoScheduleWorker()
-	return nil
+	return hasAnyWarmupEnabled(cfg.Warmup), nil
 }
 
 func (r *Runtime) setAutoApplyRunning(running bool) {

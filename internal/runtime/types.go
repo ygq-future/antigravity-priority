@@ -61,13 +61,13 @@ const (
 	TriggerManualReset Trigger = "manual_reset"
 )
 
-// WarmupScope narrows the quota warm-up a run may perform. The reset
-// watcher dispatches one credential pool per global lane slot, and runs that
-// only refresh evidence suppress warm-up so the lane spacing cannot be
-// bypassed by the quota probe that precedes it.
+// WarmupScope narrows the quota warm-up a run may perform. Only the reset
+// watcher holds a reserved global lane slot and sets Allow=true for one
+// credential pool; regular probes and auto-apply runs leave Allow=false so
+// they cannot bypass the global lane spacing.
 type WarmupScope struct {
-	Suppress bool
-	Group    config.AntigravityModelGroup
+	Allow bool
+	Group config.AntigravityModelGroup
 }
 
 // TaskRequest holds parameters for an internal scheduling run.
