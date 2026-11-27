@@ -10,7 +10,7 @@ const managementPageShellMarkup = `
             <div class="brand-zone">
                 <h1>
                     <span data-i18n="title">Antigravity Priority</span>
-                    <span class="version-badge">v1.4.1</span>
+                    <span class="version-badge">v1.4.2</span>
                 </h1>
             </div>
             <div class="topbar-actions">

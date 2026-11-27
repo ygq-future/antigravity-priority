@@ -30,7 +30,7 @@ A high-performance, single-provider priority scheduler and quota management plug
 - **Session Affinity & Custom Tier Overrides**: Supports `canonical_session_id` sticky routing and round-robin distribution within equal-priority clusters, plus per-card custom tier overrides (Tier #1, Tier #2...) for explicit precedence.
 - **Self-Healing Soft Fallback & Health Failover**: Exhausted windows trigger pure in-memory soft demotion (priority `-1`, never altering host `disabled` state) and recover automatically on reset; isolates 401/403 credential errors and recovers 429/5xx pools via backoff probing.
 - **Smart Quota Warm-Up (5h Short-Window)**: Proactively warms eligible full-quota Gemini/Claude 5h windows using staggered global slots, with per-card override support.
-- **Adaptive Probe Calibration**: Dynamically paces background quota probes based on recent request frequency and bursts—skipping idle periods while keeping active accounts calibrated.
+- **Adaptive Probe Calibration**: Dynamically paces background quota probes based on recent request frequency and bursts—running low-rate fallback checks while idle and keeping active accounts calibrated.
 - **Model Routing Board & Global Exclusion**: Displays a model-centric routing board with 4-bar credential cards (`Gemini 5h/7d`, `Claude 5h/7d`) and supports one-click global model exclusion with instant hot-reload.
 - **System-Prompt Prompt Guard**: Syncs phrase/regex rewrite rules from a remote dictionary with local custom overrides and preview (rewriting system/developer instructions only; disabled by default).
 - **Zero-Restart Config Center & Dual-Theme Dashboard**: Keep only `enabled: true` in CPA host YAML and manage all parameters live in **`⚙️ Config Center`** inside an embedded, CSP-compliant dashboard featuring real-time request history and persistent account masking.
@@ -128,8 +128,8 @@ In the **`⚙️ Config Center`** tab of the management dashboard, the following
 
 | Setting | Default | Range/Options | Description |
 | :--- | :--- | :--- | :--- |
-| **Adaptive Quota Calibration (`auto_apply`)** | `false` | On / Off | When true, background calibration adapts to request frequency: probes run within the interval ceiling under active traffic, stretch when sparse, and skip while idle. |
-| **Active Calibration Max Interval (`interval`)** | `15m` | `5m`, `15m`, `30m`, `1h`, custom | Maximum calibration interval under frequent traffic (with jitter); sparse traffic stretches to 2–6 hours and idle windows skip it. Changes take effect immediately without restarting. |
+| **Adaptive Quota Calibration (`auto_apply`)** | `false` | On / Off | When true, background calibration adapts to request frequency: probes run within the interval ceiling under active traffic, stretch when sparse, and fall back to long-interval checks while idle. |
+| **Active Calibration Max Interval (`interval`)** | `15m` | `5m`, `15m`, `30m`, `1h`, custom | Maximum calibration interval under frequent traffic (with jitter); sparse traffic stretches to 2–6 hours and idle traffic falls back to checks at most every 4 hours. Changes take effect immediately without restarting. |
 | **Max Probe Concurrency (`max_concurrency`)** | `6` | `1 ~ 32` | Maximum concurrent goroutines for quota probe requests to Google API. |
 | **Urgency Bucket Tolerance (`urgency_tolerance`)** | `0.05` | `0.00 ~ 0.50` | Accounts within this tolerance share the same priority for round-robin balancing. |
 | **Adaptive Sample Capacity (`quota_sample_capacity`)** | `6` | `2 ~ 30` | FIFO history retained for both consumption-trend inspection and burn-rate learning. |
