@@ -213,7 +213,14 @@ const templateScriptDiagnostics = `        let latestDiagnostics = null;
                 badge.textContent = t("diagModeIdle");
                 var prevC = Number(sched.prev_window_requests || 0);
                 var currC = Number(sched.curr_window_requests || 0);
-                desc.textContent = t("diagSchedIdleDesc") + " (" + currC + "/" + prevC + ")";
+                var idleNext = sched.next_run_at || "";
+                var idleBase = t("diagSchedIdleDesc") + " (" + currC + "/" + prevC + ")";
+                if (idleNext) {
+                    desc.innerHTML = escapeHTML(idleBase) + " · " + (currentLang === "zh-CN" ? "兜底巡检: " : "Idle check: ") +
+                        "<span class=\"meter-countdown\" data-scheduler-countdown=\"" + escapeHTML(idleNext) + "\">" + formatCountdown(idleNext) + "</span>";
+                } else {
+                    desc.textContent = idleBase;
+                }
             } else {
                 var isLow = sched.mode === "low_frequency";
                 badge.className = isLow ? "badge badge-predicted" : "badge badge-success";

@@ -54,7 +54,7 @@ func TestEvaluateAdaptivePlan_IdleBootstrapLowAndFrequent(t *testing.T) {
 		}
 	})
 
-	t.Run("idle when zero requests and cached evidence exists", func(t *testing.T) {
+	t.Run("idle schedules long-period fallback heartbeat capped at 4h", func(t *testing.T) {
 		snap, _ := evaluateAdaptivePlan(adaptiveEvalInput{
 			now:              now,
 			interval:         15 * time.Minute,
@@ -62,17 +62,59 @@ func TestEvaluateAdaptivePlan_IdleBootstrapLowAndFrequent(t *testing.T) {
 			hasQuotaEvidence: true,
 			jitterRange:      midpointJitter,
 		})
-		if snap.Mode != ScheduleModeIdle || snap.ShouldRunNow || !snap.NextRunAt.IsZero() {
-			t.Fatalf("expected idle sleep, got %+v", snap)
+		if snap.Mode != ScheduleModeIdle || snap.ShouldRunNow || snap.NextRunAt.IsZero() {
+			t.Fatalf("expected deferred idle fallback schedule, got %+v", snap)
+		}
+		if snap.TargetInterval != 2*time.Hour {
+			t.Fatalf("expected idleTarget=2h for 15m interval, got %v", snap.TargetInterval)
+		}
+		// midpointJitter on [2h, 2h18m] = 2h09m from lastAutoApplyAt (-20m) => +1h49m from now.
+		if snap.NextWait != 109*time.Minute {
+			t.Fatalf("expected NextWait=109m, got %v", snap.NextWait)
+		}
+
+		snap45m, _ := evaluateAdaptivePlan(adaptiveEvalInput{
+			now:              now,
+			interval:         45 * time.Minute,
+			lastAutoApplyAt:  now.Add(-30 * time.Minute),
+			hasQuotaEvidence: true,
+			jitterRange:      func(minDur, maxDur time.Duration) time.Duration { return minDur },
+		})
+		if snap45m.TargetInterval != 3*time.Hour {
+			t.Fatalf("expected idleTarget=3h for 45m interval, got %v", snap45m.TargetInterval)
+		}
+
+		snap2h, _ := evaluateAdaptivePlan(adaptiveEvalInput{
+			now:              now,
+			interval:         2 * time.Hour,
+			lastAutoApplyAt:  now.Add(-30 * time.Minute),
+			hasQuotaEvidence: true,
+			jitterRange:      func(minDur, maxDur time.Duration) time.Duration { return maxDur },
+		})
+		if snap2h.TargetInterval != 4*time.Hour {
+			t.Fatalf("expected idleTarget capped at 4h for 2h interval, got %v", snap2h.TargetInterval)
+		}
+		if snap2h.NextRunAt.Sub(now.Add(-30*time.Minute)) > 4*time.Hour {
+			t.Fatalf("expected idle NextRunAt not to exceed 4h ceiling, got %v", snap2h.NextRunAt)
+		}
+
+		dueSnap, _ := evaluateAdaptivePlan(adaptiveEvalInput{
+			now:              now,
+			interval:         15 * time.Minute,
+			lastAutoApplyAt:  now.Add(-3 * time.Hour),
+			hasQuotaEvidence: true,
+			jitterRange:      midpointJitter,
+		})
+		if dueSnap.Mode != ScheduleModeIdle || !dueSnap.ShouldRunNow {
+			t.Fatalf("expected overdue idle fallback to trigger immediately, got %+v", dueSnap)
 		}
 	})
-
 	t.Run("low frequency stretches interval and anchors to FirstSinceLastAt after long idle", func(t *testing.T) {
-		// Last run was 4h ago; 1 single isolated request arrived just now.
+		// Last run was 1h ago; 1 single isolated request arrived just now.
 		snap, latched := evaluateAdaptivePlan(adaptiveEvalInput{
 			now:              now,
 			interval:         15 * time.Minute,
-			lastAutoApplyAt:  now.Add(-4 * time.Hour),
+			lastAutoApplyAt:  now.Add(-1 * time.Hour),
 			hasQuotaEvidence: true,
 			summary: state.RequestActivitySummary{
 				CurrWindowCount:  1,
@@ -89,12 +131,12 @@ func TestEvaluateAdaptivePlan_IdleBootstrapLowAndFrequent(t *testing.T) {
 			t.Fatalf("expected stretched wait >= 15m, got %v", snap.NextWait)
 		}
 
-		// 30m later with no additional requests: current window is empty, so idle-decay guard sleeps.
+		// 30m later with no additional requests: current window is empty, so idle-decay guard falls back to idle heartbeat.
 		later := now.Add(30 * time.Minute)
 		decayed, _ := evaluateAdaptivePlan(adaptiveEvalInput{
 			now:              later,
 			interval:         15 * time.Minute,
-			lastAutoApplyAt:  now.Add(-4 * time.Hour),
+			lastAutoApplyAt:  now.Add(-1 * time.Hour),
 			hasQuotaEvidence: true,
 			latched:          latched,
 			summary: state.RequestActivitySummary{
@@ -107,7 +149,7 @@ func TestEvaluateAdaptivePlan_IdleBootstrapLowAndFrequent(t *testing.T) {
 			jitterRange: midpointJitter,
 		})
 		if decayed.Mode != ScheduleModeIdle || decayed.ShouldRunNow {
-			t.Fatalf("expected idle-decay guard to skip stale sporadic request, got mode=%s shouldRun=%v", decayed.Mode, decayed.ShouldRunNow)
+			t.Fatalf("expected idle-decay guard to enter deferred idle heartbeat, got mode=%s shouldRun=%v", decayed.Mode, decayed.ShouldRunNow)
 		}
 	})
 
@@ -203,7 +245,7 @@ func TestRuntime_AdaptiveTicker_IdleSkipsAndBurstWakes(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	store.SetLastAutoApplyAt(now.Add(-2 * time.Hour))
+	store.SetLastAutoApplyAt(now.Add(-30 * time.Minute))
 	if err := store.SaveAtomic(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -250,8 +292,8 @@ func TestRuntime_AdaptiveTicker_IdleSkipsAndBurstWakes(t *testing.T) {
 	if sched["mode"] != string(ScheduleModeIdle) {
 		t.Fatalf("expected scheduler mode=idle, got %v", sched["mode"])
 	}
-	if sched["next_run_at"] != "" {
-		t.Fatalf("expected empty next_run_at while idle, got %v", sched["next_run_at"])
+	if sched["next_run_at"] == "" {
+		t.Fatalf("expected non-empty idle fallback next_run_at, got empty")
 	}
 	for range 4 {
 		r.Handle(context.Background(), MethodUsageHandle, []byte(`{"Provider":"antigravity","Model":"gemini-3-flash","AuthIndex":"auth-1","Failed":false}`))
@@ -318,7 +360,7 @@ func TestRuntime_AdaptiveSchedule_IgnoresWarmupRequestsLiveAndAfterRestart(t *te
 	}); err != nil {
 		t.Fatal(err)
 	}
-	store.SetLastAutoApplyAt(now.Add(-2 * time.Hour))
+	store.SetLastAutoApplyAt(now.Add(-30 * time.Minute))
 	if err := store.SaveAtomic(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -382,7 +424,7 @@ func TestRuntime_AdaptiveSchedule_IgnoresWarmupRequestsLiveAndAfterRestart(t *te
 			t.Fatalf("%s: expected nil last_request_at, got %v", label, sched["last_request_at"])
 		}
 		if sched["next_run_at"] != "" {
-			t.Fatalf("%s: expected empty next_run_at, got %v", label, sched["next_run_at"])
+			t.Fatalf("%s: expected empty next_run_at when auto_apply is disabled, got %v", label, sched["next_run_at"])
 		}
 	}
 
@@ -407,4 +449,80 @@ func TestRuntime_AdaptiveSchedule_IgnoresWarmupRequestsLiveAndAfterRestart(t *te
 		t.Fatalf("expected source=%q, got %q", state.RequestHistorySourceWarmup, history[0].Source)
 	}
 	assertIdle("restarted", restarted)
+}
+
+func TestRuntime_AdaptiveTicker_IdleFallbackExecutesAfterCeiling(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "adaptive-idle-fallback.json")
+	now := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
+	clock := &fixedAdaptiveClock{now: now}
+
+	store, err := state.Load(context.Background(), cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rem := int64(80)
+	if err := store.MarkProbeSuccess(context.Background(), state.ProbeSuccess{
+		AuthIndex:            "auth-1",
+		Provider:             core.ProviderAntigravity,
+		ModelGroup:           "gemini",
+		ObservedAt:           now.Add(-30 * time.Minute),
+		ShortWindowResetAt:   now.Add(4 * time.Hour),
+		ShortWindowRemaining: &rem,
+		LongWindowResetAt:    now.Add(5 * 24 * time.Hour),
+		LongWindowRemaining:  &rem,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	store.SetLastAutoApplyAt(now.Add(-30 * time.Minute))
+	if err := store.SaveAtomic(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	var calls atomic.Int32
+	r := New(Options{
+		Clock:          clock,
+		Sleeper:        realSleeper{},
+		StateCachePath: cachePath,
+		Runner: func(ctx context.Context, request TaskRequest) error {
+			calls.Add(1)
+			return nil
+		},
+	})
+	defer func() { _ = r.Shutdown(context.Background()) }()
+
+	resp := r.Handle(context.Background(), MethodPluginRegister, []byte(`{"config_yaml":"enabled: true\nstate_cache_path: `+filepath.ToSlash(cachePath)+`\n"}`))
+	var regEnv Envelope
+	if err := json.Unmarshal(resp, &regEnv); err != nil || !regEnv.OK {
+		t.Fatalf("register failed: %s", string(resp))
+	}
+	dyn, err := r.GetDynamicConfig(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dyn.AutoApply = true
+	dyn.Interval = "15m"
+	if err := r.SetDynamicConfig(context.Background(), dyn); err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait past startup delay: still inside 2h idle fallback window -> 0 calls.
+	time.Sleep(2400 * time.Millisecond)
+	if got := calls.Load(); got != 0 {
+		t.Fatalf("expected 0 calls before idle fallback ceiling, got %d", got)
+	}
+
+	// Advance past the 2h..2h18m fallback ceiling and wake worker.
+	clock.Advance(2 * time.Hour)
+	r.signalAutoScheduleWorker()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if calls.Load() >= 1 {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("expected idle fallback probe after ceiling, got %d calls", got)
+	}
 }

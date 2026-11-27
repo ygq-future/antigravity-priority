@@ -1,6 +1,7 @@
 package state
 
 import (
+	"math"
 	"strings"
 	"time"
 )
@@ -16,6 +17,13 @@ const (
 	MinDeltaThreshold = 0.05
 	// MinReplenishmentPoints is the same-window increase required to rebase learning instead of treating it as quota jitter.
 	MinReplenishmentPoints int64 = 5
+	// MinTokenCalibrationDelta is the minimum 5h percentage drop required to calibrate TokensPerShortPct.
+	MinTokenCalibrationDelta int64 = 2
+	// MinExternalRebaseDelta is the minimum zero-local-usage drop that triggers an immediate baseline rebase.
+	MinExternalRebaseDelta int64 = 2
+	// MinAnomalyConfirmationStreak is the number of consecutive consistent local-traffic anomalies
+	// required to confirm a genuine upstream pricing/tier shift and re-anchor TokensPerShortPct.
+	MinAnomalyConfirmationStreak = 3
 	// EMASmoothingAlpha is the exponential moving average smoothing factor.
 	EMASmoothingAlpha = 0.3
 	// DefaultQuotaSampleCapacity is the default sliding window capacity for multi-sample estimation.
@@ -77,6 +85,43 @@ type QuotaSample struct {
 	ShortWindowRem     int64     `json:"short_window_rem"`
 	LongWindowRem      int64     `json:"long_window_rem"`
 	ProbeRoundID       string    `json:"probe_round_id,omitempty"`
+	AnomalySkipped     bool      `json:"anomaly_skipped,omitempty"`
+}
+
+// QuotaLearningInput carries the persisted estimator state and local usage
+// accumulators needed to evaluate one probe observation.
+type QuotaLearningInput struct {
+	ModelGroup                   string
+	PrevCycleBurnRate            float64
+	PrevTokensPerShortPct        float64
+	PrevSamples                  []QuotaSample
+	LearningBaselineSequence     uint64
+	PrevShortResetAt             time.Time
+	PrevShortRemaining           *int64
+	StepPendingTokens            float64
+	StepEstimatedShortPct        float64
+	LearningPendingTokens        float64
+	LearningEstimatedShortPct    float64
+	SensitivityAnomalyStreak     int
+	LastAnomalyTokensPerShortPct float64
+	CurrObservedAt               time.Time
+	CurrShortResetAt             time.Time
+	CurrShortRemaining           *int64
+	CurrLongRemaining            *int64
+	SampleCapacity               int
+}
+
+// QuotaLearningOutput returns the updated sample history and learned parameters
+// after applying EMA-gated attribution checks.
+type QuotaLearningOutput struct {
+	CycleBurnRate                float64
+	TokensPerShortPct            float64
+	Samples                      []QuotaSample
+	LearningBaselineSequence     uint64
+	LearningPendingTokens        float64
+	LearningEstimatedShortPct    float64
+	SensitivityAnomalyStreak     int
+	LastAnomalyTokensPerShortPct float64
 }
 
 // UpdateSamplesAndCycleBurnRate updates the sliding window sample queue and adaptively estimates
@@ -162,6 +207,223 @@ func UpdateSamplesAndCycleBurnRate(
 
 	// 7. Advance only the learning cursor so history remains available for trend inspection.
 	return newRate, updatedSamples, currSample.Sequence
+}
+
+// CalibrateQuotaLearning updates sample history, TokensPerShortPct, and CycleBurnRate
+// while filtering out unattributed external quota drops that deviate from the current
+// EMA-predicted consumption envelope.
+func CalibrateQuotaLearning(in QuotaLearningInput) QuotaLearningOutput {
+	prevRate := in.PrevCycleBurnRate
+	if prevRate <= 0 {
+		prevRate = DefaultCycleBurnRate
+	}
+	capacity := in.SampleCapacity
+	if capacity < MinQuotaSampleCapacity || capacity > MaxQuotaSampleCapacity {
+		capacity = DefaultQuotaSampleCapacity
+	}
+	samples, baseline := normalizeSampleHistory(in.PrevSamples, in.LearningBaselineSequence)
+	out := QuotaLearningOutput{
+		CycleBurnRate:                prevRate,
+		TokensPerShortPct:            in.PrevTokensPerShortPct,
+		Samples:                      samples,
+		LearningBaselineSequence:     baseline,
+		LearningPendingTokens:        in.LearningPendingTokens,
+		LearningEstimatedShortPct:    in.LearningEstimatedShortPct,
+		SensitivityAnomalyStreak:     in.SensitivityAnomalyStreak,
+		LastAnomalyTokensPerShortPct: in.LastAnomalyTokensPerShortPct,
+	}
+	if in.CurrShortRemaining == nil || in.CurrLongRemaining == nil || in.CurrShortResetAt.IsZero() {
+		return out
+	}
+
+	currSample := QuotaSample{
+		Sequence:           nextSampleSequence(samples),
+		ObservedAt:         in.CurrObservedAt.UTC(),
+		ShortWindowResetAt: in.CurrShortResetAt.UTC(),
+		ShortWindowRem:     *in.CurrShortRemaining,
+		LongWindowRem:      *in.CurrLongRemaining,
+	}
+
+	// 1. Cold start: record initial observation and anchor learning baseline.
+	if len(samples) == 0 {
+		out.Samples = []QuotaSample{currSample}
+		out.LearningBaselineSequence = currSample.Sequence
+		out.LearningPendingTokens = 0
+		out.LearningEstimatedShortPct = 0
+		out.SensitivityAnomalyStreak = 0
+		out.LastAnomalyTokensPerShortPct = 0
+		return out
+	}
+
+	lastSample := samples[len(samples)-1]
+
+	// 2. Zero-consumption deduplication: preserve accumulated local usage while refreshing metadata.
+	if currSample.ShortWindowRem == lastSample.ShortWindowRem &&
+		currSample.LongWindowRem == lastSample.LongWindowRem {
+		updated := append([]QuotaSample(nil), samples...)
+		updated[len(updated)-1].ObservedAt = currSample.ObservedAt
+		updated[len(updated)-1].ShortWindowResetAt = currSample.ShortWindowResetAt
+		out.Samples = updated
+		return out
+	}
+
+	// 3. Append new sample and enforce FIFO window capacity.
+	updated := append([]QuotaSample(nil), samples...)
+	updated = append(updated, currSample)
+	if len(updated) > capacity {
+		updated = updated[len(updated)-capacity:]
+	}
+	out.Samples = updated
+
+	// 4. Short-window reset or replenishment starts a fresh learning span.
+	if !currSample.ShortWindowResetAt.Equal(lastSample.ShortWindowResetAt) ||
+		currSample.ShortWindowRem-lastSample.ShortWindowRem >= MinReplenishmentPoints {
+		out.LearningBaselineSequence = currSample.Sequence
+		out.LearningPendingTokens = 0
+		out.LearningEstimatedShortPct = 0
+		out.SensitivityAnomalyStreak = 0
+		out.LastAnomalyTokensPerShortPct = 0
+		return out
+	}
+
+	// 5. Resolve baseline sample for the active learning span.
+	baseSample, found := sampleBySequence(updated, baseline)
+	if !found {
+		baseSample = updated[0]
+		baseline = baseSample.Sequence
+		out.LearningBaselineSequence = baseline
+	}
+
+	prevShortRem := lastSample.ShortWindowRem
+	if in.PrevShortRemaining != nil && !in.PrevShortResetAt.IsZero() && in.PrevShortResetAt.Equal(currSample.ShortWindowResetAt) {
+		prevShortRem = *in.PrevShortRemaining
+	}
+	deltaShort := prevShortRem - currSample.ShortWindowRem
+
+	isColdStartK := in.PrevTokensPerShortPct <= 0
+	prevK := in.PrevTokensPerShortPct
+	if isColdStartK {
+		prevK = defaultTokensPerShortPct(in.ModelGroup)
+	}
+
+	maxRatio := 2.5
+	minAnomalyDrop := 4.0
+	if isColdStartK {
+		maxRatio = 4.0
+		minAnomalyDrop = 6.0
+	}
+
+	// 6. Step-level EMA consistency check and TokensPerShortPct calibration.
+	stepAnomalous := false
+	reanchored := false
+	if deltaShort > 0 {
+		stepEstPct := in.StepEstimatedShortPct
+		if stepEstPct <= 0 && in.StepPendingTokens > 0 {
+			stepEstPct = in.StepPendingTokens / prevK
+		}
+		priorEstPct := max(0.0, in.LearningEstimatedShortPct-stepEstPct)
+		alreadyObservedDrop := max(baseSample.ShortWindowRem-prevShortRem, 0)
+		unexplainedPriorEstPct := max(0.0, priorEstPct-float64(alreadyObservedDrop))
+		effectiveStepEstPct := stepEstPct + unexplainedPriorEstPct
+		maxAllowedStepDrop := math.Max(maxRatio*effectiveStepEstPct+2.0, minAnomalyDrop)
+
+		switch {
+		case in.StepPendingTokens <= 0 && effectiveStepEstPct <= 0:
+			if deltaShort >= MinExternalRebaseDelta {
+				stepAnomalous = true
+				out.SensitivityAnomalyStreak = 0
+				out.LastAnomalyTokensPerShortPct = 0
+			}
+		case in.StepPendingTokens <= 0:
+			if float64(deltaShort) > maxAllowedStepDrop {
+				stepAnomalous = true
+				out.SensitivityAnomalyStreak = 0
+				out.LastAnomalyTokensPerShortPct = 0
+			}
+		default:
+			exceedsEnvelope := float64(deltaShort) > maxAllowedStepDrop
+			if deltaShort >= MinTokenCalibrationDelta {
+				kObs := in.StepPendingTokens / float64(deltaShort)
+				switch {
+				case kObs < MinTokensPerShortPct || kObs > MaxTokensPerShortPct:
+					stepAnomalous = true
+					out.SensitivityAnomalyStreak = 0
+					out.LastAnomalyTokensPerShortPct = 0
+				case exceedsEnvelope:
+					stepAnomalous = true
+					if in.StepPendingTokens >= MinTokensPerShortPct {
+						if in.SensitivityAnomalyStreak > 0 && in.LastAnomalyTokensPerShortPct > 0 &&
+							kObs >= 0.5*in.LastAnomalyTokensPerShortPct && kObs <= 2.0*in.LastAnomalyTokensPerShortPct {
+							out.SensitivityAnomalyStreak = in.SensitivityAnomalyStreak + 1
+						} else {
+							out.SensitivityAnomalyStreak = 1
+						}
+						out.LastAnomalyTokensPerShortPct = kObs
+						if out.SensitivityAnomalyStreak >= MinAnomalyConfirmationStreak {
+							out.TokensPerShortPct = clamp(kObs, MinTokensPerShortPct, MaxTokensPerShortPct)
+							out.SensitivityAnomalyStreak = 0
+							out.LastAnomalyTokensPerShortPct = 0
+							reanchored = true
+						}
+					} else {
+						out.SensitivityAnomalyStreak = 0
+						out.LastAnomalyTokensPerShortPct = 0
+					}
+				default:
+					out.SensitivityAnomalyStreak = 0
+					out.LastAnomalyTokensPerShortPct = 0
+					newK := EMASmoothingAlpha*kObs + (1.0-EMASmoothingAlpha)*prevK
+					out.TokensPerShortPct = clamp(newK, MinTokensPerShortPct, MaxTokensPerShortPct)
+				}
+			} else if exceedsEnvelope {
+				stepAnomalous = true
+				out.SensitivityAnomalyStreak = 0
+				out.LastAnomalyTokensPerShortPct = 0
+			} else {
+				out.SensitivityAnomalyStreak = 0
+				out.LastAnomalyTokensPerShortPct = 0
+			}
+		}
+	}
+
+	if stepAnomalous {
+		if !reanchored {
+			updated[len(updated)-1].AnomalySkipped = true
+		}
+		out.LearningBaselineSequence = currSample.Sequence
+		out.LearningPendingTokens = 0
+		out.LearningEstimatedShortPct = 0
+		return out
+	}
+
+	// 7. Span-level CycleBurnRate update when cumulative 5h burn reaches MinDeltaThreshold.
+	delta5hPct := float64(baseSample.ShortWindowRem - currSample.ShortWindowRem)
+	delta5h := delta5hPct / 100.0
+	delta7d := float64(baseSample.LongWindowRem-currSample.LongWindowRem) / 100.0
+	if delta5h < MinDeltaThreshold || delta7d <= 0 {
+		return out
+	}
+
+	spanEstPct := in.LearningEstimatedShortPct
+	if spanEstPct <= 0 && in.LearningPendingTokens > 0 {
+		spanEstPct = in.LearningPendingTokens / prevK
+	}
+	maxAllowedSpanDrop := math.Max(maxRatio*spanEstPct+2.0, minAnomalyDrop)
+	if in.LearningPendingTokens <= 0 || delta5hPct > maxAllowedSpanDrop {
+		updated[len(updated)-1].AnomalySkipped = true
+		out.LearningBaselineSequence = currSample.Sequence
+		out.LearningPendingTokens = 0
+		out.LearningEstimatedShortPct = 0
+		return out
+	}
+
+	obs := delta7d / delta5h
+	clamped := clamp(obs, MinCycleBurnRate, MaxCycleBurnRate)
+	out.CycleBurnRate = EMASmoothingAlpha*clamped + (1.0-EMASmoothingAlpha)*prevRate
+	out.LearningBaselineSequence = currSample.Sequence
+	out.LearningPendingTokens = 0
+	out.LearningEstimatedShortPct = 0
+	return out
 }
 
 func normalizeSampleHistory(samples []QuotaSample, baseline uint64) ([]QuotaSample, uint64) {

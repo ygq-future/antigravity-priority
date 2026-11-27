@@ -160,10 +160,14 @@ const templateScriptOverviewRender = `        function resolveModelPool(modelId)
                     } else if (sched.mode === "idle") {
                         var prevReq = Number(sched.prev_window_requests || 0);
                         var currReq = Number(sched.curr_window_requests || 0);
+                        var idleNext = sched.next_run_at || "";
                         var idleTitle = currentLang === "zh-CN"
-                            ? ("前窗口请求 " + prevReq + " 次，当前窗口 " + currReq + " 次；无活跃请求时自动跳过")
-                            : ("Prev window: " + prevReq + " reqs, current: " + currReq + " reqs; skipped while idle");
-                        el.innerHTML = (currentLang === "zh-CN" ? "调度模式: " : "Schedule: ") + "<span title=\"" + escapeHTML(idleTitle) + "\" style=\"color:var(--text-muted); font-weight:600;\">" + t("scheduleModeIdle") + "</span>";
+                            ? ("前窗口请求 " + prevReq + " 次，当前窗口 " + currReq + " 次；空闲期间按长周期兜底校准")
+                            : ("Prev window: " + prevReq + " reqs, current: " + currReq + " reqs; low-rate idle fallback check");
+                        var idleCountdown = idleNext
+                            ? (" <span class=\"meter-countdown\" data-scheduler-countdown=\"" + escapeHTML(idleNext) + "\" style=\"color:var(--text-muted); font-size:11px;\">(" + formatCountdown(idleNext) + ")</span>")
+                            : "";
+                        el.innerHTML = (currentLang === "zh-CN" ? "调度模式: " : "Schedule: ") + "<span title=\"" + escapeHTML(idleTitle) + "\" style=\"color:var(--text-muted); font-weight:600;\">" + t("scheduleModeIdle") + "</span>" + idleCountdown;
                     } else {
                         var nextRunAt = sched.next_run_at;
                         var nextStr = nextRunAt ? formatCountdown(nextRunAt) : (sched.next_wait || "-");

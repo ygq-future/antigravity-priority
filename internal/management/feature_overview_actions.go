@@ -240,7 +240,7 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
             var currNextRun = String(sched.next_run_at || "");
             var completedNewRun = prevLastRun !== null && currLastRun !== prevLastRun;
             var movedNextRun = Boolean(currNextRun) && currNextRun !== prevNextRun;
-            return completedNewRun || movedNextRun || sched.mode === "idle";
+            return completedNewRun || movedNextRun || (sched.mode === "idle" && !currNextRun);
         }
 
         function syncAutoScheduleFromDiagnostics(data, options) {
@@ -299,7 +299,7 @@ const templateScriptOverviewActionsCore = `        let latestSnapshot = null;
                 ? latestDiagnostics.scheduler
                 : null;
             if (!sched || sched.running || sched.worker_active === false) return false;
-            if (sched.mode === "idle" || !sched.next_run_at) return false;
+            if (!sched.next_run_at) return false;
 
             var nextRunStr = String(sched.next_run_at);
             if (autoScheduleDueHandledForRunAt === nextRunStr) return false;

@@ -1,6 +1,15 @@
 package runtime_test
 
 import (
+	"antigravity-priority/internal/apply"
+	"antigravity-priority/internal/config"
+	"antigravity-priority/internal/core"
+	"antigravity-priority/internal/host"
+	"antigravity-priority/internal/management"
+	"antigravity-priority/internal/promptguard"
+	"antigravity-priority/internal/provider/antigravity"
+	"antigravity-priority/internal/runtime"
+	"antigravity-priority/internal/state"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,15 +23,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-	"antigravity-priority/internal/apply"
-	"antigravity-priority/internal/config"
-	"antigravity-priority/internal/core"
-	"antigravity-priority/internal/host"
-	"antigravity-priority/internal/management"
-	"antigravity-priority/internal/promptguard"
-	"antigravity-priority/internal/provider/antigravity"
-	"antigravity-priority/internal/runtime"
-	"antigravity-priority/internal/state"
 )
 
 type mockHost struct {
@@ -939,6 +939,9 @@ func TestRuntime_ProbeAndSyncHostUseTheSameLearnedCycleBurnRate(t *testing.T) {
 		{at: now.Add(-time.Hour), short: 100, long: 100},
 		{at: now.Add(-30 * time.Minute), short: 90, long: 97},
 	} {
+		if sample.short < 100 {
+			store.RecordUsageConsumption("consistent-auth", "gemini", 800000, sample.at.Add(-time.Minute))
+		}
 		if err := store.MarkProbeSuccess(context.Background(), state.ProbeSuccess{
 			AuthIndex:            "consistent-auth",
 			Provider:             core.ProviderAntigravity,

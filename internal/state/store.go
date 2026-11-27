@@ -20,41 +20,46 @@ import (
 	"antigravity-priority/internal/priority"
 )
 
-// SchemaVersion is the current state cache document version. Version 2 removed
-// legacy probe scheduling and entry source fields.
-const SchemaVersion = 2
+// SchemaVersion is the current state cache document version.
+// Version 2 removed legacy probe scheduling and entry source fields.
+// Version 3 resets pre-v3 unattributed learning estimates and enables EMA-gated calibration.
+const SchemaVersion = 3
 
 // ErrCorruptCache indicates the cache file could not be parsed as valid state JSON.
 var ErrCorruptCache = errors.New("state: corrupt cache")
 
 // Entry represents the persisted and learned state for a single credential and model group.
 type Entry struct {
-	SchemaVersion            int                    `json:"schema_version"`
-	Provider                 core.Provider          `json:"provider"`
-	ModelGroup               string                 `json:"model_group,omitempty"`
-	AuthIndex                string                 `json:"auth_index"`
-	ObservedAt               time.Time              `json:"observed_at"`
-	ResetAt                  time.Time              `json:"reset_at,omitzero"`
-	Remaining                int64                  `json:"remaining"`
-	ShortWindowResetAt       time.Time              `json:"short_window_reset_at,omitzero"`
-	ShortWindowRemaining     *int64                 `json:"short_window_remaining,omitempty"`
-	LongWindowResetAt        time.Time              `json:"long_window_reset_at,omitzero"`
-	LongWindowRemaining      *int64                 `json:"long_window_remaining,omitempty"`
-	CycleBurnRate            float64                `json:"cycle_burn_rate"`
-	Samples                  []QuotaSample          `json:"samples,omitempty"`
-	LearningBaselineSequence uint64                 `json:"learning_baseline_sequence,omitempty"`
-	PendingWeightedTokens    float64                `json:"pending_weighted_tokens,omitempty"`
-	EstimatedShortBurnPct    float64                `json:"estimated_short_burn_pct,omitempty"`
-	EstimatedLongBurnPct     float64                `json:"estimated_long_burn_pct,omitempty"`
-	TokensPerShortPct        float64                `json:"tokens_per_short_pct,omitempty"`
-	LastUsageAt              time.Time              `json:"last_usage_at,omitzero"`
-	LastError                string                 `json:"last_error,omitempty"`
-	LastFailureAt            time.Time              `json:"last_failure_at,omitzero"`
-	AuthInvalid              bool                   `json:"auth_invalid,omitempty"`
-	PlanType                 core.PlanType          `json:"plan_type,omitempty"`
-	Unavailable              bool                   `json:"unavailable,omitempty"`
-	UnavailableAt            time.Time              `json:"unavailable_at,omitzero"`
-	UnavailableReason        string                 `json:"unavailable_reason,omitempty"`
+	SchemaVersion                int           `json:"schema_version"`
+	Provider                     core.Provider `json:"provider"`
+	ModelGroup                   string        `json:"model_group,omitempty"`
+	AuthIndex                    string        `json:"auth_index"`
+	ObservedAt                   time.Time     `json:"observed_at"`
+	ResetAt                      time.Time     `json:"reset_at,omitzero"`
+	Remaining                    int64         `json:"remaining"`
+	ShortWindowResetAt           time.Time     `json:"short_window_reset_at,omitzero"`
+	ShortWindowRemaining         *int64        `json:"short_window_remaining,omitempty"`
+	LongWindowResetAt            time.Time     `json:"long_window_reset_at,omitzero"`
+	LongWindowRemaining          *int64        `json:"long_window_remaining,omitempty"`
+	CycleBurnRate                float64       `json:"cycle_burn_rate"`
+	Samples                      []QuotaSample `json:"samples,omitempty"`
+	LearningBaselineSequence     uint64        `json:"learning_baseline_sequence,omitempty"`
+	PendingWeightedTokens        float64       `json:"pending_weighted_tokens,omitempty"`
+	EstimatedShortBurnPct        float64       `json:"estimated_short_burn_pct,omitempty"`
+	EstimatedLongBurnPct         float64       `json:"estimated_long_burn_pct,omitempty"`
+	LearningPendingTokens        float64       `json:"learning_pending_tokens,omitempty"`
+	LearningEstimatedShortPct    float64       `json:"learning_estimated_short_pct,omitempty"`
+	TokensPerShortPct            float64       `json:"tokens_per_short_pct,omitempty"`
+	SensitivityAnomalyStreak     int           `json:"sensitivity_anomaly_streak,omitempty"`
+	LastAnomalyTokensPerShortPct float64       `json:"last_anomaly_tokens_per_short_pct,omitempty"`
+	LastUsageAt                  time.Time     `json:"last_usage_at,omitzero"`
+	LastError                    string        `json:"last_error,omitempty"`
+	LastFailureAt                time.Time     `json:"last_failure_at,omitzero"`
+	AuthInvalid                  bool          `json:"auth_invalid,omitempty"`
+	PlanType                     core.PlanType `json:"plan_type,omitempty"`
+	Unavailable                  bool          `json:"unavailable,omitempty"`
+	UnavailableAt                time.Time     `json:"unavailable_at,omitzero"`
+	UnavailableReason            string        `json:"unavailable_reason,omitempty"`
 }
 
 // PlanTierRecord is the account-level subscription tier discovered from
@@ -256,8 +261,9 @@ func Load(ctx context.Context, path string) (*Store, error) {
 	if err != nil {
 		return store, fmt.Errorf("decode state cache %s: %w", paths.Main, errors.Join(ErrCorruptCache, err))
 	}
+	migratedState := false
 	if newMain {
-		store.applyStateDocument(main)
+		migratedState = store.applyStateDocument(main)
 	}
 
 	var legacyMain legacyStateDocument
@@ -269,9 +275,8 @@ func Load(ctx context.Context, path string) (*Store, error) {
 		}
 	}
 	if !newMain && legacyMainExists {
-		store.applyStateDocument(legacyMain)
+		migratedState = store.applyStateDocument(legacyMain)
 	}
-
 	var runtimeDoc runtimeDocument
 	newRuntime, err := readDocument(paths.Runtime, &runtimeDoc)
 	if err != nil {
@@ -347,6 +352,7 @@ func Load(ctx context.Context, path string) (*Store, error) {
 		usedLegacyRequests = true
 	}
 
+	savedMain := false
 	if legacyMainExists || legacyRuntimeExists || legacyRunsExists || legacyRequestsExists {
 		usedLegacy := (!newMain && legacyMainExists) || usedLegacyRuntime || usedLegacyRuns || usedLegacyRequests
 		if usedLegacy {
@@ -354,8 +360,14 @@ func Load(ctx context.Context, path string) (*Store, error) {
 				store.loadErrors = append(store.loadErrors, fmt.Sprintf("migrate legacy cache: %v", err))
 				return store, nil
 			}
+			savedMain = true
 		}
 		store.removeLegacy(ctx, legacy, paths)
+	}
+	if migratedState && !savedMain {
+		if err := store.SaveStateAtomic(ctx); err != nil {
+			store.loadErrors = append(store.loadErrors, fmt.Sprintf("migrate state schema: %v", err))
+		}
 	}
 	store.seedActivityFromRequestHistory()
 
@@ -412,16 +424,17 @@ func readDocument(path string, target any) (bool, error) {
 	return true, nil
 }
 
-func (s *Store) applyStateDocument(doc legacyStateDocument) {
+func (s *Store) applyStateDocument(doc legacyStateDocument) bool {
+	migrated := doc.SchemaVersion > 0 && doc.SchemaVersion < SchemaVersion
 	if doc.Entries != nil {
 		s.entries = doc.Entries
 		for key, entry := range s.entries {
+			prevVersion := entry.SchemaVersion
 			entry.Samples, entry.LearningBaselineSequence = normalizeSampleHistory(entry.Samples, entry.LearningBaselineSequence)
-			// Removed probe scheduling/source fields were optional, so older
-			// entries remain valid after normalization. SaveAtomic will persist
-			// them under the current schema version.
-			if entry.SchemaVersion < SchemaVersion {
+			if prevVersion < SchemaVersion {
+				migrated = true
 				entry.SchemaVersion = SchemaVersion
+				resetEntryLearningState(&entry)
 			}
 			s.entries[key] = entry
 		}
@@ -455,6 +468,31 @@ func (s *Store) applyStateDocument(doc legacyStateDocument) {
 		for key, at := range doc.WarmupCompleted {
 			s.warmupCompleted[key] = utcOrZero(at)
 		}
+	}
+	return migrated
+}
+
+func resetEntryLearningState(entry *Entry) {
+	if entry == nil {
+		return
+	}
+	if !entry.Unavailable && !entry.ObservedAt.IsZero() {
+		entry.CycleBurnRate = DefaultCycleBurnRate
+	} else {
+		entry.CycleBurnRate = 0
+	}
+	entry.TokensPerShortPct = 0
+	entry.PendingWeightedTokens = 0
+	entry.EstimatedShortBurnPct = 0
+	entry.EstimatedLongBurnPct = 0
+	entry.LearningPendingTokens = 0
+	entry.LearningEstimatedShortPct = 0
+	entry.SensitivityAnomalyStreak = 0
+	entry.LastAnomalyTokensPerShortPct = 0
+	if len(entry.Samples) > 0 {
+		entry.LearningBaselineSequence = entry.Samples[len(entry.Samples)-1].Sequence
+	} else {
+		entry.LearningBaselineSequence = 0
 	}
 }
 
@@ -781,60 +819,59 @@ func (s *Store) MarkProbeSuccess(ctx context.Context, success ProbeSuccess) erro
 			capacity = DefaultQuotaSampleCapacity
 		}
 	}
-	newRate, newSamples, newBaseline := UpdateSamplesAndCycleBurnRate(
-		prev.CycleBurnRate,
-		prev.Samples,
-		prev.LearningBaselineSequence,
-		success.ObservedAt,
-		success.ShortWindowResetAt,
-		success.ShortWindowRemaining,
-		success.LongWindowRemaining,
-		capacity,
-	)
+	learningOut := CalibrateQuotaLearning(QuotaLearningInput{
+		ModelGroup:                   success.ModelGroup,
+		PrevCycleBurnRate:            prev.CycleBurnRate,
+		PrevTokensPerShortPct:        prev.TokensPerShortPct,
+		PrevSamples:                  prev.Samples,
+		LearningBaselineSequence:     prev.LearningBaselineSequence,
+		PrevShortResetAt:             prev.ShortWindowResetAt,
+		PrevShortRemaining:           prev.ShortWindowRemaining,
+		StepPendingTokens:            prev.PendingWeightedTokens,
+		StepEstimatedShortPct:        prev.EstimatedShortBurnPct,
+		LearningPendingTokens:        prev.LearningPendingTokens,
+		LearningEstimatedShortPct:    prev.LearningEstimatedShortPct,
+		SensitivityAnomalyStreak:     prev.SensitivityAnomalyStreak,
+		LastAnomalyTokensPerShortPct: prev.LastAnomalyTokensPerShortPct,
+		CurrObservedAt:               success.ObservedAt,
+		CurrShortResetAt:             success.ShortWindowResetAt,
+		CurrShortRemaining:           success.ShortWindowRemaining,
+		CurrLongRemaining:            success.LongWindowRemaining,
+		SampleCapacity:               capacity,
+	})
+	newSamples := learningOut.Samples
 	if sampleAppended(prev.Samples, newSamples) && strings.TrimSpace(success.ProbeRoundID) != "" && len(newSamples) > 0 {
 		newSamples[len(newSamples)-1].ProbeRoundID = strings.TrimSpace(success.ProbeRoundID)
 	}
-	// Probe calibration for real-time usage estimator
-	tokensPerShortPct := prev.TokensPerShortPct
-	if prev.PendingWeightedTokens > 0 && prev.ShortWindowRemaining != nil && success.ShortWindowRemaining != nil {
-		if !prev.ShortWindowResetAt.IsZero() && !success.ShortWindowResetAt.IsZero() && prev.ShortWindowResetAt.Equal(success.ShortWindowResetAt) {
-			deltaShort := *prev.ShortWindowRemaining - *success.ShortWindowRemaining
-			if deltaShort >= 2 {
-				kObs := prev.PendingWeightedTokens / float64(deltaShort)
-				prevK := prev.TokensPerShortPct
-				if prevK <= 0 {
-					prevK = defaultTokensPerShortPct(success.ModelGroup)
-				}
-				newK := 0.3*kObs + 0.7*prevK
-				tokensPerShortPct = clamp(newK, MinTokensPerShortPct, MaxTokensPerShortPct)
-			}
-		}
-	}
 
 	entry := Entry{
-		SchemaVersion:            SchemaVersion,
-		Provider:                 success.Provider,
-		ModelGroup:               entryModelGroup(success.ModelGroup),
-		AuthIndex:                authIndexKey(success.AuthIndex),
-		ObservedAt:               success.ObservedAt.UTC(),
-		ResetAt:                  utcOrZero(success.ResetAt),
-		Remaining:                success.Remaining,
-		ShortWindowResetAt:       utcOrZero(success.ShortWindowResetAt),
-		ShortWindowRemaining:     cloneInt64Ptr(success.ShortWindowRemaining),
-		LongWindowResetAt:        utcOrZero(success.LongWindowResetAt),
-		LongWindowRemaining:      cloneInt64Ptr(success.LongWindowRemaining),
-		CycleBurnRate:            newRate,
-		Samples:                  newSamples,
-		LearningBaselineSequence: newBaseline,
-		PendingWeightedTokens:    0,
-		EstimatedShortBurnPct:    0,
-		EstimatedLongBurnPct:     0,
-		TokensPerShortPct:        tokensPerShortPct,
-		LastUsageAt:              time.Time{},
-		LastError:                "",
-		LastFailureAt:            time.Time{},
-		AuthInvalid:              success.AuthInvalid,
-		PlanType:                 success.PlanType,
+		SchemaVersion:                SchemaVersion,
+		Provider:                     success.Provider,
+		ModelGroup:                   entryModelGroup(success.ModelGroup),
+		AuthIndex:                    authIndexKey(success.AuthIndex),
+		ObservedAt:                   success.ObservedAt.UTC(),
+		ResetAt:                      utcOrZero(success.ResetAt),
+		Remaining:                    success.Remaining,
+		ShortWindowResetAt:           utcOrZero(success.ShortWindowResetAt),
+		ShortWindowRemaining:         cloneInt64Ptr(success.ShortWindowRemaining),
+		LongWindowResetAt:            utcOrZero(success.LongWindowResetAt),
+		LongWindowRemaining:          cloneInt64Ptr(success.LongWindowRemaining),
+		CycleBurnRate:                learningOut.CycleBurnRate,
+		Samples:                      newSamples,
+		LearningBaselineSequence:     learningOut.LearningBaselineSequence,
+		PendingWeightedTokens:        0,
+		EstimatedShortBurnPct:        0,
+		EstimatedLongBurnPct:         0,
+		LearningPendingTokens:        learningOut.LearningPendingTokens,
+		LearningEstimatedShortPct:    learningOut.LearningEstimatedShortPct,
+		TokensPerShortPct:            learningOut.TokensPerShortPct,
+		SensitivityAnomalyStreak:     learningOut.SensitivityAnomalyStreak,
+		LastAnomalyTokensPerShortPct: learningOut.LastAnomalyTokensPerShortPct,
+		LastUsageAt:                  time.Time{},
+		LastError:                    "",
+		LastFailureAt:                time.Time{},
+		AuthInvalid:                  success.AuthInvalid,
+		PlanType:                     success.PlanType,
 	}
 	s.entries[key] = entry
 	return nil
@@ -901,7 +938,11 @@ func (s *Store) MarkProbeUnavailable(ctx context.Context, unavailable ProbeUnava
 	entry.PendingWeightedTokens = 0
 	entry.EstimatedShortBurnPct = 0
 	entry.EstimatedLongBurnPct = 0
+	entry.LearningPendingTokens = 0
+	entry.LearningEstimatedShortPct = 0
 	entry.TokensPerShortPct = 0
+	entry.SensitivityAnomalyStreak = 0
+	entry.LastAnomalyTokensPerShortPct = 0
 	entry.PlanType = core.PlanTypeUnknown
 
 	s.entries[key] = entry
@@ -923,6 +964,7 @@ func (s *Store) RecordUsageConsumption(authIndex, modelGroup string, weightedTok
 	}
 
 	entry.PendingWeightedTokens += weightedTokens
+	entry.LearningPendingTokens += weightedTokens
 	entry.LastUsageAt = now.UTC()
 	k5h := effectiveTokensPerShortPct(entry)
 	deltaShortPct := weightedTokens / k5h
@@ -930,6 +972,7 @@ func (s *Store) RecordUsageConsumption(authIndex, modelGroup string, weightedTok
 
 	entry.EstimatedShortBurnPct += deltaShortPct
 	entry.EstimatedLongBurnPct += deltaShortPct * cCycle
+	entry.LearningEstimatedShortPct += deltaShortPct
 	s.entries[key] = entry
 
 }

@@ -107,8 +107,11 @@ func TestStoreLoadNormalizesLegacySampleLearningState(t *testing.T) {
 	if len(entry.Samples) != 2 || entry.Samples[0].Sequence != 1 || entry.Samples[1].Sequence != 2 {
 		t.Fatalf("legacy sample sequences not normalized: %+v", entry.Samples)
 	}
-	if entry.LearningBaselineSequence != 1 {
-		t.Fatalf("legacy baseline = %d, want oldest sequence 1", entry.LearningBaselineSequence)
+	if entry.SchemaVersion != state.SchemaVersion {
+		t.Fatalf("legacy schema version = %d, want %d", entry.SchemaVersion, state.SchemaVersion)
+	}
+	if entry.LearningBaselineSequence != 2 {
+		t.Fatalf("upgraded v3 baseline = %d, want latest sequence 2", entry.LearningBaselineSequence)
 	}
 }
 
@@ -149,8 +152,11 @@ func TestStoreLoadCollapsesAdjacentDuplicateQuotaSamples(t *testing.T) {
 	if entry.Samples[0].ObservedAt.Format(time.RFC3339) != "2026-08-23T02:15:00Z" || entry.Samples[0].ShortWindowResetAt.Format(time.RFC3339) != "2026-08-23T07:15:00Z" {
 		t.Fatalf("latest duplicate metadata was not retained: %+v", entry.Samples[0])
 	}
-	if entry.LearningBaselineSequence != entry.Samples[0].Sequence {
-		t.Fatalf("baseline did not follow collapsed duplicate: %d", entry.LearningBaselineSequence)
+	if entry.SchemaVersion != state.SchemaVersion {
+		t.Fatalf("duplicate schema version = %d, want %d", entry.SchemaVersion, state.SchemaVersion)
+	}
+	if entry.LearningBaselineSequence != entry.Samples[len(entry.Samples)-1].Sequence {
+		t.Fatalf("upgraded v3 baseline = %d, want latest sequence %d", entry.LearningBaselineSequence, entry.Samples[len(entry.Samples)-1].Sequence)
 	}
 }
 
@@ -220,6 +226,7 @@ func TestStore_SaveAtomic_And_Reload(t *testing.T) {
 
 	// Step 2: Next probe with consumption
 	now2 := now.Add(30 * time.Minute)
+	store.RecordUsageConsumption("account-1", "gemini", 1600000, now2.Add(-5*time.Minute))
 	err = store.MarkProbeSuccess(ctx, state.ProbeSuccess{
 		AuthIndex:            "account-1",
 		ModelGroup:           "gemini",
@@ -1225,5 +1232,100 @@ func TestStore_MigratesLegacyDefaultIntoDedicatedDirectory(t *testing.T) {
 	}
 	if history := reloaded.GetRequestHistory(); len(history) != 1 || history[0].ID != "legacy-req" {
 		t.Fatalf("migrated request history = %+v", history)
+	}
+}
+
+func TestStore_LoadMigratesV2ResetsPollutedLearningOnce(t *testing.T) {
+	ctx := context.Background()
+	cachePath := filepath.Join(t.TempDir(), "v2-polluted.json")
+	paths := state.ResolvePaths(cachePath)
+	if err := os.MkdirAll(filepath.Dir(paths.Main), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	v2Raw := `{
+  "schema_version": 2,
+  "entries": {
+    "auth-v2|model_group=gemini": {
+      "schema_version": 2,
+      "provider": "antigravity",
+      "model_group": "gemini",
+      "auth_index": "auth-v2",
+      "observed_at": "2026-11-20T10:00:00Z",
+      "remaining": 75,
+      "short_window_reset_at": "2026-11-20T14:00:00Z",
+      "short_window_remaining": 75,
+      "long_window_reset_at": "2026-11-25T10:00:00Z",
+      "long_window_remaining": 90,
+      "cycle_burn_rate": 0.29,
+      "tokens_per_short_pct": 5000,
+      "pending_weighted_tokens": 12000,
+      "estimated_short_burn_pct": 2.4,
+      "learning_baseline_sequence": 1,
+      "plan_type": "pro",
+      "samples": [
+        {"sequence":1,"observed_at":"2026-11-20T09:00:00Z","short_window_reset_at":"2026-11-20T14:00:00Z","short_window_rem":100,"long_window_rem":95},
+        {"sequence":2,"observed_at":"2026-11-20T10:00:00Z","short_window_reset_at":"2026-11-20T14:00:00Z","short_window_rem":75,"long_window_rem":90}
+      ]
+    }
+  }
+}`
+	if err := os.WriteFile(paths.Main, []byte(v2Raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	entry, ok := store.GetEntry("auth-v2", "gemini")
+	if !ok {
+		t.Fatal("expected migrated entry")
+	}
+	if entry.SchemaVersion != state.SchemaVersion {
+		t.Fatalf("expected schema_version=%d, got %d", state.SchemaVersion, entry.SchemaVersion)
+	}
+	if entry.CycleBurnRate != state.DefaultCycleBurnRate {
+		t.Fatalf("expected reset CycleBurnRate=%v, got %v", state.DefaultCycleBurnRate, entry.CycleBurnRate)
+	}
+	if entry.TokensPerShortPct != 0 {
+		t.Fatalf("expected reset TokensPerShortPct=0, got %v", entry.TokensPerShortPct)
+	}
+	if entry.PendingWeightedTokens != 0 || entry.EstimatedShortBurnPct != 0 || entry.LearningPendingTokens != 0 {
+		t.Fatalf("expected pending accumulators cleared, got %+v", entry)
+	}
+	if entry.LearningBaselineSequence != 2 {
+		t.Fatalf("expected LearningBaselineSequence rebased to 2, got %d", entry.LearningBaselineSequence)
+	}
+	if entry.ShortWindowRemaining == nil || *entry.ShortWindowRemaining != 75 || entry.PlanType != core.PlanTypePro || len(entry.Samples) != 2 {
+		t.Fatalf("migration corrupted quota/sample metadata: %+v", entry)
+	}
+
+	// Verify migration persisted v3 on disk so subsequent v3 learning is NOT reset on restart.
+	store.RecordUsageConsumption("auth-v2", "gemini", 400000, time.Date(2026, 11, 20, 10, 15, 0, 0, time.UTC))
+	if err := store.MarkProbeSuccess(ctx, state.ProbeSuccess{
+		AuthIndex:            "auth-v2",
+		Provider:             core.ProviderAntigravity,
+		ModelGroup:           "gemini",
+		ObservedAt:           time.Date(2026, 11, 20, 10, 30, 0, 0, time.UTC),
+		ResetAt:              time.Date(2026, 11, 20, 14, 0, 0, 0, time.UTC),
+		Remaining:            70,
+		ShortWindowResetAt:   time.Date(2026, 11, 20, 14, 0, 0, 0, time.UTC),
+		ShortWindowRemaining: int64Ptr(70),
+		LongWindowResetAt:    time.Date(2026, 11, 25, 10, 0, 0, 0, time.UTC),
+		LongWindowRemaining:  int64Ptr(89),
+		PlanType:             core.PlanTypePro,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveStateAtomic(ctx); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := state.Load(ctx, cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reloadedEntry, _ := reloaded.GetEntry("auth-v2", "gemini")
+	if reloadedEntry.CycleBurnRate == state.DefaultCycleBurnRate || reloadedEntry.TokensPerShortPct == 0 {
+		t.Fatalf("v3 learned state should persist across restart without re-resetting: rate=%v k=%v", reloadedEntry.CycleBurnRate, reloadedEntry.TokensPerShortPct)
 	}
 }

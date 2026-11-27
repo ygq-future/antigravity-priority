@@ -26,6 +26,10 @@ const (
 	lowMaxCapDuration   = 6 * time.Hour
 	lowMinCapDuration   = 2 * time.Hour
 	lowJitterFraction   = 0.15
+	idleStretchFactor   = 4
+	idleMinCapDuration  = 2 * time.Hour
+	idleMaxCapDuration  = 4 * time.Hour
+	idleJitterPercent   = 15
 	burstWakeMinDelay   = 15 * time.Second
 	burstWakeMaxDelay   = 45 * time.Second
 )
@@ -159,22 +163,14 @@ func evaluateAdaptivePlan(in adaptiveEvalInput) (AdaptiveScheduleSnapshot, adapt
 				nextRunAt:      now,
 			}
 		}
-		snap.Mode = ScheduleModeIdle
-		return snap, adaptiveScheduleState{
-			mode:     ScheduleModeIdle,
-			interval: interval,
-		}
+		return evaluateIdlePlan(now, interval, in.lastAutoApplyAt, in.latched, jitter, in.forDirectAutoCall, snap)
 	}
 
 	// Idle-decay guard: if the current window has zero traffic and the total
 	// uncalibrated requests since the last probe haven't reached the active
-	// threshold, the trickle has gone silent — stay idle instead of probing.
+	// threshold, the trickle has gone silent — fall back to low-rate idle heartbeat.
 	if in.summary.CurrWindowCount == 0 && float64(in.summary.SinceLastCount) < refThreshold {
-		snap.Mode = ScheduleModeIdle
-		return snap, adaptiveScheduleState{
-			mode:     ScheduleModeIdle,
-			interval: interval,
-		}
+		return evaluateIdlePlan(now, interval, in.lastAutoApplyAt, in.latched, jitter, in.forDirectAutoCall, snap)
 	}
 
 	momentum := 0.45*float64(in.summary.PrevWindowCount) + 0.55*float64(in.summary.CurrWindowCount)
@@ -318,6 +314,66 @@ func evaluateAdaptivePlan(in adaptiveEvalInput) (AdaptiveScheduleSnapshot, adapt
 		nextRunAt:      nextRunAt,
 	}
 	return snap, nextState
+}
+
+func evaluateIdlePlan(
+	now time.Time,
+	interval time.Duration,
+	lastAutoApplyAt time.Time,
+	latched adaptiveScheduleState,
+	jitter func(minDur, maxDur time.Duration) time.Duration,
+	forDirectAutoCall bool,
+	snap AdaptiveScheduleSnapshot,
+) (AdaptiveScheduleSnapshot, adaptiveScheduleState) {
+	idleTarget := min(idleMaxCapDuration, max(idleMinCapDuration, idleStretchFactor*interval))
+	minIdle := max(idleMinCapDuration, idleTarget*(100-idleJitterPercent)/100)
+	maxIdle := max(minIdle, min(idleMaxCapDuration, idleTarget*(100+idleJitterPercent)/100))
+
+	last := lastAutoApplyAt.UTC()
+	if forDirectAutoCall && (last.IsZero() || !now.Before(last.Add(idleTarget))) {
+		snap.Mode = ScheduleModeIdle
+		snap.TargetInterval = idleTarget
+		snap.NextRunAt = now
+		snap.ShouldRunNow = true
+		return snap, latched
+	}
+
+	var nextRunAt time.Time
+	reuseLatched := latched.mode == ScheduleModeIdle &&
+		latched.interval == interval &&
+		latched.lastAutoApply.Equal(last) &&
+		!latched.nextRunAt.IsZero()
+
+	if reuseLatched {
+		nextRunAt = latched.nextRunAt
+		if nextRunAt.Sub(now) > maxIdle {
+			nextRunAt = now.Add(jitter(minIdle, maxIdle))
+		}
+	} else {
+		anchor := last
+		if anchor.IsZero() {
+			anchor = now
+		}
+		nextRunAt = anchor.Add(jitter(minIdle, maxIdle))
+	}
+
+	snap.Mode = ScheduleModeIdle
+	snap.TargetInterval = idleTarget
+	snap.NextRunAt = nextRunAt
+	if !now.Before(nextRunAt) {
+		snap.ShouldRunNow = true
+		snap.NextWait = 0
+	} else {
+		snap.NextWait = nextRunAt.Sub(now)
+	}
+
+	return snap, adaptiveScheduleState{
+		mode:           ScheduleModeIdle,
+		interval:       interval,
+		lastAutoApply:  last,
+		targetInterval: idleTarget,
+		nextRunAt:      nextRunAt,
+	}
 }
 
 func minTime(a, b time.Time) time.Time {
